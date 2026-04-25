@@ -2347,6 +2347,427 @@ static SEXP block_lanczos_pack_result(int n, int k_target, const double* V,
                          iterations, matvecs, 0, m_active_final);
 }
 
+static int lobpcg_orthonormalize(const double* S, int n, int cols, double tol,
+                                 double* Q, double* tmp) {
+  int rank = 0;
+  for (int col = 0; col < cols; ++col) {
+    double* q_col = Q + static_cast<int64_t>(rank) * n;
+    std::memcpy(q_col, S + static_cast<int64_t>(col) * n,
+                sizeof(double) * static_cast<size_t>(n));
+    trl_orthogonalise(nullptr, 0, Q, rank, q_col, tmp, n);
+    const double q_norm = trl_norm2(q_col, n);
+    if (q_norm <= tol) {
+      continue;
+    }
+    const double inv = 1.0 / q_norm;
+    for (int row = 0; row < n; ++row) {
+      q_col[row] *= inv;
+    }
+    ++rank;
+  }
+  return rank;
+}
+
+static int lobpcg_apply_tridiagonal_preconditioner(
+    const double* lower,
+    const double* diag,
+    const double* upper,
+    int n,
+    int cols,
+    const double* R,
+    double* W,
+    double* cprime,
+    double* dprime) {
+  for (int col = 0; col < cols; ++col) {
+    const double* rhs = R + static_cast<int64_t>(col) * n;
+    double* out = W + static_cast<int64_t>(col) * n;
+    if (fabs(diag[0]) <= DBL_EPSILON) {
+      return -5;
+    }
+    dprime[0] = diag[0];
+    if (n > 1) {
+      cprime[0] = upper[0] / dprime[0];
+    }
+    out[0] = rhs[0] / dprime[0];
+    for (int i = 1; i < n; ++i) {
+      dprime[i] = diag[i] - lower[i - 1] * cprime[i - 1];
+      if (fabs(dprime[i]) <= DBL_EPSILON) {
+        return -5;
+      }
+      if (i < n - 1) {
+        cprime[i] = upper[i] / dprime[i];
+      }
+      out[i] = (rhs[i] - lower[i - 1] * out[i - 1]) / dprime[i];
+    }
+    for (int i = n - 2; i >= 0; --i) {
+      out[i] -= cprime[i] * out[i + 1];
+    }
+  }
+  return 0;
+}
+
+static SEXP lobpcg_pack_result(int n, int k, const double* X,
+                               const double* values,
+                               const double* residuals,
+                               const int* converged,
+                               const double* hist_max_residual,
+                               const int* hist_nconv,
+                               int iterations, int matvecs,
+                               int preconditioner_calls,
+                               int q_rank_final) {
+  SEXP values_ = PROTECT(allocVector(REALSXP, k));
+  SEXP vectors_ = PROTECT(allocMatrix(REALSXP, n, k));
+  SEXP residuals_ = PROTECT(allocVector(REALSXP, k));
+  SEXP converged_ = PROTECT(allocVector(LGLSXP, k));
+  SEXP hist_res_ = PROTECT(allocVector(REALSXP, iterations));
+  SEXP hist_nconv_ = PROTECT(allocVector(INTSXP, iterations));
+  std::memcpy(REAL(values_), values, sizeof(double) * static_cast<size_t>(k));
+  std::memcpy(REAL(vectors_), X, sizeof(double) * static_cast<size_t>(n) * k);
+  std::memcpy(REAL(residuals_), residuals, sizeof(double) * static_cast<size_t>(k));
+  for (int i = 0; i < k; ++i) {
+    LOGICAL(converged_)[i] = converged[i] ? TRUE : FALSE;
+  }
+  for (int i = 0; i < iterations; ++i) {
+    REAL(hist_res_)[i] = hist_max_residual[i];
+    INTEGER(hist_nconv_)[i] = hist_nconv[i];
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 10));
+  SET_VECTOR_ELT(out_, 0, values_);
+  SET_VECTOR_ELT(out_, 1, vectors_);
+  SET_VECTOR_ELT(out_, 2, residuals_);
+  SET_VECTOR_ELT(out_, 3, converged_);
+  SET_VECTOR_ELT(out_, 4, hist_res_);
+  SET_VECTOR_ELT(out_, 5, hist_nconv_);
+  SET_VECTOR_ELT(out_, 6, ScalarInteger(iterations));
+  SET_VECTOR_ELT(out_, 7, ScalarInteger(matvecs));
+  SET_VECTOR_ELT(out_, 8, ScalarInteger(preconditioner_calls));
+  SET_VECTOR_ELT(out_, 9, ScalarInteger(q_rank_final));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 10));
+  SET_STRING_ELT(names_, 0, mkChar("values"));
+  SET_STRING_ELT(names_, 1, mkChar("vectors"));
+  SET_STRING_ELT(names_, 2, mkChar("residuals"));
+  SET_STRING_ELT(names_, 3, mkChar("converged"));
+  SET_STRING_ELT(names_, 4, mkChar("history_max_relative_residual"));
+  SET_STRING_ELT(names_, 5, mkChar("history_nconv"));
+  SET_STRING_ELT(names_, 6, mkChar("iterations"));
+  SET_STRING_ELT(names_, 7, mkChar("matvecs"));
+  SET_STRING_ELT(names_, 8, mkChar("preconditioner_calls"));
+  SET_STRING_ELT(names_, 9, mkChar("q_rank_final"));
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(8);
+  return out_;
+}
+
+static int native_lobpcg_run(void* impl,
+                             EigencoreApplyFn apply,
+                             int n,
+                             int k,
+                             int maxit,
+                             int target_kind,
+                             double tol,
+                             const double* start,
+                             int use_tridiagonal_preconditioner,
+                             const double* lower,
+                             const double* diag,
+                             const double* upper,
+                             double* X_out,
+                             double* values_out,
+                             double* residuals_out,
+                             int* converged_out,
+                             double* hist_max_residual,
+                             int* hist_nconv,
+                             int* iterations_out,
+                             int* matvecs_out,
+                             int* preconditioner_calls_out,
+                             int* q_rank_final_out) {
+  const int max_trial_cols = 3 * k;
+  const size_t nk = static_cast<size_t>(n) * static_cast<size_t>(k);
+  const size_t nt = static_cast<size_t>(n) * static_cast<size_t>(max_trial_cols);
+  double* X = static_cast<double*>(std::calloc(nk, sizeof(double)));
+  double* Xnext = static_cast<double*>(std::calloc(nk, sizeof(double)));
+  double* P = static_cast<double*>(std::calloc(nk, sizeof(double)));
+  double* AX = static_cast<double*>(std::calloc(nk, sizeof(double)));
+  double* R = static_cast<double*>(std::calloc(nk, sizeof(double)));
+  double* W = static_cast<double*>(std::calloc(nk, sizeof(double)));
+  double* S = static_cast<double*>(std::calloc(nt, sizeof(double)));
+  double* Q = static_cast<double*>(std::calloc(nt, sizeof(double)));
+  double* AQ = static_cast<double*>(std::calloc(nt, sizeof(double)));
+  double* H = static_cast<double*>(std::calloc(static_cast<size_t>(max_trial_cols) * max_trial_cols, sizeof(double)));
+  double* selected_vectors = static_cast<double*>(std::calloc(static_cast<size_t>(max_trial_cols) * k, sizeof(double)));
+  double* theta = static_cast<double*>(std::calloc(static_cast<size_t>(max_trial_cols), sizeof(double)));
+  double* tmp = static_cast<double*>(std::calloc(static_cast<size_t>(max_trial_cols), sizeof(double)));
+  int* selected = static_cast<int*>(std::calloc(static_cast<size_t>(max_trial_cols), sizeof(int)));
+  double* cprime = static_cast<double*>(std::calloc(static_cast<size_t>(n > 1 ? n - 1 : 1), sizeof(double)));
+  double* dprime = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
+  const int dsyev_lwork_query = trl_dsyev_query(max_trial_cols);
+  int dsyev_lwork = dsyev_lwork_query > 0 ? dsyev_lwork_query : 3 * max_trial_cols;
+  double* dsyev_work = static_cast<double*>(std::calloc(static_cast<size_t>(dsyev_lwork), sizeof(double)));
+  if (X == nullptr || Xnext == nullptr || P == nullptr || AX == nullptr ||
+      R == nullptr || W == nullptr || S == nullptr || Q == nullptr ||
+      AQ == nullptr || H == nullptr || selected_vectors == nullptr ||
+      theta == nullptr || tmp == nullptr || selected == nullptr ||
+      cprime == nullptr || dprime == nullptr || dsyev_work == nullptr) {
+    std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
+    std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
+    std::free(selected_vectors); std::free(theta); std::free(tmp);
+    std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+    return -2;
+  }
+
+  std::memcpy(S, start, sizeof(double) * nk);
+  int q_rank = lobpcg_orthonormalize(S, n, k, 100.0 * DBL_EPSILON, X, tmp);
+  if (q_rank < k) {
+    std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
+    std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
+    std::free(selected_vectors); std::free(theta); std::free(tmp);
+    std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+    return -4;
+  }
+
+  const char trans_T = 'T';
+  const char trans_N = 'N';
+  const double one = 1.0;
+  const double zero = 0.0;
+  EigencoreWorkspace workspace = {0, 0, nullptr, 0};
+  int have_p = 0;
+  *iterations_out = 0;
+  *matvecs_out = 0;
+  *preconditioner_calls_out = 0;
+  *q_rank_final_out = k;
+
+  for (int iter = 0; iter < maxit; ++iter) {
+    *iterations_out = iter + 1;
+    int status = apply(impl, EIGENCORE_TRANSPOSE_NONE, k, X, n,
+                       1.0, 0.0, AX, n, &workspace);
+    if (status != 0) {
+      std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
+      std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
+      std::free(selected_vectors); std::free(theta); std::free(tmp);
+      std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+      return status;
+    }
+    ++(*matvecs_out);
+
+    int nconv = 0;
+    double max_relative = 0.0;
+    for (int col = 0; col < k; ++col) {
+      long double lambda = 0.0L;
+      for (int row = 0; row < n; ++row) {
+        lambda += static_cast<long double>(X[row + static_cast<int64_t>(col) * n]) *
+                  AX[row + static_cast<int64_t>(col) * n];
+      }
+      values_out[col] = static_cast<double>(lambda);
+      long double rn = 0.0L;
+      for (int row = 0; row < n; ++row) {
+        const double res = AX[row + static_cast<int64_t>(col) * n] -
+                           values_out[col] * X[row + static_cast<int64_t>(col) * n];
+        R[row + static_cast<int64_t>(col) * n] = res;
+        rn += static_cast<long double>(res) * res;
+      }
+      residuals_out[col] = sqrt(static_cast<double>(rn));
+      const double scale = fabs(values_out[col]) > 1.0 ? fabs(values_out[col]) : 1.0;
+      const double rel = residuals_out[col] / scale;
+      converged_out[col] = rel <= tol ? 1 : 0;
+      if (converged_out[col]) ++nconv;
+      if (rel > max_relative) max_relative = rel;
+    }
+    hist_max_residual[iter] = max_relative;
+    hist_nconv[iter] = nconv;
+    if (nconv >= k || iter + 1 >= maxit) {
+      break;
+    }
+
+    if (use_tridiagonal_preconditioner) {
+      status = lobpcg_apply_tridiagonal_preconditioner(
+        lower, diag, upper, n, k, R, W, cprime, dprime
+      );
+      if (status != 0) {
+        std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
+        std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
+        std::free(selected_vectors); std::free(theta); std::free(tmp);
+        std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+        return status;
+      }
+      ++(*preconditioner_calls_out);
+    } else {
+      std::memcpy(W, R, sizeof(double) * nk);
+    }
+
+    int trial_cols = 0;
+    std::memcpy(S + static_cast<int64_t>(trial_cols) * n, X, sizeof(double) * nk);
+    trial_cols += k;
+    std::memcpy(S + static_cast<int64_t>(trial_cols) * n, W, sizeof(double) * nk);
+    trial_cols += k;
+    if (have_p) {
+      std::memcpy(S + static_cast<int64_t>(trial_cols) * n, P, sizeof(double) * nk);
+      trial_cols += k;
+    }
+    std::memset(Q, 0, sizeof(double) * nt);
+    q_rank = lobpcg_orthonormalize(S, n, trial_cols, 100.0 * DBL_EPSILON, Q, tmp);
+    if (q_rank < k) {
+      std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
+      std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
+      std::free(selected_vectors); std::free(theta); std::free(tmp);
+      std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+      return -4;
+    }
+    *q_rank_final_out = q_rank;
+
+    status = apply(impl, EIGENCORE_TRANSPOSE_NONE, q_rank, Q, n,
+                   1.0, 0.0, AQ, n, &workspace);
+    if (status != 0) {
+      std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
+      std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
+      std::free(selected_vectors); std::free(theta); std::free(tmp);
+      std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+      return status;
+    }
+    ++(*matvecs_out);
+
+    F77_CALL(dgemm)(&trans_T, &trans_N, &q_rank, &q_rank, &n,
+                    &one, Q, &n, AQ, &n,
+                    &zero, H, &q_rank FCONE FCONE);
+    for (int i = 0; i < q_rank; ++i) {
+      for (int j = i + 1; j < q_rank; ++j) {
+        const double avg = 0.5 * (H[i + j * q_rank] + H[j + i * q_rank]);
+        H[i + j * q_rank] = avg;
+        H[j + i * q_rank] = avg;
+      }
+    }
+    char jobz = 'V';
+    char uplo = 'U';
+    int info = 0;
+    int lwork = dsyev_lwork;
+    F77_CALL(dsyev)(&jobz, &uplo, &q_rank, H, &q_rank, theta,
+                    dsyev_work, &lwork, &info FCONE FCONE);
+    if (info != 0) {
+      std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
+      std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
+      std::free(selected_vectors); std::free(theta); std::free(tmp);
+      std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+      return -3;
+    }
+    selected_ritz_indices(theta, q_rank, k, target_kind, selected);
+    for (int col = 0; col < k; ++col) {
+      const int idx = selected[col];
+      for (int row = 0; row < q_rank; ++row) {
+        selected_vectors[row + static_cast<int64_t>(col) * q_rank] =
+          H[row + static_cast<int64_t>(idx) * q_rank];
+      }
+    }
+    F77_CALL(dgemm)(&trans_N, &trans_N, &n, &k, &q_rank,
+                    &one, Q, &n, selected_vectors, &q_rank,
+                    &zero, Xnext, &n FCONE FCONE);
+    for (int pos = 0; pos < static_cast<int>(nk); ++pos) {
+      P[pos] = Xnext[pos] - X[pos];
+      X[pos] = Xnext[pos];
+    }
+    have_p = 1;
+  }
+
+  std::memcpy(X_out, X, sizeof(double) * nk);
+  std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
+  std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
+  std::free(selected_vectors); std::free(theta); std::free(tmp);
+  std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+  return 0;
+}
+
+extern "C" SEXP eigencore_lobpcg_dense(SEXP A_, SEXP k_, SEXP maxit_,
+                                       SEXP target_kind_, SEXP tol_,
+                                       SEXP start_, SEXP lower_, SEXP diag_,
+                                       SEXP upper_) {
+  if (!isReal(A_) || !isReal(start_)) {
+    error("A and start must be double");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimS = getAttrib(start_, R_DimSymbol);
+  if (dimA == R_NilValue || dimS == R_NilValue) {
+    error("A and start must be matrices");
+  }
+  const int n = INTEGER(dimA)[0];
+  const int k = static_cast<int>(asInteger(k_));
+  if (INTEGER(dimA)[1] != n || INTEGER(dimS)[0] != n || INTEGER(dimS)[1] != k) {
+    error("non-conformable dense LOBPCG inputs");
+  }
+  const int maxit = static_cast<int>(asInteger(maxit_));
+  const int target_kind = static_cast<int>(asInteger(target_kind_));
+  const double tol = asReal(tol_);
+  const int use_tridiag = LENGTH(diag_) > 0;
+  if (k < 1 || maxit < 1) error("k and maxit must be positive");
+
+  std::vector<double> X(static_cast<size_t>(n) * k, 0.0);
+  std::vector<double> values(static_cast<size_t>(k), 0.0);
+  std::vector<double> residuals(static_cast<size_t>(k), R_PosInf);
+  std::vector<int> converged(static_cast<size_t>(k), 0);
+  std::vector<double> hist_res(static_cast<size_t>(maxit), R_PosInf);
+  std::vector<int> hist_nconv(static_cast<size_t>(maxit), 0);
+  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0;
+  DenseColumnMajorOperator impl = {n, n, REAL(A_)};
+  const int status = native_lobpcg_run(
+    &impl, eigencore_dense_apply, n, k, maxit, target_kind, tol, REAL(start_),
+    use_tridiag, LENGTH(lower_) ? REAL(lower_) : nullptr,
+    LENGTH(diag_) ? REAL(diag_) : nullptr,
+    LENGTH(upper_) ? REAL(upper_) : nullptr,
+    X.data(), values.data(), residuals.data(), converged.data(),
+    hist_res.data(), hist_nconv.data(), &iterations, &matvecs,
+    &preconditioner_calls, &q_rank);
+  if (status != 0) {
+    error("native dense LOBPCG failed with status=%d", status);
+  }
+  return lobpcg_pack_result(n, k, X.data(), values.data(), residuals.data(),
+                            converged.data(), hist_res.data(), hist_nconv.data(),
+                            iterations, matvecs, preconditioner_calls, q_rank);
+}
+
+extern "C" SEXP eigencore_lobpcg_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
+                                     SEXP k_, SEXP maxit_, SEXP target_kind_,
+                                     SEXP tol_, SEXP start_, SEXP lower_,
+                                     SEXP diag_, SEXP upper_) {
+  if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
+      !isReal(start_)) {
+    error("invalid CSC LOBPCG inputs");
+  }
+  SEXP dimS = getAttrib(start_, R_DimSymbol);
+  if (dimS == R_NilValue) {
+    error("start must be a matrix");
+  }
+  const int n = INTEGER(dim_)[0];
+  const int k = static_cast<int>(asInteger(k_));
+  if (INTEGER(dim_)[1] != n || INTEGER(dimS)[0] != n || INTEGER(dimS)[1] != k) {
+    error("non-conformable CSC LOBPCG inputs");
+  }
+  const int maxit = static_cast<int>(asInteger(maxit_));
+  const int target_kind = static_cast<int>(asInteger(target_kind_));
+  const double tol = asReal(tol_);
+  const int use_tridiag = LENGTH(diag_) > 0;
+  if (k < 1 || maxit < 1) error("k and maxit must be positive");
+
+  std::vector<double> X(static_cast<size_t>(n) * k, 0.0);
+  std::vector<double> values(static_cast<size_t>(k), 0.0);
+  std::vector<double> residuals(static_cast<size_t>(k), R_PosInf);
+  std::vector<int> converged(static_cast<size_t>(k), 0);
+  std::vector<double> hist_res(static_cast<size_t>(maxit), R_PosInf);
+  std::vector<int> hist_nconv(static_cast<size_t>(maxit), 0);
+  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0;
+  CSCOperator impl = {n, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
+  const int status = native_lobpcg_run(
+    &impl, eigencore_csc_apply, n, k, maxit, target_kind, tol, REAL(start_),
+    use_tridiag, LENGTH(lower_) ? REAL(lower_) : nullptr,
+    LENGTH(diag_) ? REAL(diag_) : nullptr,
+    LENGTH(upper_) ? REAL(upper_) : nullptr,
+    X.data(), values.data(), residuals.data(), converged.data(),
+    hist_res.data(), hist_nconv.data(), &iterations, &matvecs,
+    &preconditioner_calls, &q_rank);
+  if (status != 0) {
+    error("native CSC LOBPCG failed with status=%d", status);
+  }
+  return lobpcg_pack_result(n, k, X.data(), values.data(), residuals.data(),
+                            converged.data(), hist_res.data(), hist_nconv.data(),
+                            iterations, matvecs, preconditioner_calls, q_rank);
+}
+
 extern "C" SEXP eigencore_thick_restart_lanczos_dense(SEXP A_, SEXP k_,
                                                       SEXP m_max_,
                                                       SEXP target_kind_,
