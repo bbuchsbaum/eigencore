@@ -106,23 +106,101 @@ Deliver the native engine in order. Each step ships with adversarial tests
    is the canonical one: solve the projected problem in the basis, then
    `V_k = Q · S_k` *without* independent post-orthogonalization. If
    orthogonality loss exceeds tolerance, re-extract — never patch with
-   independent MGS.
+   independent MGS. A scalar `block = 1` implementation is an acceptable
+   staging step only if planner labels say so; it does not satisfy the block
+   milestone or the performance gate.
 4. **Native Golub–Kahan bidiagonalization with thick restart.** True SVD
    residuals `(||A v − σ u||, ||A* u − σ v||)` computed natively. No
    `A^T A` materialization. No independent MGS on `U` and `V` after
    extraction.
 5. **Native randomized SVD** (range finder + subspace iteration), with
    honest certificate (`certificate_type = "estimated"` unless refinement
-   pass runs and lowers residual below tolerance).
-6. **Generalized SPD** via B-orthogonal block Lanczos. Cholesky path on
-   `B` as an operator; never invert `R` explicitly.
-7. **Shift-invert** with user-supplied solve / factorization-cache
+   pass runs and lowers residual below tolerance). Use
+   `docs/hegelsvd_svd_acceleration.md` as the design note for mining
+   HegelSVD's adaptive QB/PCS strategy, planner regimes, and benchmark cases
+   without inheriting its dense-only assumptions.
+6. **Generalized SPD LOBPCG** for dense, sparse, and matrix-free operators.
+   This is the primary scalable V1 path for `A x = lambda B x`, especially
+   smallest eigenpairs and preconditioned problems. It uses block iteration,
+   B-orthogonal Rayleigh-Ritz extraction, optional constraints/deflation, and
+   native residual/certificate kernels. The planner maps largest generalized
+   eigenpairs through the sign-flipped problem when appropriate; it never
+   densifies sparse `A` or `B` silently.
+7. **Generalized SPD B-orthogonal block Lanczos** as an alternate/refinement
+   path after LOBPCG. Cholesky paths treat `B` as an operator or factorization
+   cache; never invert `R` explicitly.
+8. **Shift-invert** with user-supplied solve / factorization-cache
    operator. Fails loud if no solve is provided; never silently dense.
-8. **LOBPCG** for symmetric / generalized SPD with preconditioner.
+9. **Standard symmetric LOBPCG refinements** for graph Laplacians and
+   preconditioned standard Hermitian problems, sharing the generalized LOBPCG
+   core.
 
 Until a step lands natively, its planner label is
 `"reference <method> (prototype — not production)"`. The existing honest-label
 machinery is the template.
+
+### Current status checkpoint
+
+As of the current native Hermitian and certificate work, eigencore has:
+
+- native dense, CSC, and diagonal block-apply operators;
+- native MGS2 / CholQR2 / dense B-CholQR2 orthogonalization kernels;
+- native dense eigen/SVD certificate diagnostics;
+- native standard built-in-operator certificate diagnostics for dense, CSC,
+  and diagonal operators;
+- a certified `native scalar thick-restart Hermitian Lanczos` path for dense
+  double matrices and `dgCMatrix` operators, with native locking metadata and
+  sparse non-densification;
+- a `native block Hermitian Lanczos prototype` path for dense double matrices
+  and `dgCMatrix` operators, with block native operator application and honest
+  no-restart/no-locking metadata;
+- a certified native Golub-Kahan staging path for dense double and `dgCMatrix`
+  SVD, with adaptive subspace growth metadata.
+- an internal reference LOBPCG spike showing that a shifted sparse solve
+  preconditioner can reduce Laplacian smallest-eigenpair iteration count by an
+  order of magnitude; this is evidence for the native preconditioner interface,
+  not a production solver path.
+- an explicit `lobpcg()` method descriptor and
+  `shifted_cholesky_preconditioner()` helper. The current solver route is
+  labeled `reference LOBPCG prototype` and runs in R, but it returns the normal
+  eigencore result/certificate object.
+- built-in preconditioners now carry typed metadata (`kind`, `native`,
+  `factorization`, `shift`) and LOBPCG results report preconditioner call
+  counts. This makes the planner and benchmark gates inspectable before the
+  native LOBPCG loop replaces the R prototype.
+
+The Hermitian path supports native targets `largest`, `smallest`,
+`largest_magnitude`, and `smallest_magnitude`; unsupported targets such as
+`nearest()` route away from the native path with an honest planner label.
+
+This is not Milestone G completion. The implementation is scalar (`block = 1`),
+not block-native, and the quick benchmark gates currently show certification
+but not performance leadership:
+
+- sparse Hermitian path Laplacian `n = 200, k = 5`: eigencore certifies all
+  requested pairs with the scalar-native path and the tuned default
+  `max_subspace = 3*k + 20`, but is still slower than RSpectra and
+  allocates more memory on the quick gate;
+- the block Hermitian prototype certifies the same quick Laplacian case only
+  when allowed to use the full `n`-dimensional subspace; it gives excellent
+  residuals but is slower than the scalar path and therefore remains a
+  prototype, not the G1 solution;
+- preconditioned reference LOBPCG on the same quick Laplacian case certifies
+  in about 10 iterations. The current gate shows it is about 1.8x faster than
+  scalar eigencore, slightly faster than PRIMME on some runs, still slower than
+  RSpectra, and allocates materially more memory because the path is R-level
+  and factorization-backed;
+- a native shifted tridiagonal preconditioner now covers path-Laplacian-style
+  tridiagonal gates. It preserves the 10-iteration convergence behavior and
+  reduces memory versus the Cholesky-backed reference setup, but the current
+  R-level LOBPCG loop still dominates enough allocation that the memory gate
+  remains open. Benchmark rows and the LOBPCG gate now record which typed
+  preconditioner candidate was selected;
+- sparse tall-skinny SVD `500 x 80, rank = 5`: eigencore certifies but is
+  still materially slower than RSpectra and `irlba`.
+
+Do not mark the Hermitian solver milestone complete until the block path and
+speed/memory gate below pass on reproducible benchmark scripts.
 
 ## 4. Dense-fallback policy
 
@@ -146,9 +224,11 @@ Every certificate carries explicit provenance:
 certificate <- list(
   passed              = logical(1),
   tolerance           = numeric(1),
-  certificate_type    = c("certified", "estimated"),
-  norm_bound_type     = c("exact_2", "exact_frobenius",
-                          "upper_frobenius", "estimated", "user_supplied"),
+  certificate_type    = c("residual_backward_error", "uncomputed", ...),
+  norm_bound_type     = c("frobenius_exact", "frobenius_metadata",
+                          "identity_exact", "frobenius_hutchinson_estimate",
+                          ...),
+  scale_is_estimate   = logical(1),
   max_residual        = numeric(1),
   max_backward_error  = numeric(1),
   max_orthogonality_loss = numeric(1),
@@ -160,16 +240,19 @@ certificate <- list(
 
 Rules:
 
-- `certificate_type = "certified"` requires `norm_bound_type ∈ {exact_2,
-  exact_frobenius, upper_frobenius, user_supplied}`.
+- `certificate_type = "residual_backward_error"` means the certificate is based
+  on explicit residual recomputation or residuals returned by a native solver
+  and scaled by the shared backward-error denominator.
 - Hutchinson-style stochastic norm estimates produce
-  `certificate_type = "estimated"`. `passed` may still be `TRUE` but the
-  printed certificate marks it clearly.
-- Backward-error denominator prefers 2-norm when available, falls back to
-  Frobenius as a **labeled upper bound** (`upper_frobenius`). This fixes the
-  current loose-scale bias toward "passed."
-- Dense and operator paths share a single scale helper (already unified
-  in `R/certification.R`); only the norm source differs.
+  `norm_bound_type = "frobenius_hutchinson_estimate"` and
+  `scale_is_estimate = TRUE`. In that case `passed` is withheld even if every
+  returned residual is below tolerance.
+- Backward-error denominators currently use exact Frobenius norms for explicit
+  dense matrices, exact Frobenius metadata for built-in sparse/diagonal
+  operators, identity metadata for standard eigenproblem B = I, and labeled
+  Hutchinson estimates only for matrix-free operators without norm metadata.
+- Dense and built-in operator paths share one scale definition; only the norm
+  source differs.
 
 ## 6. Target taxonomy
 
@@ -267,9 +350,9 @@ In addition to the PRD's criteria, V1 must pass:
 - **No R-level iteration loops** in any non-reference solver path.
 - **No silent dense fallback** above the memory budget (§4).
 - **No default SVD through `A^T A`** for any operator class.
-- **No `passed = TRUE`** from a stochastic norm estimate unless
-  `certificate_type = "estimated"` and a refinement pass has tightened
-  the residual.
+- **No `passed = TRUE`** from a stochastic norm estimate. Such cases must carry
+  `scale_is_estimate = TRUE` and an explanatory note until a refinement path
+  can produce a non-stochastic scale.
 - **Sorted singular values** by target, always.
 - **Planner honesty** — every result's `method` string equals the path
   that actually ran.
@@ -290,16 +373,19 @@ over a fixed seed, not elapsed wall clock, and measured as **time-to-certified-a
 | D | Certificate typing + target taxonomy + `SM` shim fix          | Dual-path cert agreement; ARPACK-compatible `which` codes  |
 | E | Dense fallback policy + memory budget                         | Sparse never silently densifies; planner rejects w/ reason |
 | F | Native MGS2 / CholQR2 + native certificate kernels            | Reference bank green against native ortho + cert           |
-| G | Native Hermitian block Lanczos (thick restart, locking)       | Reference bank green; beats RSpectra on Hermitian subset   |
+| G0 | Native scalar Hermitian thick-restart staging path          | Honest planner label; certified dense/CSC path; sparse non-densification; unsupported targets routed honestly |
+| G1 | Native Hermitian block Lanczos (thick restart, locking)     | Reference bank green; beats RSpectra/PRIMME on Hermitian subset by time-to-certified-answer and memory gate |
 | H | Native Golub–Kahan (thick restart, true SVD residuals)        | Reference bank green; beats RSpectra on SVD subset         |
-| I | Native randomized SVD + refinement + honest estimate cert     | 2× RSvd on low-rank cases, honest degraded certificates    |
-| J | Generalized SPD via B-orthogonal Lanczos                      | Shift-invert-free generalized path passes adversarial B    |
-| K | Shift-invert with user solve / factorization cache            | Smallest/interior works on at least one real Laplacian     |
-| L | LOBPCG (symmetric + generalized SPD, preconditioned)          | Graph Laplacian test converges with fewer iterations      |
-| M | Release hardening: vignettes, migration guide, CRAN/sanitizer | All PRD acceptance criteria + §9 gates green               |
+| I | Native randomized SVD + refinement + honest estimate cert     | HegelSVD-derived regimes ported; 2× deterministic SVD on selected approximate cases; honest degraded certificates |
+| J | Generalized SPD LOBPCG (dense/sparse/matrix-free)             | Largest/smallest generalized SPD paths certify without sparse densification; adversarial B bank green |
+| K | Generalized SPD B-orthogonal Lanczos alternate/refinement     | Shift-invert-free generalized path passes adversarial B and agrees with LOBPCG certificates |
+| L | Shift-invert with user solve / factorization cache            | Smallest/interior works on at least one real Laplacian     |
+| M | Standard symmetric LOBPCG refinements                         | Graph Laplacian test converges with fewer iterations      |
+| N | Release hardening: vignettes, migration guide, CRAN/sanitizer | All PRD acceptance criteria + §9 gates green               |
 
-A–E are *prerequisites* to any native solver work. F–L are the engine.
-M is the release.
+A–E are *prerequisites* to any native solver work. F–M are the engine; G0 is
+only the scalar Hermitian staging checkpoint, and G1 is the full Hermitian
+block/performance milestone. N is the release.
 
 ## 11. Things to preserve exactly
 

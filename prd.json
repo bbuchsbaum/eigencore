@@ -404,6 +404,35 @@
         "cluster-aware convergence",
         "residual certification"
       ],
+      "current_implementation_status": {
+        "status": "in_progress",
+        "implemented_path": "native scalar thick-restart Hermitian Lanczos for dense double matrices and dgCMatrix operators; native block Hermitian Lanczos prototype for dense double matrices and dgCMatrix operators",
+        "prototype_paths": [
+          "native block Hermitian Lanczos prototype with block operator application, Rayleigh-Ritz extraction, no thick restart, and no locking",
+          "internal reference LOBPCG spike proving preconditioner leverage on graph Laplacian smallest-eigenpair cases",
+          "explicit lobpcg() method descriptor and shifted_cholesky_preconditioner() helper routed through normal eigencore result/certificate objects with a reference-prototype planner label",
+          "native shifted tridiagonal preconditioner for path-Laplacian-style benchmark cases",
+          "typed preconditioner metadata and call-count diagnostics threaded into LOBPCG results, planner reasons, and benchmark gate rows"
+        ],
+        "native_certificate_paths": [
+          "dense standard eigen certificate diagnostics",
+          "built-in dense, dgCMatrix, and diagonal standard operator certificate diagnostics"
+        ],
+        "supported_native_targets": [
+          "largest algebraic",
+          "smallest algebraic",
+          "largest magnitude",
+          "smallest magnitude"
+        ],
+        "not_yet_satisfied": [
+          "true block Lanczos/Krylov-Schur performance path",
+          "block thick restart and locking",
+          "native LOBPCG/preconditioner production path with memory below sparse references",
+          "nearest sigma through shift-invert",
+          "RSpectra/PRIMME speed and memory gate"
+        ],
+        "planner_policy": "Use honest scalar-native or block-prototype labels for current paths; route unsupported targets such as nearest() away from native Lanczos rather than remapping them."
+      },
       "generalized_spd": {
         "problem": "A x = lambda B x, B positive definite",
         "required_features": [
@@ -451,30 +480,50 @@
         "clustered singular value handling",
         "residual certification",
         "orthogonality certification for U and V"
-      ]
+      ],
+      "current_implementation_status": {
+        "status": "in_progress",
+        "implemented_path": "native Golub-Kahan staging path for dense double matrices and dgCMatrix operators",
+        "native_certificate_paths": [
+          "dense SVD certificate diagnostics",
+          "built-in dense, dgCMatrix, and diagonal SVD operator certificate diagnostics"
+        ],
+        "not_yet_satisfied": [
+          "thick restart / continuation without adaptive full reruns",
+          "block-native Golub-Kahan performance path",
+          "RSpectra speed gate"
+        ],
+        "planner_policy": "Use an honest native prototype label for the current path; keep matrix-free SVD on the reference path until the native callback/operator ABI is broadened."
+      }
     },
     "randomized_svd": {
       "required_v1_method": "randomized range finder + subspace iteration",
+      "design_reference": "docs/hegelsvd_svd_acceleration.md",
       "options_signature": "randomized(oversample = 10, n_iter = 2, block = NULL, normalizer = c(\"qr\", \"lu\", \"none\"), refine = TRUE)",
       "required_behavior": [
         "deterministic with seed",
         "certified residuals",
         "optional refinement through Lanczos bidiagonalization",
-        "warning if approximation fails requested tolerance"
+        "warning if approximation fails requested tolerance",
+        "planner heuristics informed by HegelSVD's adaptive QB/PCS regimes without inheriting dense-only assumptions"
       ]
     },
     "lobpcg": {
       "required_v1_method": "LOBPCG for symmetric/Hermitian standard and generalized SPD problems",
+      "planning_priority": "Primary scalable V1 path for generalized SPD eigenproblems before B-orthogonal Lanczos.",
       "required_features": [
         "block iteration",
         "preconditioner support",
         "B-orthogonality",
         "constraints/deflation for known nullspaces",
-        "residual certification"
+        "residual certification",
+        "dense, sparse, and matrix-free A/B operators",
+        "largest and smallest generalized eigenpairs"
       ],
       "primary_v1_use_cases": [
         "graph Laplacian eigenvectors",
         "smallest generalized eigenpairs",
+        "largest generalized eigenpairs via sign-flipped A when appropriate",
         "PCA/covariance-style Hermitian operators"
       ]
     },
@@ -514,7 +563,7 @@
       },
       {
         "problem": "Generalized SPD, extreme",
-        "default_method": "B-orthogonal block Lanczos or LOBPCG"
+        "default_method": "LOBPCG first; B-orthogonal block Lanczos as alternate/refinement"
       },
       {
         "problem": "Generalized SPD, smallest with preconditioner",
@@ -681,6 +730,9 @@
       "returns": {
         "passed": "logical",
         "tolerance": "numeric",
+        "certificate_type": "character provenance tag, currently residual_backward_error or uncomputed",
+        "norm_bound_type": "character norm-source tag such as frobenius_exact, frobenius_metadata, identity_exact, or frobenius_hutchinson_estimate",
+        "scale_is_estimate": "logical",
         "max_backward_error": "numeric",
         "max_residual": "numeric",
         "max_orthogonality_loss": "numeric",
@@ -945,22 +997,41 @@
         "passes oracle tests",
         "beats or matches RSpectra on initial Hermitian benchmark subset",
         "returns certified residuals"
-      ]
+      ],
+      "current_status": "In progress: certified native scalar thick-restart path exists for dense/CSC Hermitian problems, and a native block Hermitian prototype exists, but the full block thick-restart solver, production LOBPCG/preconditioner path, and RSpectra/PRIMME performance gate remain open."
     },
     {
       "name": "Milestone 4",
-      "title": "generalized SPD and shift-invert",
+      "title": "generalized SPD LOBPCG",
       "deliverables": [
         "generalized problem object",
-        "B-inner-product basis",
+        "native generalized SPD LOBPCG",
+        "dense/sparse/matrix-free A and B operators",
+        "B-orthogonal Rayleigh-Ritz",
         "B-normalized vectors",
+        "largest and smallest generalized eigenpair targets",
+        "optional constraints/deflation",
+        "preconditioner hook",
+        "generalized residual certification"
+      ],
+      "exit_criteria": [
+        "A V approximately B V Lambda",
+        "V^* B V approximately I",
+        "sparse A/B inputs are not densified",
+        "largest and smallest generalized targets pass adversarial B cases"
+      ]
+    },
+    {
+      "name": "Milestone 4b",
+      "title": "generalized SPD Lanczos and shift-invert",
+      "deliverables": [
+        "B-orthogonal block Lanczos alternate path",
         "shift-invert transform",
         "factorization cache",
         "user solve operator"
       ],
       "exit_criteria": [
-        "A V approximately B V Lambda",
-        "V^* B V approximately I",
+        "B-orthogonal Lanczos agrees with LOBPCG certificates on shared cases",
         "sigma-targeted problems converge on validation cases"
       ]
     },
@@ -988,12 +1059,14 @@
         "subspace iteration",
         "oversampling",
         "deterministic seed",
-        "certificate/refinement path"
+        "certificate/refinement path",
+        "HegelSVD-derived benchmark regimes"
       ],
       "exit_criteria": [
         "fast approximate results on low-rank-ish matrices",
         "certificate reports approximation quality honestly",
-        "refinement improves failed certificates"
+        "refinement improves failed certificates",
+        "planner chooses randomized PCS only in regimes where certification and benchmarks justify it"
       ]
     },
     {
