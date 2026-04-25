@@ -1,0 +1,13 @@
+.omc/
+.claude/
+repomix-output.txt
+*.tar.gz
+*.Rcheck/
+.Rhistory
+.RData
+.Ruserdata
+inst/benchmarks/results/
+src/*.o
+src/*.so
+src/*.dll
+vendor/

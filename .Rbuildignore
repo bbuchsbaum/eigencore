@@ -1,0 +1,12 @@
+^vendor$
+^benchmarks$
+^prd[.]json$
+^vision[.]md$
+^mission[.]md$
+^plan_v1[.]md$
+^AGENTS[.]md$
+^repomix-output[.]txt$
+^eigencore[.]Rcheck$
+^eigencore_.*[.]tar[.]gz$
+^[.][.]Rcheck$
+^[.]omc$

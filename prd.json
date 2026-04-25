@@ -1,0 +1,1136 @@
+{
+  "document_type": "PRD",
+  "title": "Native SOTA spectral solver engine for R",
+  "working_names": [
+    "Ritz",
+    "SpectralCore",
+    "eigencore"
+  ],
+  "product_type": "R package with native numerical core",
+  "v1_ambition": "Replace RSpectra for most production use cases, beat it on speed/correctness diagnostics, and establish a more mathematically expressive foundation than SciPy-style sparse linear algebra.",
+  "executive_summary": {
+    "description": "A ground-up spectral computation library for R focused on partial eigenvalues, eigenvectors, singular values, singular vectors, generalized eigenpairs, and structured PCA/SVD problems using native high-performance iterative algorithms.",
+    "focus_equations": [
+      "A x = lambda x",
+      "A x = lambda B x",
+      "A: V -> U",
+      "A v_i = sigma_i u_i"
+    ],
+    "central_design": [
+      "Spaces",
+      "Operators",
+      "Metrics",
+      "Transforms",
+      "Solvers",
+      "Certificates"
+    ],
+    "v1_user_promises": [
+      "Native block-operator core, not scalar callback loops.",
+      "Certified partial eigensolvers and SVD, with residual/backward-error reports.",
+      "True SVD algorithms, not default normal-equation SVD.",
+      "Generalized SPD/Hermitian eigenproblems as first-class.",
+      "Shift-invert and factorization-aware solving.",
+      "Automatic solver planning, with inspectable decisions.",
+      "RSpectra-compatible shim, so existing users can migrate."
+    ],
+    "opportunity": "RSpectra exposes eigs() and svds() for large-scale eigenvalue/SVD problems over dense, sparse, and user-defined operator inputs and has a substantial CRAN reverse-dependency footprint, creating an opportunity across graph, genomics, text, dimensionality reduction, and sparse modeling packages."
+  },
+  "strategic_positioning": {
+    "positioning_statement": "A certified, native, matrix-free spectral computation engine for R.",
+    "differentiator": "The combination of mathematical expressiveness, native speed, and correctness certification.",
+    "reference_points": {
+      "scipy_linear_operator": {
+        "minimum_abstraction_bar": [
+          "matvec",
+          "matmat",
+          "adjoint operations",
+          "lazy operator composition"
+        ],
+        "v1_extension": [
+          "Mandatory block application in the fast path.",
+          "Metrics and generalized spaces.",
+          "Certificates returned by default."
+        ]
+      },
+      "scipy_svds": {
+        "observations": [
+          "Supports ARPACK, PROPACK, and LOBPCG.",
+          "ARPACK SVD path is documented as using an eigensolver on A^*A or AA^*.",
+          "Solver-specific options are currently reserved rather than deeply exposed.",
+          "ARPACK and PROPACK docs state that singular value return order is not guaranteed."
+        ],
+        "opening": "Return sorted, certified, solver-diagnosed partial SVDs as the default behavior."
+      },
+      "primme": {
+        "role": "High-performance reference point.",
+        "capabilities_to_benchmark_against": [
+          "Few eigenpairs and singular triplets.",
+          "Symmetric/Hermitian standard and generalized problems.",
+          "Largest, smallest, and interior values.",
+          "Preconditioning."
+        ],
+        "v1_policy": "Do not wrap PRIMME in V1; use it as benchmark and design inspiration."
+      },
+      "slepc": {
+        "role": "Architecture reference point.",
+        "capabilities_to_emulate": [
+          "Separation of spectral transformations from solvers.",
+          "Many SVD methods including Lanczos, thick-restart Lanczos, randomized SVD, and PRIMME wrappers.",
+          "SVD residuals defined using both Av - sigma u and A^*u - sigma v."
+        ],
+        "v1_policy": "Adopt this seriousness in a smaller, R-native, non-HPC form."
+      }
+    }
+  },
+  "product_principles": {
+    "mathematical_first_principles": {
+      "description": "Model spectral computation as structured mathematical problems, not loose calls to matrix routines.",
+      "core_concepts": [
+        "Space",
+        "Metric",
+        "Operator",
+        "Adjoint",
+        "Preconditioner",
+        "Spectral transform",
+        "Target",
+        "Solver",
+        "Certificate"
+      ],
+      "problem_forms": {
+        "standard_eigenproblem": "A x = lambda x",
+        "generalized_eigenproblem": "A x = lambda B x",
+        "svd_map": "A: V -> U",
+        "svd_relations": [
+          "A v_i = sigma_i u_i",
+          "A^* u_i = sigma_i v_i"
+        ]
+      },
+      "natural_extensions": [
+        "weighted SVD",
+        "centered PCA",
+        "generalized inner products",
+        "graph Laplacians",
+        "preconditioned solvers"
+      ]
+    },
+    "native_algorithms_not_wrappers": {
+      "allowed_external_kernels": [
+        "BLAS",
+        "LAPACK",
+        "sparse matrix kernels"
+      ],
+      "native_components_required": [
+        "iteration loops",
+        "restart logic",
+        "basis management",
+        "orthogonalization",
+        "Rayleigh-Ritz extraction",
+        "bidiagonalization",
+        "locking/deflation",
+        "solver planning",
+        "residual evaluation",
+        "certification",
+        "result objects"
+      ],
+      "external_solver_plugins": "Optional later; they must not define V1."
+    },
+    "certification_by_default": {
+      "requirement": "Every returned eigenpair or singular triplet must be accompanied by residuals and convergence metadata.",
+      "core_user_promise": "We do not merely compute partial spectra. We certify them."
+    },
+    "block_native_speed": {
+      "fundamental_operation": "Y <- alpha * A(X) + beta * Y",
+      "benefits": [
+        "Reduces R/native boundary crossings.",
+        "Improves cache behavior.",
+        "Enables BLAS-3 kernels.",
+        "Supports block Krylov/Davidson methods."
+      ]
+    },
+    "inspectable_automation": {
+      "requirement": "method = \"auto\" must produce a solver plan with inspectable decisions.",
+      "plan_explains": [
+        "problem structure",
+        "chosen method",
+        "chosen block size",
+        "target transform",
+        "expected memory",
+        "fallback",
+        "reasoning"
+      ]
+    }
+  },
+  "target_users": {
+    "package_authors": {
+      "description": "R package authors currently depending on RSpectra, irlba, base svd(), base eigen(), or custom sparse eigensolver logic.",
+      "needs": [
+        "stable API",
+        "predictable sorting",
+        "residual diagnostics",
+        "fast sparse/dense support",
+        "CRAN-safe dependency story",
+        "drop-in compatibility layer"
+      ]
+    },
+    "applied_researchers": {
+      "description": "Users doing PCA, spectral clustering, graph embeddings, topic models, genomics, single-cell analysis, text models, and sparse covariance methods.",
+      "needs": [
+        "partial SVD",
+        "partial eigendecomposition",
+        "weighted/centered/scaled operators",
+        "clear warnings",
+        "trustworthy convergence"
+      ]
+    },
+    "numerical_power_users": {
+      "description": "Users who understand Krylov methods, preconditioners, shift-invert, generalized eigenproblems, and tolerances.",
+      "needs": [
+        "method control",
+        "preconditioners",
+        "custom operators",
+        "custom solves",
+        "warm starts",
+        "diagnostics"
+      ]
+    }
+  },
+  "v1_product_scope": {
+    "supported_problem_classes": [
+      {
+        "problem": "Real symmetric/Hermitian partial eigenproblem",
+        "required_in_v1": true,
+        "notes": "Main flagship eigensolver"
+      },
+      {
+        "problem": "General real nonsymmetric eigenproblem",
+        "required_in_v1": true,
+        "notes": "Compatibility-grade; needed to replace RSpectra-style use"
+      },
+      {
+        "problem": "Generalized symmetric/Hermitian SPD problem A x = lambda B x",
+        "required_in_v1": true,
+        "notes": "Major differentiator"
+      },
+      {
+        "problem": "Shift-invert symmetric/Hermitian eigenproblem",
+        "required_in_v1": true,
+        "notes": "With explicit factorization or user solve"
+      },
+      {
+        "problem": "Rectangular partial SVD, largest singular values",
+        "required_in_v1": true,
+        "notes": "Native Golub-Kahan, not normal equations"
+      },
+      {
+        "problem": "Randomized SVD",
+        "required_in_v1": true,
+        "notes": "Fast approximate path with certification/refinement"
+      },
+      {
+        "problem": "LOBPCG for symmetric/Hermitian problems",
+        "required_in_v1": true,
+        "notes": "Especially with preconditioner"
+      },
+      {
+        "problem": "Smallest singular values",
+        "required_in_v1": "partial",
+        "notes": "Supported where stable; full interior/smallest SVD moves to V2"
+      },
+      {
+        "problem": "Interior nonsymmetric eigenvalues",
+        "required_in_v1": "limited",
+        "notes": "Via user-supplied shift-invert operator"
+      },
+      {
+        "problem": "Complex Hermitian",
+        "required_in_v1": "target",
+        "notes": "At least dense and core operator path; sparse complex may be gated"
+      },
+      {
+        "problem": "Full dense eig/SVD replacement",
+        "required_in_v1": false,
+        "notes": "Use base LAPACK for full decompositions"
+      }
+    ],
+    "non_goals": [
+      "GPU support",
+      "distributed memory",
+      "DelayedArray-first integration",
+      "HDF5-backed specialization",
+      "nonlinear eigenproblems",
+      "contour integral eigensolvers",
+      "full replacement for Matrix",
+      "full SLEPc/PRIMME interop",
+      "automatic adapters for every R matrix ecosystem"
+    ],
+    "focus_note": "DelayedArray and out-of-core support can arrive later once the operator protocol is strong. V1 should focus on numerical foundations."
+  },
+  "api_requirements": {
+    "high_level_api": {
+      "functions": {
+        "eig_partial": {
+          "signature": "eig_partial(A, k, target = largest(), B = NULL, method = auto(), tol = 1e-8, maxit = NULL, vectors = TRUE, seed = NULL, certify = TRUE)"
+        },
+        "svd_partial": {
+          "signature": "svd_partial(A, rank, target = largest(), method = auto(), tol = 1e-8, vectors = c(\"both\", \"left\", \"right\", \"none\"), seed = NULL, certify = TRUE)"
+        }
+      },
+      "examples": [
+        "fit <- eig_partial(A, k = 20, target = largest())",
+        "fit <- eig_partial(A, B = M, k = 20, target = smallest())",
+        "fit <- eig_partial(A, B = M, k = 20, target = nearest(0), method = shift_invert(sigma = 0))",
+        "fit <- svd_partial(X, rank = 100)",
+        "fit <- svd_partial(X, rank = 100, method = randomized(oversample = 20, n_iter = 2))"
+      ]
+    },
+    "problem_object_api": {
+      "description": "The elegant interface should be problem-first.",
+      "eigen_problem_example": [
+        "P <- eigen_problem(A, metric = B, structure = hermitian(), target = nearest(0), transform = shift_invert(sigma = 0))",
+        "fit <- solve(P, k = 30, tol = 1e-10)"
+      ],
+      "svd_problem_example": [
+        "S <- svd_problem(A, domain = euclidean(ncol(A)), codomain = euclidean(nrow(A)), target = largest())",
+        "fit <- solve(S, rank = 50)"
+      ]
+    },
+    "operator_api": {
+      "requirement": "Define a native block operator protocol.",
+      "r_example": "op <- linear_operator(dim = c(m, n), apply = function(X, alpha = 1, beta = 0, Y = NULL) { ... }, apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) { ... }, dtype = \"double\", structure = general())",
+      "apply_contract": "returns alpha * A %*% X + beta * Y",
+      "apply_adjoint_contract": "returns alpha * A^* %*% X + beta * Y",
+      "builtin_fast_paths": [
+        "base matrix",
+        "Matrix::dgCMatrix",
+        "Matrix::dgRMatrix if supported internally",
+        "symmetric sparse Matrix forms",
+        "diagonal matrices",
+        "operator compositions"
+      ]
+    },
+    "operator_algebra": {
+      "examples": [
+        "Aop <- as_operator(A)",
+        "B <- center(Aop, columns = TRUE)",
+        "C <- scale(B, rows = w)",
+        "D <- adjoint(C)",
+        "E <- C + low_rank(U, V)",
+        "F <- compose(C, D)"
+      ],
+      "required_v1_transforms": [
+        "transpose / adjoint",
+        "scalar multiply",
+        "sum",
+        "composition",
+        "diagonal row/column scaling",
+        "centering",
+        "symmetric wrapper",
+        "crossprod operator A* A, only as an operator",
+        "cyclic SVD operator, only when explicitly requested"
+      ]
+    },
+    "result_object": {
+      "fields": [
+        "values",
+        "vectors",
+        "u",
+        "v",
+        "d",
+        "residuals",
+        "backward_error",
+        "orthogonality",
+        "nconv",
+        "requested",
+        "iterations",
+        "matvecs",
+        "method",
+        "target",
+        "plan",
+        "certificate",
+        "warnings"
+      ],
+      "print_example": [
+        "Partial SVD",
+        "  requested rank: 100",
+        "  converged rank: 100",
+        "  method: thick-restarted Golub-Kahan",
+        "  target: largest singular values",
+        "  max residual: 2.4e-10",
+        "  max backward error: 6.1e-11",
+        "  orthogonality loss U: 8.0e-13",
+        "  orthogonality loss V: 7.5e-13",
+        "  operator calls: 812 A, 812 A*",
+        "  certificate: passed"
+      ],
+      "methods": [
+        "values(fit)",
+        "vectors(fit)",
+        "left_vectors(fit)",
+        "right_vectors(fit)",
+        "residuals(fit)",
+        "backward_error(fit)",
+        "certificate(fit)",
+        "diagnostics(fit)",
+        "plot_convergence(fit)"
+      ]
+    },
+    "rspectra_compatibility_shim": {
+      "functions": [
+        "eigs()",
+        "eigs_sym()",
+        "svds()"
+      ],
+      "implementation": "Route internally into the new problem API.",
+      "compatibility_goals": [
+        "same basic argument names",
+        "same broad return fields where possible",
+        "additional diagnostics included",
+        "clear deprecation or upgrade warnings only when needed"
+      ]
+    }
+  },
+  "native_algorithm_requirements": {
+    "symmetric_hermitian_eigen_solver": {
+      "required_method": "block Lanczos / Krylov-Schur-style thick restart",
+      "required_features": [
+        "largest algebraic",
+        "smallest algebraic",
+        "largest magnitude",
+        "nearest sigma through shift-invert",
+        "locking",
+        "deflation",
+        "block starts",
+        "restart",
+        "cluster-aware convergence",
+        "residual certification"
+      ],
+      "generalized_spd": {
+        "problem": "A x = lambda B x, B positive definite",
+        "required_features": [
+          "B-inner-product orthogonalization",
+          "B-normalized eigenvectors",
+          "V^* B V = I certification",
+          "optional Cholesky/factorization path",
+          "optional user-supplied B solve"
+        ],
+        "residual_formula": "r_i = A v_i - lambda_i B v_i",
+        "backward_error_formula": "eta_i = ||r_i|| / ((||A|| + |lambda_i| ||B||) ||v_i||)"
+      }
+    },
+    "nonsymmetric_eigen_solver": {
+      "required_method": "Arnoldi with restart",
+      "v1_scope": [
+        "real general matrices",
+        "largest magnitude",
+        "largest/smallest real part",
+        "largest/smallest imaginary part",
+        "optional user shift-invert operator",
+        "right eigenvectors",
+        "residual certification"
+      ],
+      "v1_non_goals": [
+        "full generalized nonsymmetric eigenproblems",
+        "advanced harmonic/refined extraction",
+        "left eigenvectors",
+        "complex Schur sophistication"
+      ]
+    },
+    "partial_svd_solver": {
+      "required_default_method": "thick-restarted Golub-Kahan Lanczos bidiagonalization",
+      "normal_equation_policy": "The default must not be A^T A unless the solver planner explicitly chooses that as a safe special case.",
+      "singular_triplet_relations": [
+        "A v_i = sigma_i u_i",
+        "A^* u_i = sigma_i v_i"
+      ],
+      "required_residual": "r_i = (||A v_i - sigma_i u_i||^2 + ||A^* u_i - sigma_i v_i||^2)^(1/2)",
+      "required_features": [
+        "largest singular values",
+        "left/right/both/no vectors",
+        "sorted singular values",
+        "rank-deficient handling",
+        "clustered singular value handling",
+        "residual certification",
+        "orthogonality certification for U and V"
+      ]
+    },
+    "randomized_svd": {
+      "required_v1_method": "randomized range finder + subspace iteration",
+      "options_signature": "randomized(oversample = 10, n_iter = 2, block = NULL, normalizer = c(\"qr\", \"lu\", \"none\"), refine = TRUE)",
+      "required_behavior": [
+        "deterministic with seed",
+        "certified residuals",
+        "optional refinement through Lanczos bidiagonalization",
+        "warning if approximation fails requested tolerance"
+      ]
+    },
+    "lobpcg": {
+      "required_v1_method": "LOBPCG for symmetric/Hermitian standard and generalized SPD problems",
+      "required_features": [
+        "block iteration",
+        "preconditioner support",
+        "B-orthogonality",
+        "constraints/deflation for known nullspaces",
+        "residual certification"
+      ],
+      "primary_v1_use_cases": [
+        "graph Laplacian eigenvectors",
+        "smallest generalized eigenpairs",
+        "PCA/covariance-style Hermitian operators"
+      ]
+    },
+    "shift_invert": {
+      "required_v1_support": "shift_invert(sigma)",
+      "generalized_problem_transform": "(A - sigma B)^(-1) B x",
+      "scope": "Cover the core normal shift-invert case and expose user-supplied solve operators cleanly.",
+      "required_features": [
+        "factorization cache",
+        "user-supplied solve operator",
+        "factorization diagnostics",
+        "singularity/near-singularity warnings",
+        "residuals computed in original problem, not transformed problem only"
+      ]
+    }
+  },
+  "solver_planner": {
+    "requirement": "V1 must include an inspectable planner.",
+    "example_call": "plan <- plan_solver(problem, k = 50)",
+    "example_output": {
+      "problem": "rectangular real sparse operator, 2,000,000 x 80,000",
+      "target": "largest 100 singular values",
+      "chosen_method": "thick-restarted Golub-Kahan",
+      "reasons": [
+        "A and A* available",
+        "avoids normal equations",
+        "block apply available",
+        "requested rank is moderate"
+      ],
+      "fallback": "randomized SVD with certified refinement",
+      "estimated_workspace": "1.8 GB"
+    },
+    "v1_rules": [
+      {
+        "problem": "Symmetric/Hermitian, largest/smallest extreme",
+        "default_method": "Block Lanczos / Krylov-Schur"
+      },
+      {
+        "problem": "Generalized SPD, extreme",
+        "default_method": "B-orthogonal block Lanczos or LOBPCG"
+      },
+      {
+        "problem": "Generalized SPD, smallest with preconditioner",
+        "default_method": "LOBPCG"
+      },
+      {
+        "problem": "Near target sigma with factorization",
+        "default_method": "Shift-invert Lanczos"
+      },
+      {
+        "problem": "General nonsymmetric",
+        "default_method": "Restarted Arnoldi"
+      },
+      {
+        "problem": "Rectangular SVD, largest",
+        "default_method": "Golub-Kahan bidiagonalization"
+      },
+      {
+        "problem": "Approximate low-rank SVD, loose tolerance",
+        "default_method": "Randomized SVD"
+      },
+      {
+        "problem": "k close to dimension",
+        "default_method": "Dense/full fallback with warning"
+      },
+      {
+        "problem": "Missing adjoint for SVD",
+        "default_method": "Error unless one-sided approximation requested"
+      }
+    ]
+  },
+  "core_architecture": {
+    "native_layers": [
+      "R API",
+      "Problem builder",
+      "Solver planner",
+      "Native C/C++ core",
+      "Operator kernels",
+      "BLAS/LAPACK/sparse kernels"
+    ],
+    "suggested_core_language": "C++17 or C++20 with a stable C ABI boundary for R.",
+    "native_modules": {
+      "core": [
+        "scalar.hpp",
+        "workspace.hpp",
+        "status.hpp",
+        "errors.hpp"
+      ],
+      "operator": [
+        "operator.hpp",
+        "dense_operator.hpp",
+        "csc_operator.hpp",
+        "diagonal_operator.hpp",
+        "composite_operator.hpp",
+        "centered_operator.hpp",
+        "scaled_operator.hpp"
+      ],
+      "orthogonalization": [
+        "mgs2.hpp",
+        "householder_qr.hpp",
+        "cholqr2.hpp",
+        "b_orthogonalize.hpp"
+      ],
+      "projection": [
+        "rayleigh_ritz.hpp",
+        "harmonic_ritz.hpp",
+        "small_dense_eig.hpp",
+        "small_dense_svd.hpp"
+      ],
+      "solvers": [
+        "lanczos_block.hpp",
+        "arnoldi_restart.hpp",
+        "golub_kahan.hpp",
+        "randomized_svd.hpp",
+        "lobpcg.hpp"
+      ],
+      "transforms": [
+        "shift_invert.hpp",
+        "factorization_cache.hpp"
+      ],
+      "certification": [
+        "eigen_residual.hpp",
+        "svd_residual.hpp",
+        "backward_error.hpp",
+        "orthogonality.hpp"
+      ],
+      "r_api": [
+        "problem.cpp",
+        "solve.cpp",
+        "compatibility.cpp"
+      ]
+    },
+    "memory_requirements": [
+      "workspace preallocation",
+      "aligned dense blocks",
+      "basis memory pooling",
+      "explicit allocation counters in debug mode",
+      "no R allocations inside native iteration for built-in operators"
+    ],
+    "operator_performance_contract": {
+      "builtin_explicit_operator_requirements": [
+        "dense GEMM",
+        "sparse CSC/CSR SpMM",
+        "symmetric sparse SpMM",
+        "diagonal scaling",
+        "centered/scaled fused operation",
+        "adjoint block apply"
+      ],
+      "r_callback_policy": "R callback operators are allowed but marked as slower. The planner should warn if a user gives only scalar matvec and the selected method would benefit from block application."
+    }
+  },
+  "orthogonalization_requirements": {
+    "required_methods": [
+      "modified Gram-Schmidt twice, MGS2",
+      "DGKS-style reorthogonalization check",
+      "Cholesky QR2 for appropriate block bases",
+      "B-inner-product orthogonalization",
+      "orthogonality diagnostics"
+    ],
+    "standard_condition": "Q^* Q = I",
+    "generalized_condition": "Q^* B Q = I",
+    "acceptance_metrics": [
+      "max_abs(Q^* Q - I) <= orthogonality_tol",
+      "max_abs(Q^* B Q - I) <= orthogonality_tol for generalized problems"
+    ],
+    "default_tolerance_policy": "Default orthogonality_tol should be tied to machine precision and problem conditioning, not hard-coded naively."
+  },
+  "certification_requirements": {
+    "standard_eigenpair_certificate": {
+      "residual_formula": "r_i = A v_i - lambda_i v_i",
+      "reports": [
+        "absolute residual norm",
+        "relative residual norm",
+        "relative backward error",
+        "orthogonality loss",
+        "converged TRUE/FALSE"
+      ]
+    },
+    "generalized_eigenpair_certificate": {
+      "problem": "A v_i = lambda_i B v_i",
+      "reports": [
+        "||A v_i - lambda_i B v_i||",
+        "relative backward error",
+        "|V^* B V - I|",
+        "B positive-definiteness/factorization status if known"
+      ]
+    },
+    "svd_certificate": {
+      "relations": [
+        "A v_i = sigma_i u_i",
+        "A^* u_i = sigma_i v_i"
+      ],
+      "reports": [
+        "left residual",
+        "right residual",
+        "combined residual",
+        "relative backward error",
+        "U orthogonality",
+        "V orthogonality"
+      ]
+    },
+    "certificate_object": {
+      "signature": "certificate(fit)",
+      "returns": {
+        "passed": "logical",
+        "tolerance": "numeric",
+        "max_backward_error": "numeric",
+        "max_residual": "numeric",
+        "max_orthogonality_loss": "numeric",
+        "failed_indices": "integer vector",
+        "scale": "numeric or descriptor",
+        "notes": "character vector"
+      }
+    }
+  },
+  "v1_acceptance_criteria": {
+    "functional": [
+      "eig_partial() works for dense real, sparse real, symmetric sparse, and matrix-free operators.",
+      "svd_partial() works for dense real, sparse real, and matrix-free operators with adjoints.",
+      "eig_partial(A, B = B) supports generalized symmetric/Hermitian SPD problems.",
+      "shift_invert(sigma) works for explicit sparse/dense symmetric problems and user-supplied solve operators.",
+      "svd_partial() returns singular values sorted in requested order.",
+      "All high-level results include nconv, residuals, method name, iteration count, operator-call counts, and certificate status.",
+      "RSpectra-compatible eigs(), eigs_sym(), and svds() shims exist.",
+      "plan_solver() explains method choice.",
+      "All built-in explicit matrix paths run without R callbacks inside the iteration loop.",
+      "The package passes CRAN-style checks, sanitizer checks, and valgrind-style memory checks on representative platforms."
+    ],
+    "numerical_correctness": {
+      "small_matrix_ground_truth_requirements": [
+        "eigenvalue relative error <= 100 * eps-scaled bound when well-conditioned",
+        "singular value relative error <= 100 * eps-scaled bound when well-conditioned",
+        "subspace angle small for clustered/multiple values",
+        "residual certificate agrees with direct recomputation"
+      ],
+      "all_tested_matrix_requirements": [
+        "reported residuals must match independently recomputed residuals",
+        "reported orthogonality must match independently recomputed orthogonality",
+        "certified converged results must satisfy requested tolerance",
+        "non-converged results must be clearly marked"
+      ]
+    },
+    "svd_correctness": {
+      "triplet_residuals": [
+        "||A v_i - sigma_i u_i||",
+        "||A^* u_i - sigma_i v_i||"
+      ],
+      "acceptance": [
+        "max combined residual <= requested tolerance scale",
+        "U^T U close to I for returned U",
+        "V^T V close to I for returned V",
+        "singular values sorted",
+        "rank-deficient cases handled without NaN/Inf",
+        "clustered singular values judged by subspace accuracy, not individual vector identity"
+      ]
+    },
+    "generalized_eigenproblem": {
+      "spd_b_requirements": [
+        "V^* B V approximately I",
+        "A V approximately B V Lambda",
+        "residuals certified in original coordinates",
+        "smallest/largest targets sorted correctly"
+      ],
+      "invalid_b_handling": [
+        "not square",
+        "dimension mismatch",
+        "not symmetric/Hermitian when required",
+        "not positive definite when factorization proves failure"
+      ]
+    },
+    "performance": {
+      "measurement": "time to certified answer",
+      "v1_release_gates": [
+        "Hermitian sparse eigen: median time-to-certified-answer at least 1.25x faster than RSpectra on the V1 benchmark suite, with no worse residual quality.",
+        "Partial SVD largest singular values: median time-to-certified-answer at least 1.5x faster than RSpectra on benchmark cases where normal-equation SVD is disadvantaged.",
+        "Randomized SVD: at least 2x faster than deterministic Lanczos SVD on low-rank-ish matrices when tolerance is loose, while clearly reporting approximation quality.",
+        "Memory: no materialization of A^T A or A A^T in default SVD paths.",
+        "Allocation: no per-iteration dynamic allocation in native hot loops after setup for built-in matrix operators.",
+        "R boundary: for built-in matrix types, zero R-level callbacks during solver iteration.",
+        "Fallback honesty: if a benchmark is slower than RSpectra, the certificate must show whether the new solver achieved stricter correctness; otherwise the case is a performance failure."
+      ]
+    },
+    "api": {
+      "requirements": [
+        "simple cases require one line",
+        "advanced users can control method/tolerance/block/preconditioner",
+        "result printing explains convergence",
+        "errors are mathematical, not cryptic",
+        "compatibility shims are documented"
+      ],
+      "acceptable_user_flow": [
+        "fit <- svd_partial(A, rank = 50)",
+        "certificate(fit)",
+        "diagnostics(fit)"
+      ],
+      "usability_goal": "No user should need to understand Arnoldi, Lanczos, or Golub-Kahan to get a reliable result."
+    }
+  },
+  "validation_plan": {
+    "test_hierarchy": [
+      "unit tests",
+      "property tests",
+      "oracle tests",
+      "adversarial numerical tests",
+      "benchmark/certification tests"
+    ],
+    "unit_tests": [
+      "operator dimensions",
+      "operator adjoints",
+      "operator composition",
+      "centering/scaling algebra",
+      "dense block apply",
+      "sparse block apply",
+      "workspace allocation",
+      "orthogonalization",
+      "Rayleigh-Ritz extraction",
+      "SVD residual computation",
+      "generalized residual computation",
+      "sorting"
+    ],
+    "operator_adjoint_tests": {
+      "identity": "<A x, y> = <x, A^* y>",
+      "randomized_test": "check_adjoint(Aop, trials = 20, tol = 1e-12)",
+      "requirement": "Required for SVD unless user explicitly opts out of vector computation."
+    },
+    "oracle_tests": {
+      "comparisons": [
+        "base::eigen()",
+        "base::svd()",
+        "dense LAPACK via R",
+        "analytically known spectra"
+      ],
+      "matrix_classes": [
+        "diagonal with known spectrum",
+        "rank-deficient rectangular",
+        "orthogonally generated SVD",
+        "clustered singular values",
+        "multiple eigenvalues",
+        "ill-conditioned diagonal",
+        "graph Laplacian with known nullspace",
+        "generalized SPD synthetic pair"
+      ]
+    },
+    "adversarial_numerical_tests": [
+      "nearly repeated eigenvalues",
+      "nearly repeated singular values",
+      "tiny spectral gaps",
+      "rank deficiency",
+      "large nullspace",
+      "ill-conditioned singular spectrum",
+      "non-normal nonsymmetric matrix",
+      "bad starting vectors",
+      "poorly scaled rows/columns",
+      "generalized problem with ill-conditioned B",
+      "shift-invert near singular sigma"
+    ],
+    "adversarial_acceptance_basis": "Residuals and subspace angles, not naive vector-by-vector comparison.",
+    "benchmark_suite": {
+      "categories": [
+        "sparse graph Laplacians",
+        "tall-skinny sparse matrices",
+        "wide sparse matrices",
+        "dense-but-low-rank matrices",
+        "text/document-term-like matrices",
+        "clustered spectrum matrices",
+        "generalized SPD problems",
+        "interior eigenvalue problems",
+        "matrix-free centered/scaled PCA operators"
+      ],
+      "compare_against": [
+        "RSpectra",
+        "irlba where relevant",
+        "base eigen/svd for small matrices",
+        "SciPy as an external reference benchmark where useful",
+        "PRIMME as an external reference benchmark where useful"
+      ],
+      "metrics": [
+        "time to certified answer",
+        "max residual",
+        "max backward error",
+        "orthogonality loss",
+        "matvec count",
+        "operator-call count",
+        "memory peak",
+        "allocation count",
+        "failure rate",
+        "sorting correctness",
+        "nconv correctness"
+      ]
+    },
+    "continuous_validation": {
+      "pr_requirements_for_solver_logic": [
+        "small deterministic numerical tests",
+        "randomized property tests with fixed seeds",
+        "residual recomputation tests",
+        "sanitizer build",
+        "benchmark smoke tests"
+      ],
+      "release_requirement": "Full benchmark suite runs before release."
+    }
+  },
+  "v1_release_milestones": [
+    {
+      "name": "Milestone 0",
+      "title": "mathematical spec",
+      "deliverables": [
+        "problem taxonomy",
+        "operator protocol",
+        "result schema",
+        "certificate formulas",
+        "tolerance semantics",
+        "solver-planner rules"
+      ],
+      "exit_criteria": [
+        "all public result fields defined",
+        "all residual formulas defined",
+        "all V1 problem classes mapped to solver candidates"
+      ]
+    },
+    {
+      "name": "Milestone 1",
+      "title": "native operator core",
+      "deliverables": [
+        "dense operator",
+        "sparse CSC operator",
+        "diagonal operator",
+        "adjoint operator",
+        "composite operator",
+        "centered/scaled operator",
+        "R operator wrapper",
+        "block apply API"
+      ],
+      "exit_criteria": [
+        "adjoint tests pass",
+        "block apply matches dense reference",
+        "no R callback for built-in dense/sparse operators"
+      ]
+    },
+    {
+      "name": "Milestone 2",
+      "title": "orthogonalization and projection",
+      "deliverables": [
+        "MGS2",
+        "Cholesky QR2",
+        "B-orthogonalization",
+        "Rayleigh-Ritz",
+        "small dense eigensolver bridge",
+        "small dense SVD bridge",
+        "orthogonality diagnostics"
+      ],
+      "exit_criteria": [
+        "Q^* Q approximately I",
+        "Q^* B Q approximately I",
+        "projection results match dense references"
+      ]
+    },
+    {
+      "name": "Milestone 3",
+      "title": "Hermitian eigensolver",
+      "deliverables": [
+        "block Lanczos / thick restart",
+        "locking",
+        "deflation",
+        "largest/smallest targets",
+        "residual certification"
+      ],
+      "exit_criteria": [
+        "passes oracle tests",
+        "beats or matches RSpectra on initial Hermitian benchmark subset",
+        "returns certified residuals"
+      ]
+    },
+    {
+      "name": "Milestone 4",
+      "title": "generalized SPD and shift-invert",
+      "deliverables": [
+        "generalized problem object",
+        "B-inner-product basis",
+        "B-normalized vectors",
+        "shift-invert transform",
+        "factorization cache",
+        "user solve operator"
+      ],
+      "exit_criteria": [
+        "A V approximately B V Lambda",
+        "V^* B V approximately I",
+        "sigma-targeted problems converge on validation cases"
+      ]
+    },
+    {
+      "name": "Milestone 5",
+      "title": "SVD solver",
+      "deliverables": [
+        "Golub-Kahan bidiagonalization",
+        "thick restart",
+        "left/right vector modes",
+        "sorted singular values",
+        "SVD residual certificate"
+      ],
+      "exit_criteria": [
+        "no default A*A materialization",
+        "residuals match direct recomputation",
+        "beats RSpectra on SVD benchmark subset"
+      ]
+    },
+    {
+      "name": "Milestone 6",
+      "title": "randomized SVD",
+      "deliverables": [
+        "range finder",
+        "subspace iteration",
+        "oversampling",
+        "deterministic seed",
+        "certificate/refinement path"
+      ],
+      "exit_criteria": [
+        "fast approximate results on low-rank-ish matrices",
+        "certificate reports approximation quality honestly",
+        "refinement improves failed certificates"
+      ]
+    },
+    {
+      "name": "Milestone 7",
+      "title": "LOBPCG",
+      "deliverables": [
+        "standard LOBPCG",
+        "generalized SPD LOBPCG",
+        "preconditioner interface",
+        "constraint/nullspace handling"
+      ],
+      "exit_criteria": [
+        "graph Laplacian tests pass",
+        "generalized SPD tests pass",
+        "preconditioned cases reduce iteration count"
+      ]
+    },
+    {
+      "name": "Milestone 8",
+      "title": "R API and compatibility",
+      "deliverables": [
+        "eig_partial()",
+        "svd_partial()",
+        "eigen_problem()",
+        "svd_problem()",
+        "solve()",
+        "plan_solver()",
+        "certificate()",
+        "diagnostics()",
+        "RSpectra-compatible eigs/eigs_sym/svds"
+      ],
+      "exit_criteria": [
+        "API examples work",
+        "compatibility tests pass",
+        "documentation draft complete"
+      ]
+    },
+    {
+      "name": "Milestone 9",
+      "title": "release hardening",
+      "deliverables": [
+        "full benchmark suite",
+        "full validation suite",
+        "vignettes",
+        "migration guide",
+        "CRAN checks",
+        "sanitizer checks",
+        "memory checks"
+      ],
+      "exit_criteria": [
+        "all V1 acceptance criteria pass",
+        "performance gates pass",
+        "known limitations documented"
+      ]
+    }
+  ],
+  "v2_scope": {
+    "algorithmic_additions": [
+      "Jacobi-Davidson",
+      "Davidson",
+      "harmonic Ritz extraction",
+      "refined Ritz vectors",
+      "better nonsymmetric Krylov-Schur",
+      "left eigenvectors",
+      "interior SVD",
+      "smallest SVD with stronger methods",
+      "polynomial/Chebyshev filtering",
+      "warm starts and continuation",
+      "dynamic rank selection"
+    ],
+    "product_additions": [
+      "svd_until(A, variance = 0.99, max_rank = 500)",
+      "eig_interval(A, interval = c(a, b))",
+      "pca_problem(A, center = TRUE, scale = TRUE, row_weights = NULL, col_weights = NULL)"
+    ],
+    "preconditioning_additions": [
+      "incomplete Cholesky",
+      "incomplete LU",
+      "diagonal/block diagonal preconditioners",
+      "deflation preconditioners",
+      "polynomial preconditioners",
+      "better user preconditioner diagnostics"
+    ],
+    "acceptance_theme": "V2 should become the best R package for hard spectral problems: interior eigenvalues, clustered spectra, weighted PCA/SVD, and preconditioned generalized problems."
+  },
+  "v3_scope": {
+    "potential_features": [
+      "GPU block kernels",
+      "distributed memory backend",
+      "GraphBLAS-style sparse kernels",
+      "AMG preconditioner integration",
+      "optional PRIMME plugin",
+      "optional SLEPc/PETSc plugin",
+      "DelayedArray/HDF5 adapters",
+      "file-backed matrix adapters",
+      "contour/rational eigensolvers",
+      "spectral slicing",
+      "nonlinear eigenproblem experiments",
+      "mixed precision"
+    ],
+    "policy": "V3 should not compromise the V1/V2 native core. External backends should plug into the problem/solver/certificate system, not replace it."
+  },
+  "documentation_requirements": {
+    "required_docs": [
+      "quick start",
+      "RSpectra migration guide",
+      "partial eigenproblem guide",
+      "partial SVD guide",
+      "generalized eigenproblem guide",
+      "shift-invert guide",
+      "operator guide",
+      "certificate/diagnostics guide",
+      "benchmark report",
+      "method-selection guide",
+      "known limitations"
+    ],
+    "key_vignettes": [
+      "Replace RSpectra in 5 minutes",
+      "Certified partial SVD for sparse matrices",
+      "Generalized eigenproblems for graph embeddings",
+      "Shift-invert without mystery",
+      "Matrix-free centered PCA",
+      "Reading solver diagnostics"
+    ]
+  },
+  "disruptive_design_choices": {
+    "required_truths": [
+      "The default SVD is not normal-equation SVD.",
+      "Every result has a certificate.",
+      "Generalized SPD eigenproblems are built in.",
+      "Operators are block-native.",
+      "The solver planner is inspectable.",
+      "RSpectra migration is easy.",
+      "Benchmarks measure time to certified answer.",
+      "The native core avoids R-level iteration overhead."
+    ],
+    "central_product_claim": "The fastest path to a trustworthy partial spectrum in R.",
+    "clarification": "Not merely the fastest path to some eigenvalues. A trustworthy, certified result."
+  }
+}
