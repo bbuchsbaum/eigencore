@@ -21,6 +21,8 @@ Imports:
     Matrix,
     methods
 Suggests:
+    bench,
+    PRIMME,
     RSpectra,
     irlba,
     rsvd,

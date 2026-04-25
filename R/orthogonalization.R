@@ -28,18 +28,22 @@ native_mgs2 <- function(X, tol = sqrt(.Machine$double.eps)) {
 #' Cholesky QR with a corrective second pass.
 cholqr2 <- function(X, tol = sqrt(.Machine$double.eps)) {
   X <- as.matrix(X)
-  first <- cholqr_once(X)
-  second <- cholqr_once(first$Q)
-  Q <- second$Q
-  R <- second$R %*% first$R
+  decomp <- native_cholqr2(X)
+  Q <- decomp$Q
+  R <- decomp$R
   loss <- orthogonality_loss(Q)
   if (loss > max(10 * tol, 100 * .Machine$double.eps)) {
     warning("Cholesky QR2 orthogonality loss is ", format(loss), ".", call. = FALSE)
   }
   structure(
-    list(Q = Q, R = R, rank = ncol(Q), orthogonality = loss),
+    list(Q = Q, R = R, rank = decomp$rank, orthogonality = loss),
     class = "eigencore_orthogonalization"
   )
+}
+
+#' @keywords internal
+native_cholqr2 <- function(X) {
+  .Call("eigencore_cholqr2", as.matrix(X), PACKAGE = "eigencore")
 }
 
 #' Orthogonalize columns in the B-inner product.
@@ -55,25 +59,23 @@ b_orthogonalize <- function(X, B, against = NULL, tol = sqrt(.Machine$double.eps
     X <- b_reorthogonalize_against(X, against, B, passes = 2L)
   }
 
-  gram <- crossprod(X, B %*% X)
-  gram <- (gram + t(gram)) / 2
-  R <- chol(gram)
-  Q <- X %*% backsolve(R, diag(ncol(R)))
-  # Corrective pass in the B metric.
-  gram2 <- crossprod(Q, B %*% Q)
-  gram2 <- (gram2 + t(gram2)) / 2
-  R2 <- chol(gram2)
-  Q <- Q %*% backsolve(R2, diag(ncol(R2)))
-  R <- R2 %*% R
+  decomp <- native_b_cholqr2(X, B)
+  Q <- decomp$Q
+  R <- decomp$R
 
   loss <- orthogonality_loss(Q, B = B)
   if (loss > max(10 * tol, 100 * .Machine$double.eps)) {
     warning("B-orthogonalization loss is ", format(loss), ".", call. = FALSE)
   }
   structure(
-    list(Q = Q, R = R, rank = ncol(Q), orthogonality = loss, B = B),
+    list(Q = Q, R = R, rank = decomp$rank, orthogonality = loss, B = B),
     class = "eigencore_orthogonalization"
   )
+}
+
+#' @keywords internal
+native_b_cholqr2 <- function(X, B) {
+  .Call("eigencore_b_cholqr2", as.matrix(X), as.matrix(B), PACKAGE = "eigencore")
 }
 
 #' Measure orthogonality loss.
@@ -157,12 +159,41 @@ cholqr_once <- function(X) {
 }
 
 #' @keywords internal
-reorthogonalize_against <- function(X, Q, passes = 2L) {
-  out <- X
-  for (i in seq_len(passes)) {
-    out <- out - Q %*% crossprod(Q, out)
+reorthogonalize_against <- function(X, Q, passes = 2L, workspace = NULL) {
+  if (is.null(workspace)) {
+    .Call(
+      "eigencore_reorthogonalize_against",
+      as.matrix(X),
+      as.matrix(Q),
+      as.integer(passes),
+      PACKAGE = "eigencore"
+    )
+  } else {
+    .Call(
+      "eigencore_reorthogonalize_against_workspace",
+      as.matrix(X),
+      as.matrix(Q),
+      as.integer(passes),
+      workspace,
+      PACKAGE = "eigencore"
+    )
   }
-  out
+}
+
+#' @keywords internal
+basis_workspace <- function(rows, basis_cols, block_cols) {
+  .Call(
+    "eigencore_basis_workspace_create",
+    as.numeric(rows),
+    as.numeric(basis_cols),
+    as.numeric(block_cols),
+    PACKAGE = "eigencore"
+  )
+}
+
+#' @keywords internal
+basis_workspace_info <- function(workspace) {
+  .Call("eigencore_basis_workspace_info", workspace, PACKAGE = "eigencore")
 }
 
 #' @keywords internal

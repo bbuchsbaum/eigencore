@@ -84,6 +84,28 @@ smallest_imaginary <- function() {
   new_target("smallest_imaginary")
 }
 
+#' Target both algebraic ends.
+#'
+#' @param k_low Number of values to select from the smallest algebraic end.
+#' @param k_high Number of values to select from the largest algebraic end.
+#' @return An `eigencore_target` descriptor selecting both algebraic ends
+#'   (ARPACK `BE`).
+#' @export
+both_ends <- function(k_low, k_high) {
+  k_low <- as.integer(k_low)
+  k_high <- as.integer(k_high)
+  if (length(k_low) != 1L || is.na(k_low) || k_low < 0L) {
+    stop("k_low must be a single non-negative integer.", call. = FALSE)
+  }
+  if (length(k_high) != 1L || is.na(k_high) || k_high < 0L) {
+    stop("k_high must be a single non-negative integer.", call. = FALSE)
+  }
+  if ((k_low + k_high) < 1L) {
+    stop("k_low + k_high must be at least 1.", call. = FALSE)
+  }
+  new_target("both_ends", list(k_low = k_low, k_high = k_high))
+}
+
 #' @noRd
 new_method <- function(kind, ...) {
   structure(c(list(kind = kind), list(...)), class = "eigencore_method")
@@ -100,14 +122,37 @@ auto <- function() {
 
 #' Hermitian Lanczos method descriptor.
 #'
-#' @param max_subspace Optional maximum Krylov subspace size.
-#' @param reorthogonalize Whether to apply full reorthogonalization.
+#' @param max_subspace Optional maximum active Krylov subspace size `m`. Must
+#'   be at least `k + 1`. The native thick-restart path keeps the active
+#'   basis bounded by this value across restart cycles.
+#' @param max_restarts Optional non-negative integer giving the maximum
+#'   number of thick-restart cycles allowed before stopping with whatever
+#'   has converged. Default `100L`.
+#' @param block Native block size. `1L` selects the scalar thick-restart path;
+#'   values greater than one select the native block Krylov prototype where
+#'   supported.
+#' @param reorthogonalize Whether to apply full reorthogonalization. The
+#'   native path always reorthogonalizes (DGKS x2) and ignores this flag;
+#'   it is preserved for the R reference solver's public API.
 #' @return An `eigencore_method` descriptor selecting Lanczos iteration.
 #' @export
-lanczos <- function(max_subspace = NULL, reorthogonalize = TRUE) {
+lanczos <- function(max_subspace = NULL, max_restarts = NULL, block = 1L,
+                    reorthogonalize = TRUE) {
+  block <- as.integer(block)
+  if (length(block) != 1L || is.na(block) || block < 1L) {
+    stop("block must be a single positive integer.", call. = FALSE)
+  }
+  if (!is.null(max_restarts)) {
+    max_restarts <- as.integer(max_restarts)
+    if (length(max_restarts) != 1L || is.na(max_restarts) || max_restarts < 0L) {
+      stop("max_restarts must be a single non-negative integer.", call. = FALSE)
+    }
+  }
   new_method(
     "lanczos",
     max_subspace = max_subspace,
+    max_restarts = max_restarts,
+    block = block,
     reorthogonalize = reorthogonalize
   )
 }
@@ -147,6 +192,25 @@ randomized <- function(oversample = 10, n_iter = 2, block = NULL,
     normalizer = normalizer,
     refine = refine
   )
+}
+
+#' LOBPCG method descriptor.
+#'
+#' @param maxit Maximum LOBPCG iterations.
+#' @param preconditioner Optional function taking a residual block and
+#'   returning a preconditioned block with the same dimensions.
+#' @return An `eigencore_method` descriptor selecting the reference LOBPCG
+#'   prototype.
+#' @export
+lobpcg <- function(maxit = 200L, preconditioner = NULL) {
+  maxit <- as.integer(maxit)
+  if (length(maxit) != 1L || is.na(maxit) || maxit < 1L) {
+    stop("maxit must be a single positive integer.", call. = FALSE)
+  }
+  if (!is.null(preconditioner) && !is.function(preconditioner)) {
+    stop("preconditioner must be NULL or a function.", call. = FALSE)
+  }
+  new_method("lobpcg", maxit = maxit, preconditioner = preconditioner)
 }
 
 #' Shift-invert method descriptor.
@@ -195,6 +259,9 @@ target_label <- function(target) {
   }
   if (identical(target$kind, "nearest")) {
     return(paste0("nearest(", target$value, ")"))
+  }
+  if (identical(target$kind, "both_ends")) {
+    return(paste0("both_ends(", target$value$k_low, ", ", target$value$k_high, ")"))
   }
   target$kind
 }

@@ -54,10 +54,37 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
   is_dense_source <- is.matrix(source_matrix) && is.double(source_matrix)
   is_dense_metric <- is.matrix(metric_matrix) && is.double(metric_matrix)
   is_native_csc <- identical(problem$A$metadata$storage, "dgCMatrix")
+  preconditioner_reason <- if (inherits(method, "eigencore_method") &&
+    identical(method$kind, "lobpcg")) {
+    preconditioner_plan_reason(method$preconditioner)
+  } else {
+    NULL
+  }
+  native_lanczos_supported <- is_hermitian &&
+    native_lanczos_target_supported(problem$target) &&
+    (is_native_csc || is_dense_source)
+  lanczos_block <- if (inherits(method, "eigencore_method") &&
+    identical(method$kind, "lanczos")) method$block %||% 1L else 1L
 
   chosen <- if (inherits(method, "eigencore_method") && method$kind != "auto") {
     if (identical(method$kind, "lanczos")) {
-      if (is_native_csc) "native CSC-backed prototype Hermitian Lanczos" else "prototype Hermitian Lanczos"
+      if (!is_hermitian) {
+        "dense LAPACK eigen oracle (Lanczos requires Hermitian structure)"
+      } else if (native_lanczos_supported && lanczos_block > 1L) {
+        "native block Hermitian Lanczos prototype"
+      } else if (native_lanczos_supported) {
+        "native scalar thick-restart Hermitian Lanczos"
+      } else {
+        "reference Hermitian Lanczos (prototype/oracle fallback)"
+      }
+    } else if (identical(method$kind, "lobpcg")) {
+      if (is_hermitian && is.null(problem$metric)) {
+        "reference LOBPCG prototype"
+      } else if (is_hermitian && !is.null(problem$metric)) {
+        "reference generalized SPD LOBPCG prototype"
+      } else {
+        "dense LAPACK eigen oracle (LOBPCG prototype requires Hermitian structure)"
+      }
     } else {
       method_label(method)
     }
@@ -67,10 +94,14 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
     "native dense generalized SPD LAPACK fallback"
   } else if (has_metric && is_hermitian) {
     "dense generalized SPD LAPACK oracle (prototype fallback)"
+  } else if (is_hermitian && is_native_csc && native_lanczos_target_supported(problem$target)) {
+    "native scalar thick-restart Hermitian Lanczos"
   } else if (is_hermitian && is_native_csc) {
-    "native CSC-backed prototype Hermitian Lanczos"
+    "reference Hermitian Lanczos (target unsupported by native path)"
   } else if (is_hermitian && is.null(source_or_null(problem$A))) {
-    "prototype Hermitian Lanczos"
+    "reference Hermitian Lanczos (prototype/oracle fallback)"
+  } else if (auto_dense_partial_lanczos(problem, k)) {
+    "native scalar thick-restart Hermitian Lanczos"
   } else if (is_hermitian && is_dense_source) {
     "native dense Hermitian LAPACK fallback"
   } else if (is_hermitian) {
@@ -84,10 +115,12 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
     paste0("target: ", target_label(problem$target)),
     if (has_metric) "metric/operator B supplied" else "standard eigenproblem",
     if (has_shift) "shift-invert transform requested" else NULL,
+    preconditioner_reason,
     operator_kernel_reason(problem$A)
   )
 
-  fallback <- if (grepl("prototype Hermitian Lanczos", chosen, fixed = TRUE)) {
+  fallback <- if (grepl("Hermitian Lanczos", chosen, fixed = TRUE) ||
+    grepl("LOBPCG", chosen, fixed = TRUE)) {
     "dense oracle prototype if unsupported"
   } else {
     "dense oracle prototype"
@@ -102,12 +135,14 @@ plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ..
   is_native_csc <- identical(problem$A$metadata$storage, "dgCMatrix")
   chosen <- if (inherits(method, "eigencore_method") && method$kind != "auto") {
     if (identical(method$kind, "golub_kahan")) {
-      if (is_native_csc) "native CSC-backed prototype Golub-Kahan" else "prototype Golub-Kahan"
+      if (is_native_csc || is_dense_source) "native prototype Golub-Kahan" else "prototype Golub-Kahan"
+    } else if (identical(method$kind, "randomized")) {
+      "reference randomized SVD prototype"
     } else {
       method_label(method)
     }
   } else if (is_native_csc && !is.null(problem$A$apply_adjoint)) {
-    "native CSC-backed prototype Golub-Kahan"
+    "native prototype Golub-Kahan"
   } else if (is.null(source_or_null(problem$A)) && !is.null(problem$A$apply_adjoint)) {
     "prototype Golub-Kahan"
   } else if (is_dense_source) {

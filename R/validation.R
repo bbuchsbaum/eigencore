@@ -95,8 +95,15 @@ benchmark_eigen_methods <- function(A, k, target = largest(), repeats = 3L,
       median_seconds = stats::median(timed$times),
       min_seconds = min(timed$times),
       max_seconds = max(timed$times),
+      mem_alloc = timed$mem_alloc,
       values = method_values(fit, kind = "eigen"),
-      certificate_passed = method_certificate_passed(fit)
+      certificate_passed = method_certificate_passed(fit),
+      certificate_type = method_certificate_field(fit, "certificate_type"),
+      norm_bound_type = method_certificate_field(fit, "norm_bound_type"),
+      scale_is_estimate = method_certificate_field(fit, "scale_is_estimate"),
+      preconditioner_kind = method_preconditioner_field(fit, "kind"),
+      preconditioner_native = method_preconditioner_field(fit, "native"),
+      preconditioner_calls = method_preconditioner_calls(fit)
     )
   })
   class(rows) <- c("eigencore_benchmark", "list")
@@ -118,8 +125,15 @@ benchmark_svd_methods <- function(A, rank, repeats = 3L,
       median_seconds = stats::median(timed$times),
       min_seconds = min(timed$times),
       max_seconds = max(timed$times),
+      mem_alloc = timed$mem_alloc,
       values = method_values(fit, kind = "svd"),
-      certificate_passed = method_certificate_passed(fit)
+      certificate_passed = method_certificate_passed(fit),
+      certificate_type = method_certificate_field(fit, "certificate_type"),
+      norm_bound_type = method_certificate_field(fit, "norm_bound_type"),
+      scale_is_estimate = method_certificate_field(fit, "scale_is_estimate"),
+      preconditioner_kind = method_preconditioner_field(fit, "kind"),
+      preconditioner_native = method_preconditioner_field(fit, "native"),
+      preconditioner_calls = method_preconditioner_calls(fit)
     )
   })
   class(rows) <- c("eigencore_benchmark", "list")
@@ -150,15 +164,26 @@ print.eigencore_benchmark <- function(x, ...) {
 
 #' @keywords internal
 available_eigen_methods <- function() {
-  c("eigencore", "base", if (requireNamespace("RSpectra", quietly = TRUE)) "RSpectra")
+  c(
+    "eigencore",
+    "eigencore_block",
+    "eigencore_lobpcg",
+    "eigencore_lobpcg_preconditioned",
+    "eigencore_lobpcg_tridiagonal",
+    "base",
+    if (requireNamespace("RSpectra", quietly = TRUE)) "RSpectra",
+    if (requireNamespace("PRIMME", quietly = TRUE)) "PRIMME"
+  )
 }
 
 #' @keywords internal
 available_svd_methods <- function() {
   c(
     "eigencore",
+    "eigencore_randomized",
     "base",
     if (requireNamespace("RSpectra", quietly = TRUE)) "RSpectra",
+    if (requireNamespace("PRIMME", quietly = TRUE)) "PRIMME",
     if (requireNamespace("irlba", quietly = TRUE)) "irlba",
     if (requireNamespace("rsvd", quietly = TRUE)) "rsvd"
   )
@@ -169,6 +194,40 @@ run_eigen_method <- function(method, A, k, target, tol) {
   switch(
     method,
     eigencore = eig_partial(A, k = k, target = target, tol = tol),
+    eigencore_block = eig_partial(
+      A,
+      k = k,
+      target = target,
+      method = lanczos(block = min(4L, as.integer(k)), max_subspace = nrow(A)),
+      tol = tol
+    ),
+    eigencore_lobpcg = eig_partial(
+      A,
+      k = k,
+      target = target,
+      method = lobpcg(maxit = 200L),
+      tol = tol
+    ),
+    eigencore_lobpcg_preconditioned = {
+      preconditioner <- shifted_cholesky_preconditioner(A, shift = 1e-3)
+      eig_partial(
+        A,
+        k = k,
+        target = target,
+        method = lobpcg(maxit = 80L, preconditioner = preconditioner),
+        tol = tol
+      )
+    },
+    eigencore_lobpcg_tridiagonal = {
+      preconditioner <- shifted_tridiagonal_preconditioner(A, shift = 1e-3)
+      eig_partial(
+        A,
+        k = k,
+        target = target,
+        method = lobpcg(maxit = 80L, preconditioner = preconditioner),
+        tol = tol
+      )
+    },
     base = {
       eig <- eigen(as.matrix(A), symmetric = is_square_symmetric(as.matrix(A)))
       idx <- order_indices(eig$values, target)
@@ -178,17 +237,29 @@ run_eigen_method <- function(method, A, k, target, tol) {
       which <- target_to_rspectra_which(target, symmetric = TRUE)
       RSpectra::eigs_sym(A, k = k, which = which)
     },
+    PRIMME = {
+      which <- target_to_rspectra_which(target, symmetric = TRUE)
+      PRIMME::eigs_sym(A, NEig = k, which = which, tol = tol)
+    },
     stop("Unsupported eigen benchmark method: ", method, call. = FALSE)
   )
 }
 
 #' @keywords internal
-run_svd_method <- function(method, A, rank, tol) {
+run_svd_method <- function(method, A, rank, tol, seed = NULL) {
   switch(
     method,
-    eigencore = svd_partial(A, rank = rank, tol = tol),
+    eigencore = svd_partial(A, rank = rank, tol = tol, seed = seed),
+    eigencore_randomized = svd_partial(
+      A,
+      rank = rank,
+      method = randomized(oversample = max(10L, rank), n_iter = 2L),
+      tol = tol,
+      seed = seed
+    ),
     base = svd(as.matrix(A), nu = rank, nv = rank),
     RSpectra = RSpectra::svds(A, k = rank),
+    PRIMME = PRIMME::svds(A, NSvals = rank, which = "L", tol = tol),
     irlba = irlba::irlba(A, nv = rank, nu = rank),
     rsvd = rsvd::rsvd(A, k = rank, nu = rank, nv = rank),
     stop("Unsupported SVD benchmark method: ", method, call. = FALSE)
@@ -199,6 +270,24 @@ run_svd_method <- function(method, A, rank, tol) {
 time_repeated <- function(repeats, expr) {
   expr <- substitute(expr)
   env <- parent.frame()
+  if (requireNamespace("bench", quietly = TRUE)) {
+    value <- NULL
+    mark <- bench::mark(
+      value <- eval(expr, envir = env),
+      iterations = repeats,
+      check = FALSE,
+      time_unit = "s",
+      memory = TRUE,
+      filter_gc = FALSE
+    )
+    return(list(
+      times = as.numeric(mark$time[[1L]]),
+      value = value,
+      mem_alloc = as.numeric(mark$mem_alloc[[1L]]),
+      bench = mark
+    ))
+  }
+
   times <- numeric(repeats)
   value <- NULL
   for (i in seq_len(repeats)) {
@@ -206,7 +295,7 @@ time_repeated <- function(repeats, expr) {
     elapsed <- system.time(value <- eval(expr, envir = env))[["elapsed"]]
     times[[i]] <- elapsed
   }
-  list(times = times, value = value)
+  list(times = times, value = value, mem_alloc = NA_real_, bench = NULL)
 }
 
 #' @keywords internal
@@ -221,6 +310,26 @@ method_values <- function(x, kind) {
 method_certificate_passed <- function(x) {
   cert <- x$certificate
   if (is.null(cert$passed)) NA else cert$passed
+}
+
+#' @keywords internal
+method_certificate_field <- function(x, field) {
+  cert <- x$certificate
+  if (is.null(cert[[field]])) NA else cert[[field]]
+}
+
+#' @keywords internal
+method_preconditioner_field <- function(x, field) {
+  info <- x$preconditioner %||% x$restart$preconditioner %||% NULL
+  if (is.null(info) || is.null(info[[field]])) {
+    return(NA)
+  }
+  info[[field]]
+}
+
+#' @keywords internal
+method_preconditioner_calls <- function(x) {
+  x$preconditioner_calls %||% x$restart$preconditioner_calls %||% NA_integer_
 }
 
 #' @keywords internal
@@ -251,6 +360,12 @@ target_to_rspectra_which <- function(target, symmetric = TRUE) {
     largest = if (symmetric) "LA" else "LR",
     smallest = if (symmetric) "SA" else "SR",
     largest_magnitude = "LM",
+    smallest_magnitude = "SM",
+    largest_real = "LR",
+    smallest_real = "SR",
+    largest_imaginary = "LI",
+    smallest_imaginary = "SI",
+    both_ends = "BE",
     "LM"
   )
 }

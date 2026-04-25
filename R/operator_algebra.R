@@ -255,7 +255,24 @@ symmetric_operator <- function(A, validate = TRUE, tol = 1e-10) {
 #' Create A^* A as an operator.
 crossprod_operator <- function(A, name = NULL) {
   A <- as_operator(A)
-  compose(adjoint(A), A, name = name %||% paste0("crossprod(", A$name, ")"))
+  if (is.null(A$apply_adjoint)) {
+    stop("Operator does not define apply_adjoint().", call. = FALSE)
+  }
+  linear_operator(
+    dim = c(A$dim[2L], A$dim[2L]),
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      Z <- apply_operator(A, X)
+      apply_adjoint_operator(A, Z, alpha = alpha, beta = beta, Y = Y)
+    },
+    apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) {
+      Z <- apply_operator(A, X)
+      apply_adjoint_operator(A, Z, alpha = alpha, beta = beta, Y = Y)
+    },
+    dtype = A$dtype,
+    structure = hermitian(),
+    name = name %||% paste0("crossprod(", A$name, ")"),
+    metadata = list(parent = A, fused = "crossprod", native = isTRUE(A$metadata$native))
+  )
 }
 
 #' Check an operator adjoint identity.

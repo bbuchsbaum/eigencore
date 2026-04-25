@@ -7,6 +7,10 @@ test_that("ARPACK which codes map to exact targets", {
   expect_identical(eigencore:::target_from_which("SR")$kind, "smallest_real")
   expect_identical(eigencore:::target_from_which("LI")$kind, "largest_imaginary")
   expect_identical(eigencore:::target_from_which("SI")$kind, "smallest_imaginary")
+  be <- eigencore:::target_from_which("BE", k = 5)
+  expect_identical(be$kind, "both_ends")
+  expect_equal(be$value$k_low, 2L)
+  expect_equal(be$value$k_high, 3L)
 })
 
 test_that("order_indices honours magnitude-based targets", {
@@ -21,6 +25,13 @@ test_that("order_indices distinguishes real and imaginary targets", {
   expect_equal(Re(z[eigencore:::order_indices(z, smallest_real())]), c(1, 2, 3))
   expect_equal(Im(z[eigencore:::order_indices(z, largest_imaginary())]), c(4, 0, -2))
   expect_equal(Im(z[eigencore:::order_indices(z, smallest_imaginary())]), c(-2, 0, 4))
+})
+
+test_that("order_indices selects both algebraic ends", {
+  x <- c(-5, -2, 0, 3, 9)
+  idx <- eigencore:::order_indices(x, both_ends(k_low = 2, k_high = 1))
+  expect_equal(x[idx], c(-5, -2, 9))
+  expect_equal(eigencore:::target_to_rspectra_which(both_ends(1, 1)), "BE")
 })
 
 test_that("eigs_sym SM selects smallest-magnitude, not smallest-algebraic", {

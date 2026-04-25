@@ -25,6 +25,8 @@ test_that("compose and crossprod_operator match dense algebra", {
   cp <- crossprod_operator(A)
   Z <- matrix(rnorm(6), nrow = 3)
   expect_equal(cp$apply(Z), t(A) %*% A %*% Z)
+  expect_equal(cp$metadata$fused, "crossprod")
+  expect_equal(cp$structure$kind, "hermitian")
 })
 
 test_that("row and column scaling match dense algebra", {
