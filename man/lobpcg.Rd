@@ -13,8 +13,9 @@ lobpcg(maxit = 200L, preconditioner = NULL)
 returning a preconditioned block with the same dimensions.}
 }
 \value{
-An \code{eigencore_method} descriptor selecting the reference LOBPCG
-prototype.
+An \code{eigencore_method} descriptor selecting LOBPCG. Built-in
+standard Hermitian dense/CSC operators may use a native prototype;
+unsupported cases route to the reference prototype.
 }
 \description{
 LOBPCG method descriptor.

@@ -178,6 +178,91 @@ test_that("native dense eigen certificate diagnostics match R formula contract",
   expect_equal(generalized$orthogonality, eigencore:::orthogonality_loss(vectors, B = B), tolerance = 1e-12)
 })
 
+test_that("certificate passed requires residual convergence and orthogonality", {
+  cert <- eigencore:::new_certificate(
+    tol = 1e-8,
+    residuals = c(1e-12, 1e-12),
+    backward_error = c(1e-12, 1e-12),
+    orthogonality = 0.5,
+    converged = c(TRUE, TRUE),
+    scale = c(1, 1)
+  )
+
+  expect_false(cert$passed)
+  expect_false(cert$orthogonality_passed)
+  expect_equal(cert$failed_indices, integer(0))
+  expect_match(paste(cert$notes, collapse = " "), "orthogonality loss")
+
+  nonnormal_cert <- eigencore:::new_certificate(
+    tol = 1e-8,
+    residuals = c(1e-12, 1e-12),
+    backward_error = c(1e-12, 1e-12),
+    orthogonality = 0.5,
+    converged = c(TRUE, TRUE),
+    scale = c(1, 1),
+    require_orthogonality = FALSE
+  )
+
+  expect_true(nonnormal_cert$passed)
+  expect_true(nonnormal_cert$orthogonality_passed)
+  expect_false(nonnormal_cert$orthogonality_required)
+})
+
+test_that("operator generalized eigen certificates use dense native diagnostics when available", {
+  set.seed(212)
+  A <- crossprod(matrix(rnorm(36), nrow = 6)) + diag(6)
+  B <- crossprod(matrix(rnorm(36), nrow = 6)) + diag(6)
+  eig <- eigencore:::dense_generalized_spd_eigen(A, B)
+  values <- eig$values[1:3]
+  vectors <- eig$vectors[, 1:3, drop = FALSE]
+
+  cert <- eigencore:::certify_eigen_operator(
+    as_operator(A),
+    values,
+    vectors,
+    Bop = as_operator(B),
+    tol = 1e-8
+  )
+
+  expect_true(cert$passed)
+  expect_equal(cert$norm_bound_type, "frobenius_exact+frobenius_exact")
+  expect_equal(cert$residuals, eigencore:::dense_eigen_residuals(A, values, vectors, B = B),
+               tolerance = 1e-12)
+  expect_lt(cert$max_orthogonality_loss, 1e-10)
+})
+
+test_that("residual-backed generalized operator certificates preserve original-coordinate contract", {
+  set.seed(213)
+  A <- crossprod(matrix(rnorm(36), nrow = 6)) + diag(6)
+  B <- crossprod(matrix(rnorm(36), nrow = 6)) + diag(6)
+  eig <- eigencore:::dense_generalized_spd_eigen(A, B)
+  values <- eig$values[1:3]
+  vectors <- eig$vectors[, 1:3, drop = FALSE]
+  residuals <- eigencore:::dense_eigen_residuals(A, values, vectors, B = B)
+
+  from_residuals <- eigencore:::certify_eigen_operator_residuals(
+    as_operator(A),
+    values,
+    vectors,
+    residuals,
+    Bop = as_operator(B),
+    tol = 1e-8
+  )
+  direct <- eigencore:::certify_eigen_operator(
+    as_operator(A),
+    values,
+    vectors,
+    Bop = as_operator(B),
+    tol = 1e-8
+  )
+
+  expect_true(from_residuals$passed)
+  expect_equal(from_residuals$residuals, direct$residuals, tolerance = 1e-12)
+  expect_equal(from_residuals$backward_error, direct$backward_error, tolerance = 1e-12)
+  expect_equal(from_residuals$orthogonality, direct$orthogonality, tolerance = 1e-12)
+  expect_equal(from_residuals$norm_bound_type, direct$norm_bound_type)
+})
+
 test_that("native dense SVD residuals match direct two-sided formulas", {
   set.seed(22)
   A <- matrix(rnorm(35), nrow = 7)
@@ -227,6 +312,20 @@ test_that("benchmark helpers return timing rows for base and eigencore", {
   expect_true(all(vapply(sb, function(x) is.numeric(x$median_seconds), logical(1))))
   expect_true(all(vapply(eb, function(x) !is.null(x$norm_bound_type), logical(1))))
   expect_true(all(vapply(sb, function(x) !is.null(x$norm_bound_type), logical(1))))
+  expect_true(all(vapply(sb, function(x) !is.null(x$fallback_attempted), logical(1))))
+  expect_true(all(vapply(sb, function(x) !is.null(x$fallback_used), logical(1))))
+})
+
+test_that("base SVD benchmark adapter keeps singular values conformable", {
+  set.seed(502)
+  A <- matrix(rnorm(35), nrow = 7)
+  fit <- eigencore:::run_svd_method("base", A, rank = 3, tol = 1e-8)
+  cert <- eigencore:::certify_svd_operator(as_operator(A), fit$d, fit$u, fit$v, tol = 1e-8)
+
+  expect_equal(length(fit$d), 3L)
+  expect_equal(dim(fit$u), c(7L, 3L))
+  expect_equal(dim(fit$v), c(5L, 3L))
+  expect_true(cert$passed)
 })
 
 test_that("matrix-free Golub-Kahan values match base SVD oracle through explicit twin", {

@@ -35,24 +35,66 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
   allow_dense_fallback <- match.arg(allow_dense_fallback)
   plan <- plan_solver(a, k = k, method = method)
   if (inherits(a$transform, "eigencore_method") && identical(a$transform$kind, "shift_invert")) {
-    stop("shift_invert() is declared in the API but not implemented in the solver core yet.", call. = FALSE)
+    return(solve_shift_invert_hermitian(
+      a, k = k, method = a$transform, tol = tol,
+      maxit = maxit, vectors = vectors, certify = certify, plan = plan
+    ))
   }
   if (inherits(method, "eigencore_method") && identical(method$kind, "lobpcg")) {
     if (!identical(a$structure$kind, "hermitian")) {
       stop("lobpcg() prototype currently requires a Hermitian eigenproblem.", call. = FALSE)
     }
-    iter <- reference_lobpcg_hermitian(
+    use_native_lobpcg <- native_lobpcg_supported(
       a$A,
-      k = k,
       target = a$target,
-      tol = tol,
-      maxit = maxit %||% method$maxit,
       preconditioner = method$preconditioner,
       Bop = a$metric
     )
+    use_native_generalized_lobpcg <- !use_native_lobpcg && !is.null(a$metric) &&
+      native_generalized_lobpcg_supported(
+        a$A,
+        a$metric,
+        target = a$target,
+        preconditioner = method$preconditioner
+      )
+    iter <- if (use_native_lobpcg) {
+      native_lobpcg_hermitian(
+        a$A,
+        k = k,
+        target = a$target,
+        tol = tol,
+        maxit = maxit %||% method$maxit,
+        preconditioner = method$preconditioner
+      )
+    } else if (use_native_generalized_lobpcg) {
+      native_generalized_lobpcg_hermitian(
+        a$A,
+        a$metric,
+        k = k,
+        target = a$target,
+        tol = tol,
+        maxit = maxit %||% method$maxit
+      )
+    } else {
+      reference_lobpcg_hermitian(
+        a$A,
+        k = k,
+        target = a$target,
+        tol = tol,
+        maxit = maxit %||% method$maxit,
+        preconditioner = method$preconditioner,
+        Bop = a$metric
+      )
+    }
     warning_msg <- if (!isTRUE(iter$certificate$passed)) {
-      paste0("reference LOBPCG prototype exhausted ", maxit %||% method$maxit,
+      paste0(plan$method, " exhausted ", maxit %||% method$maxit,
              " iterations before all ", k, " requested pairs converged")
+    } else if (isTRUE(iter$native)) {
+      if (isTRUE(iter$generalized)) {
+        "using native generalized SPD LOBPCG prototype slice for built-in A/B operators; production generalized preconditioning is not yet implemented"
+      } else {
+        "using native standard LOBPCG prototype; locking/generalized production path not yet implemented"
+      }
     } else {
       "using R-level reference LOBPCG prototype; native hot loop not yet implemented"
     }
@@ -72,8 +114,9 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
       restart = list(
         kind = "lobpcg",
         implemented = TRUE,
-        native = FALSE,
+        native = isTRUE(iter$native),
         native_kernels = any(c(
+          isTRUE(iter$native),
           isTRUE(iter$orthogonalization$native),
           isTRUE(iter$preconditioner$native)
         )),
@@ -86,7 +129,8 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
         preconditioner_calls = iter$preconditioner_calls,
         preconditioner = iter$preconditioner,
         generalized = isTRUE(iter$generalized),
-        maxit = maxit %||% method$maxit
+        maxit = maxit %||% method$maxit,
+        q_rank_final = iter$q_rank_final %||% NA_integer_
       ),
       locked = which(iter$certificate$converged),
       method = plan$method,
@@ -100,10 +144,15 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
   }
   use_lanczos <- should_use_lanczos(a, method, k = k)
   if (use_lanczos) {
-    method_maxit <- if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$max_subspace else NULL
-    method_reorth <- if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$reorthogonalize else TRUE
-    method_max_restarts <- if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$max_restarts else NULL
-    method_block <- if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$block else 1L
+    controls <- plan$controls %||% list()
+    method_maxit <- controls$max_subspace %||%
+      if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$max_subspace else NULL
+    method_reorth <- controls$reorthogonalize %||%
+      if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$reorthogonalize else TRUE
+    method_max_restarts <- controls$max_restarts %||%
+      if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$max_restarts else NULL
+    method_block <- controls$block %||%
+      if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$block else 1L
     iter <- if (should_use_native_lanczos(a, method, k = k)) {
       if (method_block > 1L) {
         native_block_lanczos_hermitian(
@@ -113,6 +162,7 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
           tol = tol,
           maxit = maxit %||% method_maxit,
           block = method_block,
+          max_restarts = method_max_restarts,
           vectors = vectors
         )
       } else {
@@ -140,7 +190,7 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
 
     native_path <- plan$method %in% c(
       "native scalar thick-restart Hermitian Lanczos",
-      "native block Hermitian Lanczos prototype"
+      "native block Hermitian Lanczos thick-restart candidate"
     )
     warning_msg <- if (native_path) {
       if (!isTRUE(iter$certificate$passed)) {
@@ -162,16 +212,27 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
     result <- list(
       values = iter$values,
       vectors = iter$vectors,
-      residuals = iter$residuals,
-      backward_error = iter$backward_error,
-      orthogonality = iter$orthogonality,
+      residuals = iter$residuals %||% iter$certificate$residuals,
+      backward_error = iter$backward_error %||% iter$certificate$backward_error,
+      orthogonality = iter$orthogonality %||% iter$certificate$orthogonality,
       nconv = sum(iter$certificate$converged),
       requested = k,
       iterations = iter$iterations,
       matvecs = iter$matvecs,
+      restarts = iter$restarts %||% iter$restart$restarts_used %||% NA_integer_,
+      ortho_passes = iter$ortho_passes %||% iter$restart$ortho_passes %||% NA_integer_,
+      locking_events = iter$locking_events %||% iter$restart$locking_events %||% NA_integer_,
+      block = iter$block %||% iter$restart$block %||% NA_integer_,
+      operator_allocations = iter$operator_allocations %||%
+        iter$restart$operator_allocations %||%
+        if (identical(iter$restart$kind, "block_full_subspace_dense_lapack")) 0 else NA_real_,
+      operator_bytes_allocated = iter$operator_bytes_allocated %||%
+        iter$restart$operator_bytes_allocated %||%
+        if (identical(iter$restart$kind, "block_full_subspace_dense_lapack")) 0 else NA_real_,
+      stage_seconds = iter$stage_seconds %||% iter$restart$stage_seconds %||% numeric(),
       convergence_history = iter$convergence_history %||% NULL,
       restart = iter$restart %||% NULL,
-      locked = iter$locked %||% integer(0),
+      locked = iter$locked %||% which(iter$certificate$converged),
       method = plan$method,
       target = target_label(a$target),
       plan = plan,
@@ -237,7 +298,14 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
   vecs <- if (vectors && !is.null(eig$vectors)) eig$vectors[, idx, drop = FALSE] else NULL
 
   cert <- if (certify && !is.null(vecs)) {
-    certify_eigen(A, vals, vecs, B = B, tol = tol)
+    certify_eigen(
+      A,
+      vals,
+      vecs,
+      B = B,
+      tol = tol,
+      require_orthogonality = identical(a$structure$kind, "hermitian") || !is.null(B)
+    )
   } else {
     empty_certificate(tol, note = "vectors not returned; residual certificate not computed")
   }
@@ -277,24 +345,27 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
   allow_dense_fallback <- match.arg(allow_dense_fallback)
   plan <- plan_solver(a, rank = rank, method = method)
   if (inherits(method, "eigencore_method") && identical(method$kind, "randomized")) {
+    controls <- plan$controls %||% list()
     iter <- reference_randomized_svd(
       a$A,
       rank = rank,
       target = a$target,
       tol = tol,
-      oversample = method$oversample,
-      n_iter = method$n_iter,
-      vectors = vectors
+      oversample = controls$oversample %||% method$oversample,
+      n_iter = controls$n_iter %||% method$n_iter,
+      vectors = vectors,
+      refine = controls$refine %||% method$refine,
+      normalizer = controls$normalizer %||% method$normalizer
     )
-    cert <- if (isTRUE(certify) && !is.null(iter$u) && !is.null(iter$v)) {
+    cert <- if (isTRUE(certify) && !is.null(iter[["u"]]) && !is.null(iter[["v"]])) {
       iter$certificate
     } else {
       empty_certificate(tol, note = "both left and right vectors are required for full SVD certification")
     }
     result <- list(
       d = iter$d,
-      u = iter$u,
-      v = iter$v,
+      u = iter[["u"]],
+      v = iter[["v"]],
       values = iter$d,
       residuals = cert$residuals,
       backward_error = cert$backward_error,
@@ -303,12 +374,15 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
       requested = rank,
       iterations = iter$iterations,
       matvecs = iter$matvecs,
+      stage_seconds = iter$stage_seconds %||% iter$restart$stage_seconds %||% numeric(),
       method = plan$method,
       target = target_label(a$target),
       plan = plan,
       certificate = cert,
       restart = iter$restart,
-      warnings = if (isTRUE(cert$passed)) {
+      warnings = if (isTRUE(iter$restart$refinement_passed)) {
+        "using reference randomized SVD prototype with certified native refinement"
+      } else if (isTRUE(cert$passed)) {
         "using reference randomized SVD prototype with residual certification"
       } else {
         "using reference randomized SVD prototype; residual certificate did not meet tolerance"
@@ -317,10 +391,105 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
     class(result) <- "eigencore_svd_result"
     return(result)
   }
+  if (should_use_native_gram_svd(a, method, rank = rank)) {
+    iter <- native_gram_svd(
+      a$A,
+      rank = rank,
+      target = a$target,
+      tol = tol,
+      vectors = vectors
+    )
+    cert <- if (isTRUE(certify) && !is.null(iter[["u"]]) && !is.null(iter[["v"]])) {
+      iter$certificate
+    } else {
+      empty_certificate(tol, note = "both left and right vectors are required for full SVD certification")
+    }
+    gram_cert <- cert
+    gram_restart <- iter$restart
+    fallback_attempted <- FALSE
+    fallback_used <- FALSE
+    fallback_iter <- NULL
+    fallback_cert <- NULL
+    if (isTRUE(certify) && !isTRUE(cert$passed) && vectors == "both") {
+      fallback_attempted <- TRUE
+      fallback_iter <- tryCatch(
+        native_golub_kahan_svd(
+          a$A,
+          rank = rank,
+          target = a$target,
+          tol = tol,
+          maxit = NULL,
+          vectors = vectors
+        ),
+        error = function(e) {
+          structure(list(error = conditionMessage(e)), class = "eigencore_fallback_error")
+        }
+      )
+      if (!inherits(fallback_iter, "eigencore_fallback_error")) {
+        fallback_cert <- fallback_iter$certificate
+        fallback_used <- isTRUE(fallback_cert$passed) ||
+          (is.finite(fallback_cert$max_backward_error) &&
+            fallback_cert$max_backward_error < cert$max_backward_error)
+        if (isTRUE(fallback_used)) {
+          iter <- fallback_iter
+          cert <- fallback_cert
+        }
+      }
+    }
+    restart <- iter$restart
+    restart$fallback_attempted <- fallback_attempted
+    restart$fallback_used <- fallback_used
+    restart$fallback_method <- if (fallback_attempted) "native prototype Golub-Kahan" else NA_character_
+    restart$fallback_error <- if (inherits(fallback_iter, "eigencore_fallback_error")) {
+      fallback_iter$error
+    } else {
+      NA_character_
+    }
+    restart$gram_certificate_passed <- isTRUE(gram_cert$passed)
+    restart$gram_max_backward_error <- gram_cert$max_backward_error
+    restart$gram_restart <- gram_restart
+    if (fallback_attempted && !is.null(fallback_cert)) {
+      restart$fallback_max_backward_error <- fallback_cert$max_backward_error
+    }
+    result <- list(
+      d = iter$d,
+      u = iter[["u"]],
+      v = iter[["v"]],
+      values = iter$d,
+      residuals = cert$residuals,
+      backward_error = cert$backward_error,
+      orthogonality = cert$orthogonality,
+      nconv = sum(cert$converged),
+      requested = rank,
+      iterations = iter$iterations,
+      matvecs = iter$matvecs,
+      method = if (isTRUE(fallback_used)) {
+        "native prototype Golub-Kahan fallback from Gram SVD"
+      } else {
+        plan$method
+      },
+      target = target_label(a$target),
+      plan = plan,
+      certificate = cert,
+      restart = restart,
+      warnings = if (isTRUE(fallback_used)) {
+        "native certified Gram SVD special case failed certification; using native Golub-Kahan fallback"
+      } else if (fallback_attempted) {
+        "native certified Gram SVD special case failed certification; native Golub-Kahan fallback was not better"
+      } else {
+        "using native certified Gram SVD special case; residuals certified in original coordinates"
+      }
+    )
+    class(result) <- "eigencore_svd_result"
+    return(result)
+  }
   use_gk <- should_use_golub_kahan(a, method)
   if (use_gk) {
-    method_maxit <- if (inherits(method, "eigencore_method") && identical(method$kind, "golub_kahan")) method$max_subspace else NULL
-    method_reorth <- if (inherits(method, "eigencore_method") && identical(method$kind, "golub_kahan")) method$reorthogonalize else TRUE
+    controls <- plan$controls %||% list()
+    method_maxit <- controls$max_subspace %||%
+      if (inherits(method, "eigencore_method") && identical(method$kind, "golub_kahan")) method$max_subspace else NULL
+    method_reorth <- controls$reorthogonalize %||%
+      if (inherits(method, "eigencore_method") && identical(method$kind, "golub_kahan")) method$reorthogonalize else TRUE
     iter <- if (should_use_native_golub_kahan(a, method)) {
       native_golub_kahan_svd(
         a$A,
@@ -342,15 +511,15 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
       )
     }
 
-    cert <- if (isTRUE(certify) && !is.null(iter$u) && !is.null(iter$v)) {
+    cert <- if (isTRUE(certify) && !is.null(iter[["u"]]) && !is.null(iter[["v"]])) {
       iter$certificate
     } else {
       empty_certificate(tol, note = "both left and right vectors are required for full SVD certification")
     }
     result <- list(
       d = iter$d,
-      u = iter$u,
-      v = iter$v,
+      u = iter[["u"]],
+      v = iter[["v"]],
       values = iter$d,
       residuals = cert$residuals,
       backward_error = cert$backward_error,
@@ -359,13 +528,18 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
       requested = rank,
       iterations = iter$iterations,
       matvecs = iter$matvecs,
+      stage_seconds = iter$stage_seconds %||% iter$restart$stage_seconds %||% numeric(),
       method = plan$method,
       target = target_label(a$target),
       plan = plan,
       certificate = cert,
       restart = iter$restart,
       warnings = if (identical(plan$method, "native prototype Golub-Kahan")) {
-        "using native prototype Golub-Kahan iteration; restart/refinement not yet implemented"
+        if (isTRUE(iter$restart$converged)) {
+          "using native prototype Golub-Kahan iteration with adaptive subspace growth"
+        } else {
+          "using native prototype Golub-Kahan iteration; adaptive subspace budget exhausted before full certification"
+        }
       } else {
         "using R-level prototype Golub-Kahan; native hot loop not yet implemented"
       }
@@ -557,6 +731,17 @@ native_dense_symmetric_eigen <- function(A) {
 }
 
 #' @keywords internal
+native_dense_symmetric_eigen_selected <- function(A, k, target) {
+  .Call(
+    "eigencore_dense_symmetric_eigen_selected",
+    as.matrix(A),
+    as.integer(k),
+    as.integer(lanczos_target_kind(target)),
+    PACKAGE = "eigencore"
+  )
+}
+
+#' @keywords internal
 should_use_native_dense_svd <- function(problem, method) {
   if (inherits(method, "eigencore_method") && !identical(method$kind, "auto")) {
     return(FALSE)
@@ -706,4 +891,28 @@ should_use_native_golub_kahan <- function(problem, method) {
   inherits(method, "eigencore_method") &&
     identical(method$kind, "auto") &&
     identical(storage, "dgCMatrix")
+}
+
+#' @keywords internal
+should_use_native_gram_svd <- function(problem, method, rank = NULL) {
+  if (!inherits(method, "eigencore_method") || !identical(method$kind, "auto")) {
+    return(FALSE)
+  }
+  if (!native_gram_svd_target_supported(problem$target)) {
+    return(FALSE)
+  }
+  storage <- problem$A$metadata$storage %||% NULL
+  source <- source_or_null(problem$A)
+  supported <- identical(storage, "dgCMatrix") ||
+    (is.matrix(source) && is.double(source))
+  if (!isTRUE(supported)) {
+    return(FALSE)
+  }
+  dims <- problem$A$dim
+  reduced <- min(dims)
+  full <- max(dims)
+  rank <- as.integer(rank %||% problem$rank %||% 1L)
+  reduced <= getOption("eigencore.gram_svd_max_dimension", 512L) &&
+    full >= 2L * reduced &&
+    rank <= reduced / 2
 }

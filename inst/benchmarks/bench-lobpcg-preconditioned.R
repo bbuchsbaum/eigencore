@@ -3,9 +3,9 @@
 source("inst/benchmarks/_helpers.R")
 
 args <- benchmark_args()
-sizes <- if (args$quick) 200L else c(200L, 1000L)
+sizes <- if (args$quick) 200L else c(200L, 1000L, 2000L)
 iterations <- 5L
-k <- if (args$quick) 5L else 20L
+k <- 5L
 
 results <- lapply(sizes, function(n) {
   A <- path_laplacian(n)
@@ -45,4 +45,8 @@ print(gates)
 if (args$save) {
   message("saved rows: ", save_benchmark_result(rows, "lobpcg-preconditioned-rows"))
   message("saved gates: ", save_benchmark_result(gates, "lobpcg-preconditioned-gates"))
+}
+
+if (args$strict && !all(gates$passed)) {
+  stop("Preconditioned LOBPCG benchmark failed release gate.", call. = FALSE)
 }

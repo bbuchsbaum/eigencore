@@ -15,6 +15,7 @@ diagnostics <- function(x, ...) {
     preconditioner_calls = x$preconditioner_calls,
     convergence_history = x$convergence_history,
     restart = x$restart,
+    stage_seconds = x$stage_seconds %||% x$restart$stage_seconds %||% numeric(),
     preconditioner = x$preconditioner %||% x$restart$preconditioner %||% NULL,
     locked = x$locked,
     method = x$method,
@@ -54,7 +55,8 @@ backward_error <- function(x, ...) {
 }
 
 #' @keywords internal
-certify_eigen <- function(A, values, vectors, B = NULL, tol = 1e-8) {
+certify_eigen <- function(A, values, vectors, B = NULL, tol = 1e-8,
+                          require_orthogonality = TRUE) {
   diag <- native_dense_eigen_certificate(A, values, vectors, B = B, tol = tol)
   new_certificate(
     tol = tol,
@@ -63,7 +65,8 @@ certify_eigen <- function(A, values, vectors, B = NULL, tol = 1e-8) {
     orthogonality = diag$orthogonality,
     converged = diag$converged,
     scale = diag$scale,
-    norm_bound_type = "frobenius_exact"
+    norm_bound_type = "frobenius_exact",
+    require_orthogonality = require_orthogonality
   )
 }
 
@@ -116,12 +119,22 @@ certify_eigen_operator <- function(Aop, values, vectors, Bop = NULL, tol = 1e-8)
 }
 
 #' @keywords internal
-certify_eigen_operator_residuals <- function(Aop, values, vectors, residuals, tol = 1e-8) {
+certify_eigen_operator_residuals <- function(Aop, values, vectors, residuals,
+                                             Bop = NULL, tol = 1e-8) {
   norm_A <- operator_norm_for_certificate_info(Aop)
-  norm_B <- list(value = 1, norm_bound_type = "identity_exact", scale_is_estimate = FALSE)
+  norm_B <- if (is.null(Bop)) {
+    list(value = 1, norm_bound_type = "identity_exact", scale_is_estimate = FALSE)
+  } else {
+    operator_norm_for_certificate_info(Bop)
+  }
   scale <- eigen_backward_scale(norm_A$value, norm_B$value, values, vectors)
   backward <- residuals / pmax(scale, .Machine$double.eps)
-  orth <- orthogonality_loss(vectors)
+  if (is.null(Bop)) {
+    orth <- orthogonality_loss(vectors)
+  } else {
+    Bv <- apply_operator(Bop, vectors)
+    orth <- max(abs(crossprod(vectors, Bv) - diag(length(values))))
+  }
   new_certificate(
     tol = tol,
     residuals = residuals,
@@ -130,7 +143,7 @@ certify_eigen_operator_residuals <- function(Aop, values, vectors, residuals, to
     converged = backward <= tol,
     scale = scale,
     norm_bound_type = paste(c(norm_A$norm_bound_type, norm_B$norm_bound_type), collapse = "+"),
-    scale_is_estimate = isTRUE(norm_A$scale_is_estimate)
+    scale_is_estimate = isTRUE(norm_A$scale_is_estimate) || isTRUE(norm_B$scale_is_estimate)
   )
 }
 
@@ -191,19 +204,31 @@ new_certificate <- function(tol, residuals, backward_error, orthogonality,
                             converged, scale, notes = character(),
                             certificate_type = "residual_backward_error",
                             norm_bound_type = "unspecified",
-                            scale_is_estimate = FALSE) {
+                            scale_is_estimate = FALSE,
+                            require_orthogonality = TRUE) {
   if (isTRUE(scale_is_estimate)) {
     notes <- c(notes, "certificate scale uses a stochastic norm estimate; passed is withheld")
   }
+  orthogonality_tolerance <- max(tol, sqrt(.Machine$double.eps))
+  max_orthogonality_loss <- if (length(orthogonality)) max(orthogonality) else NA_real_
+  orthogonality_passed <- !isTRUE(require_orthogonality) ||
+    is.na(max_orthogonality_loss) ||
+    max_orthogonality_loss <= orthogonality_tolerance
+  if (!isTRUE(orthogonality_passed)) {
+    notes <- c(notes, "orthogonality loss exceeds certificate tolerance")
+  }
   cert <- list(
-    passed = all(converged) && !isTRUE(scale_is_estimate),
+    passed = all(converged) && orthogonality_passed && !isTRUE(scale_is_estimate),
     tolerance = tol,
+    orthogonality_tolerance = orthogonality_tolerance,
+    orthogonality_required = isTRUE(require_orthogonality),
     certificate_type = certificate_type,
     norm_bound_type = norm_bound_type,
     scale_is_estimate = isTRUE(scale_is_estimate),
     max_backward_error = if (length(backward_error)) max(backward_error) else NA_real_,
     max_residual = max_residual_value(residuals),
-    max_orthogonality_loss = if (length(orthogonality)) max(orthogonality) else NA_real_,
+    max_orthogonality_loss = max_orthogonality_loss,
+    orthogonality_passed = orthogonality_passed,
     failed_indices = which(!converged),
     scale = scale,
     notes = notes,
@@ -242,6 +267,8 @@ print.eigencore_certificate <- function(x, ...) {
   cat("  max residual:", format(x$max_residual), "\n")
   cat("  max backward error:", format(x$max_backward_error), "\n")
   cat("  max orthogonality loss:", format(x$max_orthogonality_loss), "\n")
+  cat("  orthogonality tolerance:", format(x$orthogonality_tolerance), "\n")
+  cat("  orthogonality required:", x$orthogonality_required, "\n")
   if (length(x$failed_indices)) {
     cat("  failed indices:", paste(x$failed_indices, collapse = ", "), "\n")
   }
@@ -308,11 +335,20 @@ native_dense_svd_certificate <- function(A, d, u, v, tol = 1e-8) {
 
 #' @keywords internal
 native_builtin_eigen_certificate <- function(Aop, values, vectors, Bop = NULL, tol = 1e-8) {
-  if (!is.null(Bop)) {
-    return(NULL)
-  }
   storage <- Aop$metadata$storage %||% NULL
   source <- source_or_null(Aop)
+  if (!is.null(Bop)) {
+    B_source <- source_or_null(Bop)
+    if (is.matrix(source) && is.double(source) &&
+        is.matrix(B_source) && is.double(B_source)) {
+      return(list(
+        diagnostics = native_dense_eigen_certificate(source, values, vectors,
+                                                    B = B_source, tol = tol),
+        norm_bound_type = "frobenius_exact+frobenius_exact"
+      ))
+    }
+    return(NULL)
+  }
   if (is.matrix(source) && is.double(source)) {
     return(list(
       diagnostics = native_dense_eigen_certificate(source, values, vectors, tol = tol),

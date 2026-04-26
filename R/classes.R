@@ -199,8 +199,9 @@ randomized <- function(oversample = 10, n_iter = 2, block = NULL,
 #' @param maxit Maximum LOBPCG iterations.
 #' @param preconditioner Optional function taking a residual block and
 #'   returning a preconditioned block with the same dimensions.
-#' @return An `eigencore_method` descriptor selecting the reference LOBPCG
-#'   prototype.
+#' @return An `eigencore_method` descriptor selecting LOBPCG. Built-in
+#'   standard Hermitian dense/CSC operators may use a native prototype;
+#'   unsupported cases route to the reference prototype.
 #' @export
 lobpcg <- function(maxit = 200L, preconditioner = NULL) {
   maxit <- as.integer(maxit)

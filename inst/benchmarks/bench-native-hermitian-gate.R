@@ -7,21 +7,46 @@ sizes <- if (args$quick) 200L else c(1000L, 10000L)
 iterations <- 5L
 k <- if (args$quick) 5L else 20L
 
-results <- lapply(sizes, function(n) {
-  A <- path_laplacian(n)
-  out <- benchmark_native_hermitian_gate(
-    A,
+cases <- lapply(sizes, function(n) {
+  list(
+    case = "path_laplacian",
+    A = path_laplacian(n),
+    n = n,
     k = k,
     target = smallest(),
-    iterations = iterations,
     seed = 700 + n
   )
-  out$rows$case <- "path_laplacian"
-  out$rows$n <- n
-  out$rows$k <- k
-  out$gate$case <- "path_laplacian"
-  out$gate$n <- n
-  out$gate$k <- k
+})
+
+if (args$include_dense) {
+  cases <- c(cases, list(list(
+    case = "dense_hermitian",
+    A = dense_hermitian_with_spectrum(seq(if (args$quick) 80L else 200L, 1), seed = 1800L),
+    n = if (args$quick) 80L else 200L,
+    k = k,
+    target = largest(),
+    seed = 1800L
+  )))
+}
+
+results <- lapply(cases, function(case) {
+  subject <- if (args$block_candidate) "eigencore_block_candidate" else "eigencore"
+  methods <- unique(c(subject, "eigencore", "RSpectra", "PRIMME"))
+  out <- benchmark_native_hermitian_gate(
+    case$A,
+    k = case$k,
+    target = case$target,
+    iterations = iterations,
+    seed = case$seed,
+    methods = methods,
+    subject = subject
+  )
+  out$rows$case <- case$case
+  out$rows$n <- case$n
+  out$rows$k <- case$k
+  out$gate$case <- case$case
+  out$gate$n <- case$n
+  out$gate$k <- case$k
   out
 })
 
@@ -36,4 +61,8 @@ print(gates)
 if (args$save) {
   message("saved rows: ", save_benchmark_result(rows, "native-hermitian-gate-rows"))
   message("saved gates: ", save_benchmark_result(gates, "native-hermitian-gate-summary"))
+}
+
+if (args$strict && !all(gates$passed)) {
+  stop("Native Hermitian benchmark failed G1 release gate.", call. = FALSE)
 }

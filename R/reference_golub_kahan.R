@@ -131,7 +131,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   limit <- min(m, n)
   fixed_maxit <- !is.null(maxit)
   if (is.null(maxit)) {
-    maxit <- min(limit, max(20L, 4L * rank + 20L))
+    maxit <- default_golub_kahan_initial_subspace(c(m, n), rank)
   } else {
     maxit <- min(limit, as.integer(maxit))
   }
@@ -142,6 +142,14 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   start <- stats::rnorm(n)
   storage <- op$metadata$storage %||% NULL
   source <- source_or_null(op)
+  projected_stop_requested <- isTRUE(getOption("eigencore.golub_kahan_projected_stop", FALSE))
+  projected_stop_disable_reason <- NULL
+  if (identical(storage, "dgCMatrix") && m >= 4L * n) {
+    projected_stop_disable_reason <- "disabled for high-aspect tall sparse operators"
+  }
+  projected_stop_enabled <- projected_stop_requested &&
+    !fixed_maxit &&
+    is.null(projected_stop_disable_reason)
   run_native <- function(active_maxit) {
     if (identical(storage, "dgCMatrix")) {
       A <- op$metadata$matrix
@@ -153,6 +161,10 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
         methods::slot(A, "Dim"),
         as.integer(active_maxit),
         as.numeric(start),
+        as.integer(rank),
+        as.integer(native_svd_target_kind(target)),
+        as.numeric(tol),
+        as.logical(projected_stop_enabled),
         PACKAGE = "eigencore"
       )
     } else if (is.matrix(source) && is.double(source)) {
@@ -161,6 +173,10 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
         source,
         as.integer(active_maxit),
         as.numeric(start),
+        as.integer(rank),
+        as.integer(native_svd_target_kind(target)),
+        as.numeric(tol),
+        as.logical(projected_stop_enabled),
         PACKAGE = "eigencore"
       )
     } else {
@@ -172,18 +188,46 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   iter <- NULL
   active_maxit <- maxit
   retries <- 0L
+  history <- list()
+  total_iterations <- 0L
+  total_matvecs <- 0L
+  total_native_seconds <- 0
+  total_ritz_seconds <- 0
   repeat {
+    native_started <- proc.time()[["elapsed"]]
     iter <- run_native(active_maxit)
-    used <- seq_len(iter$iterations)
+    native_elapsed <- proc.time()[["elapsed"]] - native_started
+    total_native_seconds <- total_native_seconds + native_elapsed
+
+    ritz_started <- proc.time()[["elapsed"]]
     final <- native_golub_kahan_ritz(
       op,
-      iter$U[, used, drop = FALSE],
-      iter$V[, used, drop = FALSE],
-      iter$alpha[used],
-      iter$beta[used],
+      iter$U,
+      iter$V,
+      iter$alpha,
+      iter$beta,
       rank,
       target,
-      tol
+      tol,
+      active_iterations = iter$iterations
+    )
+    ritz_elapsed <- proc.time()[["elapsed"]] - ritz_started
+    total_ritz_seconds <- total_ritz_seconds + ritz_elapsed
+    total_iterations <- total_iterations + iter$iterations
+    total_matvecs <- total_matvecs + iter$matvecs
+    history[[length(history) + 1L]] <- data.frame(
+      retry = retries,
+      max_subspace = active_maxit,
+      iterations = iter$iterations,
+      matvecs = iter$matvecs,
+      cumulative_iterations = total_iterations,
+      cumulative_matvecs = total_matvecs,
+      native_seconds = native_elapsed,
+      ritz_seconds = ritz_elapsed,
+      nconv = sum(final$certificate$converged),
+      certificate_passed = isTRUE(final$certificate$passed),
+      max_residual = final$certificate$max_residual,
+      max_backward_error = final$certificate$max_backward_error
     )
 
     if (all(final$certificate$converged) || fixed_maxit || active_maxit >= limit) {
@@ -196,6 +240,39 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     )
   }
 
+  prefix_diagnostics <- isTRUE(getOption("eigencore.golub_kahan_prefix_diagnostics", FALSE))
+  prefix_history <- if (isTRUE(prefix_diagnostics)) {
+    native_golub_kahan_prefix_diagnostics(
+      op,
+      iter = iter,
+      rank = rank,
+      target = target,
+      tol = tol
+    )
+  } else {
+    data.frame(
+      prefix_iterations = integer(0),
+      prefix_matvecs = integer(0),
+      nconv = integer(0),
+      certificate_passed = logical(0),
+      max_residual = numeric(0),
+      max_backward_error = numeric(0),
+      error = character(0),
+      stringsAsFactors = FALSE
+    )
+  }
+  certified_prefixes <- prefix_history$prefix_iterations[prefix_history$certificate_passed]
+  first_certified_prefix <- if (length(certified_prefixes)) {
+    min(certified_prefixes)
+  } else {
+    NA_integer_
+  }
+  final_prefix_overshoot <- if (is.na(first_certified_prefix)) {
+    NA_integer_
+  } else {
+    max(0L, iter$iterations - first_certified_prefix)
+  }
+
   if (vectors == "left") {
     final$v <- NULL
   } else if (vectors == "right") {
@@ -204,24 +281,311 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     final$u <- NULL
     final$v <- NULL
   }
-  final$iterations <- iter$iterations
-  final$matvecs <- iter$matvecs
+  final$iterations <- total_iterations
+  final$matvecs <- total_matvecs
+  final$restarts <- retries
+  final$stage_seconds <- c(
+    native_iteration = total_native_seconds,
+    ritz = total_ritz_seconds,
+    retry_overhead = 0
+  )
+  final$convergence_history <- do.call(rbind, history)
   final$restart <- list(
     kind = "adaptive_subspace_growth",
     implemented = TRUE,
     ritz_native = TRUE,
+    restart_policy = "grow subspace until certificate convergence or limit",
     retries = retries,
+    attempts = retries + 1L,
     final_max_subspace = active_maxit,
-    fixed_max_subspace = fixed_maxit
+    fixed_max_subspace = fixed_maxit,
+    converged = all(final$certificate$converged),
+    nconv = sum(final$certificate$converged),
+    max_backward_error = final$certificate$max_backward_error,
+    total_iterations = total_iterations,
+    total_matvecs = total_matvecs,
+    final_iterations = iter$iterations,
+    final_matvecs = iter$matvecs,
+    projected_stop_enabled = projected_stop_enabled,
+    projected_stop_requested = projected_stop_requested,
+    projected_stop_disable_reason = projected_stop_disable_reason %||% NA_character_,
+    projected_stop = isTRUE(iter$projected_stop),
+    projected_nconv = iter$projected_nconv %||% NA_integer_,
+    projected_max_residual = iter$projected_max_residual %||% NA_real_,
+    projected_checks = iter$projected_checks %||% NA_integer_,
+    projected_seconds = iter$projected_seconds %||% NA_real_,
+    prefix_diagnostics = prefix_diagnostics,
+    prefix_history = prefix_history,
+    first_certified_prefix = first_certified_prefix,
+    final_prefix_iteration_overshoot = final_prefix_overshoot,
+    final_prefix_matvec_overshoot = if (is.na(final_prefix_overshoot)) NA_integer_ else 2L * final_prefix_overshoot,
+    stage_seconds = final$stage_seconds,
+    history = final$convergence_history
   )
   final
 }
 
 #' @keywords internal
+native_golub_kahan_prefix_diagnostics <- function(op, iter, rank, target, tol) {
+  iterations <- as.integer(iter$iterations %||% 0L)
+  rank <- as.integer(rank)
+  if (iterations < rank) {
+    return(data.frame(
+      prefix_iterations = integer(0),
+      prefix_matvecs = integer(0),
+      nconv = integer(0),
+      certificate_passed = logical(0),
+      max_residual = numeric(0),
+      max_backward_error = numeric(0)
+    ))
+  }
+
+  candidate_prefixes <- unique(c(
+    rank,
+    2L * rank,
+    4L * rank,
+    4L * rank + 20L,
+    8L * rank + 20L,
+    iterations
+  ))
+  prefixes <- sort(unique(as.integer(candidate_prefixes[
+    candidate_prefixes >= rank & candidate_prefixes <= iterations
+  ])))
+
+  rows <- lapply(prefixes, function(prefix) {
+    fit <- tryCatch(
+      native_golub_kahan_ritz(
+        op,
+        iter$U,
+        iter$V,
+        iter$alpha,
+        iter$beta,
+        rank,
+        target,
+        tol,
+        active_iterations = prefix
+      ),
+      error = function(e) {
+        structure(list(error = conditionMessage(e)), class = "eigencore_prefix_error")
+      }
+    )
+    if (inherits(fit, "eigencore_prefix_error")) {
+      return(data.frame(
+        prefix_iterations = prefix,
+        prefix_matvecs = 2L * prefix,
+        nconv = 0L,
+        certificate_passed = FALSE,
+        max_residual = Inf,
+        max_backward_error = Inf,
+        error = fit$error,
+        stringsAsFactors = FALSE
+      ))
+    }
+    data.frame(
+      prefix_iterations = prefix,
+      prefix_matvecs = 2L * prefix,
+      nconv = sum(fit$certificate$converged),
+      certificate_passed = isTRUE(fit$certificate$passed),
+      max_residual = fit$certificate$max_residual,
+      max_backward_error = fit$certificate$max_backward_error,
+      error = "",
+      stringsAsFactors = FALSE
+    )
+  })
+  do.call(rbind, rows)
+}
+
+#' @keywords internal
+native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
+                            vectors = c("both", "left", "right", "none")) {
+  vectors <- match.arg(vectors)
+  op <- as_operator(op)
+  source <- source_or_null(op)
+  storage <- op$metadata$storage %||% NULL
+  if (!identical(storage, "dgCMatrix") && !(is.matrix(source) && is.double(source))) {
+    stop("Native Gram SVD requires a dense double matrix or dgCMatrix operator.", call. = FALSE)
+  }
+  if (!native_gram_svd_target_supported(target)) {
+    stop("Native Gram SVD special case supports only largest singular values.", call. = FALSE)
+  }
+
+  A <- if (identical(storage, "dgCMatrix")) op$metadata$matrix else source
+  m <- op$dim[1L]
+  n <- op$dim[2L]
+  limit <- min(m, n)
+  rank <- min(as.integer(rank), limit)
+  if (rank < 1L) {
+    stop("rank must be positive.", call. = FALSE)
+  }
+
+  if (n <= m) {
+    gram <- as.matrix(crossprod(A))
+    small <- gram_svd_eigen_slice(gram, rank, target)
+    d <- sqrt(pmax(small$values, 0))
+    v_full <- small$vectors
+    u_full <- as.matrix(A %*% v_full)
+    zero_tol <- gram_svd_zero_tolerance(d, tol)
+    nz <- d > zero_tol
+    d[!nz] <- 0
+    if (any(nz)) {
+      u_full[, nz] <- sweep(u_full[, nz, drop = FALSE], 2L, d[nz], `/`)
+    }
+    if (any(!nz)) {
+      v_full[, !nz] <- orthonormal_completion(
+        v_full[, nz, drop = FALSE],
+        n_rows = n,
+        needed = sum(!nz),
+        tol = zero_tol
+      )
+      u_full[, !nz] <- orthonormal_completion(
+        u_full[, nz, drop = FALSE],
+        n_rows = m,
+        needed = sum(!nz),
+        tol = zero_tol
+      )
+    }
+  } else {
+    gram <- as.matrix(tcrossprod(A))
+    small <- gram_svd_eigen_slice(gram, rank, target)
+    d <- sqrt(pmax(small$values, 0))
+    u_full <- small$vectors
+    v_full <- as.matrix(crossprod(A, u_full))
+    zero_tol <- gram_svd_zero_tolerance(d, tol)
+    nz <- d > zero_tol
+    d[!nz] <- 0
+    if (any(nz)) {
+      v_full[, nz] <- sweep(v_full[, nz, drop = FALSE], 2L, d[nz], `/`)
+    }
+    if (any(!nz)) {
+      u_full[, !nz] <- orthonormal_completion(
+        u_full[, nz, drop = FALSE],
+        n_rows = m,
+        needed = sum(!nz),
+        tol = zero_tol
+      )
+      v_full[, !nz] <- orthonormal_completion(
+        v_full[, nz, drop = FALSE],
+        n_rows = n,
+        needed = sum(!nz),
+        tol = zero_tol
+      )
+    }
+  }
+
+  cert <- certify_svd_operator(op, d, u_full, v_full, tol = tol)
+  u <- u_full
+  v <- v_full
+  if (vectors == "left") {
+    v <- NULL
+  } else if (vectors == "right") {
+    u <- NULL
+  } else if (vectors == "none") {
+    u <- NULL
+    v <- NULL
+  }
+
+  list(
+    d = d,
+    u = u,
+    v = v,
+    values = d,
+    residuals = cert$residuals,
+    backward_error = cert$backward_error,
+    orthogonality = cert$orthogonality,
+    certificate = cert,
+    iterations = 1L,
+    matvecs = 2L,
+    restart = list(
+      kind = "gram_svd_special_case",
+      implemented = TRUE,
+      native = TRUE,
+      gram_side = if (n <= m) "right" else "left",
+      gram_dimension = min(m, n),
+      zero_singular_completion = any(!nz),
+      zero_singular_threshold = zero_tol,
+      certified_in_original_coordinates = TRUE
+    )
+  )
+}
+
+#' @keywords internal
+gram_svd_eigen_slice <- function(gram, rank, target) {
+  rank <- min(as.integer(rank), nrow(gram))
+  kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
+  if (kind %in% c("largest", "largest_magnitude") && rank < nrow(gram)) {
+    selected <- tryCatch(
+      native_dense_symmetric_eigen_selected(gram, rank, largest()),
+      error = function(e) NULL
+    )
+    if (!is.null(selected)) {
+      return(list(
+        values = selected$values,
+        vectors = selected$vectors
+      ))
+    }
+  }
+  eig <- native_dense_symmetric_eigen(gram)
+  idx <- order_indices(eig$values, target)
+  idx <- idx[seq_len(min(rank, length(idx)))]
+  list(
+    values = eig$values[idx],
+    vectors = eig$vectors[, idx, drop = FALSE]
+  )
+}
+
+#' @keywords internal
+gram_svd_zero_tolerance <- function(d, tol) {
+  scale <- max(1, d, na.rm = TRUE)
+  max(100 * .Machine$double.eps * scale, sqrt(.Machine$double.eps) * scale, tol * scale * 1e-3)
+}
+
+#' @keywords internal
+orthonormal_completion <- function(Q, n_rows, needed, tol = sqrt(.Machine$double.eps)) {
+  needed <- as.integer(needed)
+  if (needed < 1L) {
+    return(matrix(0, n_rows, 0L))
+  }
+  Q <- if (is.null(Q) || ncol(Q) == 0L) {
+    matrix(0, n_rows, 0L)
+  } else {
+    as.matrix(Q)
+  }
+  out <- matrix(0, n_rows, needed)
+  accepted <- 0L
+  against <- Q
+  for (j in seq_len(n_rows)) {
+    z <- numeric(n_rows)
+    z[[j]] <- 1
+    if (ncol(against) > 0L) {
+      for (pass in 1:2) {
+        z <- z - as.vector(against %*% crossprod(against, z))
+      }
+    }
+    z_norm <- sqrt(sum(z^2))
+    if (z_norm > tol) {
+      accepted <- accepted + 1L
+      out[, accepted] <- z / z_norm
+      against <- cbind(against, out[, accepted, drop = FALSE])
+      if (accepted == needed) {
+        break
+      }
+    }
+  }
+  if (accepted < needed) {
+    stop("Could not complete an orthonormal nullspace basis for zero singular triplets.",
+         call. = FALSE)
+  }
+  out
+}
+
+#' @keywords internal
 reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
                                      oversample = 10L, n_iter = 2L,
-                                     vectors = c("both", "left", "right", "none")) {
+                                     vectors = c("both", "left", "right", "none"),
+                                     refine = TRUE,
+                                     normalizer = c("qr", "lu", "none")) {
   vectors <- match.arg(vectors)
+  normalizer <- match.arg(normalizer)
   op <- as_operator(op)
   if (is.null(op$apply_adjoint)) {
     stop("Randomized SVD requires an adjoint operator.", call. = FALSE)
@@ -237,12 +601,13 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
   Omega <- matrix(stats::rnorm(n * l), nrow = n, ncol = l)
   Y <- apply_operator(op, Omega)
   matvecs <- 1L
-  Q <- qr.Q(qr(Y))
+  Q <- randomized_svd_normalize(Y, normalizer, final = n_iter == 0L)
   for (iter in seq_len(n_iter)) {
     Z <- apply_adjoint_operator(op, Q)
+    Z <- randomized_svd_normalize(Z, normalizer, final = FALSE)
     Y <- apply_operator(op, Z)
     matvecs <- matvecs + 2L
-    Q <- qr.Q(qr(Y))
+    Q <- randomized_svd_normalize(Y, normalizer, final = iter == n_iter)
   }
 
   B_t <- apply_adjoint_operator(op, Q)
@@ -255,6 +620,24 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
   u <- Q %*% small$u[, idx, drop = FALSE]
   v <- small$v[, idx, drop = FALSE]
   cert <- certify_svd_operator(op, d, u, v, tol = tol)
+  initial_cert <- cert
+
+  refinement <- NULL
+  if (isTRUE(refine) && !isTRUE(cert$passed)) {
+    refinement <- tryCatch(
+      native_gram_svd(op, rank = rank, target = target, tol = tol, vectors = "both"),
+      error = function(e) {
+        structure(list(error = conditionMessage(e)), class = "eigencore_refinement_error")
+      }
+    )
+    if (!inherits(refinement, "eigencore_refinement_error") &&
+        isTRUE(refinement$certificate$passed)) {
+      d <- refinement$d
+      u <- refinement$u
+      v <- refinement$v
+      cert <- refinement$certificate
+    }
+  }
 
   if (vectors == "left") {
     v <- NULL
@@ -274,16 +657,79 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
     orthogonality = cert$orthogonality,
     certificate = cert,
     iterations = n_iter + 1L,
-    matvecs = matvecs,
+    matvecs = matvecs + if (!is.null(refinement) && !inherits(refinement, "eigencore_refinement_error")) {
+      refinement$matvecs
+    } else {
+      0L
+    },
     restart = list(
-      kind = "randomized_range_finder",
+      kind = if (!is.null(refinement) && !inherits(refinement, "eigencore_refinement_error") &&
+        isTRUE(refinement$certificate$passed)) {
+        "randomized_range_finder_refined"
+      } else {
+        "randomized_range_finder"
+      },
       implemented = TRUE,
       native = FALSE,
       oversample = oversample,
       n_iter = n_iter,
-      sample_dimension = l
+      normalizer = normalizer,
+      sample_dimension = l,
+      approximate = TRUE,
+      certificate_policy = if (isTRUE(refine)) {
+        "residual certificate, with deterministic refinement when needed"
+      } else {
+        "residual certificate only; stochastic sketch is not sufficient to pass"
+      },
+      refine = isTRUE(refine),
+      initial_certificate_passed = isTRUE(initial_cert$passed),
+      initial_max_backward_error = initial_cert$max_backward_error,
+      refinement_attempted = !is.null(refinement),
+      refinement_kind = if (!is.null(refinement) && !inherits(refinement, "eigencore_refinement_error")) {
+        refinement$restart$kind
+      } else {
+        NA_character_
+      },
+      refinement_passed = !is.null(refinement) &&
+        !inherits(refinement, "eigencore_refinement_error") &&
+        isTRUE(refinement$certificate$passed),
+      refinement_error = if (inherits(refinement, "eigencore_refinement_error")) {
+        refinement$error
+      } else {
+        NA_character_
+      }
     )
   )
+}
+
+#' @keywords internal
+randomized_svd_normalize <- function(X, normalizer = c("qr", "lu", "none"),
+                                     final = FALSE) {
+  normalizer <- match.arg(normalizer)
+  if (isTRUE(final) || identical(normalizer, "qr")) {
+    return(qr.Q(qr(X)))
+  }
+  if (identical(normalizer, "none")) {
+    return(X)
+  }
+  randomized_svd_lu_normalize(X)
+}
+
+#' @keywords internal
+randomized_svd_lu_normalize <- function(X) {
+  out <- tryCatch({
+    lu <- Matrix::lu(Matrix::Matrix(X, sparse = FALSE))
+    pieces <- Matrix::expand(lu)
+    L <- as.matrix(pieces$L)
+    if (ncol(L) > ncol(X)) {
+      L <- L[, seq_len(ncol(X)), drop = FALSE]
+    }
+    L
+  }, error = function(e) NULL)
+  if (is.null(out) || !identical(nrow(out), nrow(X)) || ncol(out) < ncol(X)) {
+    return(qr.Q(qr(X)))
+  }
+  out[, seq_len(ncol(X)), drop = FALSE]
 }
 
 #' @keywords internal
@@ -336,7 +782,15 @@ native_svd_target_kind <- function(target) {
 }
 
 #' @keywords internal
-native_golub_kahan_ritz <- function(op, U, V, alpha, beta, rank, target, tol) {
+native_gram_svd_target_supported <- function(target) {
+  kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
+  kind %in% c("largest", "largest_magnitude")
+}
+
+#' @keywords internal
+native_golub_kahan_ritz <- function(op, U, V, alpha, beta, rank, target, tol,
+                                    active_iterations = NULL) {
+  active_iterations <- as.integer(active_iterations %||% length(alpha))
   ritz <- .Call(
     "eigencore_golub_kahan_ritz",
     U,
@@ -345,6 +799,7 @@ native_golub_kahan_ritz <- function(op, U, V, alpha, beta, rank, target, tol) {
     as.numeric(beta),
     as.integer(rank),
     as.integer(native_svd_target_kind(target)),
+    active_iterations,
     PACKAGE = "eigencore"
   )
   cert <- certify_svd_operator(op, ritz$d, ritz$u, ritz$v, tol = tol)

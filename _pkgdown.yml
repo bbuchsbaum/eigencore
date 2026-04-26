@@ -1,0 +1,116 @@
+url: https://bbuchsbaum.github.io/eigencore/
+
+destination: pkgdown_site
+
+template:
+  bootstrap: 5
+  light-switch: true
+  bslib:
+    primary: "#0054AD"
+    border-radius: 0.5rem
+    btn-border-radius: 0.25rem
+
+home:
+  title: eigencore — Certified Partial Spectral Computation in R
+  description: >
+    A native engine for certified partial eigenvalue and singular-value
+    computation in R. Faster than RSpectra/PRIMME on its core workloads, and
+    every result carries residuals, backward error, orthogonality loss, and an
+    inspectable solver plan.
+
+navbar:
+  structure:
+    left:  [intro, articles, reference, news]
+    right: [search, lightswitch, github]
+
+reference:
+- title: User entry points
+  desc: High-level functions for partial eigenvalue and SVD computation.
+  contents:
+  - eig_partial
+  - svd_partial
+
+- title: RSpectra-compatible shims
+  desc: Drop-in replacements for `RSpectra::eigs()`, `eigs_sym()`, and `svds()`.
+  contents:
+  - eigs
+  - eigs_sym
+  - svds
+
+- title: Problems and planning
+  desc: Build problem descriptors and inspect the solver plan.
+  contents:
+  - eigen_problem
+  - svd_problem
+  - plan_solver
+  - solve.eigencore_eigen_problem
+  - solve.eigencore_svd_problem
+
+- title: Operators
+  desc: Block-native linear operators and operator algebra.
+  contents:
+  - linear_operator
+  - as_operator
+  - adjoint
+  - check_adjoint
+  - compose
+  - crossprod_operator
+  - symmetric_operator
+  - scale_cols
+  - scale_rows
+  - center
+
+- title: Targets
+  desc: Selectors describing which part of the spectrum you want.
+  contents:
+  - largest
+  - smallest
+  - largest_magnitude
+  - smallest_magnitude
+  - largest_real
+  - smallest_real
+  - largest_imaginary
+  - smallest_imaginary
+  - both_ends
+  - nearest
+
+- title: Methods
+  desc: Solver families and method descriptors.
+  contents:
+  - auto
+  - lanczos
+  - lobpcg
+  - golub_kahan
+  - randomized
+  - shift_invert
+
+- title: Preconditioners
+  desc: Preconditioner factories for iterative solvers.
+  contents:
+  - shifted_cholesky_preconditioner
+  - shifted_tridiagonal_preconditioner
+
+- title: Spaces and structure tags
+  contents:
+  - euclidean
+  - hermitian
+  - general
+
+- title: Results, certificates, diagnostics
+  desc: Inspecting solver output and the numerical evidence.
+  contents:
+  - certificate
+  - residuals
+  - backward_error
+  - values
+  - vectors
+  - left_vectors
+  - right_vectors
+  - diagnostics
+
+articles:
+- title: Get started
+  navbar: ~
+  contents:
+  - eigencore
+  - certificates

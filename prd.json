@@ -406,17 +406,21 @@
       ],
       "current_implementation_status": {
         "status": "in_progress",
-        "implemented_path": "native scalar thick-restart Hermitian Lanczos for dense double matrices and dgCMatrix operators; native block Hermitian Lanczos prototype for dense double matrices and dgCMatrix operators",
+        "implemented_path": "native scalar thick-restart Hermitian Lanczos for dense double matrices and dgCMatrix operators; native block Hermitian Lanczos thick-restart candidate for dense double matrices and dgCMatrix operators with an honest non-promoted planner label",
         "prototype_paths": [
-          "native block Hermitian Lanczos prototype with block operator application, Rayleigh-Ritz extraction, no thick restart, and no locking",
+          "native block Hermitian Lanczos thick-restart candidate with block operator application, structured projected recurrence, four-vector capped Ritz padding, tuned adaptive block/max_subspace defaults for large sparse k >= 16 rows, CSC Ritz-vector residual application, allocation-free CholQR2 block acceptance, read-only restart Ritz residual checks that preserve A*V blocks, guarded native final subspace polishing with residual reuse, residual-refresh fast path, Rayleigh-Ritz fallback, locked-prefix preservation on exhausted partial-lock runs, best-so-far restart snapshot recovery, per-restart convergence history, small-dense native full-subspace fallback with selected dsyevr extraction and no-allocation dense symmetry detection, native stage diagnostics, Rayleigh-Ritz extraction, native restart metadata, and native locking metadata; current strict quick gates and larger k staging certify and pass PRIMME parity, the n = 1000, k = 20 path row passes the RSpectra speed target locally, and the n = 10000, k = 20 path row certifies with adaptive block-4 controls and passes the robust certified RSpectra/PRIMME speed references locally, but the dense Hermitian regression row remains just below memory parity, so it is not promoted",
           "internal reference LOBPCG spike proving preconditioner leverage on graph Laplacian smallest-eigenpair cases",
           "explicit lobpcg() method descriptor and shifted_cholesky_preconditioner() helper routed through normal eigencore result/certificate objects with a reference-prototype planner label",
           "native shifted tridiagonal preconditioner for path-Laplacian-style benchmark cases",
-          "typed preconditioner metadata and call-count diagnostics threaded into LOBPCG results, planner reasons, and benchmark gate rows"
+          "typed preconditioner metadata and call-count diagnostics threaded into LOBPCG results, planner reasons, and benchmark gate rows",
+          "native standard Hermitian LOBPCG prototype for dense double and dgCMatrix operators with optional native shifted tridiagonal preconditioning; direct n = 10000, k = 20 path-Laplacian probes certify locally with the shifted tridiagonal preconditioner but remain a separate LOBPCG milestone path, not a G1 block-Lanczos substitute"
         ],
         "native_certificate_paths": [
           "dense standard eigen certificate diagnostics",
-          "built-in dense, dgCMatrix, and diagonal standard operator certificate diagnostics"
+          "built-in dense, dgCMatrix, and diagonal standard operator certificate diagnostics",
+          "native dense generalized SPD operator certificate diagnostics",
+          "residual-backed generalized SPD operator certificate helper for future native iteration loops",
+          "native diagonal B-CholQR2 support for generalized SPD LOBPCG prototypes without dense B materialization"
         ],
         "supported_native_targets": [
           "largest algebraic",
@@ -426,12 +430,12 @@
         ],
         "not_yet_satisfied": [
           "true block Lanczos/Krylov-Schur performance path",
-          "block thick restart and locking",
-          "native LOBPCG/preconditioner production path with memory below sparse references",
+          "promoted block thick restart and locking path with adversarial correctness and benchmark gates green",
+          "native LOBPCG/preconditioner production hardening beyond the strict quick staging gate",
           "nearest sigma through shift-invert",
           "RSpectra/PRIMME speed and memory gate"
         ],
-        "planner_policy": "Use honest scalar-native or block-prototype labels for current paths; route unsupported targets such as nearest() away from native Lanczos rather than remapping them."
+        "planner_policy": "Use honest scalar-native or block-candidate labels for current paths; route unsupported targets such as nearest() away from native Lanczos rather than remapping them. Promote the block label only after adversarial correctness and RSpectra/PRIMME gates pass."
       },
       "generalized_spd": {
         "problem": "A x = lambda B x, B positive definite",
@@ -537,7 +541,27 @@
         "factorization diagnostics",
         "singularity/near-singularity warnings",
         "residuals computed in original problem, not transformed problem only"
-      ]
+      ],
+      "current_implementation_status": {
+        "status": "in_progress",
+        "implemented_path": "reference Hermitian Lanczos shift-invert via base::solve / Matrix::solve factorization for dense double, dgCMatrix, and dsCMatrix sources, plus a user-supplied solve operator for matrix-free A; eigenvalues returned in original coordinates with full operator-side certification.",
+        "honest_planner_labels": [
+          "reference Hermitian Lanczos shift-invert (dense LU)",
+          "reference Hermitian Lanczos shift-invert (sparse LU)",
+          "reference Hermitian Lanczos shift-invert (user solve)"
+        ],
+        "guards": [
+          "near-singular shifted operator detected via rcond and rejected with an actionable error",
+          "zero-magnitude inverted eigenvalue detected and rejected with an actionable error",
+          "generalized SPD shift-invert (B != NULL) rejected at plan time with a roadmap note"
+        ],
+        "not_yet_satisfied": [
+          "native shift-invert hot loop (factorization cache and apply driven from C++)",
+          "generalized SPD shift-invert (A - sigma B)^(-1) B x",
+          "compatibility with the `nearest()` target on native Lanczos without going through the reference path"
+        ],
+        "planner_policy": "All shift-invert paths are honestly labelled as `reference Hermitian Lanczos shift-invert (...)` until a native hot loop lands. Generalized cases fail loudly at plan time."
+      }
     }
   },
   "solver_planner": {
@@ -998,7 +1022,7 @@
         "beats or matches RSpectra on initial Hermitian benchmark subset",
         "returns certified residuals"
       ],
-      "current_status": "In progress: certified native scalar thick-restart path exists for dense/CSC Hermitian problems, and a native block Hermitian prototype exists, but the full block thick-restart solver, production LOBPCG/preconditioner path, and RSpectra/PRIMME performance gate remain open."
+      "current_status": "In progress: certified native scalar thick-restart path exists for dense/CSC Hermitian problems, a native block Hermitian thick-restart candidate exists under an honest non-promoted label and certifies the quick path-Laplacian and dense Hermitian rows, but it is not promoted. The current block candidate passes path-row memory and PRIMME parity after tuned restart defaults, adaptive block-4 controls for large sparse k >= 16 rows, four-vector capped Ritz padding, read-only restart Ritz residual checks that preserve A*V blocks, guarded native final subspace polishing with residual reuse plus residual-refresh and Rayleigh-Ritz fallback paths, locked-prefix preservation on exhausted partial-lock runs, best-so-far restart snapshot recovery, per-restart convergence history, selected dsyevr small-dense full-subspace fallback, and no-allocation dense symmetry detection; the n = 1000, k = 20 path row passes the RSpectra speed target locally, and the n = 10000, k = 20 path row certifies locally with adaptive block-4 controls while passing robust certified RSpectra and PRIMME references. Production promotion remains blocked because the dense Hermitian regression row remains just below memory parity. Native standard Hermitian LOBPCG with shifted tridiagonal preconditioning passes the strict path-Laplacian staging gate at n = 200, 1000, and 2000 with k = 5, and direct n = 10000, k = 20 path-Laplacian probes certify locally in the LOBPCG path. Native dense, diagonal, and CSC generalized SPD LOBPCG loop slices are available for explicit lobpcg() plans, while generalized preconditioning, matrix-free B, and production promotion remain open."
     },
     {
       "name": "Milestone 4",

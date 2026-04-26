@@ -131,6 +131,11 @@ benchmark_svd_methods <- function(A, rank, repeats = 3L,
       certificate_type = method_certificate_field(fit, "certificate_type"),
       norm_bound_type = method_certificate_field(fit, "norm_bound_type"),
       scale_is_estimate = method_certificate_field(fit, "scale_is_estimate"),
+      fallback_attempted = method_restart_field(fit, "fallback_attempted"),
+      fallback_used = method_restart_field(fit, "fallback_used"),
+      fallback_method = method_restart_field(fit, "fallback_method"),
+      gram_max_backward_error = method_restart_field(fit, "gram_max_backward_error"),
+      fallback_max_backward_error = method_restart_field(fit, "fallback_max_backward_error"),
       preconditioner_kind = method_preconditioner_field(fit, "kind"),
       preconditioner_native = method_preconditioner_field(fit, "native"),
       preconditioner_calls = method_preconditioner_calls(fit)
@@ -166,6 +171,7 @@ print.eigencore_benchmark <- function(x, ...) {
 available_eigen_methods <- function() {
   c(
     "eigencore",
+    "eigencore_block_candidate",
     "eigencore_block",
     "eigencore_lobpcg",
     "eigencore_lobpcg_preconditioned",
@@ -180,6 +186,8 @@ available_eigen_methods <- function() {
 available_svd_methods <- function() {
   c(
     "eigencore",
+    "eigencore_golub_kahan",
+    "eigencore_golub_kahan_projected",
     "eigencore_randomized",
     "base",
     if (requireNamespace("RSpectra", quietly = TRUE)) "RSpectra",
@@ -190,15 +198,50 @@ available_svd_methods <- function() {
 }
 
 #' @keywords internal
+benchmark_block_candidate_lanczos_method <- function(A, k) {
+  n <- nrow(A)
+  k <- as.integer(k)
+  if (k >= 16L && n >= 5000L) {
+    lanczos(
+      block = 4L,
+      max_subspace = max(default_block_lanczos_max_subspace(k, 4L), 16L * k),
+      max_restarts = 100L
+    )
+  } else {
+    lanczos(block = 2L, max_restarts = 100L)
+  }
+}
+
+#' @keywords internal
+benchmark_rspectra_eigen_opts <- function(A, k, target) {
+  n <- nrow(A)
+  k <- as.integer(k)
+  target_kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
+  storage <- tryCatch(as_operator(A)$metadata$storage %||% NULL, error = function(e) NULL)
+  if (identical(storage, "dgCMatrix") && identical(target_kind, "smallest") &&
+      k >= 16L && n >= 5000L) {
+    return(list(ncv = min(n, max(2L * k + 1L, 6L * k)), maxitr = 20000L))
+  }
+  list()
+}
+
+#' @keywords internal
 run_eigen_method <- function(method, A, k, target, tol) {
   switch(
     method,
     eigencore = eig_partial(A, k = k, target = target, tol = tol),
+    eigencore_block_candidate = eig_partial(
+      A,
+      k = k,
+      target = target,
+      method = benchmark_block_candidate_lanczos_method(A, k),
+      tol = tol
+    ),
     eigencore_block = eig_partial(
       A,
       k = k,
       target = target,
-      method = lanczos(block = min(4L, as.integer(k)), max_subspace = nrow(A)),
+      method = benchmark_block_candidate_lanczos_method(A, k),
       tol = tol
     ),
     eigencore_lobpcg = eig_partial(
@@ -219,13 +262,13 @@ run_eigen_method <- function(method, A, k, target, tol) {
       )
     },
     eigencore_lobpcg_tridiagonal = {
-      preconditioner <- shifted_tridiagonal_preconditioner(A, shift = 1e-3)
-      eig_partial(
-        A,
+      native_lobpcg_tridiagonal_hermitian(
+        as_operator(A),
         k = k,
         target = target,
-        method = lobpcg(maxit = 80L, preconditioner = preconditioner),
-        tol = tol
+        tol = tol,
+        maxit = 80L,
+        shift = 1e-3
       )
     },
     base = {
@@ -235,7 +278,12 @@ run_eigen_method <- function(method, A, k, target, tol) {
     },
     RSpectra = {
       which <- target_to_rspectra_which(target, symmetric = TRUE)
-      RSpectra::eigs_sym(A, k = k, which = which)
+      RSpectra::eigs_sym(
+        A,
+        k = k,
+        which = which,
+        opts = benchmark_rspectra_eigen_opts(A, k, target)
+      )
     },
     PRIMME = {
       which <- target_to_rspectra_which(target, symmetric = TRUE)
@@ -250,6 +298,24 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
   switch(
     method,
     eigencore = svd_partial(A, rank = rank, tol = tol, seed = seed),
+    eigencore_golub_kahan = svd_partial(
+      A,
+      rank = rank,
+      method = golub_kahan(),
+      tol = tol,
+      seed = seed
+    ),
+    eigencore_golub_kahan_projected = {
+      old_options <- options(eigencore.golub_kahan_projected_stop = TRUE)
+      on.exit(options(old_options), add = TRUE)
+      svd_partial(
+        A,
+        rank = rank,
+        method = golub_kahan(),
+        tol = tol,
+        seed = seed
+      )
+    },
     eigencore_randomized = svd_partial(
       A,
       rank = rank,
@@ -257,7 +323,16 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
       tol = tol,
       seed = seed
     ),
-    base = svd(as.matrix(A), nu = rank, nv = rank),
+    base = {
+      decomp <- svd(as.matrix(A), nu = rank, nv = rank)
+      idx <- seq_len(min(rank, length(decomp$d)))
+      list(
+        d = decomp$d[idx],
+        u = decomp$u[, idx, drop = FALSE],
+        v = decomp$v[, idx, drop = FALSE],
+        values = decomp$d[idx]
+      )
+    },
     RSpectra = RSpectra::svds(A, k = rank),
     PRIMME = PRIMME::svds(A, NSvals = rank, which = "L", tol = tol),
     irlba = irlba::irlba(A, nv = rank, nu = rank),
@@ -316,6 +391,15 @@ method_certificate_passed <- function(x) {
 method_certificate_field <- function(x, field) {
   cert <- x$certificate
   if (is.null(cert[[field]])) NA else cert[[field]]
+}
+
+#' @keywords internal
+method_restart_field <- function(x, field) {
+  restart <- x$restart %||% NULL
+  if (is.null(restart) || is.null(restart[[field]])) {
+    return(NA)
+  }
+  restart[[field]]
 }
 
 #' @keywords internal

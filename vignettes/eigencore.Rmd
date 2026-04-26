@@ -1,0 +1,150 @@
+---
+title: "Get started with eigencore"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Get started with eigencore}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+eigencore turns spectral computation into a five-step workflow:
+
+1. **Build an operator** describing the action of `A`.
+2. **Describe the problem** (eigen or SVD; metric `B`; spectral target).
+3. **Plan a solver** and inspect what it will run.
+4. **Solve.**
+5. **Inspect the certificate** — the numerical evidence that the result is trustworthy.
+
+This vignette walks through the workflow on three problem classes: a standard
+Hermitian eigenproblem, a generalized SPD eigenproblem with a metric `B`, and
+a partial SVD. It also shows the RSpectra-compatible shim for users migrating
+from existing code.
+
+```{r setup}
+library(eigencore)
+suppressPackageStartupMessages(library(Matrix))
+```
+
+## 1. Standard Hermitian eigenproblem
+
+Build a small symmetric matrix and ask for the five largest eigenvalues.
+
+```{r}
+set.seed(1)
+n <- 200
+A <- crossprod(matrix(rnorm(n * n), n, n)) / n + diag(n)
+```
+
+eigencore wraps the matrix in a *block-native operator* the moment you hand it
+to a problem constructor. You can do this explicitly:
+
+```{r}
+Aop <- as_operator(A)
+Aop
+```
+
+The operator carries dimensions, structure tags, and a flag indicating whether
+the underlying storage has a native kernel (in this case dense double — yes).
+
+### Build the problem and inspect the plan
+
+```{r}
+P    <- eigen_problem(A, structure = hermitian(), target = largest())
+plan <- plan_solver(P, k = 5)
+plan
+```
+
+The plan tells you *exactly* which kernel will be invoked. There is no
+silent dispatch.
+
+### Solve and read the certificate
+
+```{r}
+fit <- solve(P, k = 5)
+fit
+```
+
+```{r}
+fit$certificate
+```
+
+A passing certificate means: every requested pair has
+
+- residual `||A v - lambda v|| / s` below `tol`, where `s` is the labeled norm
+  bound (here `frobenius_exact`),
+- backward error below `tol`,
+- inter-vector orthogonality loss below the orthogonality tolerance.
+
+If any pair fails, the certificate's `failed_indices` slot tells you which.
+
+```{r}
+fit$values
+```
+
+## 2. Generalized SPD eigenproblem (`A v = lambda B v`)
+
+Pass a metric `B` to `eigen_problem()` (or to `eig_partial()` via the `B`
+argument).
+
+```{r}
+B <- diag(seq(1, 5, length.out = n))
+fit_gen <- eig_partial(A, k = 5, target = largest(), B = B,
+                       method = lobpcg(maxit = 200))
+fit_gen
+```
+
+The certificate's residual is `||A v - lambda B v|| / (||A|| + |lambda| ||B||)`,
+and orthogonality is measured in the `B`-inner product where appropriate.
+
+## 3. Partial SVD
+
+For rectangular problems use `svd_partial()`:
+
+```{r}
+M <- matrix(rnorm(400 * 50), 400, 50)
+svd_fit <- svd_partial(M, rank = 5, target = largest())
+svd_fit
+```
+
+The reported `method` again identifies the path — for very small or
+near-square problems eigencore may use a dense LAPACK SVD fallback rather than
+running its iterative Golub–Kahan kernel; either way the certificate covers
+both `||A v - sigma u||` and `||A^T u - sigma v||`.
+
+## 4. RSpectra-compatible workflow
+
+If your existing code uses `RSpectra::eigs_sym()`, you can call eigencore in
+the same shape — the return list extends RSpectra's by adding `certificate`
+and `diagnostics`:
+
+```{r}
+res <- eigs_sym(A, k = 5, which = "LA")
+str(res, max.level = 1)
+```
+
+```{r}
+res$certificate
+```
+
+`eigs()`, `eigs_sym()`, and `svds()` accept the same `which` codes as
+`RSpectra` — `"LM"`, `"SM"`, `"LA"`, `"SA"`, `"LR"`, `"SR"`, `"LI"`, `"SI"`,
+and `"BE"`.
+
+## Where to go next
+
+- The package reference, organised by topic, lives in the
+  [reference index](../reference/index.html).
+- `?certificate` documents the certificate fields in detail.
+- `?plan_solver` explains how operator structure, target, and method
+  combine to choose a kernel.
+- `linear_operator()` lets you wrap a matrix-free `apply` callback as a
+  first-class operator; eigencore's planner will warn when an R-level
+  callback is being driven from a block-native solver hot loop, so you
+  can decide whether to invest in a native operator implementation.

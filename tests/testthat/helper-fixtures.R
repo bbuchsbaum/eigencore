@@ -29,3 +29,34 @@ expect_certificate_clean <- function(fit, tol = 1e-8) {
   expect_true(all(is.finite(cert$backward_error)))
   expect_lte(cert$max_backward_error, tol)
 }
+
+#' @noRd
+spectrum_pattern <- function(pattern = c("uniform", "clustered", "exponential",
+                                         "geometric", "two_cluster"),
+                             n) {
+  pattern <- match.arg(pattern)
+  switch(
+    pattern,
+    uniform     = seq.int(1, n, length.out = n),
+    clustered   = c(rep(1, n - 3L) + seq.int(0, by = 1e-3, length.out = n - 3L),
+                    n / 2, n / 2 + 1, n),
+    exponential = exp(seq.int(-1, -n, length.out = n)),
+    geometric   = 0.7 ^ (seq.int(0, n - 1L)),
+    two_cluster = c(seq.int(1, 1 + 1e-3, length.out = floor(n / 2)),
+                    seq.int(n - 1, n, length.out = n - floor(n / 2)))
+  )
+}
+
+#' @noRd
+random_symmetric_with_spectrum <- function(n, pattern = "uniform", seed = 1L) {
+  vals <- spectrum_pattern(pattern, n)
+  symmetric_with_spectrum(vals, seed = seed)
+}
+
+#' @noRd
+random_rectangular_with_pattern <- function(m, n, rank = NULL,
+                                            pattern = "uniform", seed = 1L) {
+  rank <- rank %||% min(m, n)
+  vals <- spectrum_pattern(pattern, rank)
+  rectangular_with_singular_values(vals, m, n, seed = seed)
+}

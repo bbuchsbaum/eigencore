@@ -153,6 +153,18 @@ test_that("native B-CholQR2 gives a B-orthonormal basis", {
   expect_equal(out$R[lower.tri(out$R)], rep(0, sum(lower.tri(out$R))), tolerance = 1e-14)
 })
 
+test_that("native diagonal B-CholQR2 avoids dense B materialization", {
+  set.seed(404)
+  X <- matrix(rnorm(40), nrow = 10)
+  weights <- seq(1, 2, length.out = 10)
+  out <- eigencore:::native_diagonal_b_cholqr2(X, weights)
+
+  expect_equal(out$rank, ncol(X))
+  expect_equal(crossprod(out$Q, weights * out$Q), diag(ncol(X)), tolerance = 1e-12)
+  expect_equal(out$BQ, weights * out$Q, tolerance = 1e-12)
+  expect_equal(out$Q %*% out$R, X, tolerance = 1e-10)
+})
+
 test_that("B-orthogonalization respects an existing B-orthonormal basis", {
   set.seed(131)
   B0 <- matrix(rnorm(100), nrow = 10)

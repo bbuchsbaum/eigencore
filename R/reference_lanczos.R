@@ -1,4 +1,16 @@
 #' @keywords internal
+default_block_lanczos_max_subspace <- function(k, block) {
+  k <- as.integer(k)
+  block <- as.integer(block)
+  k_term <- if (k >= 16L) {
+    8L * k
+  } else {
+    6L * k + 10L
+  }
+  max(k_term, 6L * block + 20L)
+}
+
+#' @keywords internal
 reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
                                         maxit = NULL, vectors = TRUE,
                                         reorthogonalize = TRUE) {
@@ -186,7 +198,8 @@ native_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
 
 #' @keywords internal
 native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
-                                           maxit = NULL, block = 4L,
+                                           maxit = NULL, block = 2L,
+                                           max_restarts = 100L,
                                            vectors = TRUE) {
   op <- as_operator(op)
   if (op$dim[1L] != op$dim[2L]) {
@@ -202,21 +215,40 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
     stop("native block Hermitian Lanczos requires block >= 2.", call. = FALSE)
   }
   m_max <- if (is.null(maxit)) {
-    min(n, max(as.integer(k) + block, 8L * as.integer(k) + 4L * block))
+    min(n, default_block_lanczos_max_subspace(k, block))
   } else {
     min(n, as.integer(maxit))
   }
-  if (m_max < as.integer(k)) {
-    stop("max_subspace must be at least k.", call. = FALSE)
+  if (m_max < as.integer(k) + block) {
+    stop("max_subspace must be at least k + block for block thick-restart Lanczos.", call. = FALSE)
+  }
+  max_restarts <- as.integer(max_restarts)
+  if (length(max_restarts) != 1L || is.na(max_restarts) || max_restarts < 0L) {
+    stop("max_restarts must be a non-negative integer.", call. = FALSE)
+  }
+
+  norm_A <- operator_norm_for_certificate_info(op)$value
+  storage <- op$metadata$storage %||% NULL
+  source <- source_or_null(op)
+  target_kind <- lanczos_target_kind(target)
+  if (is.matrix(source) && is.double(source) && m_max >= n) {
+    return(native_block_full_subspace_hermitian(
+      op,
+      k = k,
+      target = target,
+      tol = tol,
+      block = block,
+      max_subspace = m_max,
+      max_restarts = max_restarts,
+      vectors = vectors
+    ))
   }
 
   start <- matrix(stats::rnorm(n * block), nrow = n, ncol = block)
-  storage <- op$metadata$storage %||% NULL
-  source <- source_or_null(op)
   iter <- if (identical(storage, "dgCMatrix")) {
     A <- op$metadata$matrix
     .Call(
-      "eigencore_block_lanczos_csc",
+      "eigencore_block_thick_restart_lanczos_csc",
       methods::slot(A, "i"),
       methods::slot(A, "p"),
       methods::slot(A, "x"),
@@ -224,20 +256,24 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
       as.integer(k),
       as.integer(m_max),
       as.integer(block),
-      as.integer(lanczos_target_kind(target)),
+      as.integer(target_kind),
       as.numeric(tol),
+      as.integer(max_restarts),
+      as.numeric(norm_A),
       start,
       PACKAGE = "eigencore"
     )
   } else if (is.matrix(source) && is.double(source)) {
     .Call(
-      "eigencore_block_lanczos_dense",
+      "eigencore_block_thick_restart_lanczos_dense",
       source,
       as.integer(k),
       as.integer(m_max),
       as.integer(block),
-      as.integer(lanczos_target_kind(target)),
+      as.integer(target_kind),
       as.numeric(tol),
+      as.integer(max_restarts),
+      as.numeric(norm_A),
       start,
       PACKAGE = "eigencore"
     )
@@ -251,6 +287,37 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
   if (!isTRUE(vectors)) {
     vec_matrix <- NULL
   }
+  ortho_passes <- as.integer(iter$ortho_passes %||% NA_integer_)
+  locking_events <- as.integer(iter$locking_events %||% 0L)
+  restarts_used <- as.integer(iter$restarts %||% 0L)
+  locked <- seq_len(iter$n_locked %||% 0L)
+  operator_allocations <- as.numeric(iter$operator_allocations %||% NA_real_)
+  operator_bytes_allocated <- as.numeric(iter$operator_bytes_allocated %||% NA_real_)
+  stage_seconds <- iter$stage_seconds %||% numeric()
+  restart_history <- iter$restart_history %||% NULL
+  restart_history <- if (is.list(restart_history) && length(restart_history)) {
+    data.frame(
+      restart = as.integer(restart_history$restart),
+      m_active = as.integer(restart_history$m_active),
+      selected_count = as.integer(restart_history$selected_count),
+      locked_before = as.integer(restart_history$locked_before),
+      locked_after = as.integer(restart_history$locked_after),
+      nconv_wanted = as.integer(restart_history$nconv_wanted),
+      max_residual = as.numeric(restart_history$max_residual),
+      max_backward_error = as.numeric(restart_history$max_backward_error)
+    )
+  } else {
+    data.frame(
+      restart = restarts_used,
+      m_active = iter$m_active_final %||% NA_integer_,
+      selected_count = NA_integer_,
+      locked_before = NA_integer_,
+      locked_after = iter$n_locked %||% sum(iter$converged),
+      nconv_wanted = sum(iter$converged),
+      max_residual = max(cert$residuals),
+      max_backward_error = cert$max_backward_error
+    )
+  }
 
   list(
     values = values,
@@ -261,23 +328,87 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
     certificate = cert,
     iterations = iter$iterations,
     matvecs = iter$matvecs,
-    convergence_history = data.frame(
-      restart = 0L,
-      iteration = iter$iterations,
-      n_locked = sum(iter$converged)
-    ),
-    locked = which(iter$converged),
+    restarts = restarts_used,
+    ortho_passes = ortho_passes,
+    locking_events = locking_events,
+    block = block,
+    operator_allocations = operator_allocations,
+    operator_bytes_allocated = operator_bytes_allocated,
+    stage_seconds = stage_seconds,
+    convergence_history = restart_history,
+    locked = locked,
     restart = list(
-      kind = "block_krylov_rayleigh_ritz",
+      kind = "block_thick_restart_candidate",
       implemented = TRUE,
-      locking = "none",
-      locked = which(iter$converged),
-      locked_count = sum(iter$converged),
-      restarts_used = 0L,
-      max_restarts = 0L,
+      locking = "in_native_loop",
+      locked = locked,
+      locked_count = iter$n_locked %||% sum(iter$converged),
+      restarts_used = restarts_used,
+      max_restarts = max_restarts,
       max_subspace = m_max,
       final_active_subspace = iter$m_active_final %||% NA_integer_,
-      block = block
+      block = block,
+      ortho_passes = ortho_passes,
+      locking_events = locking_events,
+      operator_allocations = operator_allocations,
+      operator_bytes_allocated = operator_bytes_allocated,
+      stage_seconds = stage_seconds,
+      history = restart_history
+    )
+  )
+}
+
+#' @keywords internal
+native_block_full_subspace_hermitian <- function(op, k, target, tol, block,
+                                                 max_subspace, max_restarts,
+                                                 vectors = TRUE) {
+  op <- as_operator(op)
+  source <- source_or_null(op)
+  if (!(is.matrix(source) && is.double(source))) {
+    stop("Full-subspace block Hermitian fallback requires a dense double source.", call. = FALSE)
+  }
+  target_kind <- lanczos_target_kind(target)
+  eig <- if (target_kind %in% c(1L, 2L)) {
+    tryCatch(
+      native_dense_symmetric_eigen_selected(source, k, target),
+      error = function(e) native_dense_symmetric_eigen(source)
+    )
+  } else {
+    native_dense_symmetric_eigen(source)
+  }
+  eig_values <- eig[[1L]]
+  eig_vectors <- eig[[2L]]
+  if (length(eig_values) > as.integer(k)) {
+    idx <- order_indices(eig_values, target)
+    idx <- idx[seq_len(min(as.integer(k), length(idx)))]
+    values <- eig_values[idx]
+    vec_matrix <- eig_vectors[, idx, drop = FALSE]
+  } else {
+    values <- eig_values
+    vec_matrix <- eig_vectors
+  }
+  cert <- certify_eigen_operator(op, values, vec_matrix, tol = tol)
+  if (!isTRUE(vectors)) {
+    vec_matrix <- NULL
+  }
+  nconv <- sum(cert$converged)
+  list(
+    values = values,
+    vectors = vec_matrix,
+    certificate = cert,
+    iterations = 1L,
+    matvecs = 0L,
+    restarts = 0L,
+    ortho_passes = 0L,
+    locking_events = 0L,
+    block = as.integer(block),
+    restart = list(
+      kind = "block_full_subspace_dense_lapack",
+      locking = "not_required_full_subspace",
+      locked_count = nconv,
+      max_subspace = max_subspace,
+      final_active_subspace = nrow(source),
+      block = as.integer(block)
     )
   )
 }
@@ -326,12 +457,16 @@ reference_lanczos_ritz <- function(op, Q, alpha, beta, k, target, tol) {
 
 #' @keywords internal
 native_tridiagonal_eigen <- function(alpha, beta) {
-  .Call(
+  out <- .Call(
     "eigencore_tridiagonal_eigen",
     as.numeric(alpha),
     as.numeric(beta),
     PACKAGE = "eigencore"
   )
+  if (is.null(names(out)) && length(out) == 2L) {
+    names(out) <- c("values", "vectors")
+  }
+  out
 }
 
 #' @keywords internal

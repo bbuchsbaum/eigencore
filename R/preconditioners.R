@@ -51,23 +51,55 @@ shifted_tridiagonal_preconditioner <- function(A, shift = 0) {
     stop("A must be square.", call. = FALSE)
   }
 
-  trip <- Matrix::summary(A)
-  if (any(abs(trip$i - trip$j) > 1L)) {
-    stop("A must be tridiagonal.", call. = FALSE)
-  }
   diag <- numeric(n)
   lower <- numeric(max(n - 1L, 0L))
   upper <- numeric(max(n - 1L, 0L))
-  for (idx in seq_len(nrow(trip))) {
-    i <- trip$i[idx]
-    j <- trip$j[idx]
-    x <- trip$x[idx]
-    if (i == j) {
-      diag[i] <- x
-    } else if (i == j + 1L) {
-      lower[j] <- x
-    } else if (j == i + 1L) {
-      upper[i] <- x
+  if (inherits(A, "diagonalMatrix")) {
+    diag <- as.numeric(Matrix::diag(A))
+  } else if (inherits(A, "CsparseMatrix")) {
+    i_slot <- methods::slot(A, "i") + 1L
+    p_slot <- methods::slot(A, "p")
+    x_slot <- methods::slot(A, "x")
+    for (j in seq_len(n)) {
+      start <- p_slot[[j]] + 1L
+      end <- p_slot[[j + 1L]]
+      if (start > end) {
+        next
+      }
+      for (pos in start:end) {
+        row <- i_slot[[pos]]
+        value <- x_slot[[pos]]
+        if (abs(row - j) > 1L) {
+          stop("A must be tridiagonal.", call. = FALSE)
+        }
+        if (row == j) {
+          diag[j] <- diag[j] + value
+        } else if (row == j + 1L) {
+          lower[j] <- lower[j] + value
+        } else if (row == j - 1L) {
+          upper[j - 1L] <- upper[j - 1L] + value
+        }
+      }
+    }
+  } else {
+    trip <- as.data.frame(Matrix::summary(A))
+    if (!all(c("i", "j", "x") %in% names(trip))) {
+      stop("A must be tridiagonal.", call. = FALSE)
+    }
+    if (any(abs(trip$i - trip$j) > 1L)) {
+      stop("A must be tridiagonal.", call. = FALSE)
+    }
+    for (idx in seq_len(nrow(trip))) {
+      i <- trip$i[idx]
+      j <- trip$j[idx]
+      x <- trip$x[idx]
+      if (i == j) {
+        diag[i] <- x
+      } else if (i == j + 1L) {
+        lower[j] <- x
+      } else if (j == i + 1L) {
+        upper[i] <- x
+      }
     }
   }
   if (n > 1L && !isTRUE(all.equal(lower, upper, tolerance = 1e-12))) {
@@ -119,7 +151,7 @@ new_eigencore_preconditioner <- function(apply, kind, native, ...) {
 }
 
 #' @keywords internal
-eigencore_preconditioner_info <- function(preconditioner) {
+eigencore_preconditioner_info <- function(preconditioner, include_arrays = TRUE) {
   if (is.null(preconditioner)) {
     return(list(
       supplied = FALSE,
@@ -137,12 +169,15 @@ eigencore_preconditioner_info <- function(preconditioner) {
       native = FALSE
     ))
   }
+  if (!isTRUE(include_arrays)) {
+    metadata[c("lower", "diag", "upper")] <- NULL
+  }
   c(list(supplied = TRUE), metadata)
 }
 
 #' @keywords internal
 preconditioner_plan_reason <- function(preconditioner) {
-  info <- eigencore_preconditioner_info(preconditioner)
+  info <- eigencore_preconditioner_info(preconditioner, include_arrays = FALSE)
   if (!isTRUE(info$supplied)) {
     return(NULL)
   }

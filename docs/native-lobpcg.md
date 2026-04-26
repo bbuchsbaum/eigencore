@@ -26,6 +26,18 @@ On the quick path-Laplacian gate (`n = 200`, `k = 5`, `tol = 1e-8`):
   `native`, `factorization`, `shift`, and call-count diagnostics, so the
   planner and benchmark gates can distinguish opaque R callbacks from
   native-backed solves.
+- a native standard Hermitian LOBPCG prototype now runs the iteration loop,
+  trial-basis orthogonalization, Rayleigh-Ritz projection, and shifted
+  tridiagonal preconditioner application in C++ for dense double and
+  `dgCMatrix` operators. On the path-Laplacian staging gate
+  (`n = 200, 1000, 2000`, `k = 5`) it certifies, beats scalar eigencore and the
+  best certified external reference, and passes the restored `0.25` memory
+  ratio gate. Reference failures are recorded as uncertified benchmark rows
+  rather than aborting the gate.
+- a direct large path-Laplacian probe (`n = 10000`, `k = 20`, `tol = 1e-8`,
+  shifted tridiagonal preconditioner) certifies 20/20 requested pairs in about
+  `4.8s` locally. This is evidence for the LOBPCG/M milestone, not a substitute
+  for G1 block-Lanczos promotion.
 
 ## Native ABI
 
@@ -65,11 +77,14 @@ int apply_preconditioner(void* impl,
 
 ## Acceptance
 
-- No R allocations inside the native iteration loop for built-in operators and
-  built-in preconditioners.
-- Preconditioned path certifies the quick Laplacian gate faster than scalar
-  eigencore and PRIMME.
+- No R allocations inside the native iteration loop for the native standard
+  Hermitian path with built-in operators and the shifted tridiagonal
+  preconditioner.
+- Preconditioned path certifies the Laplacian staging gate faster than scalar
+  eigencore and the best certified external reference.
 - Memory ratio versus the best sparse reference improves materially over the
-  reference R/Matrix path.
-- Planner label changes from `reference LOBPCG prototype` to a native label
-  only for supported built-in operator/preconditioner combinations.
+  reference R/Matrix path and stays inside the preconditioned LOBPCG staging
+  ceiling.
+- Planner label changes from `reference LOBPCG prototype` to
+  `native standard Hermitian LOBPCG prototype` only for supported built-in
+  operator/preconditioner combinations.

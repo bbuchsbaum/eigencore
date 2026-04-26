@@ -6,7 +6,11 @@ print.eigencore_eigen_result <- function(x, ...) {
   cat("  method:", x$method, "\n")
   cat("  target:", x$target, "\n")
   if (!is.null(x$restart)) {
-    cat("  restart:", x$restart$kind, "(", x$restart$locking, ")\n", sep = "")
+    if (!is.null(x$restart$locking)) {
+      cat("  restart:", x$restart$kind, "(", x$restart$locking, ")\n", sep = "")
+    } else {
+      cat("  restart:", x$restart$kind, "\n")
+    }
     cat("  locked:", length(x$locked %||% integer(0)), "\n")
   }
   cat("  max residual:", format(x$certificate$max_residual), "\n")

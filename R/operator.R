@@ -286,6 +286,9 @@ is_square_symmetric <- function(x, tol = sqrt(.Machine$double.eps)) {
   if (inherits(x, "Matrix")) {
     return(isTRUE(Matrix::isSymmetric(x, tol = tol)))
   }
+  if (is.matrix(x) && is.double(x)) {
+    return(isTRUE(.Call("eigencore_dense_is_symmetric", x, as.numeric(tol), PACKAGE = "eigencore")))
+  }
   isTRUE(isSymmetric.matrix(x, tol = tol))
 }
 

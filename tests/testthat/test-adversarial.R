@@ -42,6 +42,52 @@ test_that("graph Laplacian nullspace is recovered without sparse densification",
   expect_certificate_clean(fit)
 })
 
+test_that("native LOBPCG certifies clustered smallest dense eigenpairs", {
+  values <- c(0, 1e-8, 2e-8, 1, 2, 4, 8, 16)
+  A <- symmetric_with_spectrum(values, seed = 71)
+  fit <- eig_partial(
+    A,
+    k = 3,
+    target = smallest(),
+    method = lobpcg(maxit = 120L),
+    seed = 71,
+    tol = 1e-8
+  )
+  oracle <- eigen(A, symmetric = TRUE)
+  idx <- order(oracle$values)[1:3]
+
+  expect_equal(fit$method, "native standard Hermitian LOBPCG prototype")
+  expect_lt(max(abs(values(fit) - sort(oracle$values)[1:3])), 1e-8)
+  expect_lt(subspace_distance(vectors(fit), oracle$vectors[, idx]), 1e-6)
+  expect_certificate_clean(fit)
+})
+
+test_that("native preconditioned LOBPCG handles Laplacian near-nullspace clusters", {
+  n <- 50L
+  A <- Matrix::bandSparse(
+    n,
+    k = c(-1, 0, 1),
+    diagonals = list(rep(-1, n - 1), c(1, rep(2, n - 2), 1), rep(-1, n - 1))
+  )
+  preconditioner <- shifted_tridiagonal_preconditioner(A, shift = 1e-4)
+  fit <- eig_partial(
+    A,
+    k = 4,
+    target = smallest(),
+    method = lobpcg(maxit = 80L, preconditioner = preconditioner),
+    seed = 72,
+    tol = 1e-8
+  )
+  oracle <- eigen(as.matrix(A), symmetric = TRUE)
+  idx <- order(oracle$values)[1:4]
+
+  expect_equal(fit$method, "native standard Hermitian LOBPCG prototype")
+  expect_true(fit$restart$preconditioner_native)
+  expect_lt(max(abs(values(fit) - sort(oracle$values)[1:4])), 1e-8)
+  expect_lt(subspace_distance(vectors(fit), oracle$vectors[, idx]), 1e-5)
+  expect_certificate_clean(fit)
+})
+
 test_that("ill-conditioned generalized SPD problems remain B-orthonormal", {
   A <- diag(c(9, 6, 4, 2, 1))
   B <- diag(c(1, 1e-2, 1e-4, 1e-6, 1e-8))
@@ -76,10 +122,10 @@ test_that("poorly scaled SVD inputs remain finite and certified", {
   expect_certificate_clean(fit)
 })
 
-test_that("near-singular shift-invert requests fail loudly until implemented", {
+test_that("near-singular shift-invert requests fail loudly", {
   A <- diag(c(-1e-10, 0, 1e-10))
   expect_error(
     eig_partial(A, k = 1, target = nearest(0), method = shift_invert(0)),
-    "not implemented"
+    "singular or near-singular"
   )
 })

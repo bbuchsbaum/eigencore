@@ -3,7 +3,7 @@
 
 extern "C" SEXP eigencore_golub_kahan_ritz(SEXP U_, SEXP V_, SEXP alpha_,
                                            SEXP beta_, SEXP rank_,
-                                           SEXP target_kind_) {
+                                           SEXP target_kind_, SEXP active_p_) {
   if (!isReal(U_) || !isReal(V_) || !isReal(alpha_) || !isReal(beta_)) {
     error("U, V, alpha, and beta must be double");
   }
@@ -13,9 +13,13 @@ extern "C" SEXP eigencore_golub_kahan_ritz(SEXP U_, SEXP V_, SEXP alpha_,
     error("U and V must be matrices");
   }
   const int m = INTEGER(dimU)[0];
-  const int p = INTEGER(dimU)[1];
+  const int stored_p = INTEGER(dimU)[1];
   const int n = INTEGER(dimV)[0];
-  if (INTEGER(dimV)[1] != p || LENGTH(alpha_) < p || LENGTH(beta_) < p) {
+  int p = asInteger(active_p_);
+  if (p < 1 || p > stored_p) {
+    error("active Golub-Kahan Ritz columns must be between 1 and ncol(U)");
+  }
+  if (INTEGER(dimV)[1] != stored_p || LENGTH(alpha_) < p || LENGTH(beta_) < p) {
     error("non-conformable Golub-Kahan Ritz inputs");
   }
   int rank = asInteger(rank_);
@@ -27,7 +31,12 @@ extern "C" SEXP eigencore_golub_kahan_ritz(SEXP U_, SEXP V_, SEXP alpha_,
   }
   const int target_kind = asInteger(target_kind_);
 
-  SEXP bd_ = PROTECT(eigencore_bidiagonal_svd(alpha_, beta_));
+  SEXP alpha_active_ = PROTECT(allocVector(REALSXP, p));
+  SEXP beta_active_ = PROTECT(allocVector(REALSXP, p));
+  std::memcpy(REAL(alpha_active_), REAL(alpha_), sizeof(double) * static_cast<size_t>(p));
+  std::memcpy(REAL(beta_active_), REAL(beta_), sizeof(double) * static_cast<size_t>(p));
+
+  SEXP bd_ = PROTECT(eigencore_bidiagonal_svd(alpha_active_, beta_active_));
   SEXP d_all_ = VECTOR_ELT(bd_, 0);
   SEXP u_small_ = VECTOR_ELT(bd_, 1);
   SEXP v_small_ = VECTOR_ELT(bd_, 2);
@@ -72,7 +81,7 @@ extern "C" SEXP eigencore_golub_kahan_ritz(SEXP U_, SEXP V_, SEXP alpha_,
   SET_STRING_ELT(names_, 2, mkChar("v"));
   setAttrib(out_, R_NamesSymbol, names_);
 
-  UNPROTECT(8);
+  UNPROTECT(10);
   return out_;
 }
 

@@ -78,6 +78,17 @@ native_b_cholqr2 <- function(X, B) {
   .Call("eigencore_b_cholqr2", as.matrix(X), as.matrix(B), PACKAGE = "eigencore")
 }
 
+#' @keywords internal
+native_diagonal_b_cholqr2 <- function(X, diagonal, unit = FALSE) {
+  .Call(
+    "eigencore_diagonal_b_cholqr2",
+    as.matrix(X),
+    as.numeric(diagonal),
+    isTRUE(unit),
+    PACKAGE = "eigencore"
+  )
+}
+
 #' Measure orthogonality loss.
 orthogonality_loss <- function(Q, B = NULL) {
   Q <- as.matrix(Q)

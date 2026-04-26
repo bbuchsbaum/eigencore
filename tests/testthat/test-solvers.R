@@ -68,13 +68,29 @@ test_that("LOBPCG prototype supports dense generalized SPD problems", {
   fit <- eig_partial(A, B = B, k = 2, target = smallest(),
                      method = lobpcg(maxit = 50L), seed = 28, tol = 1e-8)
 
-  expect_equal(fit$plan$method, "reference generalized SPD LOBPCG prototype")
+  expect_equal(fit$plan$method, "native generalized SPD LOBPCG prototype (built-in A/B slice)")
   expect_equal(values(fit), c(1, 2), tolerance = 1e-8)
   expect_true(certificate(fit)$passed)
   expect_equal(crossprod(vectors(fit), B %*% vectors(fit)), diag(2), tolerance = 1e-8)
   expect_true(fit$restart$generalized)
+  expect_true(fit$restart$native)
   expect_true(fit$restart$orthogonalization_native)
-  expect_true("b_cholqr2" %in% fit$restart$orthogonalization_methods)
+  expect_true("native_dense_b_mgs2" %in% fit$restart$orthogonalization_methods)
+})
+
+test_that("native generalized SPD LOBPCG slice supports dense A with diagonal B", {
+  A <- diag(c(1, 4, 9, 16, 25))
+  B <- Matrix::Diagonal(x = c(1, 2, 3, 4, 5))
+  fit <- eig_partial(A, B = B, k = 2, target = smallest(),
+                     method = lobpcg(maxit = 50L), seed = 281, tol = 1e-8)
+
+  expect_equal(fit$plan$method, "native generalized SPD LOBPCG prototype (built-in A/B slice)")
+  expect_equal(values(fit), c(1, 2), tolerance = 1e-8)
+  expect_true(certificate(fit)$passed)
+  expect_equal(crossprod(vectors(fit), as.matrix(B) %*% vectors(fit)), diag(2), tolerance = 1e-8)
+  expect_true(fit$restart$generalized)
+  expect_true(fit$restart$native)
+  expect_true("native_diagonal_b_mgs2" %in% fit$restart$orthogonalization_methods)
 })
 
 test_that("LOBPCG prototype handles sparse generalized SPD operators without densifying", {
@@ -83,12 +99,65 @@ test_that("LOBPCG prototype handles sparse generalized SPD operators without den
   fit <- eig_partial(A, B = B, k = 2, target = smallest(),
                      method = lobpcg(maxit = 50L), seed = 29, tol = 1e-8)
 
-  expect_equal(fit$plan$method, "reference generalized SPD LOBPCG prototype")
+  expect_equal(fit$plan$method, "native generalized SPD LOBPCG prototype (built-in A/B slice)")
   expect_equal(values(fit), c(1, 2), tolerance = 1e-8)
   expect_true(certificate(fit)$passed)
   expect_true(fit$restart$generalized)
-  expect_false(fit$restart$orthogonalization_native)
-  expect_true("operator_b_qr_chol" %in% fit$restart$orthogonalization_methods)
+  expect_true(fit$restart$native)
+  expect_true(fit$restart$orthogonalization_native)
+  expect_true("native_diagonal_b_mgs2" %in% fit$restart$orthogonalization_methods)
+})
+
+test_that("native generalized SPD LOBPCG supports sparse CSC A and sparse CSC B", {
+  A <- Matrix::sparseMatrix(
+    i = 1:5,
+    j = 1:5,
+    x = c(1, 4, 9, 16, 25),
+    dims = c(5, 5)
+  )
+  B <- Matrix::sparseMatrix(
+    i = 1:5,
+    j = 1:5,
+    x = c(1, 2, 3, 4, 5),
+    dims = c(5, 5)
+  )
+  fit <- eig_partial(A, B = B, k = 2, target = smallest(),
+                     method = lobpcg(maxit = 50L), seed = 291, tol = 1e-8)
+
+  expect_equal(fit$plan$method, "native generalized SPD LOBPCG prototype (built-in A/B slice)")
+  expect_equal(values(fit), c(1, 2), tolerance = 1e-8)
+  expect_true(certificate(fit)$passed)
+  expect_equal(crossprod(vectors(fit), as.matrix(B) %*% vectors(fit)), diag(2), tolerance = 1e-8)
+  expect_true(fit$restart$native)
+  expect_true("native_csc_b_mgs2" %in% fit$restart$orthogonalization_methods)
+})
+
+test_that("generalized SPD LOBPCG is not mislabeled as native yet", {
+  A <- Matrix::Diagonal(x = c(1, 4, 9, 16, 25))
+  B <- Matrix::Diagonal(x = c(1, 2, 3, 4, 5))
+  preconditioner <- shifted_tridiagonal_preconditioner(
+    Matrix::bandSparse(5, k = 0, diagonals = list(c(1, 4, 9, 16, 25))),
+    shift = 1e-3
+  )
+  problem <- eigen_problem(A, metric = B, target = smallest())
+  plan <- plan_solver(problem, k = 2, method = lobpcg(maxit = 50L, preconditioner = preconditioner))
+
+  expect_false(eigencore:::native_lobpcg_supported(
+    as_operator(A),
+    target = smallest(),
+    preconditioner = preconditioner,
+    Bop = as_operator(B)
+  ))
+  expect_equal(plan$method, "reference generalized SPD LOBPCG prototype")
+
+  fit <- eig_partial(A, B = B, k = 2, target = smallest(),
+                     method = lobpcg(maxit = 50L, preconditioner = preconditioner),
+                     seed = 30, tol = 1e-8)
+
+  expect_equal(fit$method, "reference generalized SPD LOBPCG prototype")
+  expect_false(fit$restart$native)
+  expect_true(fit$restart$generalized)
+  expect_true(certificate(fit)$passed)
 })
 
 test_that("svd_partial returns sorted singular values and certificate", {
@@ -128,11 +197,15 @@ test_that("randomized SVD path returns honest certified results on low-rank inpu
   expect_false(fit$restart$native)
 })
 
-test_that("shift_invert is honest until implemented", {
-  expect_error(
-    eig_partial(diag(3), k = 1, method = shift_invert(0)),
-    "not implemented"
-  )
+test_that("shift_invert dense reference path returns certified original eigenpairs", {
+  A <- diag(c(1, 3, 7))
+  fit <- eig_partial(A, k = 1, target = nearest(2.8), method = shift_invert(2.8))
+
+  expect_equal(values(fit), 3, tolerance = 1e-8)
+  expect_true(certificate(fit)$passed)
+  expect_equal(fit$transform$kind, "shift_invert")
+  expect_equal(fit$transform$label_kind, "dense_lu")
+  expect_match(fit$warnings, "reference Hermitian Lanczos shift-invert")
 })
 
 test_that("dense fallback is memory-budgeted", {
@@ -368,21 +441,34 @@ test_that("native block Lanczos prototype matches dense oracle on small Hermitia
                      method = lanczos(block = 2L, max_subspace = 6L),
                      seed = 44, tol = 1e-8)
 
-  expect_equal(fit$method, "native block Hermitian Lanczos prototype")
+  expect_equal(fit$method, "native block Hermitian Lanczos thick-restart candidate")
   expect_equal(values(fit), c(9, 5), tolerance = 1e-8)
   expect_true(certificate(fit)$passed)
-  expect_equal(fit$restart$kind, "block_krylov_rayleigh_ritz")
+  expect_equal(fit$restart$kind, "block_full_subspace_dense_lapack")
+  expect_equal(fit$restart$locking, "not_required_full_subspace")
   expect_equal(fit$restart$block, 2L)
-  expect_gte(fit$restart$final_active_subspace, 2L)
-  expect_lte(fit$restart$final_active_subspace, 6L)
+  expect_equal(fit$restart$final_active_subspace, nrow(A))
+  expect_equal(fit$matvecs, 0L)
 })
 
-test_that("planner labels block Lanczos prototype honestly", {
+test_that("planner labels block Lanczos candidate honestly and stores controls", {
   A <- Matrix::sparseMatrix(i = 1:4, j = 1:4, x = c(4, 3, 2, 1))
   P <- eigen_problem(A, target = largest())
   plan <- plan_solver(P, k = 2L, method = lanczos(block = 2L, max_subspace = 4L))
 
-  expect_equal(plan$method, "native block Hermitian Lanczos prototype")
+  expect_equal(plan$method, "native block Hermitian Lanczos thick-restart candidate")
+  expect_equal(plan$controls$block, 2L)
+  expect_equal(plan$controls$max_subspace, 4L)
+  expect_equal(plan$controls$max_restarts, 100L)
+})
+
+test_that("auto planner does not promote block candidate before G1 gates pass", {
+  A <- Matrix::sparseMatrix(i = 1:8, j = 1:8, x = 8:1)
+  P <- eigen_problem(A, target = largest())
+  plan <- plan_solver(P, k = 4L, method = auto())
+
+  expect_equal(plan$method, "native scalar thick-restart Hermitian Lanczos")
+  expect_equal(plan$controls$block, 1L)
 })
 
 test_that("reference LOBPCG spike shows preconditioner leverage on Laplacian", {
@@ -462,6 +548,41 @@ test_that("shifted tridiagonal preconditioner matches shifted dense solve", {
   expected <- solve(as.matrix(A + Matrix::Diagonal(n) * 1e-3), R)
 
   expect_equal(got, expected, tolerance = 1e-10)
+})
+
+test_that("native LOBPCG routes typed tridiagonal preconditioner through native loop", {
+  n <- 80L
+  A <- Matrix::bandSparse(
+    n,
+    k = c(-1, 0, 1),
+    diagonals = list(rep(-1, n - 1L), c(1, rep(2, n - 2L), 1), rep(-1, n - 1L))
+  )
+  preconditioner <- shifted_tridiagonal_preconditioner(A, shift = 1e-3)
+  info <- eigencore:::eigencore_preconditioner_info(preconditioner)
+  expect_true(all(c("lower", "diag", "upper") %in% names(info)))
+
+  fit <- eig_partial(
+    A,
+    k = 3L,
+    target = smallest(),
+    method = lobpcg(maxit = 80L, preconditioner = preconditioner),
+    tol = 1e-8,
+    seed = 91
+  )
+
+  expect_equal(fit$method, "native standard Hermitian LOBPCG prototype")
+  expect_equal(fit$plan$method, "native standard Hermitian LOBPCG prototype")
+  expect_true(certificate(fit)$passed)
+  expect_true(fit$restart$native)
+  expect_true(fit$restart$native_kernels)
+  expect_true(fit$restart$preconditioned)
+  expect_equal(fit$restart$preconditioner_kind, "shifted_tridiagonal")
+  expect_true(fit$restart$preconditioner_native)
+  expect_equal(fit$restart$preconditioner_calls, fit$iterations - 1L)
+  expect_equal(diagnostics(fit)$preconditioner$kind, "shifted_tridiagonal")
+  expect_equal(tail(fit$convergence_history$nconv, 1), fit$nconv)
+  expect_lt(tail(fit$convergence_history$max_relative_residual, 1), 1e-8)
+  expect_match(fit$warnings, "native standard LOBPCG")
 })
 
 test_that("native thick-restart Lanczos locks the converged Ritz pairs in target order", {
@@ -660,6 +781,11 @@ test_that("native Golub-Kahan iteration matches dense diagonal singular values",
 })
 
 test_that("native Golub-Kahan exposes adaptive subspace metadata", {
+  old_options <- options(
+    eigencore.golub_kahan_prefix_diagnostics = TRUE,
+    eigencore.golub_kahan_projected_stop = TRUE
+  )
+  on.exit(options(old_options), add = TRUE)
   A <- Matrix::sparseMatrix(
     i = c(1, 2, 3, 4, 5),
     j = c(1, 2, 3, 4, 5),
@@ -669,11 +795,38 @@ test_that("native Golub-Kahan exposes adaptive subspace metadata", {
   fit <- svd_partial(A, rank = 3, tol = 1e-8, seed = 445)
 
   expect_equal(fit$method, "native prototype Golub-Kahan")
-  expect_named(fit$restart, c("kind", "implemented", "ritz_native", "retries", "final_max_subspace", "fixed_max_subspace"))
+  expect_true(all(c(
+    "kind", "implemented", "ritz_native", "restart_policy", "retries",
+    "final_max_subspace", "fixed_max_subspace", "converged", "nconv",
+    "max_backward_error", "history", "prefix_history",
+    "first_certified_prefix", "final_prefix_iteration_overshoot",
+    "projected_stop_requested", "projected_stop_enabled",
+    "projected_stop_disable_reason", "projected_stop", "projected_nconv",
+    "projected_max_residual", "projected_checks", "projected_seconds"
+  ) %in% names(fit$restart)))
   expect_equal(fit$restart$kind, "adaptive_subspace_growth")
   expect_true(fit$restart$implemented)
   expect_true(fit$restart$ritz_native)
+  expect_match(fit$restart$restart_policy, "certificate")
   expect_gte(fit$restart$final_max_subspace, fit$iterations)
+  expect_true(fit$restart$converged)
+  expect_equal(fit$restart$nconv, fit$nconv)
+  expect_true(fit$restart$projected_stop_enabled)
+  expect_true(fit$restart$projected_stop_requested)
+  expect_true(is.na(fit$restart$projected_stop_disable_reason))
+  expect_true(is.logical(fit$restart$projected_stop))
+  expect_gte(fit$restart$projected_nconv, 0L)
+  expect_gte(fit$restart$projected_checks, 0L)
+  expect_gte(fit$restart$projected_seconds, 0)
+  expect_true(all(c(
+    "retry", "max_subspace", "iterations", "matvecs", "nconv",
+    "certificate_passed", "max_residual", "max_backward_error"
+  ) %in% names(fit$restart$history)))
+  expect_equal(utils::tail(fit$restart$history$nconv, 1L), fit$nconv)
+  expect_true(is.data.frame(fit$restart$prefix_history))
+  expect_true(any(fit$restart$prefix_history$certificate_passed))
+  expect_lte(fit$restart$first_certified_prefix, fit$restart$final_iterations)
+  expect_gte(fit$restart$final_prefix_iteration_overshoot, 0L)
   expect_true(certificate(fit)$passed)
 })
 
@@ -697,6 +850,25 @@ test_that("Golub-Kahan Ritz extraction preserves coupled SVD rotations", {
   expect_equal(native$d, out$d, tolerance = 1e-14)
   expect_equal(native$u, out$u, tolerance = 1e-14)
   expect_equal(native$v, out$v, tolerance = 1e-14)
+
+  U_padded <- cbind(U, c(0, 0, 1))
+  V_padded <- cbind(V, c(0, 0))
+  alpha_padded <- c(alpha, 999)
+  beta_padded <- c(beta, 999)
+  active <- eigencore:::native_golub_kahan_ritz(
+    op,
+    U_padded,
+    V_padded,
+    alpha_padded,
+    beta_padded,
+    rank = 2,
+    target = largest(),
+    tol = 1e-8,
+    active_iterations = 2
+  )
+  expect_equal(active$d, out$d, tolerance = 1e-14)
+  expect_equal(active$u, out$u, tolerance = 1e-14)
+  expect_equal(active$v, out$v, tolerance = 1e-14)
 })
 
 test_that("native bidiagonal SVD matches dense projected oracle", {

@@ -22,10 +22,13 @@ Imports:
     methods
 Suggests:
     bench,
+    knitr,
     PRIMME,
+    rmarkdown,
     RSpectra,
     irlba,
     rsvd,
     testthat (>= 3.0.0)
+VignetteBuilder: knitr
 Config/testthat/edition: 3
 SystemRequirements: C++17

@@ -125,7 +125,8 @@ Deliver the native engine in order. Each step ships with adversarial tests
    B-orthogonal Rayleigh-Ritz extraction, optional constraints/deflation, and
    native residual/certificate kernels. The planner maps largest generalized
    eigenpairs through the sign-flipped problem when appropriate; it never
-   densifies sparse `A` or `B` silently.
+   densifies sparse `A` or `B` silently. The design contract is tracked in
+   `docs/native-generalized-spd-lobpcg.md`.
 7. **Generalized SPD B-orthogonal block Lanczos** as an alternate/refinement
    path after LOBPCG. Cholesky paths treat `B` as an operator or factorization
    cache; never invert `R` explicitly.
@@ -151,9 +152,10 @@ As of the current native Hermitian and certificate work, eigencore has:
 - a certified `native scalar thick-restart Hermitian Lanczos` path for dense
   double matrices and `dgCMatrix` operators, with native locking metadata and
   sparse non-densification;
-- a `native block Hermitian Lanczos prototype` path for dense double matrices
-  and `dgCMatrix` operators, with block native operator application and honest
-  no-restart/no-locking metadata;
+- a `native block Hermitian Lanczos thick-restart candidate` path for dense
+  double matrices and `dgCMatrix` operators, with native block operator
+  application, thick restart, native locking metadata, and an honest
+  non-promoted planner label;
 - a certified native Golub-Kahan staging path for dense double and `dgCMatrix`
   SVD, with adaptive subspace growth metadata.
 - an internal reference LOBPCG spike showing that a shifted sparse solve
@@ -168,23 +170,81 @@ As of the current native Hermitian and certificate work, eigencore has:
   `factorization`, `shift`) and LOBPCG results report preconditioner call
   counts. This makes the planner and benchmark gates inspectable before the
   native LOBPCG loop replaces the R prototype.
+- a `native standard Hermitian LOBPCG prototype` now supports dense double and
+  `dgCMatrix` standard Hermitian problems, with optional native shifted
+  tridiagonal preconditioning. The planner uses this label only for supported
+  built-in cases; generalized SPD and opaque preconditioners remain on
+  reference labels.
 
 The Hermitian path supports native targets `largest`, `smallest`,
 `largest_magnitude`, and `smallest_magnitude`; unsupported targets such as
 `nearest()` route away from the native path with an honest planner label.
 
-This is not Milestone G completion. The implementation is scalar (`block = 1`),
-not block-native, and the quick benchmark gates currently show certification
-but not performance leadership:
+This is not Milestone G completion. G0 is the scalar-native staging path; the
+block-native path is present only as a non-promoted candidate, and the quick
+benchmark gates currently show certification but not performance leadership:
 
 - sparse Hermitian path Laplacian `n = 200, k = 5`: eigencore certifies all
   requested pairs with the scalar-native path and the tuned default
   `max_subspace = 3*k + 20`, but is still slower than RSpectra and
-  allocates more memory on the quick gate;
-- the block Hermitian prototype certifies the same quick Laplacian case only
-  when allowed to use the full `n`-dimensional subspace; it gives excellent
-  residuals but is slower than the scalar path and therefore remains a
-  prototype, not the G1 solution;
+  allocates more memory on the quick gate. In the current source-loaded quick
+  gate, scalar eigencore certifies but reaches only about `0.35x` of RSpectra's
+  median time and about `0.66x` of PRIMME's median time;
+- the block Hermitian candidate now supports explicit restart and locking for
+  dense double and `dgCMatrix` inputs, and explicit
+  `lanczos(block > 1, max_subspace < n)` can certify the quick path-Laplacian
+  case. The benchmark harness now reports a subject gate for
+  `eigencore_block_candidate`. Current tuning keeps `block = 2` for smaller
+  rows and uses `block = 4` with at least `16*k` restart space for large sparse
+  `k >= 16` candidate rows, with a four-vector capped Ritz pad. The candidate now
+  forms block-recurrence residuals before reorthogonalization, maintains a
+  structured projected problem instead of recomputing the full projection at
+  each restart, uses allocation-free CholQR2 block acceptance when rank permits,
+  reports native stage timings, and uses fair solver/certificate/total
+  benchmark accounting. Additional tuning now caps the thick-restart Ritz pad,
+  uses the sparse CSC block apply for Ritz-vector residuals, reuses in-solver
+  certificates in the benchmark harness, uses `dsyevd` only for larger
+  projected dense solves, and avoids zero-filling native workspaces that are
+  immediately overwritten. It also uses native loops for tiny block projection
+  updates and one reorthogonalization pass for `n >= 64` when certificates stay
+  tight. It also copies only the upper triangle into the
+  compact projected matrix passed to LAPACK and runs a native final subspace
+  polish in the returned subspace to satisfy the orthogonality certificate
+  without R-tracked allocations. The polish first reuses the existing locked
+  residuals when the returned basis already satisfies the certificate
+  orthogonality tolerance; otherwise it tries a cheap Cholesky-orthonormalization
+  plus residual refresh and falls back to final Rayleigh-Ritz when needed.
+  Final polish now preserves any genuine locked prefix when the restart budget
+  is exhausted, so a noncertified tail cannot rotate away already certified
+  vectors. The main restart residual check also leaves `A * Ritz` blocks
+  intact, so retained Ritz vectors can carry `AV_active` forward without
+  reconstructing it from residuals. Native restart history now records, per
+  Rayleigh-Ritz cycle, the active subspace size, selected count, lock count,
+  wanted-pair convergence count, and max backward error; this is part of the
+  G1 diagnostic contract.
+  Certificate `passed` now includes
+  an orthogonality gate, not just per-pair residual convergence. The native
+  lock path rejects converged Ritz vectors that are numerically dependent on
+  already locked vectors, so duplicate locked vectors no longer earn residual
+  convergence while failing orthogonality. Default small-dense block runs with
+  `n <= getOption("eigencore.block_dense_full_subspace_max_n", 256)` take an
+  honestly labeled native full-subspace LAPACK/Rayleigh-Ritz path, closing the
+  small dense, clustered, and ill-conditioned diagonal rows in the G1 baseline;
+  explicit bounded `max_subspace` still exercises restart. The
+  installed-package quick gates now default to the sparse path-Laplacian
+  release case. Dense Hermitian rows remain available as opt-in diagnostics
+  with `--include-dense`, but no longer block the sparse G1 gate. The quick
+  path row still fails the RSpectra speed bar while passing memory and PRIMME
+  parity. A k=20, n=1000 installed staging row with the smaller block-2
+  controls certifies, passes memory/PRIMME parity, and reaches about `1.45x` to
+  `1.50x` of RSpectra's median time on local installed runs. A larger
+  `n = 10000, k = 20` path-Laplacian probe now certifies with the adaptive
+  block-4 candidate (`max_subspace = 320`), reaches about `3.0x` of a certified
+  robust RSpectra reference row, and passes PRIMME parity in the benchmark
+  harness. The full dense Hermitian regression row certifies and passes the
+  RSpectra speed bar but sits just below memory parity against the best
+  reference. The remaining dense memory gap keeps the candidate deliberately
+  unpromoted;
 - preconditioned reference LOBPCG on the same quick Laplacian case certifies
   in about 10 iterations. The current gate shows it is about 1.8x faster than
   scalar eigencore, slightly faster than PRIMME on some runs, still slower than
@@ -193,14 +253,383 @@ but not performance leadership:
 - a native shifted tridiagonal preconditioner now covers path-Laplacian-style
   tridiagonal gates. It preserves the 10-iteration convergence behavior and
   reduces memory versus the Cholesky-backed reference setup, but the current
-  R-level LOBPCG loop still dominates enough allocation that the memory gate
-  remains open. Benchmark rows and the LOBPCG gate now record which typed
-  preconditioner candidate was selected;
+  native standard LOBPCG prototype now keeps the hot iteration in C++ for this
+  case. The staging gate now covers path Laplacians at
+  `n = 200, 1000, 2000` with `k = 5`; it certifies, beats scalar eigencore,
+  beats the best certified external reference on the sampled run, and passes
+  the restored `0.25` memory threshold. A direct `n = 10000, k = 20`
+  path-Laplacian probe with the native shifted-tridiagonal preconditioner
+  certifies 20/20 pairs in about `4.8s` locally, so that solver is a strong M
+  milestone candidate but does not satisfy G1's block-Lanczos promotion
+  contract. Benchmark rows and the LOBPCG gate record which typed
+  preconditioner candidate was selected, and failed references are captured as
+  uncertified rows instead of aborting the gate;
+- native generalized SPD LOBPCG remains deliberately unpromoted for production
+  use. A design contract now exists, residual-backed generalized certificate
+  helpers preserve the original-coordinate formula, and native dense, diagonal,
+  and CSC A/B loop slices are wired for explicit `lobpcg()` plans. Matrix-free
+  `B`, generalized preconditioners, and production promotion remain open;
 - sparse tall-skinny SVD `500 x 80, rank = 5`: eigencore certifies but is
   still materially slower than RSpectra and `irlba`.
+- the SVD surface benchmark is now explicit at
+  `inst/benchmarks/bench-svd-surface.R`, covering tall/wide sparse,
+  rank-deficient sparse, clustered dense, slow-decay dense, and low-rank sparse
+  cases against RSpectra, PRIMME, `irlba`, `rsvd`, and base where applicable.
+  The dense double path can now use the same bounded certified Gram special
+  case as sparse CSC, and the Gram solver uses native selected symmetric
+  eigensolves instead of a full eigensystem for largest singular values. This
+  also fixed a native `dsyevr` buffer bug in the selected-eigen wrapper. The
+  saved 2026-04-26 quick snapshots show eigencore certifies every subject row,
+  with current speed ratios versus the best certified reference roughly in the
+  `0.27x` to `0.70x` range on the latest quick run and one sparse memory gate
+  passing. H remains a
+  performance gap, not a correctness gap; the release answer still requires a
+  production thick-restarted Golub-Kahan path rather than relying on Gram
+  special cases. The benchmark now also reports an internal
+  `eigencore_golub_kahan` candidate row. That row is excluded from external
+  release-reference gates, but it makes promotion readiness visible: it is
+  faster than the Gram subject on the current low-rank sparse row, and after
+  fixing planner controls so default Golub-Kahan remains adaptive rather than
+  accidentally fixed-budget, it certifies tall/wide random sparse rows too.
+  Its adaptive work accounting now counts every from-scratch retry, not only
+  the final successful subspace, and benchmark rows expose retry attempts,
+  final-vs-total iterations/matvecs, and native iteration/Ritz timing. A shared
+  planner/native initial-subspace heuristic now starts wide rectangular
+  Golub-Kahan runs at a larger budget; on the quick wide sparse row this removed
+  the previous second from-scratch attempt, reducing the candidate from `200`
+  total matvecs to `120`. The native candidate can also record opt-in sampled
+  prefix diagnostics from the final basis
+  (`options(eigencore.golub_kahan_prefix_diagnostics = TRUE)`), including the
+  first sampled prefix that certifies and the final-subspace iteration/matvec
+  overshoot. This tells us whether the next C++ loop should stop earlier inside
+  one attempt or whether the current subspace size is genuinely needed, without
+  charging normal benchmark timing for extra diagnostic certificates. A staged
+  native projected-stop path is also available behind
+  `options(eigencore.golub_kahan_projected_stop = TRUE)`: the C++ loop checks a
+  selected bidiagonal SVD residual estimate at coarse intervals and can stop
+  before filling the planned subspace, while the normal result certificate still
+  decides whether adaptive growth is needed. A quick probe on the wide sparse
+  fixture reduced the candidate from `60` iterations / `120` matvecs to `50` /
+  `100` while preserving the final certificate; tall sparse did not stop early
+  under the same criterion. This remains opt-in until quick and full SVD gates
+  show it improves time-to-certified-answer. The SVD surface benchmark can now
+  include an explicit `eigencore_golub_kahan_projected` row with
+  `--projected-stop`, so normal release gates stay unchanged while on/off
+  candidate comparisons are saved in the same surface table. The first quick
+  projected-stop surface run certified the projected candidate rows and showed
+  useful but uneven movement: wide sparse dropped from about `60/120`
+  iterations/matvecs to `50/100`, clustered dense from `44/88` to `24/48`,
+  slow-decay dense from `44/88` to `36/72`, while tall, rank-deficient sparse,
+  and low-rank sparse did not stop early. The stop policy now also records
+  projected-check counts and time, skips checks that cannot save at least
+  `max(5, rank)` iterations, and conservatively disables projected stopping for
+  high-aspect tall sparse operators until evidence shows it helps there. The
+  quick comparison table reports that disabled reason explicitly; on the current
+  quick fixture, tall sparse has zero projected checks, clustered/slow-decay
+  dense and wide sparse still stop early, and rank-deficient/low-rank sparse
+  run with zero useful projected checks. This is an improvement over the first
+  blind opt-in path, but the one-iteration quick table still shows timing noise
+  on cases without iteration savings, so promotion requires repeated quick and
+  full-surface evidence rather than this heuristic alone. The Ritz extraction
+  path now accepts an explicit active iteration count in native code, so the R
+  wrapper no longer copies `U[, used]` and `V[, used]` before extraction or
+  prefix diagnostics. On the quick surface this cut the internal Golub-Kahan
+  candidate's memory materially, for example tall sparse from roughly `594kB`
+  to `370kB`, wide sparse from roughly `896kB` to `562kB`, clustered dense from
+  roughly `298kB` to `233kB`, and low-rank sparse from roughly `203kB` to
+  `174kB`, while preserving certificates. A full non-quick projected-stop SVD
+  surface run on 2026-04-26 saved
+  `inst/benchmarks/results/20260426-svd-surface-rows.rds`,
+  `inst/benchmarks/results/20260426-svd-surface-gates.rds`, and
+  `inst/benchmarks/results/20260426-svd-projected-stop-comparison.rds`.
+  That repeated run shows projected stopping is useful where it actually
+  reduces native work: clustered dense and slow-decay dense improved by about
+  `1.24x` (`100/200` to `80/160` iterations/matvecs), and wide sparse improved
+  by about `1.23x` (`180/360` to `160/320`). The high-aspect tall sparse,
+  low-rank sparse, and rank-deficient sparse cases record the disabled reason
+  or no useful projected checks. Release gates still fail overall: wide sparse
+  is the only current SVD surface row meeting the speed gate, and it still
+  fails memory; the other rows remain speed/memory failures, with the
+  rank-deficient sparse subject not yet certified to the requested rank.
+  It is
+  still much slower and more memory-hungry there, so it is not ready to replace
+  the default planner path.
+- shift-invert via `shift_invert(sigma)` is now wired through a reference
+  Hermitian Lanczos path on the inverted operator, with three honest planner
+  labels: `reference Hermitian Lanczos shift-invert (dense LU)` for dense
+  double sources, `reference Hermitian Lanczos shift-invert (sparse LU)` for
+  `dgCMatrix`/`dsCMatrix` sources, and `reference Hermitian Lanczos
+  shift-invert (user solve)` for matrix-free `A` with a user-supplied solve
+  function. Eigenvalues are returned in original coordinates with full
+  operator-side certification; near-singular shifted operators and zero-
+  magnitude inverted eigenvalues are rejected with actionable errors;
+  generalized SPD shift-invert is rejected at plan time with a roadmap note.
+  Milestone L's "smallest/interior works on at least one real Laplacian"
+  exit criterion is satisfied by `tests/testthat/test-shift-invert.R` (1D
+  Laplacian, smallest 4 eigenvalues). The native shift-invert hot loop and
+  generalized SPD shift-invert remain open for V1 promotion.
+- a property-based test grid now runs under `NOT_CRAN=true` covering Hermitian
+  and SVD certificate residual contracts across 5 spectrum patterns
+  (`uniform`, `clustered`, `exponential`, `geometric`, `two_cluster`),
+  multiple seeds, and multiple sizes; total ~230 assertions. The grid is
+  skipped on CRAN to keep CI under budget but runs on every local
+  `testthat::test_dir()` and on the GH Actions check matrix.
+- a SVD adversarial-and-honest-label bank now asserts that planner labels
+  match the kernel that actually runs across dense `auto`, dense
+  `golub_kahan()`, sparse CSC `auto`, and matrix-free reference paths, and
+  exercises `vectors = "left"|"right"|"none"` modes (which previously leaked
+  `result$values` into `result$v` via `$` partial-matching — fixed in
+  `R/solve.R`). Sparse CSC `auto()` can now take a certified Gram SVD special
+  case for small rectangular problems, with residuals recomputed in original
+  coordinates. That path handles exact rank deficiency through deterministic
+  zero-singular-vector completion and carries a certification-gated native
+  Golub-Kahan fallback when the Gram certificate is weaker. The planner and
+  benchmark rows expose this policy through `fallback_policy`,
+  `runtime_fallback`, `fallback_attempted`, `fallback_used`,
+  `gram_max_backward_error`, and `fallback_max_backward_error`.
 
 Do not mark the Hermitian solver milestone complete until the block path and
 speed/memory gate below pass on reproducible benchmark scripts.
+
+### Current PRD alignment and attack surfaces
+
+The project is now past the original skeleton/prototype phase. The architecture
+and correctness machinery are credible: operator/problem/plan/result/certificate
+boundaries exist, planner labels are mostly honest, sparse non-densification is
+guarded, native dense/CSC/diagonal kernels exist, and the test bank catches
+certificate and planner regressions. The codebase is still not V1-disruptive
+because the PRD's performance promise is not yet defensible.
+
+Working status against the sequenced milestones:
+
+| Milestone | Status | Notes |
+|---|---|---|
+| A | mostly done | Public/reference/native layering is established; reference fallbacks must remain honestly labeled. |
+| B | mostly done | Dense, CSC, and diagonal block operators exist; composed/centered/scaled native fusion remains incomplete. |
+| C | substantially done | Adversarial, property, oracle, and benchmark-smoke tests are in place and expanding. |
+| D | mostly done | Typed certificates and target taxonomy are implemented enough for current paths. |
+| E | mostly done | Dense fallback is memory-budgeted; sparse densification is rejected in production paths. |
+| F | largely done for current paths | Native ortho and certificate kernels exist, but not every future solver path is fully native-certificate-backed. |
+| G0 | done | Native scalar Hermitian staging path exists and certifies on dense/CSC cases. |
+| G1 | in progress, not promoted | Block Hermitian Lanczos candidate exists and certifies the large path-Laplacian row under adaptive block-4 controls with a passing robust RSpectra comparison, but dense memory parity is still just short. |
+| H | staged, not complete | Native Golub-Kahan exists as a staging path; production thick-restart SVD and SVD performance gates remain open. |
+| I | prototype | Randomized SVD has reference implementation, normalizers, and certified refinement; native approximate engine remains open. |
+| J | partial | Native generalized SPD LOBPCG slices exist; matrix-free `B`, generalized preconditioning, and promotion remain open. |
+| K | not complete | B-orthogonal block Lanczos is still a later generalized-SPD refinement path. |
+| L | reference-complete, native-open | Shift-invert works through honest reference paths; native hot loop/factorization-cache production path remains open. |
+| M | partial | Standard Hermitian LOBPCG and tridiagonal preconditioner staging are useful but not final release surfaces. |
+| N | not started as release hardening | CRAN/sanitizer/valgrind, docs, migration guide, and release benchmark reports remain ahead. |
+
+PRD truth check:
+
+- **Trustworthy/certified results:** strong and improving. Certificates are now
+  the central design surface, not a debug add-on.
+- **Fastest path:** not yet true. RSpectra and/or `irlba` still beat eigencore
+  on important sparse Hermitian and SVD cases, even when eigencore certifies
+  more tightly.
+- **Block-native engine:** partially true. Built-in block operators and block
+  candidate paths exist, but V1 still needs promoted native block solver loops
+  with no R-level iteration overhead.
+- **Default SVD not normal equations:** directionally true, but the final V1
+  answer must be native thick-restarted Golub-Kahan. The Gram path is an
+  explicit, inspectable, bounded special case, not the default SVD doctrine.
+- **Generalized SPD first-class:** partially true at the API/certificate level;
+  not yet complete at native production-solver level.
+- **Inspectable automation:** mostly true; new solver work must continue to
+  update `plan_solver()`, dispatch, result diagnostics, and benchmarks together.
+
+Primary attack surfaces, in order:
+
+1. **G1 block Hermitian Lanczos promotion.** Close the remaining correctness,
+   large-Laplacian, memory, and RSpectra-speed gaps. This is the first decisive
+   PRD performance milestone.
+2. **H production SVD.** Replace staging/Gram-special-case dependence with a
+   native thick-restarted Golub-Kahan path that wins sparse SVD time-to-certified
+   answer against RSpectra/`irlba` on the PRD benchmark subset.
+3. **J generalized SPD LOBPCG promotion.** Finish matrix-free `B`,
+   generalized preconditioning, B-orthogonality diagnostics, and original
+   coordinate certification without sparse densification.
+4. **L native shift-invert.** Move from reference inverted-operator Lanczos to
+   factorization-aware native transforms with cached solves and original
+   problem residual certification.
+5. **Operator fusion.** Native centered/scaled/composed operators are needed
+   for matrix-free PCA/SVD and for keeping the mathematical API elegant without
+   paying R callback overhead.
+6. **Release hardening.** Keep benchmark claims tied to reproducible
+   `bench::mark()` scripts; do not weaken the PRD's "faster and unambiguously
+   better" bar to fit current results.
+
+### G1 implementation clarifications
+
+The G1 solver is the first production Hermitian block path, so promotion is not
+just a label change. The implementation must satisfy these extra constraints:
+
+- Planner promotion must update both `plan_solver()` and solver dispatch. The
+  plan must record the chosen block size, restart budget, and subspace budget
+  well enough that `solve.eigencore_eigen_problem()` runs the same path the
+  planner reported. `auto()` must not silently fall back to scalar Lanczos after
+  planning a block path. Explicit `lanczos(block = 1)` remains the scalar
+  staging/debug path.
+- The current R-facing native MGS2, CholQR2, Rayleigh-Ritz, and dense symmetric
+  eigen entry points are `.Call` wrappers and may allocate R objects. G1 must
+  first factor the allocation-free C++ kernels needed by the native block loop,
+  with all solver temporaries supplied by a setup-time workspace.
+- Native locking and convergence tests must use the same backward-error scale
+  definition as certificates: the operator norm source plus the identity `B`
+  scale used by `eigen_backward_scale()`. A shortcut such as
+  `tol * max(abs(theta), 1)` is acceptable only as a development diagnostic, not
+  as the production lock criterion.
+- The current `native block Hermitian Lanczos thick-restart candidate` is
+  evidence for block apply, projected extraction, restart, and locking
+  plumbing only. It does not count as the promoted G1 path until the
+  adversarial bank and RSpectra/PRIMME benchmark gates pass.
+- Correctness comparisons for iterative paths use residuals scaled by the
+  certificate denominator, e.g. `max(tol * scale, 100 * eps * scale)`, and use
+  subspace-distance assertions for clustered or repeated eigenvalues rather than
+  per-vector identity.
+- The G1 benchmark gate is median time-to-certified-answer at least `1.25x`
+  faster than RSpectra on the Hermitian suite, with the memory gate still
+  applied against certified references. PRIMME remains a required V1 reference
+  point: if PRIMME is installed, G1 must at least pass parity against PRIMME or
+  leave an explicit G1 performance gap recorded in this plan and
+  `benchmarks/RELEASES.md`.
+- Hermitian benchmark helpers must expose the reference set being gated and
+  enforce strict failure behavior consistently across
+  `bench-hermitian-sparse.R` and `bench-native-hermitian-gate.R`.
+
+### G1 execution plan from current candidate state
+
+G1 is a promotion milestone, not just an implementation milestone. The current
+candidate provides the scaffolding; the work below turns it into the default
+production Hermitian path only if it wins the correctness and benchmark gates.
+
+**G1.0 Freeze and measure the current state**
+
+- Keep the explicit block candidate benchmark subject (`eigencore_block`) on
+  the same bounded controls that would be used after promotion: block size,
+  `max_subspace`, restart budget, target, and tolerance. The helper must never
+  force `max_subspace = n` for the promotion gate.
+- Save a source-loaded baseline under
+  `inst/benchmarks/baselines/g1_candidate_pre.csv` covering at least:
+  path Laplacian smallest eigenpairs, dense Hermitian regression matrices,
+  clustered spectra, and ill-conditioned diagonal spectra.
+- Regenerate that baseline with
+  `inst/benchmarks/bench-g1-candidate-baseline.R --save`. Its `--strict` mode
+  checks case coverage, method-error-free rows, and full certification for the
+  current block-candidate baseline.
+- Record per-case `method`, `nconv`, `certificate_passed`, `iterations`,
+  `matvecs`, `restarts`, `ortho_passes`, `locking_events`, `block_size`,
+  memory, and median time-to-certified-answer. A row that does not certify is
+  a failing row regardless of speed.
+
+Exit: baseline committed, quick and full benchmark scripts can select scalar,
+block candidate, RSpectra, and PRIMME as separate methods without ambiguity.
+
+**G1.1 Make the candidate mathematically contract-complete**
+
+- Keep `R/reference_block_lanczos.R` as the permanent unexported oracle, and
+  compare native results against it on dense and CSC fixtures using
+  certificate-scaled residual tolerances and subspace-distance assertions for
+  clustered or repeated eigenvalues.
+- Add white-box restart/locking tests: forced restart with
+  `max_subspace < n`, forced soft locking on a well-separated cluster,
+  duplicate Ritz-value rejection, lock-vector orthogonality against the active
+  block, and no sparse densification.
+- Treat native/native-oracle mismatches as regressions if either path returns
+  `passed = TRUE` but the subspace distance or backward-error contract fails.
+- Verify target semantics for `largest`, `smallest`, `largest_magnitude`, and
+  `smallest_magnitude`; keep `nearest()` routed away from native Lanczos until
+  shift-invert lands.
+
+Exit: `tests/testthat/test-block-lanczos-oracle.R`,
+`tests/testthat/test-block-lanczos-thick-restart.R`, and the adversarial bank
+are green with the native block candidate enabled.
+
+**G1.2 Convert the native candidate into a real hot-loop kernel**
+
+- Move all solver temporaries into a setup-time workspace struct. The inner
+  restart/extension loop must not call `R_alloc`, `Rf_*`, or allocate R
+  objects; `.Call` allocation is allowed only for final result packaging.
+- Preserve BLAS-3 operator application (`A * V_block`) for dense and CSC
+  built-ins. Sparse inputs must stay on CSC block apply and never materialize a
+  dense copy.
+- Replace the current full-reorthogonalized block Krylov extension with the
+  Hermitian block recurrence/projection structure needed for performance:
+  block three-term recurrence before restart, arrow-plus-block-tridiagonal
+  after thick restart, and dense `dsyev`/`dsyevd` only on the small projected
+  problem.
+- Keep the certificate-scale lock criterion:
+  `||r_i|| <= tol * eigen_backward_scale(norm_A, 1, theta_i, v_i)`.
+- Surface native counters for iteration count, block applies, reorth passes,
+  restarts, locking events, final active subspace, locked count, and restart
+  convergence history.
+
+Exit: native block candidate has allocation-free hot-loop discipline, stable
+counters, and no correctness loss against G1.1 tests.
+
+**G1.3 Tune only after correctness is fixed**
+
+Tune in this order, one isolated commit per tuning knob:
+
+1. Planner block size: compare `b = 2`, `ceil(k / 4)`, `ceil(k / 2)`, and
+   cap `8`, separately for `k < 8`, `8 <= k <= 32`, and larger `k`.
+2. Subspace budget: compare `3*k + 20`, `4*k + 20`, and `max(3*k + 20,
+   6*b + 20)` on sparse Laplacian and dense clustered cases.
+3. Reorthogonalization: keep two-pass MGS2 as the correctness baseline, then
+   test selective second pass when measured orthogonality loss stays within
+   certificate tolerance.
+4. Projection/RR cadence: avoid recomputing more projected state than needed
+   between restart decisions.
+5. Dense apply microkernels: use symmetric structure where it measurably helps,
+   but only after it preserves certificate results on dense Hermitian fixtures.
+
+Exit: candidate is faster than scalar on the Hermitian suite and within striking
+distance of the RSpectra/PRIMME gate before any planner promotion.
+
+**G1.4 Promote planner and dispatch**
+
+- Promote `auto()` to the block path only in regimes that pass the benchmark
+  gate. Initial policy should be conservative: `k >= 4`, native dense/CSC
+  source, supported target, and a size threshold proven by the gate. Keep
+  scalar thick restart for small `k`, small `n`, unsupported block regimes, and
+  explicit `lanczos(block = 1)`.
+- Update the planner label to the production string only after G1.1-G1.3 pass:
+  `native block Hermitian Lanczos (thick restart, locking)`.
+- Ensure `solve.eigencore_eigen_problem()` consumes `plan$controls` exactly:
+  block size, `max_subspace`, and restart budget must match what the planner
+  printed.
+- Keep an explicit development escape hatch for the scalar native path, but do
+  not let `auto()` report block and execute scalar.
+
+Exit: `result$method`, `result$plan$method`, and actual native entry point agree
+for promoted block runs; scalar remains honestly labeled.
+
+**G1.5 Enforce the release gate**
+
+- `inst/benchmarks/bench-native-hermitian-gate.R --strict` and
+  `inst/benchmarks/bench-hermitian-sparse.R --strict` must fail on any
+  uncertified eigencore row, `nconv < k`, missing reference row, RSpectra speed
+  ratio below `1.25`, PRIMME parity below `1.0` when PRIMME is installed, or
+  memory ratio below `1.0`.
+- Gate only certified reference rows. If RSpectra or PRIMME fails to certify a
+  case, record that in the row and exclude it from speed comparison rather than
+  silently treating it as a win.
+- Save passing rows and gate summaries to `benchmarks/RELEASES.md`, including
+  package version, seed, platform, BLAS/LAPACK note when available, and exact
+  benchmark command.
+
+Exit: Hermitian sparse and dense regression gates pass reproducibly; G1 can be
+marked done.
+
+**G1.6 Documentation cleanup after promotion**
+
+- Update `prd.json` only after G1.5 passes: move the promoted block path into
+  `implemented_path` and remove the promoted items from `not_yet_satisfied`.
+- Update this plan's status checkpoint and milestone table. If any PRIMME
+  parity gap remains, G1 is not complete; record it as an explicit blocker
+  rather than weakening the gate.
+- Add a short release note explaining when `auto()` chooses block vs scalar and
+  how users can request `lanczos(block = 1)` for scalar debugging.
 
 ## 4. Dense-fallback policy
 
@@ -362,6 +791,9 @@ In addition to the PRD's criteria, V1 must pass:
 
 Performance gates remain as in `prd.json` but measured with `bench::mark()`
 over a fixed seed, not elapsed wall clock, and measured as **time-to-certified-answer**.
+For G1 specifically, RSpectra carries the PRD's `1.25x` release threshold, while
+PRIMME is a required parity reference when available unless the remaining gap is
+explicitly documented as not yet G1-complete.
 
 ## 10. Sequenced milestones (replacing PRD Milestones 1–9 in order of work)
 
@@ -374,7 +806,7 @@ over a fixed seed, not elapsed wall clock, and measured as **time-to-certified-a
 | E | Dense fallback policy + memory budget                         | Sparse never silently densifies; planner rejects w/ reason |
 | F | Native MGS2 / CholQR2 + native certificate kernels            | Reference bank green against native ortho + cert           |
 | G0 | Native scalar Hermitian thick-restart staging path          | Honest planner label; certified dense/CSC path; sparse non-densification; unsupported targets routed honestly |
-| G1 | Native Hermitian block Lanczos (thick restart, locking)     | Reference bank green; beats RSpectra/PRIMME on Hermitian subset by time-to-certified-answer and memory gate |
+| G1 | Native Hermitian block Lanczos (thick restart, locking)     | Reference bank green; beats RSpectra by PRD threshold; PRIMME parity when available; Hermitian memory gate green |
 | H | Native Golub–Kahan (thick restart, true SVD residuals)        | Reference bank green; beats RSpectra on SVD subset         |
 | I | Native randomized SVD + refinement + honest estimate cert     | HegelSVD-derived regimes ported; 2× deterministic SVD on selected approximate cases; honest degraded certificates |
 | J | Generalized SPD LOBPCG (dense/sparse/matrix-free)             | Largest/smallest generalized SPD paths certify without sparse densification; adversarial B bank green |
@@ -404,8 +836,9 @@ methods, no nonlinear eigenproblems.
 
 ## 13. How this plan is enforced
 
-- Every PR that adds a solver path also updates `plan_solver()` labels, the
-  certificate type fields, and the adversarial bank. No exceptions.
+- Every PR that adds a solver path also updates `plan_solver()` labels, solver
+  dispatch, the certificate type fields, and the adversarial bank. No
+  exceptions.
 - Any export added without a corresponding native-or-reference
   implementation is a review-blocker.
 - Benchmark claims in README / vignettes cite a reproducible `bench::mark()`
