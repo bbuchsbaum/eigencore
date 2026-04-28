@@ -154,6 +154,63 @@ slow_decay_svd_matrix <- function(m, n, decay = 0.35, seed = 1L) {
   U %*% (d * t(V))
 }
 
+nearly_low_rank_svd_matrix <- function(m, n, rank, noise = 1e-3, seed = 1L) {
+  set.seed(seed)
+  U <- qr.Q(qr(matrix(stats::rnorm(m * rank), nrow = m, ncol = rank)))
+  V <- qr.Q(qr(matrix(stats::rnorm(n * rank), nrow = n, ncol = rank)))
+  signal <- U %*% (seq(rank, 1) * t(V))
+  signal + noise * matrix(stats::rnorm(m * n), nrow = m, ncol = n)
+}
+
+randomized_rsvd_benchmark_cases <- function(quick = FALSE) {
+  if (isTRUE(quick)) {
+    return(list(
+      list(
+        case = "exact_low_rank_dense",
+        A = nearly_low_rank_svd_matrix(120L, 80L, rank = 8L, noise = 0, seed = 1601L),
+        rank = 6L,
+        seed = 1601L
+      ),
+      list(
+        case = "slow_decay_dense",
+        A = slow_decay_svd_matrix(140L, 90L, decay = 0.25, seed = 1602L),
+        rank = 8L,
+        seed = 1602L
+      ),
+      list(
+        case = "low_rank_sparse",
+        A = {
+          set.seed(1603L)
+          Matrix::rsparsematrix(140L, 12L, density = 0.12) %*%
+            Matrix::rsparsematrix(12L, 90L, density = 0.12)
+        },
+        rank = 8L,
+        seed = 1603L
+      )
+    ))
+  }
+  list(
+    list(
+      case = "exact_low_rank_dense",
+      A = nearly_low_rank_svd_matrix(2000L, 500L, rank = 60L, noise = 0, seed = 1701L),
+      rank = 50L,
+      seed = 1701L
+    ),
+    list(
+      case = "nearly_low_rank_dense",
+      A = nearly_low_rank_svd_matrix(2000L, 500L, rank = 80L, noise = 1e-3, seed = 1702L),
+      rank = 50L,
+      seed = 1702L
+    ),
+    list(
+      case = "slow_decay_dense",
+      A = slow_decay_svd_matrix(2000L, 500L, decay = 0.25, seed = 1703L),
+      rank = 50L,
+      seed = 1703L
+    )
+  )
+}
+
 generalized_spd_pair <- function(n, rank = 12L, sparse = FALSE, seed = 1L) {
   set.seed(seed)
   if (isTRUE(sparse)) {
@@ -294,6 +351,37 @@ certify_svd_result <- function(A, fit, tol = 1e-8) {
     return(eigencore:::empty_certificate(tol, "both singular-vector sides unavailable"))
   }
   eigencore:::certify_svd_operator(as_operator(A), d, u, v, tol = tol)
+}
+
+svd_subspace_error <- function(observed, oracle) {
+  if (is.null(observed) || is.null(oracle) || !ncol(observed) || !ncol(oracle)) {
+    return(NA_real_)
+  }
+  observed <- qr.Q(qr(as.matrix(observed)))
+  oracle <- qr.Q(qr(as.matrix(oracle)))
+  sqrt(sum((tcrossprod(observed) - tcrossprod(oracle))^2))
+}
+
+svd_oracle_accuracy <- function(A, fit, rank, oracle = NULL) {
+  if (is.null(oracle)) {
+    oracle <- svd(as.matrix(A), nu = rank, nv = rank)
+  }
+  idx <- seq_len(min(rank, length(oracle$d)))
+  observed <- eigencore:::method_values(fit, kind = "svd")
+  observed <- observed[seq_len(min(length(observed), length(idx)))]
+  expected <- oracle$d[idx][seq_along(observed)]
+  singular_value_relative_error <- if (length(observed)) {
+    max(abs(observed - expected) / pmax(abs(expected), .Machine$double.eps))
+  } else {
+    Inf
+  }
+  u <- fit$u
+  v <- fit$v
+  list(
+    singular_value_relative_error = singular_value_relative_error,
+    left_subspace_error = svd_subspace_error(u, oracle$u[, idx, drop = FALSE]),
+    right_subspace_error = svd_subspace_error(v, oracle$v[, idx, drop = FALSE])
+  )
 }
 
 time_certified_eigen_method <- function(method, A, k, target, tol, seed,
@@ -866,6 +954,103 @@ evaluate_memory_diagnostics <- function(rows, subject = "eigencore",
     } else {
       NA_real_
     },
+    note = "",
+    stringsAsFactors = FALSE
+  )
+}
+
+benchmark_randomized_rsvd_case <- function(A, rank, methods = c("eigencore_randomized", "rsvd"),
+                                           iterations = 3L, tol = 1e-8,
+                                           seed = 1L) {
+  methods <- bench_methods("svd", methods)
+  oracle <- svd(as.matrix(A), nu = rank, nv = rank)
+  rows <- lapply(methods, function(method) {
+    timed <- time_certified_svd_method(method, A, rank, tol, seed, iterations)
+    fit <- timed$fit
+    cert <- timed$cert
+    accuracy <- svd_oracle_accuracy(A, fit, rank = rank, oracle = oracle)
+    data.frame(
+      method = method,
+      median = timed$total$median,
+      min = timed$total$min,
+      mem_alloc = timed$total$mem_alloc,
+      solver_median = timed$solver$median,
+      solver_mem_alloc = timed$solver$mem_alloc,
+      certificate_median = timed$certificate$median,
+      certificate_mem_alloc = timed$certificate$mem_alloc,
+      max_residual = cert$max_residual,
+      max_backward_error = cert$max_backward_error,
+      orthogonality_loss = cert$max_orthogonality_loss,
+      certificate_passed = cert$passed,
+      certificate_type = cert$certificate_type,
+      norm_bound_type = cert$norm_bound_type,
+      scale_is_estimate = cert$scale_is_estimate,
+      nconv = sum(cert$converged),
+      singular_value_relative_error = accuracy$singular_value_relative_error,
+      left_subspace_error = accuracy$left_subspace_error,
+      right_subspace_error = accuracy$right_subspace_error,
+      seed = seed,
+      pkg_version = as.character(utils::packageVersion("eigencore")),
+      stringsAsFactors = FALSE
+    )
+  })
+  out <- do.call(rbind, rows)
+  row.names(out) <- NULL
+  out
+}
+
+evaluate_randomized_rsvd_gate <- function(rows, subject = "eigencore_randomized",
+                                          baseline = "rsvd", requested,
+                                          speed_ratio_required = 1.0,
+                                          accuracy_multiplier = 1.05,
+                                          accuracy_floor = 1e-12) {
+  eig <- rows[rows$method == subject, , drop = FALSE]
+  ref <- rows[rows$method == baseline, , drop = FALSE]
+  if (nrow(eig) != 1L) {
+    stop("randomized rsvd gate requires exactly one subject row", call. = FALSE)
+  }
+  if (nrow(ref) != 1L) {
+    return(data.frame(
+      subject = subject,
+      baseline = baseline,
+      subject_certified = isTRUE(eig$certificate_passed) && eig$nconv >= requested,
+      subject_nconv = eig$nconv,
+      requested = requested,
+      speed_ratio_vs_rsvd = NA_real_,
+      singular_value_error_ratio_vs_rsvd = NA_real_,
+      left_subspace_error_ratio_vs_rsvd = NA_real_,
+      right_subspace_error_ratio_vs_rsvd = NA_real_,
+      speed_gate = FALSE,
+      accuracy_gate = FALSE,
+      passed = FALSE,
+      note = "rsvd baseline row unavailable",
+      stringsAsFactors = FALSE
+    ))
+  }
+
+  sv_ratio <- eig$singular_value_relative_error /
+    max(ref$singular_value_relative_error, accuracy_floor)
+  left_ratio <- eig$left_subspace_error / max(ref$left_subspace_error, accuracy_floor)
+  right_ratio <- eig$right_subspace_error / max(ref$right_subspace_error, accuracy_floor)
+  speed_ratio <- ref$median / eig$median
+  subject_certified <- isTRUE(eig$certificate_passed) && eig$nconv >= requested
+  accuracy_gate <- isTRUE(sv_ratio <= accuracy_multiplier) &&
+    (is.na(left_ratio) || isTRUE(left_ratio <= accuracy_multiplier)) &&
+    (is.na(right_ratio) || isTRUE(right_ratio <= accuracy_multiplier))
+  speed_gate <- isTRUE(speed_ratio >= speed_ratio_required)
+  data.frame(
+    subject = subject,
+    baseline = baseline,
+    subject_certified = subject_certified,
+    subject_nconv = eig$nconv,
+    requested = requested,
+    speed_ratio_vs_rsvd = speed_ratio,
+    singular_value_error_ratio_vs_rsvd = sv_ratio,
+    left_subspace_error_ratio_vs_rsvd = left_ratio,
+    right_subspace_error_ratio_vs_rsvd = right_ratio,
+    speed_gate = speed_gate,
+    accuracy_gate = accuracy_gate,
+    passed = subject_certified && speed_gate && accuracy_gate,
     note = "",
     stringsAsFactors = FALSE
   )

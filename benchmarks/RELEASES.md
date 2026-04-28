@@ -67,7 +67,17 @@ they are machine-dependent.
   exercises the production H contract before native C++ promotion: forced
   restart, clustered singular subspaces, locking diagnostics, and exact zero
   singular triplet completion. This does not change the release gate subject or
-  H status.
+  H status. A new internal native block-GK Ritz kernel computes selected
+  singular Ritz slices from a right basis and cached `A V`, with tests covering
+  active-column windows, target selection, and original-coordinate
+  certification. Dense and CSC internal native basis-cycle staging paths now
+  feed that kernel from native block right bases and cached `A V`; these are
+  full-subspace scaffolding tests, not release gate subjects.
+- The randomized SVD milestone now has an explicit `rsvd` parity benchmark
+  surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
+  `eigencore_randomized` against `rsvd` using oracle singular-value error,
+  left/right subspace error, true SVD certificate fields, and
+  time-to-certified-answer gates.
 - G1 native block Hermitian Lanczos is promoted for benchmark-proven regimes.
   The default `eigencore` path now passes both strict release scripts with dense
   diagnostics included:

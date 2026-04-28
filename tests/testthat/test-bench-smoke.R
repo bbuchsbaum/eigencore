@@ -150,6 +150,49 @@ test_that("SVD surface benchmark script is available", {
   expect_true(any(grepl("benchmark_svd_case", lines, fixed = TRUE)))
 })
 
+test_that("randomized-rsvd benchmark script is available", {
+  script <- test_path("../../inst/benchmarks/bench-randomized-rsvd.R")
+  expect_true(file.exists(script))
+  lines <- readLines(script, warn = FALSE)
+  expect_true(any(grepl("benchmark_randomized_rsvd_case", lines, fixed = TRUE)))
+  expect_true(any(grepl("evaluate_randomized_rsvd_gate", lines, fixed = TRUE)))
+  expect_true(any(grepl("randomized_rsvd_benchmark_cases", lines, fixed = TRUE)))
+  expect_true(any(grepl("eigencore_randomized", lines, fixed = TRUE)))
+  expect_true(any(grepl("rsvd", lines, fixed = TRUE)))
+})
+
+test_that("randomized-rsvd gate enforces accuracy and speed versus rsvd", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+
+  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
+  if (!nzchar(helper_path)) {
+    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
+  }
+  source(helper_path)
+
+  rows <- data.frame(
+    method = c("eigencore_randomized", "rsvd"),
+    median = c(0.5, 1.0),
+    certificate_passed = c(TRUE, TRUE),
+    nconv = c(4L, 4L),
+    singular_value_relative_error = c(1e-8, 1.1e-8),
+    left_subspace_error = c(2e-8, 2.2e-8),
+    right_subspace_error = c(3e-8, 3.3e-8)
+  )
+  gate <- evaluate_randomized_rsvd_gate(rows, requested = 4L)
+  expect_equal(gate$subject, "eigencore_randomized")
+  expect_equal(gate$baseline, "rsvd")
+  expect_true(gate$subject_certified)
+  expect_true(gate$accuracy_gate)
+  expect_true(gate$speed_gate)
+  expect_true(gate$passed)
+
+  rows$singular_value_relative_error[[1L]] <- 1e-4
+  failed <- evaluate_randomized_rsvd_gate(rows, requested = 4L)
+  expect_false(failed$accuracy_gate)
+  expect_false(failed$passed)
+})
+
 test_that("SVD surface H candidate preset selects projected GK subject", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
 

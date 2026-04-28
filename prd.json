@@ -483,7 +483,7 @@
       ],
       "current_implementation_status": {
         "status": "in_progress",
-        "implemented_path": "native Golub-Kahan staging path for dense double matrices and dgCMatrix operators",
+        "implemented_path": "native Golub-Kahan staging path for dense double matrices and dgCMatrix operators; unexported block-Golub-Kahan thick-restart oracle, native block Ritz extraction kernel, and dense/CSC native block basis-cycle scaffolding exist for H",
         "native_certificate_paths": [
           "dense SVD certificate diagnostics",
           "built-in dense, dgCMatrix, and diagonal SVD operator certificate diagnostics"
@@ -509,7 +509,8 @@
         "accuracy must match or improve vendor/rsvd on singular-value and subspace-error benchmarks",
         "time-to-certified-answer must beat vendor/rsvd in regimes where the planner selects randomized SVD"
       ],
-      "reference_baseline": "vendor/rsvd is the minimum public-package baseline for randomized SVD: eigencore must match or improve rsvd::rsvd() accuracy and exceed rsvd performance once certification/refinement cost is included."
+      "reference_baseline": "vendor/rsvd is the minimum public-package baseline for randomized SVD: eigencore must match or improve rsvd::rsvd() accuracy and exceed rsvd performance once certification/refinement cost is included.",
+      "benchmark_surface": "inst/benchmarks/bench-randomized-rsvd.R reports oracle singular-value error, left/right subspace error, true SVD certificate fields, and rsvd speed ratios."
     },
     "lobpcg": {
       "required_v1_method": "LOBPCG for symmetric/Hermitian standard and generalized SPD problems",

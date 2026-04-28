@@ -122,7 +122,10 @@ Deliver the native engine in order. Each step ships with adversarial tests
    minimum public-package bar: eigencore's native randomized path must match or
    improve `rsvd::rsvd()` singular-value/subspace accuracy on the randomized
    benchmark bank and beat it on time-to-certified-answer in the regimes where
-   the planner is allowed to choose randomized SVD.
+   the planner is allowed to choose randomized SVD. The enforcement surface is
+   `inst/benchmarks/bench-randomized-rsvd.R`, which reports oracle
+   singular-value error, left/right subspace error, true SVD certificates, and
+   speed ratios against `rsvd`.
 6. **Generalized SPD LOBPCG** for dense, sparse, and matrix-free operators.
    This is the primary scalable V1 path for `A x = lambda B x`, especially
    smallest eigenpairs and preconditioned problems. It uses block iteration,
@@ -432,7 +435,10 @@ only, while non-quick `--strict` enforces the speed/memory/parity release gate:
   first native-facing block-GK kernel,
   `eigencore_block_golub_kahan_ritz`, now computes selected singular Ritz
   slices from a right basis and cached `A V`, including active-column windows
-  and target taxonomy checks. It is scaffolding for the future native loop, not
+  and target taxonomy checks. A matching internal dense/CSC native basis-cycle
+  staging path now builds block right bases and cached `A V` with native
+  BLAS-3 reorthogonalization and certifies through the native Ritz kernel on
+  full-subspace tests. It is scaffolding for the future thick-restart loop, not
   a production solver.
 - shift-invert via `shift_invert(sigma)` is now wired through a reference
   Hermitian Lanczos path on the inverted operator, with three honest planner
