@@ -54,7 +54,10 @@ they are machine-dependent.
   path now uses an adaptive DGKS-style second reorthogonalization pass and
   reports `reorthogonalization_passes`; sampled projected rows remain
   certified, with wide sparse around `0.0028s` and clustered dense around
-  `0.0012s`.
+  `0.0012s`. The SVD surface rows now also report normalized H hotspot
+  diagnostics, including accounted native stage time, reorthogonalization time
+  fraction, seconds per pass, passes per iteration, native seconds per matvec,
+  projected-check cost, and projected-stop savings fractions.
 - G1 native block Hermitian Lanczos is promoted for benchmark-proven regimes.
   The default `eigencore` path now passes both strict release scripts with dense
   diagnostics included:

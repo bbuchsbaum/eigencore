@@ -53,9 +53,31 @@ projected_stop_comparison <- function(result) {
       plain_iterations = plain$final_iterations,
       projected_iterations = projected$final_iterations,
       iteration_savings = plain$final_iterations - projected$final_iterations,
+      iteration_savings_fraction = benchmark_safe_ratio(
+        plain$final_iterations - projected$final_iterations,
+        plain$final_iterations
+      ),
       plain_matvecs = plain$final_matvecs,
       projected_matvecs = projected$final_matvecs,
       matvec_savings = plain$final_matvecs - projected$final_matvecs,
+      matvec_savings_fraction = benchmark_safe_ratio(
+        plain$final_matvecs - projected$final_matvecs,
+        plain$final_matvecs
+      ),
+      plain_reorthogonalization_seconds = plain$stage_reorthogonalization_seconds,
+      projected_reorthogonalization_seconds = projected$stage_reorthogonalization_seconds,
+      reorthogonalization_speed_ratio = benchmark_safe_ratio(
+        plain$stage_reorthogonalization_seconds,
+        projected$stage_reorthogonalization_seconds
+      ),
+      plain_reorthogonalization_passes = plain$reorthogonalization_passes,
+      projected_reorthogonalization_passes = projected$reorthogonalization_passes,
+      reorthogonalization_pass_savings =
+        plain$reorthogonalization_passes - projected$reorthogonalization_passes,
+      reorthogonalization_pass_savings_fraction = benchmark_safe_ratio(
+        plain$reorthogonalization_passes - projected$reorthogonalization_passes,
+        plain$reorthogonalization_passes
+      ),
       projected_stop_requested = projected$projected_stop_requested,
       projected_stop_enabled = projected$projected_stop_enabled,
       projected_stop_disable_reason = projected$projected_stop_disable_reason,

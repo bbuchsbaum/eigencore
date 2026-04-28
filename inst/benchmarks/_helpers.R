@@ -2,6 +2,21 @@ library(eigencore)
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
+benchmark_safe_ratio <- function(numerator, denominator) {
+  out <- rep(NA_real_, length(numerator))
+  ok <- !is.na(numerator) & !is.na(denominator) & denominator != 0
+  out[ok] <- numerator[ok] / denominator[ok]
+  out
+}
+
+benchmark_row_sum <- function(...) {
+  values <- cbind(...)
+  out <- rep(NA_real_, nrow(values))
+  ok <- rowSums(!is.na(values)) > 0L
+  out[ok] <- rowSums(values[ok, , drop = FALSE], na.rm = TRUE)
+  out
+}
+
 benchmark_arg_value <- function(args, prefix) {
   hit <- grep(paste0("^", prefix), args, value = TRUE)
   if (!length(hit)) {
@@ -939,7 +954,34 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
       stringsAsFactors = FALSE
     )
   })
-  do.call(rbind, rows)
+  out <- do.call(rbind, rows)
+  out$native_stage_accounted_seconds <- benchmark_row_sum(
+    out$stage_apply_seconds,
+    out$stage_recurrence_seconds,
+    out$stage_reorthogonalization_seconds,
+    out$stage_projected_solve_seconds
+  )
+  out$stage_reorthogonalization_fraction <- benchmark_safe_ratio(
+    out$stage_reorthogonalization_seconds,
+    out$native_stage_accounted_seconds
+  )
+  out$reorthogonalization_seconds_per_pass <- benchmark_safe_ratio(
+    out$stage_reorthogonalization_seconds,
+    out$reorthogonalization_passes
+  )
+  out$reorthogonalization_passes_per_iteration <- benchmark_safe_ratio(
+    out$reorthogonalization_passes,
+    out$final_iterations
+  )
+  out$native_seconds_per_matvec <- benchmark_safe_ratio(
+    out$native_stage_accounted_seconds,
+    out$final_matvecs
+  )
+  out$projected_seconds_per_check <- benchmark_safe_ratio(
+    out$projected_seconds,
+    out$projected_checks
+  )
+  out
 }
 
 save_benchmark_result <- function(result, name) {

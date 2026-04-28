@@ -51,6 +51,11 @@ test_that("benchmark harness produces certificate-inclusive rows", {
     "projected_stop_disable_reason", "projected_stop", "projected_nconv",
     "projected_max_residual", "projected_checks", "projected_seconds",
     "native_workspace_bytes", "basis_returned", "reorthogonalization_passes",
+    "native_stage_accounted_seconds",
+    "stage_reorthogonalization_fraction",
+    "reorthogonalization_seconds_per_pass",
+    "reorthogonalization_passes_per_iteration",
+    "native_seconds_per_matvec", "projected_seconds_per_check",
     "first_certified_prefix", "final_prefix_iteration_overshoot",
     "final_prefix_matvec_overshoot",
     "stage_native_iteration_seconds", "stage_golub_kahan_ritz_seconds",
@@ -132,6 +137,8 @@ test_that("SVD surface benchmark script is available", {
   expect_true(any(grepl("h_candidate", lines, fixed = TRUE)))
   expect_true(any(grepl("projected_stop_comparison", lines, fixed = TRUE)))
   expect_true(any(grepl("memory_diagnostics", lines, fixed = TRUE)))
+  expect_true(any(grepl("iteration_savings_fraction", lines, fixed = TRUE)))
+  expect_true(any(grepl("reorthogonalization_pass_savings_fraction", lines, fixed = TRUE)))
   expect_true(any(grepl("evaluate_memory_diagnostics", lines, fixed = TRUE)))
   expect_true(any(grepl("gate_subject", lines, fixed = TRUE)))
   expect_true(any(grepl("svd_surface_gate_subject", lines, fixed = TRUE)))
@@ -213,6 +220,10 @@ test_that("SVD benchmark harness exposes Golub-Kahan candidate separately", {
   expect_gte(gk$final_prefix_iteration_overshoot, 0L)
   expect_true(is.finite(gk$stage_native_iteration_seconds))
   expect_true(is.finite(gk$stage_golub_kahan_ritz_seconds))
+  expect_true(is.finite(gk$stage_reorthogonalization_fraction))
+  expect_true(is.finite(gk$reorthogonalization_seconds_per_pass))
+  expect_true(is.finite(gk$reorthogonalization_passes_per_iteration))
+  expect_true(is.finite(gk$native_seconds_per_matvec))
 })
 
 test_that("default Golub-Kahan candidate is not accidentally fixed-budget", {
@@ -308,6 +319,10 @@ test_that("SVD benchmark can expose projected Golub-Kahan as a separate row", {
   expect_true(projected$projected_stop)
   expect_gt(projected$projected_checks, 0L)
   expect_gte(projected$projected_seconds, 0)
+  expect_true(is.finite(projected$projected_seconds_per_check))
+  expect_true(is.finite(projected$stage_reorthogonalization_fraction))
+  expect_true(is.finite(projected$reorthogonalization_seconds_per_pass))
+  expect_true(is.finite(projected$reorthogonalization_passes_per_iteration))
   expect_lt(projected$final_iterations, plain$final_iterations)
   expect_true(projected$certificate_passed)
 })

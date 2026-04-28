@@ -397,7 +397,13 @@ only, while non-quick `--strict` enforces the speed/memory/parity release gate:
   projected wide sparse used `99` passes for `50` iterations and improved to
   about `0.0028s`, with reorthogonalization around `0.0011s`; clustered dense
   used `47` passes for `24` iterations and remained around `0.0012s`. This is
-  useful headroom, but still not an H gate closure. A full non-quick projected-stop SVD
+  useful headroom, but still not an H gate closure. The SVD benchmark surface
+  now records normalized H hotspot metrics: accounted native stage time,
+  reorthogonalization time fraction, seconds per reorthogonalization pass,
+  passes per iteration, native seconds per matvec, projected-check cost, and
+  projected-stop savings fractions. These
+  fields make block/thick-restart SVD progress measurable by orthogonalization
+  work avoided, not only by noisy wall-clock medians. A full non-quick projected-stop SVD
   surface run on 2026-04-26 saved
   `inst/benchmarks/results/20260426-svd-surface-rows.rds`,
   `inst/benchmarks/results/20260426-svd-surface-gates.rds`, and
