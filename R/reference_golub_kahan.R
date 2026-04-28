@@ -254,6 +254,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
         active_iterations = iter$iterations
       )
     }
+    final <- complete_zero_singular_triplets(op, final, rank, target, tol)
     ritz_elapsed <- proc.time()[["elapsed"]] - ritz_started
     total_ritz_seconds <- total_ritz_seconds + ritz_elapsed
     total_iterations <- total_iterations + iter$iterations
@@ -368,6 +369,8 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     native_workspace_bytes = iter$native_workspace_bytes %||% NA_real_,
     basis_returned = isTRUE(iter$basis_returned %||% (!is.null(iter$U) && !is.null(iter$V))),
     reorthogonalization_passes = total_reorthogonalization_passes,
+    zero_singular_completion = isTRUE(final$zero_singular_completion),
+    zero_singular_threshold = final$zero_singular_threshold %||% NA_real_,
     prefix_diagnostics = prefix_diagnostics,
     prefix_history = prefix_history,
     first_certified_prefix = first_certified_prefix,
@@ -630,6 +633,74 @@ orthonormal_completion <- function(Q, n_rows, needed, tol = sqrt(.Machine$double
          call. = FALSE)
   }
   out
+}
+
+#' @keywords internal
+complete_zero_singular_triplets <- function(op, final, rank, target, tol) {
+  kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
+  if (!kind %in% c("largest", "largest_magnitude") ||
+      is.null(final$u) || is.null(final$v)) {
+    final$zero_singular_completion <- FALSE
+    final$zero_singular_threshold <- NA_real_
+    return(final)
+  }
+
+  rank <- min(as.integer(rank), min(op$dim))
+  if (length(final$d) >= rank && !any(final$d <= gram_svd_zero_tolerance(final$d, tol))) {
+    final$zero_singular_completion <- FALSE
+    final$zero_singular_threshold <- NA_real_
+    return(final)
+  }
+
+  zero_tol <- gram_svd_zero_tolerance(final$d, tol)
+  nz <- final$d > zero_tol
+  nonzero_count <- min(sum(nz), rank)
+  zero_count <- rank - nonzero_count
+  if (zero_count <= 0L) {
+    final$zero_singular_completion <- FALSE
+    final$zero_singular_threshold <- zero_tol
+    return(final)
+  }
+
+  u_nonzero <- final$u[, nz, drop = FALSE]
+  v_nonzero <- final$v[, nz, drop = FALSE]
+  if (ncol(u_nonzero) > nonzero_count) {
+    u_nonzero <- u_nonzero[, seq_len(nonzero_count), drop = FALSE]
+    v_nonzero <- v_nonzero[, seq_len(nonzero_count), drop = FALSE]
+  }
+  d_nonzero <- final$d[nz]
+  if (length(d_nonzero) > nonzero_count) {
+    d_nonzero <- d_nonzero[seq_len(nonzero_count)]
+  }
+
+  u_zero <- orthonormal_completion(
+    u_nonzero,
+    n_rows = op$dim[[1L]],
+    needed = zero_count,
+    tol = zero_tol
+  )
+  v_zero <- orthonormal_completion(
+    v_nonzero,
+    n_rows = op$dim[[2L]],
+    needed = zero_count,
+    tol = zero_tol
+  )
+  d <- c(d_nonzero, rep(0, zero_count))
+  u <- cbind(u_nonzero, u_zero)
+  v <- cbind(v_nonzero, v_zero)
+  cert <- certify_svd_operator(op, d, u, v, tol = tol)
+
+  final$d <- d
+  final$u <- u
+  final$v <- v
+  final$values <- d
+  final$residuals <- cert$residuals
+  final$backward_error <- cert$backward_error
+  final$orthogonality <- cert$orthogonality
+  final$certificate <- cert
+  final$zero_singular_completion <- TRUE
+  final$zero_singular_threshold <- zero_tol
+  final
 }
 
 #' @keywords internal
