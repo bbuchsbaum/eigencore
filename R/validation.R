@@ -189,6 +189,7 @@ available_svd_methods <- function() {
     "eigencore_golub_kahan",
     "eigencore_golub_kahan_projected",
     "eigencore_block_golub_kahan_cycle",
+    "eigencore_block_golub_kahan_cycle_cached",
     "eigencore_block_golub_kahan_cycle_lean",
     "eigencore_randomized",
     "base",
@@ -325,6 +326,17 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
         rank = rank,
         target = largest(),
         tol = tol,
+        vectors = "both"
+      )
+    },
+    eigencore_block_golub_kahan_cycle_cached = {
+      set.seed(seed %||% 1L)
+      native_block_golub_kahan_cycle_svd(
+        A,
+        rank = rank,
+        target = largest(),
+        tol = tol,
+        adaptive_start = "ritz_cached",
         vectors = "both"
       )
     },

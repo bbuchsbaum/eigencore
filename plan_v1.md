@@ -535,7 +535,7 @@ Working status against the sequenced milestones:
 | F | largely done for current paths | Native ortho and certificate kernels exist, but not every future solver path is fully native-certificate-backed. |
 | G0 | done | Native scalar Hermitian staging path exists and certifies on dense/CSC cases. |
 | G1 | done | Promoted native block Hermitian Lanczos runs by default in benchmark-proven regimes; strict Hermitian sparse and dense regression gates pass against certified RSpectra/PRIMME references. |
-| H | staged, not complete | Native Golub-Kahan exists as a staging path; block-GK restart comparators now show Ritz-plus-random starts beat lean and cold adaptive starts on the wide-sparse fixture, and benchmark rows expose restart-efficiency diagnostics, but production thick-restart SVD and SVD performance gates remain open. |
+| H | staged, not complete | Native Golub-Kahan exists as a staging path; block-GK restart comparators now include a cached Ritz-vector `A V` path and expose restart-efficiency diagnostics, but production thick-restart SVD and SVD performance gates remain open. |
 | I | prototype | Randomized SVD has reference implementation, normalizers, and certified refinement; native approximate engine remains open. |
 | J | partial | Native generalized SPD LOBPCG slices exist for built-in `B`, explicitly SPD matrix-free `B`, dense constraints, and the typed shifted-tridiagonal preconditioner; benchmark rows expose native/B-orthogonal/constrained diagnostics; broader generalized preconditioning and promotion remain open. |
 | K | not complete | B-orthogonal block Lanczos is still a later generalized-SPD refinement path. |
@@ -573,7 +573,9 @@ Primary attack surfaces, in order:
    not close the gate. The H benchmark rows now expose attempted subspaces,
    restart start width, warm-start count, certified attempt, final-attempt work,
    and total orthogonalization work; future retained-restart patches must move
-   those fields in the right direction, not just lower wall-clock noise.
+   those fields in the right direction, not just lower wall-clock noise. The
+   cached Ritz-start comparator reuses exact `A V` for retained vectors and is
+   the bridge toward a proper native retained-restart workspace.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
    preconditioning beyond the typed shifted-tridiagonal case, keep the
    benchmark B-orthogonality/native-path diagnostics green, and promote the

@@ -349,7 +349,7 @@ native_block_golub_kahan_ritz <- function(V, AV, rank, target = largest(),
 
 #' @keywords internal
 native_block_golub_kahan_basis <- function(op, max_subspace, block = NULL,
-                                           start = NULL) {
+                                           start = NULL, start_av = NULL) {
   op <- as_operator(op)
   if (is.null(op$apply_adjoint)) {
     stop("Native block Golub-Kahan basis requires an adjoint operator.", call. = FALSE)
@@ -371,33 +371,80 @@ native_block_golub_kahan_basis <- function(op, max_subspace, block = NULL,
   if (nrow(start) != n || ncol(start) < 1L) {
     stop("start must have nrow equal to ncol(op) and at least one column.", call. = FALSE)
   }
+  if (!is.null(start_av)) {
+    start_av <- as.matrix(start_av)
+    if (nrow(start_av) != op$dim[[1L]] || ncol(start_av) != ncol(start)) {
+      stop("start_av must have nrow equal to nrow(op) and ncol equal to ncol(start).", call. = FALSE)
+    }
+  }
 
   storage <- op$metadata$storage %||% NULL
   source <- source_or_null(op)
   if (identical(storage, "dgCMatrix")) {
     A <- op$metadata$matrix
-    .Call(
-      "eigencore_block_golub_kahan_csc_basis",
-      methods::slot(A, "i"),
-      methods::slot(A, "p"),
-      methods::slot(A, "x"),
-      methods::slot(A, "Dim"),
-      as.integer(max_subspace),
-      start,
-      PACKAGE = "eigencore"
-    )
+    if (is.null(start_av)) {
+      .Call(
+        "eigencore_block_golub_kahan_csc_basis",
+        methods::slot(A, "i"),
+        methods::slot(A, "p"),
+        methods::slot(A, "x"),
+        methods::slot(A, "Dim"),
+        as.integer(max_subspace),
+        start,
+        PACKAGE = "eigencore"
+      )
+    } else {
+      .Call(
+        "eigencore_block_golub_kahan_csc_basis_cached",
+        methods::slot(A, "i"),
+        methods::slot(A, "p"),
+        methods::slot(A, "x"),
+        methods::slot(A, "Dim"),
+        as.integer(max_subspace),
+        start,
+        start_av,
+        PACKAGE = "eigencore"
+      )
+    }
   } else if (is.matrix(source) && is.double(source)) {
-    .Call(
-      "eigencore_block_golub_kahan_dense_basis",
-      source,
-      as.integer(max_subspace),
-      start,
-      PACKAGE = "eigencore"
-    )
+    if (is.null(start_av)) {
+      .Call(
+        "eigencore_block_golub_kahan_dense_basis",
+        source,
+        as.integer(max_subspace),
+        start,
+        PACKAGE = "eigencore"
+      )
+    } else {
+      .Call(
+        "eigencore_block_golub_kahan_dense_basis_cached",
+        source,
+        as.integer(max_subspace),
+        start,
+        start_av,
+        PACKAGE = "eigencore"
+      )
+    }
   } else {
     stop("Native block Golub-Kahan basis currently supports dense double matrices and dgCMatrix operators only.",
          call. = FALSE)
   }
+}
+
+block_golub_kahan_normalize_cached_start <- function(start, start_av) {
+  if (is.null(start_av)) {
+    return(list(start = start, start_av = NULL))
+  }
+  qr_start <- qr(start)
+  q <- qr.Q(qr_start)
+  r <- qr.R(qr_start)
+  if (ncol(q) < ncol(start)) {
+    stop("cached block Golub-Kahan restart basis is rank deficient.", call. = FALSE)
+  }
+  list(
+    start = q[, seq_len(ncol(start)), drop = FALSE],
+    start_av = start_av %*% backsolve(r, diag(ncol(r)))
+  )
 }
 
 #' @keywords internal
@@ -408,7 +455,7 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
                                                start = NULL,
                                                adaptive = is.null(max_subspace),
                                                max_attempts = NULL,
-                                               adaptive_start = c("ritz", "ritz_lean", "initial"),
+                                               adaptive_start = c("ritz", "ritz_cached", "ritz_lean", "initial"),
                                                vectors = c("both", "left", "right", "none")) {
   vectors <- match.arg(vectors)
   adaptive_start <- match.arg(adaptive_start)
@@ -434,6 +481,7 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
     as.matrix(start)
   }
   current_start <- start
+  current_start_av <- NULL
 
   attempt_rows <- list()
   total_iterations <- 0L
@@ -444,11 +492,16 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
   attempt <- 0L
   repeat {
     attempt <- attempt + 1L
+    cached_start <- block_golub_kahan_normalize_cached_start(
+      current_start,
+      current_start_av
+    )
     basis <- native_block_golub_kahan_basis(
       op,
       max_subspace = current_max_subspace,
       block = block,
-      start = current_start
+      start = cached_start$start,
+      start_av = cached_start$start_av
     )
     ritz <- native_block_golub_kahan_ritz(
       basis$V,
@@ -483,7 +536,8 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
         max_subspace = current_max_subspace,
         block = block,
         ortho_passes = basis$ortho_passes,
-        matvecs = basis$matvecs
+        matvecs = basis$matvecs,
+        cached_start_used = isTRUE(basis$cached_start_used)
       )
     )
     out <- complete_zero_singular_triplets(op, out, rank, target, tol)
@@ -496,7 +550,8 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
       max_subspace = current_max_subspace,
       active_cols = basis$active_cols,
       start_cols = ncol(current_start),
-      warm_started = attempt > 1L && adaptive_start %in% c("ritz", "ritz_lean"),
+      cached_start_used = isTRUE(basis$cached_start_used),
+      warm_started = attempt > 1L && adaptive_start %in% c("ritz", "ritz_cached", "ritz_lean"),
       iterations = basis$iterations,
       matvecs = basis$matvecs,
       ortho_passes = basis$ortho_passes,
@@ -526,11 +581,18 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
         ritz$v[, seq_len(keep_cols), drop = FALSE],
         matrix(stats::rnorm(n * block), nrow = n, ncol = block)
       )
+      current_start_av <- NULL
+    } else if (identical(adaptive_start, "ritz_cached")) {
+      keep_cols <- min(ncol(ritz$v), max(rank, block))
+      current_start <- ritz$v[, seq_len(keep_cols), drop = FALSE]
+      current_start_av <- ritz$Avectors[, seq_len(keep_cols), drop = FALSE]
     } else if (identical(adaptive_start, "ritz_lean")) {
       keep_cols <- min(ncol(ritz$v), max(rank, block))
       current_start <- ritz$v[, seq_len(keep_cols), drop = FALSE]
+      current_start_av <- NULL
     } else {
       current_start <- start
+      current_start_av <- NULL
     }
   }
 

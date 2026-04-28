@@ -122,6 +122,12 @@ they are machine-dependent.
   These fields are the benchmark contract for retained-restart work: a future
   native thick-restart candidate should reduce attempt materialization and
   total work without hiding failed intermediate certificates.
+- Native block-GK basis generation now has an internal cached-start path for
+  retained Ritz vectors. The `eigencore_block_golub_kahan_cycle_cached`
+  benchmark row restarts from Ritz vectors and their exact cached `A V`,
+  avoiding the initial operator apply on warm attempts. This is still a staging
+  comparator, not H promotion, but it is the first direct retained-state step
+  instead of another from-scratch attempt variant.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,
