@@ -1001,7 +1001,7 @@ benchmark_randomized_rsvd_case <- function(A, rank, methods = c("eigencore_rando
 
 evaluate_randomized_rsvd_gate <- function(rows, subject = "eigencore_randomized",
                                           baseline = "rsvd", requested,
-                                          speed_ratio_required = 1.0,
+                                          speed_ratio_required = release_speed_gate("randomized_svd"),
                                           accuracy_multiplier = 1.05,
                                           accuracy_floor = 1e-12) {
   eig <- rows[rows$method == subject, , drop = FALSE]
