@@ -406,55 +406,129 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
                                                max_subspace = NULL,
                                                block = NULL,
                                                start = NULL,
+                                               adaptive = is.null(max_subspace),
+                                               max_attempts = NULL,
                                                vectors = c("both", "left", "right", "none")) {
   vectors <- match.arg(vectors)
   op <- as_operator(op)
   rank <- min(as.integer(rank), min(op$dim))
+  n <- op$dim[[2L]]
   block <- as.integer(block %||% min(8L, max(2L, ceiling(rank / 4))))
-  max_subspace <- min(
-    op$dim[[2L]],
+  initial_max_subspace <- min(
+    n,
     as.integer(max_subspace %||% max(3L * rank + 20L, 6L * block + 20L))
   )
-  basis <- native_block_golub_kahan_basis(
-    op,
-    max_subspace = max_subspace,
-    block = block,
-    start = start
-  )
-  ritz <- native_block_golub_kahan_ritz(
-    basis$V,
-    basis$AV,
-    rank = rank,
-    target = target,
-    active_cols = basis$active_cols
-  )
-  cert <- certify_svd_operator(op, ritz$d, ritz$u, ritz$v, tol = tol)
-  out <- list(
-    d = ritz$d,
-    u = ritz$u,
-    v = ritz$v,
-    values = ritz$d,
-    residuals = cert$residuals,
-    backward_error = cert$backward_error,
-    orthogonality = cert$orthogonality,
-    certificate = cert,
-    iterations = basis$iterations,
-    matvecs = basis$matvecs,
-    block = block,
-    restart = list(
-      kind = "block_golub_kahan_native_basis_cycle",
-      implemented = TRUE,
-      native = TRUE,
-      thick_restart = FALSE,
-      active_cols = basis$active_cols,
-      active_left_cols = basis$active_left_cols,
-      max_subspace = max_subspace,
+  if (length(initial_max_subspace) != 1L || is.na(initial_max_subspace) || initial_max_subspace < rank) {
+    stop("max_subspace must be at least rank.", call. = FALSE)
+  }
+  adaptive <- isTRUE(adaptive)
+  max_attempts <- as.integer(max_attempts %||% if (adaptive) 4L else 1L)
+  if (length(max_attempts) != 1L || is.na(max_attempts) || max_attempts < 1L) {
+    stop("max_attempts must be a positive integer.", call. = FALSE)
+  }
+  start <- if (is.null(start)) {
+    matrix(stats::rnorm(n * block), nrow = n, ncol = block)
+  } else {
+    as.matrix(start)
+  }
+
+  attempt_rows <- list()
+  total_iterations <- 0L
+  total_matvecs <- 0L
+  total_ortho_passes <- 0L
+  current_max_subspace <- initial_max_subspace
+  out <- NULL
+  attempt <- 0L
+  repeat {
+    attempt <- attempt + 1L
+    basis <- native_block_golub_kahan_basis(
+      op,
+      max_subspace = current_max_subspace,
       block = block,
-      ortho_passes = basis$ortho_passes,
-      matvecs = basis$matvecs
+      start = start
     )
-  )
-  out <- complete_zero_singular_triplets(op, out, rank, target, tol)
+    ritz <- native_block_golub_kahan_ritz(
+      basis$V,
+      basis$AV,
+      rank = rank,
+      target = target,
+      active_cols = basis$active_cols
+    )
+    cert <- certify_svd_operator(op, ritz$d, ritz$u, ritz$v, tol = tol)
+    out <- list(
+      d = ritz$d,
+      u = ritz$u,
+      v = ritz$v,
+      values = ritz$d,
+      residuals = cert$residuals,
+      backward_error = cert$backward_error,
+      orthogonality = cert$orthogonality,
+      certificate = cert,
+      iterations = basis$iterations,
+      matvecs = basis$matvecs,
+      block = block,
+      restart = list(
+        kind = "block_golub_kahan_native_basis_cycle",
+        implemented = TRUE,
+        native = TRUE,
+        thick_restart = FALSE,
+        adaptive = adaptive,
+        attempt = attempt,
+        active_cols = basis$active_cols,
+        active_left_cols = basis$active_left_cols,
+        max_subspace = current_max_subspace,
+        block = block,
+        ortho_passes = basis$ortho_passes,
+        matvecs = basis$matvecs
+      )
+    )
+    out <- complete_zero_singular_triplets(op, out, rank, target, tol)
+
+    total_iterations <- total_iterations + basis$iterations
+    total_matvecs <- total_matvecs + basis$matvecs
+    total_ortho_passes <- total_ortho_passes + basis$ortho_passes
+    attempt_rows[[attempt]] <- data.frame(
+      attempt = attempt,
+      max_subspace = current_max_subspace,
+      active_cols = basis$active_cols,
+      iterations = basis$iterations,
+      matvecs = basis$matvecs,
+      ortho_passes = basis$ortho_passes,
+      certificate_passed = isTRUE(out$certificate$passed),
+      max_backward_error = out$certificate$max_backward_error,
+      max_residual = out$certificate$max_residual
+    )
+
+    if (isTRUE(out$certificate$passed) || !adaptive ||
+        attempt >= max_attempts || current_max_subspace >= n) {
+      break
+    }
+    next_max_subspace <- min(
+      n,
+      max(
+        current_max_subspace + max(2L * rank, 4L * block, 10L),
+        as.integer(ceiling(1.5 * current_max_subspace))
+      )
+    )
+    if (next_max_subspace <= current_max_subspace) {
+      break
+    }
+    current_max_subspace <- next_max_subspace
+  }
+
+  out$iterations <- total_iterations
+  out$matvecs <- total_matvecs
+  out$restart$attempts <- attempt
+  out$restart$initial_max_subspace <- initial_max_subspace
+  out$restart$final_max_subspace <- out$restart$max_subspace
+  out$restart$attempted_subspaces <- vapply(attempt_rows, `[[`, integer(1), "max_subspace")
+  out$restart$attempt_history <- do.call(rbind, attempt_rows)
+  out$restart$total_iterations <- total_iterations
+  out$restart$total_matvecs <- total_matvecs
+  out$restart$total_ortho_passes <- total_ortho_passes
+  out$restart$final_attempt_iterations <- attempt_rows[[attempt]]$iterations
+  out$restart$final_attempt_matvecs <- attempt_rows[[attempt]]$matvecs
+  out$restart$final_attempt_ortho_passes <- attempt_rows[[attempt]]$ortho_passes
   if (vectors == "left") {
     out$v <- NULL
   } else if (vectors == "right") {

@@ -81,7 +81,16 @@ they are machine-dependent.
   the best certified external reference on time and memory. On `wide_sparse`
   the same row was faster than scalar/projected Golub-Kahan but failed the
   requested certificate, so H promotion still requires a real thick-restart and
-  convergence policy rather than this full-subspace staging cycle.
+  convergence policy rather than this full-subspace staging cycle. The staging
+  row now has a conservative adaptive subspace retry policy that records
+  attempted subspaces and total native work. On the quick `wide_sparse` row it
+  turned the previous uncertified block-cycle result into a certified result
+  after three attempts, but the cost rose to about `0.0084s` and `1.15MB`,
+  much worse than the scalar/projected candidates and certified references.
+  This is useful convergence evidence, not a promotion candidate: H still needs
+  restart/reuse of retained subspaces instead of rebuilding larger bases from
+  scratch. The native block basis scratch buffer was also widened to the
+  operator dimension used by fallback orthogonalization work vectors.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,

@@ -2824,8 +2824,9 @@ static int native_block_golub_kahan_basis_run(void* impl,
   double* coeff = static_cast<double*>(
     std::calloc(static_cast<size_t>(coeff_rows) * block_size, sizeof(double))
   );
+  const int tmp_len = (m > n) ? m : n;
   double* tmp = static_cast<double*>(
-    std::calloc(static_cast<size_t>(coeff_rows), sizeof(double))
+    std::calloc(static_cast<size_t>(tmp_len), sizeof(double))
   );
   if (Z_v == nullptr || Z_u == nullptr || coeff == nullptr || tmp == nullptr) {
     std::free(Z_v);

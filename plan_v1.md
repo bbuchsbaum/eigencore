@@ -461,7 +461,15 @@ only, while non-quick `--strict` enforces the speed/memory/parity release gate:
   Golub-Kahan rows, but it was still slower/more memory-heavy than the best
   certified external reference, and it failed the `wide_sparse` certificate
   despite reducing wall time. It is scaffolding for the future thick-restart
-  loop, not a production solver.
+  loop, not a production solver. The staging path now has an adaptive
+  subspace-growth mode that records each attempted subspace and total
+  work. This closes the immediate "wide sparse is fast but uncertified"
+  diagnostic hole: on the quick `wide_sparse` row it certifies after growing
+  through three basis attempts. The result is intentionally still not
+  promotable because the from-scratch retry cost is worse than the scalar
+  projected candidate and the best certified references. The next H step must
+  reuse retained vectors through a real thick-restart loop; adaptive rebuilding
+  is only a convergence oracle and benchmark diagnostic.
 - shift-invert via `shift_invert(sigma)` is now wired through a reference
   Hermitian Lanczos path on the inverted operator, with three honest planner
   labels: `reference Hermitian Lanczos shift-invert (dense LU)` for dense

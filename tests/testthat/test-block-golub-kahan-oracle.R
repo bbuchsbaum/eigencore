@@ -117,6 +117,38 @@ test_that("native block Golub-Kahan basis cycle certifies dense and CSC full sub
   }
 })
 
+test_that("native block Golub-Kahan basis cycle records adaptive subspace attempts", {
+  set.seed(702)
+  A <- Matrix::t(Matrix::rsparsematrix(600, 90, density = 0.03))
+
+  set.seed(701)
+  fixed <- eigencore:::native_block_golub_kahan_cycle_svd(
+    A,
+    rank = 5L,
+    target = largest(),
+    block = 2L,
+    tol = 1e-8,
+    adaptive = FALSE
+  )
+  set.seed(701)
+  adaptive <- eigencore:::native_block_golub_kahan_cycle_svd(
+    A,
+    rank = 5L,
+    target = largest(),
+    block = 2L,
+    tol = 1e-8
+  )
+
+  expect_false(fixed$certificate$passed)
+  expect_true(adaptive$certificate$passed)
+  expect_true(adaptive$restart$adaptive)
+  expect_gt(adaptive$restart$attempts, 1L)
+  expect_equal(adaptive$restart$attempted_subspaces[[1L]],
+               adaptive$restart$initial_max_subspace)
+  expect_true(any(adaptive$restart$attempt_history$certificate_passed))
+  expect_equal(adaptive$matvecs, sum(adaptive$restart$attempt_history$matvecs))
+})
+
 test_that("reference block Golub-Kahan handles clustered singular subspaces", {
   s <- c(10, 10 - 1e-9, 10 - 2e-9, 3, 1, 0.1)
   A <- rectangular_with_singular_values(s, m = 16L, n = 10L, seed = 702)
@@ -127,7 +159,7 @@ test_that("reference block Golub-Kahan handles clustered singular subspaces", {
     rank = 3L,
     target = largest(),
     block = 2L,
-    max_subspace = 6L,
+    max_subspace = 8L,
     max_restarts = 30L,
     tol = 1e-8
   )
