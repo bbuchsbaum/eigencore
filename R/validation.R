@@ -188,6 +188,7 @@ available_svd_methods <- function() {
     "eigencore",
     "eigencore_golub_kahan",
     "eigencore_golub_kahan_projected",
+    "eigencore_block_golub_kahan_cycle",
     "eigencore_randomized",
     "base",
     if (requireNamespace("RSpectra", quietly = TRUE)) "RSpectra",
@@ -314,6 +315,16 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
         method = golub_kahan(),
         tol = tol,
         seed = seed
+      )
+    },
+    eigencore_block_golub_kahan_cycle = {
+      set.seed(seed %||% 1L)
+      native_block_golub_kahan_cycle_svd(
+        A,
+        rank = rank,
+        target = largest(),
+        tol = tol,
+        vectors = "both"
       )
     },
     eigencore_randomized = svd_partial(

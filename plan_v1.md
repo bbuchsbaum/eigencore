@@ -453,8 +453,15 @@ only, while non-quick `--strict` enforces the speed/memory/parity release gate:
   and target taxonomy checks. A matching internal dense/CSC native basis-cycle
   staging path now builds block right bases and cached `A V` with native
   BLAS-3 reorthogonalization and certifies through the native Ritz kernel on
-  full-subspace tests. It is scaffolding for the future thick-restart loop, not
-  a production solver.
+  full-subspace tests. The SVD surface can now expose that staging path as an
+  internal `eigencore_block_golub_kahan_cycle` row under `--h-candidate`, while
+  keeping it out of external-reference gates. A quick installed-package probe
+  showed the correct shape but not release readiness: it certified
+  `rank_deficient_sparse` and `clustered_dense` and was faster than the scalar
+  Golub-Kahan rows, but it was still slower/more memory-heavy than the best
+  certified external reference, and it failed the `wide_sparse` certificate
+  despite reducing wall time. It is scaffolding for the future thick-restart
+  loop, not a production solver.
 - shift-invert via `shift_invert(sigma)` is now wired through a reference
   Hermitian Lanczos path on the inverted operator, with three honest planner
   labels: `reference Hermitian Lanczos shift-invert (dense LU)` for dense

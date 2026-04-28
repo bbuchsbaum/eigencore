@@ -133,6 +133,7 @@ test_that("SVD surface benchmark script is available", {
   lines <- readLines(script, warn = FALSE)
   expect_true(any(grepl("eigencore_golub_kahan", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_golub_kahan_projected", lines, fixed = TRUE)))
+  expect_true(any(grepl("eigencore_block_golub_kahan_cycle", lines, fixed = TRUE)))
   expect_true(any(grepl("svd_projected_stop", lines, fixed = TRUE)))
   expect_true(any(grepl("h_candidate", lines, fixed = TRUE)))
   expect_true(any(grepl("projected_stop_comparison", lines, fixed = TRUE)))
@@ -206,6 +207,7 @@ test_that("SVD surface H candidate preset selects projected GK subject", {
   methods <- svd_surface_default_methods(args)
   expect_equal(methods[[1L]], "eigencore_golub_kahan")
   expect_true("eigencore_golub_kahan_projected" %in% methods)
+  expect_true("eigencore_block_golub_kahan_cycle" %in% methods)
   expect_false("eigencore" %in% methods)
   expect_equal(
     svd_surface_gate_subject(args, methods),
@@ -368,6 +370,32 @@ test_that("SVD benchmark can expose projected Golub-Kahan as a separate row", {
   expect_true(is.finite(projected$reorthogonalization_passes_per_iteration))
   expect_lt(projected$final_iterations, plain$final_iterations)
   expect_true(projected$certificate_passed)
+})
+
+test_that("SVD benchmark can expose native block Golub-Kahan cycle candidate", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_if_not_installed("bench")
+
+  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
+  if (!nzchar(helper_path)) {
+    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
+  }
+  source(helper_path)
+
+  A <- Matrix::rsparsematrix(80, 24, density = 0.08)
+  rows <- benchmark_svd_case(
+    A,
+    rank = 4,
+    methods = "eigencore_block_golub_kahan_cycle",
+    iterations = 1,
+    seed = 905
+  )
+
+  expect_equal(unique(rows$method), "eigencore_block_golub_kahan_cycle")
+  expect_true(rows$certificate_passed)
+  expect_gte(rows$nconv, 4L)
+  expect_gt(rows$matvecs, 0L)
+  expect_equal(rows$block_size, 2L)
 })
 
 test_that("SVD reference gate can evaluate an explicit H candidate subject", {

@@ -72,7 +72,16 @@ they are machine-dependent.
   active-column windows, target selection, and original-coordinate
   certification. Dense and CSC internal native basis-cycle staging paths now
   feed that kernel from native block right bases and cached `A V`; these are
-  full-subspace scaffolding tests, not release gate subjects.
+  full-subspace scaffolding tests, not release gate subjects. The SVD surface
+  benchmark can now expose that native block basis-cycle as
+  `eigencore_block_golub_kahan_cycle` under `--h-candidate`, while excluding it
+  from external release-reference gates. A quick installed-package probe
+  certified `rank_deficient_sparse` and `clustered_dense`, with the block-cycle
+  row faster than scalar/projected Golub-Kahan on both cases, but still behind
+  the best certified external reference on time and memory. On `wide_sparse`
+  the same row was faster than scalar/projected Golub-Kahan but failed the
+  requested certificate, so H promotion still requires a real thick-restart and
+  convergence policy rather than this full-subspace staging cycle.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,
