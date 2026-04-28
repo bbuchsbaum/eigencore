@@ -2789,6 +2789,286 @@ static int apply_active_block(void* impl, EigencoreApplyFn apply,
   return rc;
 }
 
+static int native_block_golub_kahan_basis_run(void* impl,
+                                              EigencoreApplyFn apply,
+                                              int m,
+                                              int n,
+                                              int max_subspace,
+                                              int block_size,
+                                              const double* start_block,
+                                              double* V,
+                                              double* AV,
+                                              double* U,
+                                              int* active_v_out,
+                                              int* active_u_out,
+                                              int* iterations_out,
+                                              int* matvecs_out,
+                                              int* ortho_passes_out) {
+  *active_v_out = 0;
+  *active_u_out = 0;
+  *iterations_out = 0;
+  *matvecs_out = 0;
+  *ortho_passes_out = 0;
+
+  const size_t nv = static_cast<size_t>(n) * max_subspace;
+  const size_t mv = static_cast<size_t>(m) * max_subspace;
+  const size_t nb = static_cast<size_t>(n) * block_size;
+  const size_t mb = static_cast<size_t>(m) * block_size;
+  std::memset(V, 0, sizeof(double) * nv);
+  std::memset(AV, 0, sizeof(double) * mv);
+  std::memset(U, 0, sizeof(double) * mv);
+
+  const int coeff_rows = (max_subspace > block_size) ? max_subspace : block_size;
+  double* Z_v = static_cast<double*>(std::calloc(nb, sizeof(double)));
+  double* Z_u = static_cast<double*>(std::calloc(mb, sizeof(double)));
+  double* coeff = static_cast<double*>(
+    std::calloc(static_cast<size_t>(coeff_rows) * block_size, sizeof(double))
+  );
+  double* tmp = static_cast<double*>(
+    std::calloc(static_cast<size_t>(coeff_rows), sizeof(double))
+  );
+  if (Z_v == nullptr || Z_u == nullptr || coeff == nullptr || tmp == nullptr) {
+    std::free(Z_v);
+    std::free(Z_u);
+    std::free(coeff);
+    std::free(tmp);
+    return -2;
+  }
+
+  int active_v = 0;
+  int active_u = 0;
+  int last_v_start = 0;
+  int last_v_cols = block_accept_columns_blas3(
+    start_block, n, block_size, nullptr, 0,
+    V, &active_v, max_subspace, Z_v, block_size,
+    coeff, tmp, n, block_size, ortho_passes_out
+  );
+  if (last_v_cols == 0) {
+    for (int col = 0; col < block_size && active_v < max_subspace && col < n; ++col) {
+      std::memset(Z_v, 0, sizeof(double) * static_cast<size_t>(n));
+      Z_v[col] = 1.0;
+      last_v_cols += block_accept_work_vector(
+        nullptr, 0, V, &active_v, max_subspace,
+        Z_v, tmp, n, ortho_passes_out
+      );
+    }
+  }
+  if (last_v_cols == 0) {
+    std::free(Z_v);
+    std::free(Z_u);
+    std::free(coeff);
+    std::free(tmp);
+    return -4;
+  }
+
+  EigencoreWorkspace workspace = {0, 0, nullptr, 0};
+  int rc = apply(impl, EIGENCORE_TRANSPOSE_NONE, last_v_cols,
+                 V + static_cast<int64_t>(last_v_start) * n, n,
+                 1.0, 0.0,
+                 AV + static_cast<int64_t>(last_v_start) * m, m,
+                 &workspace);
+  if (rc != 0) {
+    std::free(Z_v);
+    std::free(Z_u);
+    std::free(coeff);
+    std::free(tmp);
+    return rc;
+  }
+  ++(*matvecs_out);
+
+  while (active_v < max_subspace && last_v_cols > 0) {
+    const int accepted_u_start = active_u;
+    const int accepted_u = block_accept_columns_blas3(
+      AV + static_cast<int64_t>(last_v_start) * m, m, last_v_cols,
+      nullptr, 0, U, &active_u, max_subspace, Z_u, block_size,
+      coeff, tmp, m, block_size, ortho_passes_out
+    );
+    if (accepted_u == 0) {
+      break;
+    }
+
+    rc = apply(impl, EIGENCORE_TRANSPOSE_ADJOINT, accepted_u,
+               U + static_cast<int64_t>(accepted_u_start) * m, m,
+               1.0, 0.0, Z_v, n, &workspace);
+    if (rc != 0) {
+      std::free(Z_v);
+      std::free(Z_u);
+      std::free(coeff);
+      std::free(tmp);
+      return rc;
+    }
+    ++(*matvecs_out);
+
+    const int accepted_v_start = active_v;
+    const int accepted_v = block_accept_columns_blas3(
+      Z_v, n, accepted_u, nullptr, 0,
+      V, &active_v, max_subspace, Z_v, block_size,
+      coeff, tmp, n, max_subspace - active_v, ortho_passes_out
+    );
+    if (accepted_v == 0) {
+      break;
+    }
+
+    rc = apply(impl, EIGENCORE_TRANSPOSE_NONE, accepted_v,
+               V + static_cast<int64_t>(accepted_v_start) * n, n,
+               1.0, 0.0,
+               AV + static_cast<int64_t>(accepted_v_start) * m, m,
+               &workspace);
+    if (rc != 0) {
+      std::free(Z_v);
+      std::free(Z_u);
+      std::free(coeff);
+      std::free(tmp);
+      return rc;
+    }
+    ++(*matvecs_out);
+    ++(*iterations_out);
+    last_v_start = accepted_v_start;
+    last_v_cols = accepted_v;
+  }
+
+  *active_v_out = active_v;
+  *active_u_out = active_u;
+  std::free(Z_v);
+  std::free(Z_u);
+  std::free(coeff);
+  std::free(tmp);
+  return 0;
+}
+
+static SEXP block_golub_kahan_basis_pack(int n,
+                                         int m,
+                                         int max_subspace,
+                                         const double* V,
+                                         const double* AV,
+                                         const double* U,
+                                         int active_v,
+                                         int active_u,
+                                         int iterations,
+                                         int matvecs,
+                                         int ortho_passes) {
+  SEXP V_ = PROTECT(allocMatrix(REALSXP, n, max_subspace));
+  SEXP AV_ = PROTECT(allocMatrix(REALSXP, m, max_subspace));
+  SEXP U_ = PROTECT(allocMatrix(REALSXP, m, max_subspace));
+  std::memcpy(REAL(V_), V, sizeof(double) * static_cast<size_t>(n) * max_subspace);
+  std::memcpy(REAL(AV_), AV, sizeof(double) * static_cast<size_t>(m) * max_subspace);
+  std::memcpy(REAL(U_), U, sizeof(double) * static_cast<size_t>(m) * max_subspace);
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 8));
+  SET_VECTOR_ELT(out_, 0, V_);
+  SET_VECTOR_ELT(out_, 1, AV_);
+  SET_VECTOR_ELT(out_, 2, U_);
+  SET_VECTOR_ELT(out_, 3, ScalarInteger(active_v));
+  SET_VECTOR_ELT(out_, 4, ScalarInteger(active_u));
+  SET_VECTOR_ELT(out_, 5, ScalarInteger(iterations));
+  SET_VECTOR_ELT(out_, 6, ScalarInteger(matvecs));
+  SET_VECTOR_ELT(out_, 7, ScalarInteger(ortho_passes));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 8));
+  SET_STRING_ELT(names_, 0, mkChar("V"));
+  SET_STRING_ELT(names_, 1, mkChar("AV"));
+  SET_STRING_ELT(names_, 2, mkChar("U"));
+  SET_STRING_ELT(names_, 3, mkChar("active_cols"));
+  SET_STRING_ELT(names_, 4, mkChar("active_left_cols"));
+  SET_STRING_ELT(names_, 5, mkChar("iterations"));
+  SET_STRING_ELT(names_, 6, mkChar("matvecs"));
+  SET_STRING_ELT(names_, 7, mkChar("ortho_passes"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(5);
+  return out_;
+}
+
+extern "C" SEXP eigencore_block_golub_kahan_dense_basis(SEXP A_,
+                                                        SEXP max_subspace_,
+                                                        SEXP start_) {
+  if (!isReal(A_) || !isReal(start_)) {
+    error("A and start must be double matrices");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimS = getAttrib(start_, R_DimSymbol);
+  if (dimA == R_NilValue || dimS == R_NilValue) {
+    error("A and start must be matrices");
+  }
+  const int m = INTEGER(dimA)[0];
+  const int n = INTEGER(dimA)[1];
+  const int block_size = INTEGER(dimS)[1];
+  int max_subspace = asInteger(max_subspace_);
+  if (INTEGER(dimS)[0] != n || block_size < 1) {
+    error("start must have nrow equal to ncol(A) and at least one column");
+  }
+  if (max_subspace < 1 || max_subspace > n) {
+    error("max_subspace must be between 1 and ncol(A)");
+  }
+
+  std::vector<double> V(static_cast<size_t>(n) * max_subspace, 0.0);
+  std::vector<double> AV(static_cast<size_t>(m) * max_subspace, 0.0);
+  std::vector<double> U(static_cast<size_t>(m) * max_subspace, 0.0);
+  DenseColumnMajorOperator impl = {m, n, REAL(A_)};
+  int active_v = 0;
+  int active_u = 0;
+  int iterations = 0;
+  int matvecs = 0;
+  int ortho_passes = 0;
+  const int status = native_block_golub_kahan_basis_run(
+    &impl, eigencore_dense_apply, m, n, max_subspace, block_size, REAL(start_),
+    V.data(), AV.data(), U.data(),
+    &active_v, &active_u, &iterations, &matvecs, &ortho_passes
+  );
+  if (status != 0) {
+    error("native dense block Golub-Kahan basis failed with status=%d", status);
+  }
+  return block_golub_kahan_basis_pack(
+    n, m, max_subspace, V.data(), AV.data(), U.data(),
+    active_v, active_u, iterations, matvecs, ortho_passes
+  );
+}
+
+extern "C" SEXP eigencore_block_golub_kahan_csc_basis(SEXP i_, SEXP p_,
+                                                      SEXP x_, SEXP dim_,
+                                                      SEXP max_subspace_,
+                                                      SEXP start_) {
+  if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) ||
+      !isInteger(dim_) || !isReal(start_)) {
+    error("invalid CSC block Golub-Kahan basis inputs");
+  }
+  SEXP dimS = getAttrib(start_, R_DimSymbol);
+  if (dimS == R_NilValue || LENGTH(dim_) != 2) {
+    error("start must be a matrix and dim must have length 2");
+  }
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  const int block_size = INTEGER(dimS)[1];
+  int max_subspace = asInteger(max_subspace_);
+  if (INTEGER(dimS)[0] != n || block_size < 1) {
+    error("start must have nrow equal to ncol(A) and at least one column");
+  }
+  if (max_subspace < 1 || max_subspace > n) {
+    error("max_subspace must be between 1 and ncol(A)");
+  }
+
+  std::vector<double> V(static_cast<size_t>(n) * max_subspace, 0.0);
+  std::vector<double> AV(static_cast<size_t>(m) * max_subspace, 0.0);
+  std::vector<double> U(static_cast<size_t>(m) * max_subspace, 0.0);
+  CSCOperator impl = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
+  int active_v = 0;
+  int active_u = 0;
+  int iterations = 0;
+  int matvecs = 0;
+  int ortho_passes = 0;
+  const int status = native_block_golub_kahan_basis_run(
+    &impl, eigencore_csc_apply, m, n, max_subspace, block_size, REAL(start_),
+    V.data(), AV.data(), U.data(),
+    &active_v, &active_u, &iterations, &matvecs, &ortho_passes
+  );
+  if (status != 0) {
+    error("native CSC block Golub-Kahan basis failed with status=%d", status);
+  }
+  return block_golub_kahan_basis_pack(
+    n, m, max_subspace, V.data(), AV.data(), U.data(),
+    active_v, active_u, iterations, matvecs, ortho_passes
+  );
+}
+
 static void subtract_projected_range(const double* V_active,
                                      const double* T_proj,
                                      int ldt,
@@ -8008,6 +8288,8 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_golub_kahan_csc", (DL_FUNC) &eigencore_golub_kahan_csc, 10},
   {"eigencore_golub_kahan_dense_fit", (DL_FUNC) &eigencore_golub_kahan_dense_fit, 7},
   {"eigencore_golub_kahan_csc_fit", (DL_FUNC) &eigencore_golub_kahan_csc_fit, 10},
+  {"eigencore_block_golub_kahan_dense_basis", (DL_FUNC) &eigencore_block_golub_kahan_dense_basis, 3},
+  {"eigencore_block_golub_kahan_csc_basis", (DL_FUNC) &eigencore_block_golub_kahan_csc_basis, 6},
   {"eigencore_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_thick_restart_lanczos_dense, 7},
   {"eigencore_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_thick_restart_lanczos_csc, 10},
   {"eigencore_block_lanczos_dense", (DL_FUNC) &eigencore_block_lanczos_dense, 7},

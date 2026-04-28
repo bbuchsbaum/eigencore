@@ -346,3 +346,122 @@ native_block_golub_kahan_ritz <- function(V, AV, rank, target = largest(),
     PACKAGE = "eigencore"
   )
 }
+
+#' @keywords internal
+native_block_golub_kahan_basis <- function(op, max_subspace, block = NULL,
+                                           start = NULL) {
+  op <- as_operator(op)
+  if (is.null(op$apply_adjoint)) {
+    stop("Native block Golub-Kahan basis requires an adjoint operator.", call. = FALSE)
+  }
+  n <- op$dim[[2L]]
+  block <- as.integer(block %||% 2L)
+  if (length(block) != 1L || is.na(block) || block < 1L) {
+    stop("block must be a positive integer.", call. = FALSE)
+  }
+  max_subspace <- min(n, as.integer(max_subspace))
+  if (length(max_subspace) != 1L || is.na(max_subspace) || max_subspace < 1L) {
+    stop("max_subspace must be a positive integer.", call. = FALSE)
+  }
+  start <- if (is.null(start)) {
+    matrix(stats::rnorm(n * block), nrow = n, ncol = block)
+  } else {
+    as.matrix(start)
+  }
+  if (nrow(start) != n || ncol(start) < 1L) {
+    stop("start must have nrow equal to ncol(op) and at least one column.", call. = FALSE)
+  }
+
+  storage <- op$metadata$storage %||% NULL
+  source <- source_or_null(op)
+  if (identical(storage, "dgCMatrix")) {
+    A <- op$metadata$matrix
+    .Call(
+      "eigencore_block_golub_kahan_csc_basis",
+      methods::slot(A, "i"),
+      methods::slot(A, "p"),
+      methods::slot(A, "x"),
+      methods::slot(A, "Dim"),
+      as.integer(max_subspace),
+      start,
+      PACKAGE = "eigencore"
+    )
+  } else if (is.matrix(source) && is.double(source)) {
+    .Call(
+      "eigencore_block_golub_kahan_dense_basis",
+      source,
+      as.integer(max_subspace),
+      start,
+      PACKAGE = "eigencore"
+    )
+  } else {
+    stop("Native block Golub-Kahan basis currently supports dense double matrices and dgCMatrix operators only.",
+         call. = FALSE)
+  }
+}
+
+#' @keywords internal
+native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
+                                               tol = 1e-8,
+                                               max_subspace = NULL,
+                                               block = NULL,
+                                               start = NULL,
+                                               vectors = c("both", "left", "right", "none")) {
+  vectors <- match.arg(vectors)
+  op <- as_operator(op)
+  rank <- min(as.integer(rank), min(op$dim))
+  block <- as.integer(block %||% min(8L, max(2L, ceiling(rank / 4))))
+  max_subspace <- min(
+    op$dim[[2L]],
+    as.integer(max_subspace %||% max(3L * rank + 20L, 6L * block + 20L))
+  )
+  basis <- native_block_golub_kahan_basis(
+    op,
+    max_subspace = max_subspace,
+    block = block,
+    start = start
+  )
+  ritz <- native_block_golub_kahan_ritz(
+    basis$V,
+    basis$AV,
+    rank = rank,
+    target = target,
+    active_cols = basis$active_cols
+  )
+  cert <- certify_svd_operator(op, ritz$d, ritz$u, ritz$v, tol = tol)
+  out <- list(
+    d = ritz$d,
+    u = ritz$u,
+    v = ritz$v,
+    values = ritz$d,
+    residuals = cert$residuals,
+    backward_error = cert$backward_error,
+    orthogonality = cert$orthogonality,
+    certificate = cert,
+    iterations = basis$iterations,
+    matvecs = basis$matvecs,
+    block = block,
+    restart = list(
+      kind = "block_golub_kahan_native_basis_cycle",
+      implemented = TRUE,
+      native = TRUE,
+      thick_restart = FALSE,
+      active_cols = basis$active_cols,
+      active_left_cols = basis$active_left_cols,
+      max_subspace = max_subspace,
+      block = block,
+      ortho_passes = basis$ortho_passes,
+      matvecs = basis$matvecs
+    )
+  )
+  out <- complete_zero_singular_triplets(op, out, rank, target, tol)
+  if (vectors == "left") {
+    out$v <- NULL
+  } else if (vectors == "right") {
+    out$u <- NULL
+  } else if (vectors == "none") {
+    out$u <- NULL
+    out$v <- NULL
+  }
+  out
+}

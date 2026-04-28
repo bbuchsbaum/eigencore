@@ -80,6 +80,32 @@ test_that("native block Golub-Kahan Ritz kernel matches full-basis SVD slices", 
   expect_true(cert$passed)
 })
 
+test_that("native block Golub-Kahan basis cycle certifies dense and CSC full subspaces", {
+  s <- c(8, 5, 3, 1, 0.4, 0.1)
+  A <- rectangular_with_singular_values(s, m = 10L, n = 6L, seed = 706)
+  A_csc <- methods::as(Matrix::Matrix(A, sparse = TRUE), "dgCMatrix")
+
+  for (A_in in list(A, A_csc)) {
+    set.seed(706)
+    fit <- eigencore:::native_block_golub_kahan_cycle_svd(
+      A_in,
+      rank = 4L,
+      target = largest(),
+      block = 2L,
+      max_subspace = ncol(A),
+      tol = 1e-8
+    )
+
+    expect_identical(fit$restart$kind, "block_golub_kahan_native_basis_cycle")
+    expect_true(fit$restart$native)
+    expect_gte(fit$restart$active_cols, 4L)
+    expect_gt(fit$matvecs, 0L)
+    expect_gt(fit$restart$ortho_passes, 0L)
+    expect_equal(fit$d, s[1:4], tolerance = 1e-8)
+    expect_true(fit$certificate$passed)
+  }
+})
+
 test_that("reference block Golub-Kahan handles clustered singular subspaces", {
   s <- c(10, 10 - 1e-9, 10 - 2e-9, 3, 1, 0.1)
   A <- rectangular_with_singular_values(s, m = 16L, n = 10L, seed = 702)
