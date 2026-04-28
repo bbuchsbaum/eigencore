@@ -6627,6 +6627,198 @@ extern "C" SEXP eigencore_bidiagonal_svd(SEXP alpha_, SEXP beta_) {
 
 #include "projection/golub_kahan_ritz.hpp"
 
+extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start_,
+                                                SEXP rank_, SEXP target_kind_,
+                                                SEXP tol_, SEXP projected_stop_) {
+  if (!isReal(A_) || !isReal(start_)) {
+    error("A and start must be double");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  if (dimA == R_NilValue) {
+    error("A must be a matrix");
+  }
+  const int m = INTEGER(dimA)[0];
+  const int n = INTEGER(dimA)[1];
+  if (LENGTH(start_) != n) {
+    error("non-conformable dense Golub-Kahan inputs");
+  }
+  const int limit = (m < n) ? m : n;
+  const int maxit = static_cast<int>(asInteger(maxit_));
+  const int rank = static_cast<int>(asInteger(rank_));
+  const int target_kind = static_cast<int>(asInteger(target_kind_));
+  const double tol = asReal(tol_);
+  const int enable_projected_stop = asLogical(projected_stop_) == TRUE;
+  if (maxit < 1 || maxit > limit) {
+    error("maxit must be between 1 and min(dim(A))");
+  }
+  if (rank < 1 || rank > maxit) {
+    error("rank must be between 1 and maxit");
+  }
+
+  std::vector<double> U_work(static_cast<size_t>(m) * static_cast<size_t>(maxit), 0.0);
+  std::vector<double> V_work(static_cast<size_t>(n) * static_cast<size_t>(maxit), 0.0);
+  std::vector<double> alpha_work(static_cast<size_t>(maxit), 0.0);
+  std::vector<double> beta_work(static_cast<size_t>(maxit), 0.0);
+  const double native_workspace_bytes =
+    static_cast<double>(sizeof(double)) *
+    static_cast<double>(
+      (static_cast<int64_t>(m) + static_cast<int64_t>(n) + 2) *
+      static_cast<int64_t>(maxit) +
+      static_cast<int64_t>(2 * m + 2 * n)
+    );
+
+  DenseColumnMajorOperator impl = {m, n, REAL(A_)};
+  int iterations = 0;
+  int matvecs = 0;
+  int projected_stop = 0;
+  int projected_nconv = 0;
+  double projected_max_residual = R_PosInf;
+  int projected_checks = 0;
+  double projected_seconds = 0.0;
+  const int status = native_golub_kahan_run(&impl, eigencore_dense_apply, m, n,
+                                            maxit, rank, target_kind, tol,
+                                            enable_projected_stop, REAL(start_),
+                                            U_work.data(), V_work.data(),
+                                            alpha_work.data(), beta_work.data(),
+                                            &iterations, &matvecs,
+                                            &projected_stop, &projected_nconv,
+                                            &projected_max_residual,
+                                            &projected_checks,
+                                            &projected_seconds);
+  if (status != 0) {
+    error("native dense Golub-Kahan failed with status=%d", status);
+  }
+
+  SEXP ritz_ = PROTECT(eigencore_golub_kahan_ritz_from_ptr(
+    U_work.data(), V_work.data(), m, n, iterations, alpha_work.data(),
+    beta_work.data(), rank, target_kind
+  ));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 12));
+  SET_VECTOR_ELT(out_, 0, VECTOR_ELT(ritz_, 0));
+  SET_VECTOR_ELT(out_, 1, VECTOR_ELT(ritz_, 1));
+  SET_VECTOR_ELT(out_, 2, VECTOR_ELT(ritz_, 2));
+  SET_VECTOR_ELT(out_, 3, ScalarInteger(iterations));
+  SET_VECTOR_ELT(out_, 4, ScalarInteger(matvecs));
+  SET_VECTOR_ELT(out_, 5, ScalarLogical(projected_stop));
+  SET_VECTOR_ELT(out_, 6, ScalarInteger(projected_nconv));
+  SET_VECTOR_ELT(out_, 7, ScalarReal(projected_max_residual));
+  SET_VECTOR_ELT(out_, 8, ScalarInteger(projected_checks));
+  SET_VECTOR_ELT(out_, 9, ScalarReal(projected_seconds));
+  SET_VECTOR_ELT(out_, 10, ScalarReal(native_workspace_bytes));
+  SET_VECTOR_ELT(out_, 11, ScalarLogical(FALSE));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 12));
+  SET_STRING_ELT(names_, 0, mkChar("d"));
+  SET_STRING_ELT(names_, 1, mkChar("u"));
+  SET_STRING_ELT(names_, 2, mkChar("v"));
+  SET_STRING_ELT(names_, 3, mkChar("iterations"));
+  SET_STRING_ELT(names_, 4, mkChar("matvecs"));
+  SET_STRING_ELT(names_, 5, mkChar("projected_stop"));
+  SET_STRING_ELT(names_, 6, mkChar("projected_nconv"));
+  SET_STRING_ELT(names_, 7, mkChar("projected_max_residual"));
+  SET_STRING_ELT(names_, 8, mkChar("projected_checks"));
+  SET_STRING_ELT(names_, 9, mkChar("projected_seconds"));
+  SET_STRING_ELT(names_, 10, mkChar("native_workspace_bytes"));
+  SET_STRING_ELT(names_, 11, mkChar("basis_returned"));
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(3);
+  return out_;
+}
+
+extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
+                                              SEXP maxit_, SEXP start_,
+                                              SEXP rank_, SEXP target_kind_,
+                                              SEXP tol_, SEXP projected_stop_) {
+  if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
+      !isReal(start_)) {
+    error("invalid CSC Golub-Kahan inputs");
+  }
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  if (LENGTH(start_) != n) {
+    error("non-conformable CSC Golub-Kahan inputs");
+  }
+  const int limit = (m < n) ? m : n;
+  const int maxit = static_cast<int>(asInteger(maxit_));
+  const int rank = static_cast<int>(asInteger(rank_));
+  const int target_kind = static_cast<int>(asInteger(target_kind_));
+  const double tol = asReal(tol_);
+  const int enable_projected_stop = asLogical(projected_stop_) == TRUE;
+  if (maxit < 1 || maxit > limit) {
+    error("maxit must be between 1 and min(dim(A))");
+  }
+  if (rank < 1 || rank > maxit) {
+    error("rank must be between 1 and maxit");
+  }
+
+  std::vector<double> U_work(static_cast<size_t>(m) * static_cast<size_t>(maxit), 0.0);
+  std::vector<double> V_work(static_cast<size_t>(n) * static_cast<size_t>(maxit), 0.0);
+  std::vector<double> alpha_work(static_cast<size_t>(maxit), 0.0);
+  std::vector<double> beta_work(static_cast<size_t>(maxit), 0.0);
+  const double native_workspace_bytes =
+    static_cast<double>(sizeof(double)) *
+    static_cast<double>(
+      (static_cast<int64_t>(m) + static_cast<int64_t>(n) + 2) *
+      static_cast<int64_t>(maxit) +
+      static_cast<int64_t>(2 * m + 2 * n)
+    );
+
+  CSCOperator impl = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
+  int iterations = 0;
+  int matvecs = 0;
+  int projected_stop = 0;
+  int projected_nconv = 0;
+  double projected_max_residual = R_PosInf;
+  int projected_checks = 0;
+  double projected_seconds = 0.0;
+  const int status = native_golub_kahan_run(&impl, eigencore_csc_apply, m, n,
+                                            maxit, rank, target_kind, tol,
+                                            enable_projected_stop, REAL(start_),
+                                            U_work.data(), V_work.data(),
+                                            alpha_work.data(), beta_work.data(),
+                                            &iterations, &matvecs,
+                                            &projected_stop, &projected_nconv,
+                                            &projected_max_residual,
+                                            &projected_checks,
+                                            &projected_seconds);
+  if (status != 0) {
+    error("native CSC Golub-Kahan failed with status=%d", status);
+  }
+
+  SEXP ritz_ = PROTECT(eigencore_golub_kahan_ritz_from_ptr(
+    U_work.data(), V_work.data(), m, n, iterations, alpha_work.data(),
+    beta_work.data(), rank, target_kind
+  ));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 12));
+  SET_VECTOR_ELT(out_, 0, VECTOR_ELT(ritz_, 0));
+  SET_VECTOR_ELT(out_, 1, VECTOR_ELT(ritz_, 1));
+  SET_VECTOR_ELT(out_, 2, VECTOR_ELT(ritz_, 2));
+  SET_VECTOR_ELT(out_, 3, ScalarInteger(iterations));
+  SET_VECTOR_ELT(out_, 4, ScalarInteger(matvecs));
+  SET_VECTOR_ELT(out_, 5, ScalarLogical(projected_stop));
+  SET_VECTOR_ELT(out_, 6, ScalarInteger(projected_nconv));
+  SET_VECTOR_ELT(out_, 7, ScalarReal(projected_max_residual));
+  SET_VECTOR_ELT(out_, 8, ScalarInteger(projected_checks));
+  SET_VECTOR_ELT(out_, 9, ScalarReal(projected_seconds));
+  SET_VECTOR_ELT(out_, 10, ScalarReal(native_workspace_bytes));
+  SET_VECTOR_ELT(out_, 11, ScalarLogical(FALSE));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 12));
+  SET_STRING_ELT(names_, 0, mkChar("d"));
+  SET_STRING_ELT(names_, 1, mkChar("u"));
+  SET_STRING_ELT(names_, 2, mkChar("v"));
+  SET_STRING_ELT(names_, 3, mkChar("iterations"));
+  SET_STRING_ELT(names_, 4, mkChar("matvecs"));
+  SET_STRING_ELT(names_, 5, mkChar("projected_stop"));
+  SET_STRING_ELT(names_, 6, mkChar("projected_nconv"));
+  SET_STRING_ELT(names_, 7, mkChar("projected_max_residual"));
+  SET_STRING_ELT(names_, 8, mkChar("projected_checks"));
+  SET_STRING_ELT(names_, 9, mkChar("projected_seconds"));
+  SET_STRING_ELT(names_, 10, mkChar("native_workspace_bytes"));
+  SET_STRING_ELT(names_, 11, mkChar("basis_returned"));
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(3);
+  return out_;
+}
+
 extern "C" SEXP eigencore_dense_symmetric_eigen(SEXP A_) {
   if (!isReal(A_)) {
     error("A must be a double matrix");
@@ -7059,6 +7251,8 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_lanczos_csc", (DL_FUNC) &eigencore_lanczos_csc, 9},
   {"eigencore_golub_kahan_dense", (DL_FUNC) &eigencore_golub_kahan_dense, 7},
   {"eigencore_golub_kahan_csc", (DL_FUNC) &eigencore_golub_kahan_csc, 10},
+  {"eigencore_golub_kahan_dense_fit", (DL_FUNC) &eigencore_golub_kahan_dense_fit, 7},
+  {"eigencore_golub_kahan_csc_fit", (DL_FUNC) &eigencore_golub_kahan_csc_fit, 10},
   {"eigencore_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_thick_restart_lanczos_dense, 7},
   {"eigencore_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_thick_restart_lanczos_csc, 10},
   {"eigencore_block_lanczos_dense", (DL_FUNC) &eigencore_block_lanczos_dense, 7},

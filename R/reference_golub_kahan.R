@@ -150,11 +150,16 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   projected_stop_enabled <- projected_stop_requested &&
     !fixed_maxit &&
     is.null(projected_stop_disable_reason)
+  prefix_diagnostics <- isTRUE(getOption("eigencore.golub_kahan_prefix_diagnostics", FALSE))
   run_native <- function(active_maxit) {
     if (identical(storage, "dgCMatrix")) {
       A <- op$metadata$matrix
       .Call(
-        "eigencore_golub_kahan_csc",
+        if (isTRUE(prefix_diagnostics)) {
+          "eigencore_golub_kahan_csc"
+        } else {
+          "eigencore_golub_kahan_csc_fit"
+        },
         methods::slot(A, "i"),
         methods::slot(A, "p"),
         methods::slot(A, "x"),
@@ -169,7 +174,11 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
       )
     } else if (is.matrix(source) && is.double(source)) {
       .Call(
-        "eigencore_golub_kahan_dense",
+        if (isTRUE(prefix_diagnostics)) {
+          "eigencore_golub_kahan_dense"
+        } else {
+          "eigencore_golub_kahan_dense_fit"
+        },
         source,
         as.integer(active_maxit),
         as.numeric(start),
@@ -200,17 +209,31 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     total_native_seconds <- total_native_seconds + native_elapsed
 
     ritz_started <- proc.time()[["elapsed"]]
-    final <- native_golub_kahan_ritz(
-      op,
-      iter$U,
-      iter$V,
-      iter$alpha,
-      iter$beta,
-      rank,
-      target,
-      tol,
-      active_iterations = iter$iterations
-    )
+    final <- if (!is.null(iter$d) && !is.null(iter$u) && !is.null(iter$v)) {
+      cert <- certify_svd_operator(op, iter$d, iter$u, iter$v, tol = tol)
+      list(
+        d = iter$d,
+        u = iter$u,
+        v = iter$v,
+        values = iter$d,
+        residuals = cert$residuals,
+        backward_error = cert$backward_error,
+        orthogonality = cert$orthogonality,
+        certificate = cert
+      )
+    } else {
+      native_golub_kahan_ritz(
+        op,
+        iter$U,
+        iter$V,
+        iter$alpha,
+        iter$beta,
+        rank,
+        target,
+        tol,
+        active_iterations = iter$iterations
+      )
+    }
     ritz_elapsed <- proc.time()[["elapsed"]] - ritz_started
     total_ritz_seconds <- total_ritz_seconds + ritz_elapsed
     total_iterations <- total_iterations + iter$iterations
@@ -240,7 +263,6 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     )
   }
 
-  prefix_diagnostics <- isTRUE(getOption("eigencore.golub_kahan_prefix_diagnostics", FALSE))
   prefix_history <- if (isTRUE(prefix_diagnostics)) {
     native_golub_kahan_prefix_diagnostics(
       op,
@@ -315,6 +337,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     projected_checks = iter$projected_checks %||% NA_integer_,
     projected_seconds = iter$projected_seconds %||% NA_real_,
     native_workspace_bytes = iter$native_workspace_bytes %||% NA_real_,
+    basis_returned = isTRUE(iter$basis_returned %||% (!is.null(iter$U) && !is.null(iter$V))),
     prefix_diagnostics = prefix_diagnostics,
     prefix_history = prefix_history,
     first_certified_prefix = first_certified_prefix,

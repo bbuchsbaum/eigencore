@@ -62,13 +62,13 @@ test_that("native generalized SPD fallback produces B-orthonormal vectors", {
   expect_lt(max(abs(A %*% vectors(fit) - B %*% vectors(fit) %*% diag(values(fit)))), 1e-8)
 })
 
-test_that("LOBPCG prototype supports dense generalized SPD problems", {
+test_that("native generalized SPD LOBPCG supports dense SPD problems", {
   A <- diag(c(1, 4, 9, 16, 25))
   B <- diag(c(1, 2, 3, 4, 5))
   fit <- eig_partial(A, B = B, k = 2, target = smallest(),
                      method = lobpcg(maxit = 50L), seed = 28, tol = 1e-8)
 
-  expect_equal(fit$plan$method, "native generalized SPD LOBPCG prototype (built-in A/B slice)")
+  expect_equal(fit$plan$method, eigencore:::native_generalized_lobpcg_label())
   expect_equal(values(fit), c(1, 2), tolerance = 1e-8)
   expect_true(certificate(fit)$passed)
   expect_equal(crossprod(vectors(fit), B %*% vectors(fit)), diag(2), tolerance = 1e-8)
@@ -84,7 +84,7 @@ test_that("native generalized SPD LOBPCG slice supports dense A with diagonal B"
   fit <- eig_partial(A, B = B, k = 2, target = smallest(),
                      method = lobpcg(maxit = 50L), seed = 281, tol = 1e-8)
 
-  expect_equal(fit$plan$method, "native generalized SPD LOBPCG prototype (built-in A/B slice)")
+  expect_equal(fit$plan$method, eigencore:::native_generalized_lobpcg_label())
   expect_equal(values(fit), c(1, 2), tolerance = 1e-8)
   expect_true(certificate(fit)$passed)
   expect_equal(crossprod(vectors(fit), as.matrix(B) %*% vectors(fit)), diag(2), tolerance = 1e-8)
@@ -93,13 +93,13 @@ test_that("native generalized SPD LOBPCG slice supports dense A with diagonal B"
   expect_true("native_diagonal_b_mgs2" %in% fit$restart$orthogonalization_methods)
 })
 
-test_that("LOBPCG prototype handles sparse generalized SPD operators without densifying", {
+test_that("native generalized SPD LOBPCG handles sparse operators without densifying", {
   A <- Matrix::Diagonal(x = c(1, 4, 9, 16, 25))
   B <- Matrix::Diagonal(x = c(1, 2, 3, 4, 5))
   fit <- eig_partial(A, B = B, k = 2, target = smallest(),
                      method = lobpcg(maxit = 50L), seed = 29, tol = 1e-8)
 
-  expect_equal(fit$plan$method, "native generalized SPD LOBPCG prototype (built-in A/B slice)")
+  expect_equal(fit$plan$method, eigencore:::native_generalized_lobpcg_label())
   expect_equal(values(fit), c(1, 2), tolerance = 1e-8)
   expect_true(certificate(fit)$passed)
   expect_true(fit$restart$generalized)
@@ -124,7 +124,7 @@ test_that("native generalized SPD LOBPCG supports sparse CSC A and sparse CSC B"
   fit <- eig_partial(A, B = B, k = 2, target = smallest(),
                      method = lobpcg(maxit = 50L), seed = 291, tol = 1e-8)
 
-  expect_equal(fit$plan$method, "native generalized SPD LOBPCG prototype (built-in A/B slice)")
+  expect_equal(fit$plan$method, eigencore:::native_generalized_lobpcg_label())
   expect_equal(values(fit), c(1, 2), tolerance = 1e-8)
   expect_true(certificate(fit)$passed)
   expect_equal(crossprod(vectors(fit), as.matrix(B) %*% vectors(fit)), diag(2), tolerance = 1e-8)
@@ -132,7 +132,7 @@ test_that("native generalized SPD LOBPCG supports sparse CSC A and sparse CSC B"
   expect_true("native_csc_b_mgs2" %in% fit$restart$orthogonalization_methods)
 })
 
-test_that("generalized SPD LOBPCG is not mislabeled as native yet", {
+test_that("preconditioned generalized SPD LOBPCG stays on honest reference fallback", {
   A <- Matrix::Diagonal(x = c(1, 4, 9, 16, 25))
   B <- Matrix::Diagonal(x = c(1, 2, 3, 4, 5))
   preconditioner <- shifted_tridiagonal_preconditioner(
@@ -803,7 +803,7 @@ test_that("native Golub-Kahan exposes adaptive subspace metadata", {
     "projected_stop_requested", "projected_stop_enabled",
     "projected_stop_disable_reason", "projected_stop", "projected_nconv",
     "projected_max_residual", "projected_checks", "projected_seconds",
-    "native_workspace_bytes"
+    "native_workspace_bytes", "basis_returned"
   ) %in% names(fit$restart)))
   expect_equal(fit$restart$kind, "adaptive_subspace_growth")
   expect_true(fit$restart$implemented)
@@ -820,6 +820,7 @@ test_that("native Golub-Kahan exposes adaptive subspace metadata", {
   expect_gte(fit$restart$projected_checks, 0L)
   expect_gte(fit$restart$projected_seconds, 0)
   expect_gt(fit$restart$native_workspace_bytes, 0)
+  expect_true(fit$restart$basis_returned)
   expect_true(all(c(
     "retry", "max_subspace", "iterations", "matvecs", "nconv",
     "certificate_passed", "max_residual", "max_backward_error"
@@ -830,6 +831,23 @@ test_that("native Golub-Kahan exposes adaptive subspace metadata", {
   expect_lte(fit$restart$first_certified_prefix, fit$restart$final_iterations)
   expect_gte(fit$restart$final_prefix_iteration_overshoot, 0L)
   expect_true(certificate(fit)$passed)
+})
+
+test_that("native Golub-Kahan compact fit avoids returning Krylov basis by default", {
+  old_options <- options(
+    eigencore.golub_kahan_prefix_diagnostics = FALSE,
+    eigencore.golub_kahan_projected_stop = TRUE
+  )
+  on.exit(options(old_options), add = TRUE)
+  A <- matrix(rnorm(12 * 7), 12, 7)
+  fit <- svd_partial(A, rank = 3, tol = 1e-8, seed = 446, method = golub_kahan())
+
+  expect_equal(fit$method, "native prototype Golub-Kahan")
+  expect_true(fit$certificate$passed)
+  expect_false(fit$restart$basis_returned)
+  expect_gt(fit$restart$native_workspace_bytes, 0)
+  expect_true(is.data.frame(fit$restart$prefix_history))
+  expect_equal(nrow(fit$restart$prefix_history), 0L)
 })
 
 test_that("Golub-Kahan Ritz extraction preserves coupled SVD rotations", {

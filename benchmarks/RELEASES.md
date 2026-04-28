@@ -40,7 +40,11 @@ they are machine-dependent.
   Golub-Kahan kernel now reports `native_workspace_bytes` and returns compact
   R-visible bases sized to realized iterations, which reduced projected solver
   allocation in the quick H check to `464576` bytes for wide sparse and
-  `147664` bytes for clustered dense while keeping certificates green.
+  `147664` bytes for clustered dense while keeping certificates green. The
+  default non-diagnostic path now goes further and returns compact native Ritz
+  fits instead of Krylov bases; the same quick H rows allocate `187600` bytes
+  for wide sparse and `112544` bytes for clustered dense with
+  `basis_returned = FALSE`.
 - G1 native block Hermitian Lanczos is promoted for benchmark-proven regimes.
   The default `eigencore` path now passes both strict release scripts with dense
   diagnostics included:

@@ -363,7 +363,17 @@ only, while non-quick `--strict` enforces the speed/memory/parity release gate:
   materialization and the external reference allocations, not certificate
   recomputation; the next H allocation work should reuse the per-iteration
   `v/z/u/u_prev` scratch and avoid copying or retaining basis columns that are
-  no longer needed for the final Ritz result. A full non-quick projected-stop SVD
+  no longer needed for the final Ritz result. The next pass added compact
+  native Golub-Kahan "fit" entry points that run the small Ritz projection
+  before crossing back into R, so the default non-diagnostic path returns only
+  final `d/u/v` plus metadata instead of the full Krylov basis. Prefix
+  diagnostics still force the basis-returning path. On the same quick H sampled
+  cases, projected solver allocation dropped again to `187600` bytes for wide
+  sparse and `112544` bytes for clustered dense, with `basis_returned = FALSE`
+  and certificates still passing. H is still not closed: those rows remain below
+  the speed gate and above PRIMME/RSpectra memory in the quick fixture, so the
+  remaining work is algorithmic speed and eliminating smaller R-visible result
+  allocations rather than certificate cost. A full non-quick projected-stop SVD
   surface run on 2026-04-26 saved
   `inst/benchmarks/results/20260426-svd-surface-rows.rds`,
   `inst/benchmarks/results/20260426-svd-surface-gates.rds`, and
