@@ -50,7 +50,11 @@ they are machine-dependent.
   now populate `stage_apply_seconds`, `stage_recurrence_seconds`,
   `stage_reorthogonalization_seconds`, and `stage_projected_solve_seconds`;
   current H samples show reorthogonalization, not operator application or
-  certification, is the primary sparse SVD hotspot.
+  certification, is the primary sparse SVD hotspot. The scalar Golub-Kahan
+  path now uses an adaptive DGKS-style second reorthogonalization pass and
+  reports `reorthogonalization_passes`; sampled projected rows remain
+  certified, with wide sparse around `0.0028s` and clustered dense around
+  `0.0012s`.
 - G1 native block Hermitian Lanczos is promoted for benchmark-proven regimes.
   The default `eigencore` path now passes both strict release scripts with dense
   diagnostics included:

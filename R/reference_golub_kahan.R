@@ -208,6 +208,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     reorthogonalization = 0,
     projected_solve = 0
   )
+  total_reorthogonalization_passes <- 0L
   repeat {
     native_started <- proc.time()[["elapsed"]]
     iter <- run_native(active_maxit)
@@ -221,6 +222,11 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     )
     total_native_stage_seconds <- total_native_stage_seconds +
       replace(native_stage_seconds, is.na(native_stage_seconds), 0)
+    native_reorthogonalization_passes <- iter$reorthogonalization_passes %||% NA_integer_
+    if (!is.na(native_reorthogonalization_passes)) {
+      total_reorthogonalization_passes <- total_reorthogonalization_passes +
+        as.integer(native_reorthogonalization_passes)
+    }
 
     ritz_started <- proc.time()[["elapsed"]]
     final <- if (!is.null(iter$d) && !is.null(iter$u) && !is.null(iter$v)) {
@@ -268,7 +274,8 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
       stage_apply_seconds = native_stage_seconds[["apply"]],
       stage_recurrence_seconds = native_stage_seconds[["recurrence"]],
       stage_reorthogonalization_seconds = native_stage_seconds[["reorthogonalization"]],
-      stage_projected_solve_seconds = native_stage_seconds[["projected_solve"]]
+      stage_projected_solve_seconds = native_stage_seconds[["projected_solve"]],
+      reorthogonalization_passes = native_reorthogonalization_passes
     )
 
     if (all(final$certificate$converged) || fixed_maxit || active_maxit >= limit) {
@@ -360,6 +367,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     projected_seconds = iter$projected_seconds %||% NA_real_,
     native_workspace_bytes = iter$native_workspace_bytes %||% NA_real_,
     basis_returned = isTRUE(iter$basis_returned %||% (!is.null(iter$U) && !is.null(iter$V))),
+    reorthogonalization_passes = total_reorthogonalization_passes,
     prefix_diagnostics = prefix_diagnostics,
     prefix_history = prefix_history,
     first_certified_prefix = first_certified_prefix,

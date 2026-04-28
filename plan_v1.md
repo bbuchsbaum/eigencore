@@ -389,7 +389,15 @@ only, while non-quick `--strict` enforces the speed/memory/parity release gate:
   `0.00016s` in application. This makes the next H closure criterion explicit:
   the production SVD path must reduce or restructure orthogonalization through
   block/thick-restart Golub-Kahan rather than further shaving certificate or
-  callback overhead. A full non-quick projected-stop SVD
+  callback overhead. As an interim scalar-path improvement, native Golub-Kahan
+  now uses a DGKS-style adaptive second reorthogonalization pass: every vector
+  gets one projection pass, and the second pass runs only if the first pass
+  shrinks the candidate vector enough to signal orthogonality loss. The quick H
+  sampled rows remain certified and now report `reorthogonalization_passes`:
+  projected wide sparse used `99` passes for `50` iterations and improved to
+  about `0.0028s`, with reorthogonalization around `0.0011s`; clustered dense
+  used `47` passes for `24` iterations and remained around `0.0012s`. This is
+  useful headroom, but still not an H gate closure. A full non-quick projected-stop SVD
   surface run on 2026-04-26 saved
   `inst/benchmarks/results/20260426-svd-surface-rows.rds`,
   `inst/benchmarks/results/20260426-svd-surface-gates.rds`, and
