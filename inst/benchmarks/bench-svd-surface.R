@@ -170,6 +170,40 @@ gates <- if (length(gates)) do.call(rbind, gates) else data.frame()
 row.names(gates) <- NULL
 print(gates)
 
+memory_diagnostics <- if (isTRUE(can_evaluate_gates)) lapply(split(result, result$case), function(case_rows) {
+  internal_methods <- c(
+    "eigencore",
+    "eigencore_golub_kahan",
+    "eigencore_golub_kahan_projected",
+    "eigencore_randomized"
+  )
+  gate_rows <- case_rows[
+    case_rows$method == gate_subject | !case_rows$method %in% internal_methods,
+    ,
+    drop = FALSE
+  ]
+  diagnostics <- evaluate_memory_diagnostics(
+    gate_rows,
+    subject = gate_subject,
+    references = setdiff(unique(gate_rows$method), gate_subject),
+    requested = unique(case_rows$rank)[[1L]]
+  )
+  diagnostics$case <- unique(case_rows$case)
+  diagnostics$m <- unique(case_rows$m)
+  diagnostics$n <- unique(case_rows$n)
+  diagnostics$rank <- unique(case_rows$rank)
+  diagnostics
+}) else {
+  list()
+}
+memory_diagnostics <- if (length(memory_diagnostics)) {
+  do.call(rbind, memory_diagnostics)
+} else {
+  data.frame()
+}
+row.names(memory_diagnostics) <- NULL
+print(memory_diagnostics)
+
 projected_comparison <- NULL
 has_projected_pair <- all(c(
   "eigencore_golub_kahan",
@@ -183,6 +217,7 @@ if (isTRUE(args$svd_projected_stop) || isTRUE(args$h_candidate) || has_projected
 if (args$save) {
   message("saved rows: ", save_benchmark_result(result, "svd-surface-rows"))
   message("saved gates: ", save_benchmark_result(gates, "svd-surface-gates"))
+  message("saved memory diagnostics: ", save_benchmark_result(memory_diagnostics, "svd-surface-memory"))
   if (!is.null(projected_comparison)) {
     message(
       "saved projected stop comparison: ",

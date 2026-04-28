@@ -129,6 +129,8 @@ test_that("SVD surface benchmark script is available", {
   expect_true(any(grepl("svd_projected_stop", lines, fixed = TRUE)))
   expect_true(any(grepl("h_candidate", lines, fixed = TRUE)))
   expect_true(any(grepl("projected_stop_comparison", lines, fixed = TRUE)))
+  expect_true(any(grepl("memory_diagnostics", lines, fixed = TRUE)))
+  expect_true(any(grepl("evaluate_memory_diagnostics", lines, fixed = TRUE)))
   expect_true(any(grepl("gate_subject", lines, fixed = TRUE)))
   expect_true(any(grepl("svd_surface_gate_subject", lines, fixed = TRUE)))
   expect_true(any(grepl("svd_surface_default_methods", lines, fixed = TRUE)))
@@ -336,6 +338,40 @@ test_that("SVD reference gate can evaluate an explicit H candidate subject", {
   expect_false(gate$passed)
   expect_equal(gate$speed_ratio_vs_best_reference, 0.5)
   expect_equal(gate$memory_ratio_vs_best_reference, 0.5)
+})
+
+test_that("SVD memory diagnostics expose subject/reference allocation gaps", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+
+  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
+  if (!nzchar(helper_path)) {
+    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
+  }
+  source(helper_path)
+
+  rows <- data.frame(
+    method = c("eigencore_golub_kahan_projected", "RSpectra", "irlba"),
+    mem_alloc = c(200, 80, 100),
+    solver_mem_alloc = c(180, 50, 70),
+    certificate_mem_alloc = c(20, 30, 30),
+    certificate_passed = c(TRUE, TRUE, TRUE),
+    nconv = c(2L, 2L, 2L)
+  )
+  diagnostics <- evaluate_memory_diagnostics(
+    rows,
+    subject = "eigencore_golub_kahan_projected",
+    references = c("RSpectra", "irlba"),
+    requested = 2L
+  )
+
+  expect_equal(diagnostics$subject, "eigencore_golub_kahan_projected")
+  expect_equal(diagnostics$best_reference, "RSpectra")
+  expect_equal(diagnostics$total_memory_gap_bytes, 120)
+  expect_equal(diagnostics$solver_memory_gap_bytes, 130)
+  expect_equal(diagnostics$certificate_memory_gap_bytes, -10)
+  expect_equal(diagnostics$total_memory_ratio_vs_best_reference, 0.4)
+  expect_equal(diagnostics$solver_memory_ratio_vs_best_reference, 50 / 180)
+  expect_equal(diagnostics$subject_solver_memory_fraction, 0.9)
 })
 
 test_that("G1 candidate baseline covers required pre-promotion cases", {

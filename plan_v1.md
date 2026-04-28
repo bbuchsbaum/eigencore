@@ -327,9 +327,12 @@ only, while non-quick `--strict` enforces the speed/memory/parity release gate:
   `--h-candidate` preset now selects the projected Golub-Kahan row as the gate
   subject, includes the plain Golub-Kahan row for on/off comparison, includes
   external references, and fails early if a requested `--subject` is missing
-  from the selected methods. The first quick projected-stop surface run
-  certified the projected candidate rows and showed useful but uneven movement:
-  wide sparse dropped from about `60/120`
+  from the selected methods. The same surface now prints and saves
+  `svd-surface-memory` diagnostics, separating total, solver, and certificate
+  allocation gaps against the best certified reference so H memory work can
+  target the right phase instead of relying on one aggregate memory ratio. The
+  first quick projected-stop surface run certified the projected candidate rows
+  and showed useful but uneven movement: wide sparse dropped from about `60/120`
   iterations/matvecs to `50/100`, clustered dense from `44/88` to `24/48`,
   slow-decay dense from `44/88` to `36/72`, while tall, rank-deficient sparse,
   and low-rank sparse did not stop early. The stop policy now also records

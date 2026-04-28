@@ -795,6 +795,67 @@ evaluate_reference_gate <- function(rows, subject = "eigencore", references = se
   )
 }
 
+evaluate_memory_diagnostics <- function(rows, subject = "eigencore",
+                                        references = setdiff(unique(rows$method), subject),
+                                        requested) {
+  eig <- rows[rows$method == subject, , drop = FALSE]
+  refs <- rows[rows$method %in% references & rows$certificate_passed, , drop = FALSE]
+  if (nrow(eig) != 1L) {
+    stop("memory diagnostics require exactly one subject row", call. = FALSE)
+  }
+  subject_certified <- isTRUE(eig$certificate_passed) && eig$nconv >= requested
+  if (!nrow(refs)) {
+    return(data.frame(
+      subject = subject,
+      subject_certified = subject_certified,
+      subject_nconv = eig$nconv,
+      requested = requested,
+      subject_total_mem_alloc = eig$mem_alloc,
+      subject_solver_mem_alloc = eig$solver_mem_alloc,
+      subject_certificate_mem_alloc = eig$certificate_mem_alloc,
+      subject_solver_memory_fraction = eig$solver_mem_alloc / eig$mem_alloc,
+      subject_certificate_memory_fraction = eig$certificate_mem_alloc / eig$mem_alloc,
+      best_reference = NA_character_,
+      best_reference_total_mem_alloc = NA_real_,
+      total_memory_gap_bytes = NA_real_,
+      solver_memory_gap_bytes = NA_real_,
+      certificate_memory_gap_bytes = NA_real_,
+      total_memory_ratio_vs_best_reference = NA_real_,
+      solver_memory_ratio_vs_best_reference = NA_real_,
+      certificate_memory_ratio_vs_best_reference = NA_real_,
+      note = "no certified reference rows",
+      stringsAsFactors = FALSE
+    ))
+  }
+
+  ref <- refs[order(refs$mem_alloc), , drop = FALSE][1L, , drop = FALSE]
+  data.frame(
+    subject = subject,
+    subject_certified = subject_certified,
+    subject_nconv = eig$nconv,
+    requested = requested,
+    subject_total_mem_alloc = eig$mem_alloc,
+    subject_solver_mem_alloc = eig$solver_mem_alloc,
+    subject_certificate_mem_alloc = eig$certificate_mem_alloc,
+    subject_solver_memory_fraction = eig$solver_mem_alloc / eig$mem_alloc,
+    subject_certificate_memory_fraction = eig$certificate_mem_alloc / eig$mem_alloc,
+    best_reference = ref$method,
+    best_reference_total_mem_alloc = ref$mem_alloc,
+    total_memory_gap_bytes = eig$mem_alloc - ref$mem_alloc,
+    solver_memory_gap_bytes = eig$solver_mem_alloc - ref$solver_mem_alloc,
+    certificate_memory_gap_bytes = eig$certificate_mem_alloc - ref$certificate_mem_alloc,
+    total_memory_ratio_vs_best_reference = ref$mem_alloc / eig$mem_alloc,
+    solver_memory_ratio_vs_best_reference = ref$solver_mem_alloc / eig$solver_mem_alloc,
+    certificate_memory_ratio_vs_best_reference = if (eig$certificate_mem_alloc > 0) {
+      ref$certificate_mem_alloc / eig$certificate_mem_alloc
+    } else {
+      NA_real_
+    },
+    note = "",
+    stringsAsFactors = FALSE
+  )
+}
+
 benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
                                tol = 1e-8, seed = 1L) {
   methods <- bench_methods("svd", methods)

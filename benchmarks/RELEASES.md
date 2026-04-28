@@ -31,8 +31,10 @@ they are machine-dependent.
   directly against external references without changing the default `eigencore`
   SVD release gate. The preset selects `eigencore_golub_kahan_projected` as the
   subject, keeps the plain Golub-Kahan row for projected-stop comparison, and
-  errors if the requested gate subject is absent. A quick projected subject
-  check certifies sampled
+  errors if the requested gate subject is absent. The surface now also emits
+  `svd-surface-memory` diagnostics that split total, solver, and certificate
+  allocation gaps against the best certified reference. A quick projected
+  subject check certifies sampled
   wide-sparse and clustered-dense rows, but remains well below the `1.5x` SVD
   speed gate and memory parity; H is still a performance milestone.
 - G1 native block Hermitian Lanczos is promoted for benchmark-proven regimes.
