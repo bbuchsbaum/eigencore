@@ -87,6 +87,17 @@ test_that("native block Golub-Kahan basis cycle certifies dense and CSC full sub
 
   for (A_in in list(A, A_csc)) {
     set.seed(706)
+    basis <- eigencore:::native_block_golub_kahan_basis(
+      A_in,
+      max_subspace = ncol(A),
+      block = 2L
+    )
+
+    expect_false("U" %in% names(basis))
+    expect_true(all(c("V", "AV", "active_cols", "active_left_cols") %in% names(basis)))
+    expect_equal(dim(basis$V), c(ncol(A), ncol(A)))
+    expect_equal(dim(basis$AV), c(nrow(A), ncol(A)))
+
     fit <- eigencore:::native_block_golub_kahan_cycle_svd(
       A_in,
       rank = 4L,

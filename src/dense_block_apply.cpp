@@ -2941,7 +2941,6 @@ static SEXP block_golub_kahan_basis_pack(int n,
                                          int max_subspace,
                                          const double* V,
                                          const double* AV,
-                                         const double* U,
                                          int active_v,
                                          int active_u,
                                          int iterations,
@@ -2949,32 +2948,28 @@ static SEXP block_golub_kahan_basis_pack(int n,
                                          int ortho_passes) {
   SEXP V_ = PROTECT(allocMatrix(REALSXP, n, max_subspace));
   SEXP AV_ = PROTECT(allocMatrix(REALSXP, m, max_subspace));
-  SEXP U_ = PROTECT(allocMatrix(REALSXP, m, max_subspace));
   std::memcpy(REAL(V_), V, sizeof(double) * static_cast<size_t>(n) * max_subspace);
   std::memcpy(REAL(AV_), AV, sizeof(double) * static_cast<size_t>(m) * max_subspace);
-  std::memcpy(REAL(U_), U, sizeof(double) * static_cast<size_t>(m) * max_subspace);
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 8));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 7));
   SET_VECTOR_ELT(out_, 0, V_);
   SET_VECTOR_ELT(out_, 1, AV_);
-  SET_VECTOR_ELT(out_, 2, U_);
-  SET_VECTOR_ELT(out_, 3, ScalarInteger(active_v));
-  SET_VECTOR_ELT(out_, 4, ScalarInteger(active_u));
-  SET_VECTOR_ELT(out_, 5, ScalarInteger(iterations));
-  SET_VECTOR_ELT(out_, 6, ScalarInteger(matvecs));
-  SET_VECTOR_ELT(out_, 7, ScalarInteger(ortho_passes));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 8));
+  SET_VECTOR_ELT(out_, 2, ScalarInteger(active_v));
+  SET_VECTOR_ELT(out_, 3, ScalarInteger(active_u));
+  SET_VECTOR_ELT(out_, 4, ScalarInteger(iterations));
+  SET_VECTOR_ELT(out_, 5, ScalarInteger(matvecs));
+  SET_VECTOR_ELT(out_, 6, ScalarInteger(ortho_passes));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 7));
   SET_STRING_ELT(names_, 0, mkChar("V"));
   SET_STRING_ELT(names_, 1, mkChar("AV"));
-  SET_STRING_ELT(names_, 2, mkChar("U"));
-  SET_STRING_ELT(names_, 3, mkChar("active_cols"));
-  SET_STRING_ELT(names_, 4, mkChar("active_left_cols"));
-  SET_STRING_ELT(names_, 5, mkChar("iterations"));
-  SET_STRING_ELT(names_, 6, mkChar("matvecs"));
-  SET_STRING_ELT(names_, 7, mkChar("ortho_passes"));
+  SET_STRING_ELT(names_, 2, mkChar("active_cols"));
+  SET_STRING_ELT(names_, 3, mkChar("active_left_cols"));
+  SET_STRING_ELT(names_, 4, mkChar("iterations"));
+  SET_STRING_ELT(names_, 5, mkChar("matvecs"));
+  SET_STRING_ELT(names_, 6, mkChar("ortho_passes"));
   setAttrib(out_, R_NamesSymbol, names_);
 
-  UNPROTECT(5);
+  UNPROTECT(4);
   return out_;
 }
 
@@ -3018,7 +3013,7 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_basis(SEXP A_,
     error("native dense block Golub-Kahan basis failed with status=%d", status);
   }
   return block_golub_kahan_basis_pack(
-    n, m, max_subspace, V.data(), AV.data(), U.data(),
+    n, m, max_subspace, V.data(), AV.data(),
     active_v, active_u, iterations, matvecs, ortho_passes
   );
 }
@@ -3064,7 +3059,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_basis(SEXP i_, SEXP p_,
     error("native CSC block Golub-Kahan basis failed with status=%d", status);
   }
   return block_golub_kahan_basis_pack(
-    n, m, max_subspace, V.data(), AV.data(), U.data(),
+    n, m, max_subspace, V.data(), AV.data(),
     active_v, active_u, iterations, matvecs, ortho_passes
   );
 }
