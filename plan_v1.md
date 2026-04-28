@@ -352,7 +352,18 @@ only, while non-quick `--strict` enforces the speed/memory/parity release gate:
   candidate's memory materially, for example tall sparse from roughly `594kB`
   to `370kB`, wide sparse from roughly `896kB` to `562kB`, clustered dense from
   roughly `298kB` to `233kB`, and low-rank sparse from roughly `203kB` to
-  `174kB`, while preserving certificates. A full non-quick projected-stop SVD
+  `174kB`, while preserving certificates. The native Golub-Kahan entry points
+  now also keep the planned `maxit` basis in native C++ workspace and return
+  only the realized `iterations` prefix to R, with `native_workspace_bytes`
+  exposed in restart metadata and benchmark rows. A quick H candidate check
+  after that change still certified the projected rows and reduced R-visible
+  solver allocation further: wide sparse `519920 -> 464576` bytes and
+  clustered dense `176768 -> 147664` bytes on the sampled cases. The remaining
+  memory failure is now explicitly the gap between native workspace/result
+  materialization and the external reference allocations, not certificate
+  recomputation; the next H allocation work should reuse the per-iteration
+  `v/z/u/u_prev` scratch and avoid copying or retaining basis columns that are
+  no longer needed for the final Ritz result. A full non-quick projected-stop SVD
   surface run on 2026-04-26 saved
   `inst/benchmarks/results/20260426-svd-surface-rows.rds`,
   `inst/benchmarks/results/20260426-svd-surface-gates.rds`, and

@@ -2029,14 +2029,17 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
     error("rank must be between 1 and maxit");
   }
 
-  SEXP U_ = PROTECT(allocMatrix(REALSXP, m, maxit));
-  SEXP V_ = PROTECT(allocMatrix(REALSXP, n, maxit));
-  SEXP alpha_ = PROTECT(allocVector(REALSXP, maxit));
-  SEXP beta_ = PROTECT(allocVector(REALSXP, maxit));
-  std::memset(REAL(U_), 0, sizeof(double) * static_cast<size_t>(m) * maxit);
-  std::memset(REAL(V_), 0, sizeof(double) * static_cast<size_t>(n) * maxit);
-  std::memset(REAL(alpha_), 0, sizeof(double) * static_cast<size_t>(maxit));
-  std::memset(REAL(beta_), 0, sizeof(double) * static_cast<size_t>(maxit));
+  std::vector<double> U_work(static_cast<size_t>(m) * static_cast<size_t>(maxit), 0.0);
+  std::vector<double> V_work(static_cast<size_t>(n) * static_cast<size_t>(maxit), 0.0);
+  std::vector<double> alpha_work(static_cast<size_t>(maxit), 0.0);
+  std::vector<double> beta_work(static_cast<size_t>(maxit), 0.0);
+  const double native_workspace_bytes =
+    static_cast<double>(sizeof(double)) *
+    static_cast<double>(
+      (static_cast<int64_t>(m) + static_cast<int64_t>(n) + 2) *
+      static_cast<int64_t>(maxit) +
+      static_cast<int64_t>(2 * m + 2 * n)
+    );
 
   DenseColumnMajorOperator impl = {m, n, REAL(A_)};
   int iterations = 0;
@@ -2049,8 +2052,9 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
   const int status = native_golub_kahan_run(&impl, eigencore_dense_apply, m, n,
                                             maxit, rank, target_kind, tol,
                                             enable_projected_stop, REAL(start_),
-                                            REAL(U_), REAL(V_), REAL(alpha_),
-                                            REAL(beta_), &iterations, &matvecs,
+                                            U_work.data(), V_work.data(),
+                                            alpha_work.data(), beta_work.data(),
+                                            &iterations, &matvecs,
                                             &projected_stop, &projected_nconv,
                                             &projected_max_residual,
                                             &projected_checks,
@@ -2059,7 +2063,24 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
     error("native dense Golub-Kahan failed with status=%d", status);
   }
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 11));
+  SEXP U_ = PROTECT(allocMatrix(REALSXP, m, iterations));
+  SEXP V_ = PROTECT(allocMatrix(REALSXP, n, iterations));
+  SEXP alpha_ = PROTECT(allocVector(REALSXP, iterations));
+  SEXP beta_ = PROTECT(allocVector(REALSXP, iterations));
+  for (int col = 0; col < iterations; ++col) {
+    std::memcpy(REAL(U_) + static_cast<size_t>(col) * static_cast<size_t>(m),
+                U_work.data() + static_cast<size_t>(col) * static_cast<size_t>(m),
+                sizeof(double) * static_cast<size_t>(m));
+    std::memcpy(REAL(V_) + static_cast<size_t>(col) * static_cast<size_t>(n),
+                V_work.data() + static_cast<size_t>(col) * static_cast<size_t>(n),
+                sizeof(double) * static_cast<size_t>(n));
+  }
+  std::memcpy(REAL(alpha_), alpha_work.data(),
+              sizeof(double) * static_cast<size_t>(iterations));
+  std::memcpy(REAL(beta_), beta_work.data(),
+              sizeof(double) * static_cast<size_t>(iterations));
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 12));
   SET_VECTOR_ELT(out_, 0, U_);
   SET_VECTOR_ELT(out_, 1, V_);
   SET_VECTOR_ELT(out_, 2, alpha_);
@@ -2071,7 +2092,8 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
   SET_VECTOR_ELT(out_, 8, ScalarReal(projected_max_residual));
   SET_VECTOR_ELT(out_, 9, ScalarInteger(projected_checks));
   SET_VECTOR_ELT(out_, 10, ScalarReal(projected_seconds));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 11));
+  SET_VECTOR_ELT(out_, 11, ScalarReal(native_workspace_bytes));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 12));
   SET_STRING_ELT(names_, 0, mkChar("U"));
   SET_STRING_ELT(names_, 1, mkChar("V"));
   SET_STRING_ELT(names_, 2, mkChar("alpha"));
@@ -2083,6 +2105,7 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
   SET_STRING_ELT(names_, 8, mkChar("projected_max_residual"));
   SET_STRING_ELT(names_, 9, mkChar("projected_checks"));
   SET_STRING_ELT(names_, 10, mkChar("projected_seconds"));
+  SET_STRING_ELT(names_, 11, mkChar("native_workspace_bytes"));
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(6);
   return out_;
@@ -2114,14 +2137,17 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
     error("rank must be between 1 and maxit");
   }
 
-  SEXP U_ = PROTECT(allocMatrix(REALSXP, m, maxit));
-  SEXP V_ = PROTECT(allocMatrix(REALSXP, n, maxit));
-  SEXP alpha_ = PROTECT(allocVector(REALSXP, maxit));
-  SEXP beta_ = PROTECT(allocVector(REALSXP, maxit));
-  std::memset(REAL(U_), 0, sizeof(double) * static_cast<size_t>(m) * maxit);
-  std::memset(REAL(V_), 0, sizeof(double) * static_cast<size_t>(n) * maxit);
-  std::memset(REAL(alpha_), 0, sizeof(double) * static_cast<size_t>(maxit));
-  std::memset(REAL(beta_), 0, sizeof(double) * static_cast<size_t>(maxit));
+  std::vector<double> U_work(static_cast<size_t>(m) * static_cast<size_t>(maxit), 0.0);
+  std::vector<double> V_work(static_cast<size_t>(n) * static_cast<size_t>(maxit), 0.0);
+  std::vector<double> alpha_work(static_cast<size_t>(maxit), 0.0);
+  std::vector<double> beta_work(static_cast<size_t>(maxit), 0.0);
+  const double native_workspace_bytes =
+    static_cast<double>(sizeof(double)) *
+    static_cast<double>(
+      (static_cast<int64_t>(m) + static_cast<int64_t>(n) + 2) *
+      static_cast<int64_t>(maxit) +
+      static_cast<int64_t>(2 * m + 2 * n)
+    );
 
   CSCOperator impl = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
   int iterations = 0;
@@ -2134,8 +2160,9 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   const int status = native_golub_kahan_run(&impl, eigencore_csc_apply, m, n,
                                             maxit, rank, target_kind, tol,
                                             enable_projected_stop, REAL(start_),
-                                            REAL(U_), REAL(V_), REAL(alpha_),
-                                            REAL(beta_), &iterations, &matvecs,
+                                            U_work.data(), V_work.data(),
+                                            alpha_work.data(), beta_work.data(),
+                                            &iterations, &matvecs,
                                             &projected_stop, &projected_nconv,
                                             &projected_max_residual,
                                             &projected_checks,
@@ -2144,7 +2171,24 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
     error("native CSC Golub-Kahan failed with status=%d", status);
   }
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 11));
+  SEXP U_ = PROTECT(allocMatrix(REALSXP, m, iterations));
+  SEXP V_ = PROTECT(allocMatrix(REALSXP, n, iterations));
+  SEXP alpha_ = PROTECT(allocVector(REALSXP, iterations));
+  SEXP beta_ = PROTECT(allocVector(REALSXP, iterations));
+  for (int col = 0; col < iterations; ++col) {
+    std::memcpy(REAL(U_) + static_cast<size_t>(col) * static_cast<size_t>(m),
+                U_work.data() + static_cast<size_t>(col) * static_cast<size_t>(m),
+                sizeof(double) * static_cast<size_t>(m));
+    std::memcpy(REAL(V_) + static_cast<size_t>(col) * static_cast<size_t>(n),
+                V_work.data() + static_cast<size_t>(col) * static_cast<size_t>(n),
+                sizeof(double) * static_cast<size_t>(n));
+  }
+  std::memcpy(REAL(alpha_), alpha_work.data(),
+              sizeof(double) * static_cast<size_t>(iterations));
+  std::memcpy(REAL(beta_), beta_work.data(),
+              sizeof(double) * static_cast<size_t>(iterations));
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 12));
   SET_VECTOR_ELT(out_, 0, U_);
   SET_VECTOR_ELT(out_, 1, V_);
   SET_VECTOR_ELT(out_, 2, alpha_);
@@ -2156,7 +2200,8 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   SET_VECTOR_ELT(out_, 8, ScalarReal(projected_max_residual));
   SET_VECTOR_ELT(out_, 9, ScalarInteger(projected_checks));
   SET_VECTOR_ELT(out_, 10, ScalarReal(projected_seconds));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 11));
+  SET_VECTOR_ELT(out_, 11, ScalarReal(native_workspace_bytes));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 12));
   SET_STRING_ELT(names_, 0, mkChar("U"));
   SET_STRING_ELT(names_, 1, mkChar("V"));
   SET_STRING_ELT(names_, 2, mkChar("alpha"));
@@ -2168,6 +2213,7 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   SET_STRING_ELT(names_, 8, mkChar("projected_max_residual"));
   SET_STRING_ELT(names_, 9, mkChar("projected_checks"));
   SET_STRING_ELT(names_, 10, mkChar("projected_seconds"));
+  SET_STRING_ELT(names_, 11, mkChar("native_workspace_bytes"));
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(6);
   return out_;

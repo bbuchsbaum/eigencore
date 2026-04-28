@@ -802,7 +802,8 @@ test_that("native Golub-Kahan exposes adaptive subspace metadata", {
     "first_certified_prefix", "final_prefix_iteration_overshoot",
     "projected_stop_requested", "projected_stop_enabled",
     "projected_stop_disable_reason", "projected_stop", "projected_nconv",
-    "projected_max_residual", "projected_checks", "projected_seconds"
+    "projected_max_residual", "projected_checks", "projected_seconds",
+    "native_workspace_bytes"
   ) %in% names(fit$restart)))
   expect_equal(fit$restart$kind, "adaptive_subspace_growth")
   expect_true(fit$restart$implemented)
@@ -818,6 +819,7 @@ test_that("native Golub-Kahan exposes adaptive subspace metadata", {
   expect_gte(fit$restart$projected_nconv, 0L)
   expect_gte(fit$restart$projected_checks, 0L)
   expect_gte(fit$restart$projected_seconds, 0)
+  expect_gt(fit$restart$native_workspace_bytes, 0)
   expect_true(all(c(
     "retry", "max_subspace", "iterations", "matvecs", "nconv",
     "certificate_passed", "max_residual", "max_backward_error"

@@ -36,7 +36,11 @@ they are machine-dependent.
   allocation gaps against the best certified reference. A quick projected
   subject check certifies sampled
   wide-sparse and clustered-dense rows, but remains well below the `1.5x` SVD
-  speed gate and memory parity; H is still a performance milestone.
+  speed gate and memory parity; H is still a performance milestone. The native
+  Golub-Kahan kernel now reports `native_workspace_bytes` and returns compact
+  R-visible bases sized to realized iterations, which reduced projected solver
+  allocation in the quick H check to `464576` bytes for wide sparse and
+  `147664` bytes for clustered dense while keeping certificates green.
 - G1 native block Hermitian Lanczos is promoted for benchmark-proven regimes.
   The default `eigencore` path now passes both strict release scripts with dense
   diagnostics included:

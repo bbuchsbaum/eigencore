@@ -49,6 +49,7 @@ test_that("benchmark harness produces certificate-inclusive rows", {
     "projected_stop_requested", "projected_stop_enabled",
     "projected_stop_disable_reason", "projected_stop", "projected_nconv",
     "projected_max_residual", "projected_checks", "projected_seconds",
+    "native_workspace_bytes",
     "first_certified_prefix", "final_prefix_iteration_overshoot",
     "final_prefix_matvec_overshoot",
     "stage_native_iteration_seconds", "stage_golub_kahan_ritz_seconds",
