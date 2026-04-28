@@ -78,6 +78,7 @@ svd_surface_default_methods <- function(args) {
       "eigencore_golub_kahan_projected",
       "eigencore_block_golub_kahan_cycle",
       "eigencore_block_golub_kahan_cycle_cached",
+      "eigencore_block_golub_kahan_cycle_cached_random",
       "eigencore_block_golub_kahan_cycle_lean",
       "RSpectra",
       "PRIMME",

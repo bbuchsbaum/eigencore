@@ -109,6 +109,18 @@ test_that("native block Golub-Kahan basis cycle certifies dense and CSC full sub
     expect_equal(cached_basis$AV[, 1:2, drop = FALSE],
                  basis$AV[, 1:2, drop = FALSE],
                  tolerance = 1e-10)
+    cached_prefix_basis <- eigencore:::native_block_golub_kahan_basis(
+      A_in,
+      max_subspace = ncol(A),
+      block = 3L,
+      start = cbind(basis$V[, 1:2, drop = FALSE], stats::rnorm(ncol(A))),
+      start_av = basis$AV[, 1:2, drop = FALSE]
+    )
+    expect_true(cached_prefix_basis$cached_start_used)
+    expect_lt(cached_prefix_basis$matvecs, basis$matvecs)
+    expect_equal(cached_prefix_basis$AV[, 1:2, drop = FALSE],
+                 basis$AV[, 1:2, drop = FALSE],
+                 tolerance = 1e-10)
 
     fit <- eigencore:::native_block_golub_kahan_cycle_svd(
       A_in,
@@ -177,14 +189,25 @@ test_that("native block Golub-Kahan basis cycle records adaptive subspace attemp
     tol = 1e-8,
     adaptive_start = "ritz_cached"
   )
+  set.seed(701)
+  cached_random_adaptive <- eigencore:::native_block_golub_kahan_cycle_svd(
+    A,
+    rank = 5L,
+    target = largest(),
+    block = 2L,
+    tol = 1e-8,
+    adaptive_start = "ritz_cached_random"
+  )
 
   expect_false(fixed$certificate$passed)
   expect_true(adaptive$certificate$passed)
   expect_true(lean_adaptive$certificate$passed)
   expect_true(cached_adaptive$certificate$passed)
+  expect_true(cached_random_adaptive$certificate$passed)
   expect_true(adaptive$restart$adaptive)
   expect_equal(adaptive$restart$adaptive_start, "ritz")
   expect_equal(cached_adaptive$restart$adaptive_start, "ritz_cached")
+  expect_equal(cached_random_adaptive$restart$adaptive_start, "ritz_cached_random")
   expect_equal(lean_adaptive$restart$adaptive_start, "ritz_lean")
   expect_gt(adaptive$restart$attempts, 1L)
   expect_equal(adaptive$restart$attempted_subspaces[[1L]],
@@ -194,10 +217,12 @@ test_that("native block Golub-Kahan basis cycle records adaptive subspace attemp
             max(adaptive$restart$attempt_history$start_cols))
   expect_true(any(adaptive$restart$attempt_history$warm_started))
   expect_true(any(cached_adaptive$restart$attempt_history$cached_start_used))
+  expect_true(any(cached_random_adaptive$restart$attempt_history$cached_start_used))
   expect_true(any(lean_adaptive$restart$attempt_history$warm_started))
   expect_true(any(adaptive$restart$attempt_history$certificate_passed))
   expect_equal(adaptive$matvecs, sum(adaptive$restart$attempt_history$matvecs))
   expect_lt(adaptive$matvecs, cold_adaptive$matvecs)
+  expect_lte(cached_random_adaptive$matvecs, adaptive$matvecs)
   expect_lt(cached_adaptive$matvecs, lean_adaptive$matvecs)
   expect_lt(lean_adaptive$matvecs, cold_adaptive$matvecs)
 })

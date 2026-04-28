@@ -128,6 +128,15 @@ they are machine-dependent.
   avoiding the initial operator apply on warm attempts. This is still a staging
   comparator, not H promotion, but it is the first direct retained-state step
   instead of another from-scratch attempt variant.
+- The H staging surface also includes
+  `eigencore_block_golub_kahan_cycle_cached_random`, which caches the retained
+  Ritz-vector `A V` prefix while keeping the random exploration tail used by
+  the current default restart. On the source-loaded wide sparse probe
+  (`90 x 600`, rank `5`, seed `701`), both the default and cached-random rows
+  certify in three attempts with `73` native apply calls; cached-random is
+  therefore diagnostic only, not a promotion. Restart-block construction now
+  avoids one `cbind()` copy in the default Ritz-plus-random path, reducing the
+  same probe's allocation slightly (`~1.31MB` to `~1.30MB`).
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,

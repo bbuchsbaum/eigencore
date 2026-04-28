@@ -461,6 +461,7 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
     methods = c(
       "eigencore_block_golub_kahan_cycle",
       "eigencore_block_golub_kahan_cycle_cached",
+      "eigencore_block_golub_kahan_cycle_cached_random",
       "eigencore_block_golub_kahan_cycle_lean"
     ),
     iterations = 1,
@@ -470,15 +471,19 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
   expect_true(all(c(
     "eigencore_block_golub_kahan_cycle",
     "eigencore_block_golub_kahan_cycle_cached",
+    "eigencore_block_golub_kahan_cycle_cached_random",
     "eigencore_block_golub_kahan_cycle_lean"
   ) %in% rows$method))
 
   regular <- rows[rows$method == "eigencore_block_golub_kahan_cycle", , drop = FALSE]
   cached <- rows[rows$method == "eigencore_block_golub_kahan_cycle_cached", , drop = FALSE]
+  cached_random <- rows[rows$method == "eigencore_block_golub_kahan_cycle_cached_random", , drop = FALSE]
   lean <- rows[rows$method == "eigencore_block_golub_kahan_cycle_lean", , drop = FALSE]
   expect_true(cached$certificate_passed)
+  expect_true(cached_random$certificate_passed)
   expect_true(lean$certificate_passed)
   expect_gte(cached$nconv, 5L)
+  expect_gte(cached_random$nconv, 5L)
   expect_gte(lean$nconv, 5L)
   expect_gt(lean$matvecs, 0L)
   expect_gte(lean$restart_attempts, 1L)
@@ -490,7 +495,9 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
   expect_equal(lean$final_attempt_matvecs, lean$final_matvecs)
   expect_gte(lean$total_ortho_passes, lean$final_attempt_ortho_passes)
   expect_gte(cached$cached_start_attempts, 1L)
+  expect_gte(cached_random$cached_start_attempts, 1L)
   expect_lt(cached$matvecs, lean$matvecs)
+  expect_lte(cached_random$matvecs, regular$matvecs)
   expect_lte(lean$matvecs, regular$matvecs * 2L)
 })
 

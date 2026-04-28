@@ -2847,14 +2847,14 @@ static int native_block_golub_kahan_basis_run(void* impl,
   int last_v_start = 0;
   int last_v_cols = 0;
   if (start_av_block != nullptr && start_av_cols > 0) {
-    last_v_cols = start_av_cols;
-    if (last_v_cols > block_size) {
-      last_v_cols = block_size;
+    int cached_cols = start_av_cols;
+    if (cached_cols > block_size) {
+      cached_cols = block_size;
     }
-    if (last_v_cols > max_subspace) {
-      last_v_cols = max_subspace;
+    if (cached_cols > max_subspace) {
+      cached_cols = max_subspace;
     }
-    for (int col = 0; col < last_v_cols; ++col) {
+    for (int col = 0; col < cached_cols; ++col) {
       std::memcpy(V + static_cast<int64_t>(col) * n,
                   start_block + static_cast<int64_t>(col) * n,
                   sizeof(double) * static_cast<size_t>(n));
@@ -2862,10 +2862,38 @@ static int native_block_golub_kahan_basis_run(void* impl,
                   start_av_block + static_cast<int64_t>(col) * m,
                   sizeof(double) * static_cast<size_t>(m));
     }
-    active_v = last_v_cols;
+    active_v = cached_cols;
     if (cached_start_used_out != nullptr) {
       *cached_start_used_out = 1;
     }
+    if (cached_cols < block_size && active_v < max_subspace) {
+      const int suffix_start = active_v;
+      const int suffix_cols = block_accept_columns_blas3(
+        start_block + static_cast<int64_t>(cached_cols) * n, n,
+        block_size - cached_cols, nullptr, 0,
+        V, &active_v, max_subspace, Z_v, block_size,
+        coeff, tmp, n, block_size - cached_cols, ortho_passes_out
+      );
+      if (suffix_cols > 0) {
+        EigencoreWorkspace suffix_workspace = {0, 0, nullptr, 0};
+        const int rc_suffix = apply(
+          impl, EIGENCORE_TRANSPOSE_NONE, suffix_cols,
+          V + static_cast<int64_t>(suffix_start) * n, n,
+          1.0, 0.0,
+          AV + static_cast<int64_t>(suffix_start) * m, m,
+          &suffix_workspace
+        );
+        if (rc_suffix != 0) {
+          std::free(Z_v);
+          std::free(Z_u);
+          std::free(coeff);
+          std::free(tmp);
+          return rc_suffix;
+        }
+        ++(*matvecs_out);
+      }
+    }
+    last_v_cols = active_v;
   } else {
     last_v_cols = block_accept_columns_blas3(
       start_block, n, block_size, nullptr, 0,
@@ -3077,8 +3105,9 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_basis_cached(SEXP A_,
   if (INTEGER(dimS)[0] != n || block_size < 1) {
     error("start must have nrow equal to ncol(A) and at least one column");
   }
-  if (INTEGER(dimAV)[0] != m || INTEGER(dimAV)[1] != block_size) {
-    error("start_av must have nrow equal to nrow(A) and ncol equal to ncol(start)");
+  const int start_av_cols = INTEGER(dimAV)[1];
+  if (INTEGER(dimAV)[0] != m || start_av_cols < 1 || start_av_cols > block_size) {
+    error("start_av must have nrow equal to nrow(A) and between 1 and ncol(start) columns");
   }
   if (max_subspace < 1 || max_subspace > n) {
     error("max_subspace must be between 1 and ncol(A)");
@@ -3096,7 +3125,7 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_basis_cached(SEXP A_,
   int cached_start_used = 0;
   const int status = native_block_golub_kahan_basis_run(
     &impl, eigencore_dense_apply, m, n, max_subspace, block_size, REAL(start_),
-    REAL(start_av_), block_size,
+    REAL(start_av_), start_av_cols,
     V.data(), AV.data(), U.data(),
     &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
     &cached_start_used
@@ -3180,8 +3209,9 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_basis_cached(SEXP i_, SEXP p_,
   if (INTEGER(dimS)[0] != n || block_size < 1) {
     error("start must have nrow equal to ncol(A) and at least one column");
   }
-  if (INTEGER(dimAV)[0] != m || INTEGER(dimAV)[1] != block_size) {
-    error("start_av must have nrow equal to nrow(A) and ncol equal to ncol(start)");
+  const int start_av_cols = INTEGER(dimAV)[1];
+  if (INTEGER(dimAV)[0] != m || start_av_cols < 1 || start_av_cols > block_size) {
+    error("start_av must have nrow equal to nrow(A) and between 1 and ncol(start) columns");
   }
   if (max_subspace < 1 || max_subspace > n) {
     error("max_subspace must be between 1 and ncol(A)");
@@ -3199,7 +3229,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_basis_cached(SEXP i_, SEXP p_,
   int cached_start_used = 0;
   const int status = native_block_golub_kahan_basis_run(
     &impl, eigencore_csc_apply, m, n, max_subspace, block_size, REAL(start_),
-    REAL(start_av_), block_size,
+    REAL(start_av_), start_av_cols,
     V.data(), AV.data(), U.data(),
     &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
     &cached_start_used
