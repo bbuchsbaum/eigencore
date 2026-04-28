@@ -129,8 +129,12 @@ Deliver the native engine in order. Each step ships with adversarial tests
    path uses the PRD/rsvd-style `oversample = 10` benchmark default and a
    direct dense `Q' A` projection, moving the large exact-low-rank dense parity
    row from slower than `rsvd` to roughly `1.13x` faster on
-   time-to-certified-answer. The `2x` randomized release gate remains open and
-   is expected to require native sketch/projection kernels and/or adaptive
+   time-to-certified-answer. The randomized certificate now also reuses the
+   cached projected matrix for the right residual (`A' u - sigma v`), reducing
+   the initial certificate to one full post-SVD operator apply plus cheap
+   projected algebra; the same parity row is now roughly `1.18x` faster than
+   certified `rsvd`. The `2x` randomized release gate remains open and is
+   expected to require native sketch/projection kernels and/or adaptive
    randomized planning.
 6. **Generalized SPD LOBPCG** for dense, sparse, and matrix-free operators.
    This is the primary scalable V1 path for `A x = lambda B x`, especially

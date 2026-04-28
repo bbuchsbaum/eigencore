@@ -249,9 +249,35 @@ test_that("randomized SVD records and honors normalizer choices", {
     )
     expect_equal(fit$restart$normalizer, normalizer)
     expect_equal(fit$restart$apply_kind, "dense_direct")
+    expect_true(fit$restart$certificate_reuses_projection)
     expect_true(fit$certificate$passed)
     expect_equal(fit$d, c(7, 4), tolerance = 1e-8)
   }
+})
+
+test_that("randomized SVD projected certificate matches direct recomputation", {
+  set.seed(1905)
+  A <- matrix(rnorm(70 * 40), nrow = 70, ncol = 40)
+  fit <- svd_partial(
+    A,
+    rank = 5,
+    method = randomized(oversample = 8, n_iter = 1, refine = FALSE),
+    tol = 1e-8,
+    seed = 1905
+  )
+  direct <- eigencore:::certify_svd_operator(
+    as_operator(A),
+    fit$d,
+    fit$u,
+    fit$v,
+    tol = 1e-8
+  )
+
+  expect_true(fit$restart$certificate_reuses_projection)
+  expect_equal(fit$certificate$residuals$left, direct$residuals$left, tolerance = 1e-10)
+  expect_equal(fit$certificate$residuals$right, direct$residuals$right, tolerance = 1e-10)
+  expect_equal(fit$certificate$backward_error, direct$backward_error, tolerance = 1e-10)
+  expect_equal(fit$certificate$passed, direct$passed)
 })
 
 test_that("SVD planner records inspectable method controls", {
@@ -326,6 +352,7 @@ test_that("randomized SVD reports approximation and certificate policy", {
 
   expect_true(fit$restart$approximate)
   expect_equal(fit$restart$apply_kind, "csc_direct")
+  expect_true(fit$restart$certificate_reuses_projection)
   expect_match(fit$restart$certificate_policy, "stochastic sketch is not sufficient")
   expect_false(fit$restart$refine)
   expect_false(fit$restart$refinement_attempted)

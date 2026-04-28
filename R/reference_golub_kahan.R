@@ -786,11 +786,21 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
   d <- small$d[idx]
   add_stage("small_svd", t0)
   t0 <- tick()
-  u <- Q %*% small$u[, idx, drop = FALSE]
+  small_u <- small$u[, idx, drop = FALSE]
+  u <- Q %*% small_u
   v <- small$v[, idx, drop = FALSE]
   add_stage("vector_form", t0)
   t0 <- tick()
-  cert <- certify_svd_operator(op, d, u, v, tol = tol)
+  cert <- certify_randomized_svd_projection(
+    op,
+    apply_pair,
+    core = core,
+    small_u = small_u,
+    d = d,
+    u = u,
+    v = v,
+    tol = tol
+  )
   add_stage("certificate", t0)
   initial_cert <- cert
 
@@ -850,6 +860,7 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
       n_iter = n_iter,
       normalizer = normalizer,
       apply_kind = apply_pair$kind,
+      certificate_reuses_projection = TRUE,
       stage_seconds = if (record_stages) stage_seconds else numeric(),
       sample_dimension = l,
       approximate = TRUE,
@@ -876,6 +887,32 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
         NA_character_
       }
     )
+  )
+}
+
+#' @keywords internal
+certify_randomized_svd_projection <- function(op, apply_pair, core, small_u,
+                                              d, u, v, tol = 1e-8) {
+  left_residual_matrix <- apply_pair$apply(v) - sweep(u, 2L, d, `*`)
+  right_applied <- crossprod(core, small_u)
+  right_residual_matrix <- right_applied - sweep(v, 2L, d, `*`)
+  left <- col_norms(left_residual_matrix)
+  right <- col_norms(right_residual_matrix)
+  combined <- sqrt(left^2 + right^2)
+  norm_A <- operator_norm_for_certificate_info(op)
+  scale <- svd_backward_scale(norm_A$value, d)
+  backward <- combined / scale
+  orth_u <- max(abs(crossprod(u) - diag(length(d))))
+  orth_v <- max(abs(crossprod(v) - diag(length(d))))
+  new_certificate(
+    tol = tol,
+    residuals = list(left = left, right = right, combined = combined),
+    backward_error = backward,
+    orthogonality = c(U = orth_u, V = orth_v),
+    converged = backward <= tol,
+    scale = scale,
+    norm_bound_type = norm_A$norm_bound_type,
+    scale_is_estimate = isTRUE(norm_A$scale_is_estimate)
   )
 }
 

@@ -83,9 +83,13 @@ they are machine-dependent.
   with the requested rank. The dense explicit randomized path also projects
   with direct `Q' A` rather than `A' Q` plus transpose. On the installed
   package large exact-low-rank dense parity row (`2000 x 500`, rank `50`,
-  three iterations), eigencore now certifies with identical singular-value and
-  subspace accuracy and reports about `1.13x` speed versus certified `rsvd`;
-  the randomized `2x` release speed gate remains open.
+  three iterations), eigencore certifies with identical singular-value and
+  subspace accuracy and reports about `1.13x` speed versus certified `rsvd`.
+  Randomized SVD now also reuses the cached projected matrix for the
+  `A' u - sigma v` side of its certificate, so only the `A v - sigma u` side
+  needs a full operator apply after the small SVD. The same installed-package
+  parity row now reports about `1.18x` speed versus certified `rsvd`; the
+  randomized `2x` release speed gate remains open.
 - G1 native block Hermitian Lanczos is promoted for benchmark-proven regimes.
   The default `eigencore` path now passes both strict release scripts with dense
   diagnostics included:
