@@ -125,7 +125,13 @@ Deliver the native engine in order. Each step ships with adversarial tests
    the planner is allowed to choose randomized SVD. The enforcement surface is
    `inst/benchmarks/bench-randomized-rsvd.R`, which reports oracle
    singular-value error, left/right subspace error, true SVD certificates, and
-   speed ratios against `rsvd`.
+   speed ratios against `rsvd`. As of 2026-04-28, the R reference randomized
+   path uses the PRD/rsvd-style `oversample = 10` benchmark default and a
+   direct dense `Q' A` projection, moving the large exact-low-rank dense parity
+   row from slower than `rsvd` to roughly `1.13x` faster on
+   time-to-certified-answer. The `2x` randomized release gate remains open and
+   is expected to require native sketch/projection kernels and/or adaptive
+   randomized planning.
 6. **Generalized SPD LOBPCG** for dense, sparse, and matrix-free operators.
    This is the primary scalable V1 path for `A x = lambda B x`, especially
    smallest eigenpairs and preconditioned problems. It uses block iteration,

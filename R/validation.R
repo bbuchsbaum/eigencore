@@ -319,7 +319,7 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
     eigencore_randomized = svd_partial(
       A,
       rank = rank,
-      method = randomized(oversample = max(10L, rank), n_iter = 2L),
+      method = randomized(oversample = 10L, n_iter = 2L),
       tol = tol,
       seed = seed
     ),

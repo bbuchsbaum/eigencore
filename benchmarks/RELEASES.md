@@ -78,6 +78,14 @@ they are machine-dependent.
   `eigencore_randomized` against `rsvd` using oracle singular-value error,
   left/right subspace error, true SVD certificate fields, and
   time-to-certified-answer gates.
+- Randomized SVD benchmark dispatch now uses `oversample = 10`, matching the
+  PRD default and `rsvd`'s default `p = 10`, instead of scaling oversampling
+  with the requested rank. The dense explicit randomized path also projects
+  with direct `Q' A` rather than `A' Q` plus transpose. On the installed
+  package large exact-low-rank dense parity row (`2000 x 500`, rank `50`,
+  three iterations), eigencore now certifies with identical singular-value and
+  subspace accuracy and reports about `1.13x` speed versus certified `rsvd`;
+  the randomized `2x` release speed gate remains open.
 - G1 native block Hermitian Lanczos is promoted for benchmark-proven regimes.
   The default `eigencore` path now passes both strict release scripts with dense
   diagnostics included:

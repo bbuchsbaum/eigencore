@@ -248,6 +248,7 @@ test_that("randomized SVD records and honors normalizer choices", {
       seed = 512
     )
     expect_equal(fit$restart$normalizer, normalizer)
+    expect_equal(fit$restart$apply_kind, "dense_direct")
     expect_true(fit$certificate$passed)
     expect_equal(fit$d, c(7, 4), tolerance = 1e-8)
   }
@@ -324,6 +325,7 @@ test_that("randomized SVD reports approximation and certificate policy", {
   )
 
   expect_true(fit$restart$approximate)
+  expect_equal(fit$restart$apply_kind, "csc_direct")
   expect_match(fit$restart$certificate_policy, "stochastic sketch is not sufficient")
   expect_false(fit$restart$refine)
   expect_false(fit$restart$refinement_attempted)

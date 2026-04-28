@@ -709,6 +709,22 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
                                      vectors = c("both", "left", "right", "none"),
                                      refine = TRUE,
                                      normalizer = c("qr", "lu", "none")) {
+  record_stages <- isTRUE(getOption("eigencore.randomized_stage_timing", FALSE))
+  stage_seconds <- c(
+    random = 0,
+    apply = 0,
+    normalize = 0,
+    small_svd = 0,
+    vector_form = 0,
+    certificate = 0,
+    refinement = 0
+  )
+  tick <- function() if (record_stages) proc.time()[["elapsed"]] else 0
+  add_stage <- function(name, start) {
+    if (record_stages) {
+      stage_seconds[[name]] <<- stage_seconds[[name]] + (tick() - start)
+    }
+  }
   vectors <- match.arg(vectors)
   normalizer <- match.arg(normalizer)
   op <- as_operator(op)
@@ -722,39 +738,72 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
   oversample <- max(0L, as.integer(oversample))
   n_iter <- max(0L, as.integer(n_iter))
   l <- min(limit, rank + oversample)
+  apply_pair <- randomized_svd_apply_pair(op)
 
+  t0 <- tick()
   Omega <- matrix(stats::rnorm(n * l), nrow = n, ncol = l)
-  Y <- apply_operator(op, Omega)
+  add_stage("random", t0)
+  t0 <- tick()
+  Y <- apply_pair$apply(Omega)
+  add_stage("apply", t0)
   matvecs <- 1L
+  t0 <- tick()
   Q <- randomized_svd_normalize(Y, normalizer, final = n_iter == 0L)
+  add_stage("normalize", t0)
   for (iter in seq_len(n_iter)) {
-    Z <- apply_adjoint_operator(op, Q)
+    t0 <- tick()
+    Z <- apply_pair$apply_adjoint(Q)
+    add_stage("apply", t0)
+    t0 <- tick()
     Z <- randomized_svd_normalize(Z, normalizer, final = FALSE)
-    Y <- apply_operator(op, Z)
+    add_stage("normalize", t0)
+    t0 <- tick()
+    Y <- apply_pair$apply(Z)
+    add_stage("apply", t0)
     matvecs <- matvecs + 2L
+    t0 <- tick()
     Q <- randomized_svd_normalize(Y, normalizer, final = iter == n_iter)
+    add_stage("normalize", t0)
   }
 
-  B_t <- apply_adjoint_operator(op, Q)
+  t0 <- tick()
+  B_t <- if (is.null(apply_pair$project)) {
+    apply_pair$apply_adjoint(Q)
+  } else {
+    apply_pair$project(Q)
+  }
+  add_stage("apply", t0)
   matvecs <- matvecs + 1L
-  core <- t(B_t)
+  core <- if (isTRUE(attr(B_t, "transposed", exact = TRUE))) {
+    B_t
+  } else {
+    t(B_t)
+  }
+  t0 <- tick()
   small <- svd(core, nu = min(nrow(core), rank), nv = min(ncol(core), rank))
   idx <- order_indices(small$d, target)
   idx <- idx[seq_len(min(rank, length(idx)))]
   d <- small$d[idx]
+  add_stage("small_svd", t0)
+  t0 <- tick()
   u <- Q %*% small$u[, idx, drop = FALSE]
   v <- small$v[, idx, drop = FALSE]
+  add_stage("vector_form", t0)
+  t0 <- tick()
   cert <- certify_svd_operator(op, d, u, v, tol = tol)
+  add_stage("certificate", t0)
   initial_cert <- cert
 
   refinement <- NULL
   if (isTRUE(refine) && !isTRUE(cert$passed)) {
+    t0 <- tick()
     refinement <- tryCatch(
       native_gram_svd(op, rank = rank, target = target, tol = tol, vectors = "both"),
       error = function(e) {
         structure(list(error = conditionMessage(e)), class = "eigencore_refinement_error")
       }
     )
+    add_stage("refinement", t0)
     if (!inherits(refinement, "eigencore_refinement_error") &&
         isTRUE(refinement$certificate$passed)) {
       d <- refinement$d
@@ -781,6 +830,7 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
     backward_error = cert$backward_error,
     orthogonality = cert$orthogonality,
     certificate = cert,
+    stage_seconds = if (record_stages) stage_seconds else numeric(),
     iterations = n_iter + 1L,
     matvecs = matvecs + if (!is.null(refinement) && !inherits(refinement, "eigencore_refinement_error")) {
       refinement$matvecs
@@ -799,6 +849,8 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
       oversample = oversample,
       n_iter = n_iter,
       normalizer = normalizer,
+      apply_kind = apply_pair$kind,
+      stage_seconds = if (record_stages) stage_seconds else numeric(),
       sample_dimension = l,
       approximate = TRUE,
       certificate_policy = if (isTRUE(refine)) {
@@ -824,6 +876,35 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
         NA_character_
       }
     )
+  )
+}
+
+#' @keywords internal
+randomized_svd_apply_pair <- function(op) {
+  source <- source_or_null(op) %||% op$metadata$matrix %||% NULL
+  if (is.matrix(source) && is.double(source)) {
+    return(list(
+      kind = "dense_direct",
+      apply = function(X) source %*% X,
+      apply_adjoint = function(X) crossprod(source, X),
+      project = function(Q) {
+        out <- crossprod(Q, source)
+        attr(out, "transposed") <- TRUE
+        out
+      }
+    ))
+  }
+  if (inherits(source, "dgCMatrix")) {
+    return(list(
+      kind = "csc_direct",
+      apply = function(X) as.matrix(source %*% X),
+      apply_adjoint = function(X) as.matrix(Matrix::crossprod(source, X))
+    ))
+  }
+  list(
+    kind = "operator",
+    apply = function(X) apply_operator(op, X),
+    apply_adjoint = function(X) apply_adjoint_operator(op, X)
   )
 }
 
