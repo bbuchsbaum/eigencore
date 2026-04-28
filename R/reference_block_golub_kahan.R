@@ -547,6 +547,8 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
   out$restart$final_attempt_iterations <- attempt_rows[[attempt]]$iterations
   out$restart$final_attempt_matvecs <- attempt_rows[[attempt]]$matvecs
   out$restart$final_attempt_ortho_passes <- attempt_rows[[attempt]]$ortho_passes
+  out$restart$final_iterations <- out$restart$final_attempt_iterations
+  out$restart$final_matvecs <- out$restart$final_attempt_matvecs
   if (vectors == "left") {
     out$v <- NULL
   } else if (vectors == "right") {

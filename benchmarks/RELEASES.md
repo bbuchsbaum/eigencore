@@ -115,6 +115,13 @@ they are machine-dependent.
   remains faster than cold adaptive restarts, but it needs more matvecs than
   the default Ritz-plus-random start; keep the default speed path until a real
   retained native restart workspace lands.
+- H SVD surface rows now expose adaptive restart-efficiency diagnostics:
+  attempted subspaces, maximum attempted subspace, maximum restart start width,
+  warm-started attempt count, certified attempt, final-attempt matvecs,
+  final-attempt orthogonalization passes, and total orthogonalization passes.
+  These fields are the benchmark contract for retained-restart work: a future
+  native thick-restart candidate should reduce attempt materialization and
+  total work without hiding failed intermediate certificates.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,

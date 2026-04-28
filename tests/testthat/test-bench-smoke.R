@@ -60,6 +60,9 @@ test_that("benchmark harness produces certificate-inclusive rows", {
     "final_prefix_matvec_overshoot",
     "stage_native_iteration_seconds", "stage_golub_kahan_ritz_seconds",
     "stage_retry_overhead_seconds",
+    "attempted_subspaces", "max_attempted_subspace", "max_start_cols",
+    "warm_started_attempts", "certified_attempt", "final_attempt_matvecs",
+    "final_attempt_ortho_passes", "total_ortho_passes",
     "fallback_attempted", "fallback_used", "fallback_method",
     "gram_max_backward_error", "fallback_max_backward_error"
   )
@@ -473,6 +476,13 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
   expect_gte(lean$nconv, 5L)
   expect_gt(lean$matvecs, 0L)
   expect_gte(lean$restart_attempts, 1L)
+  expect_match(lean$attempted_subspaces, ",")
+  expect_gte(lean$max_attempted_subspace, 5L)
+  expect_gte(lean$max_start_cols, 5L)
+  expect_gte(lean$warm_started_attempts, 1L)
+  expect_gte(lean$certified_attempt, 1L)
+  expect_equal(lean$final_attempt_matvecs, lean$final_matvecs)
+  expect_gte(lean$total_ortho_passes, lean$final_attempt_ortho_passes)
   expect_lte(lean$matvecs, regular$matvecs * 2L)
 })
 

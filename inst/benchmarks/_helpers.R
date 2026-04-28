@@ -529,6 +529,48 @@ result_restart_integer <- function(x, field) {
   as.integer(value)
 }
 
+result_attempt_history <- function(x) {
+  history <- result_restart_field(x, "attempt_history")
+  if (is.data.frame(history)) {
+    history
+  } else {
+    NULL
+  }
+}
+
+result_attempt_history_max <- function(x, field) {
+  history <- result_attempt_history(x)
+  if (is.null(history) || !field %in% names(history) || !nrow(history)) {
+    return(NA_integer_)
+  }
+  value <- max(history[[field]], na.rm = TRUE)
+  if (!is.finite(value)) NA_integer_ else as.integer(value)
+}
+
+result_attempt_history_count_true <- function(x, field) {
+  history <- result_attempt_history(x)
+  if (is.null(history) || !field %in% names(history) || !nrow(history)) {
+    return(NA_integer_)
+  }
+  value <- history[[field]]
+  if (!is.logical(value)) {
+    return(NA_integer_)
+  }
+  as.integer(sum(value, na.rm = TRUE))
+}
+
+result_certified_attempt <- function(x) {
+  history <- result_attempt_history(x)
+  if (is.null(history) || !"certificate_passed" %in% names(history) || !nrow(history)) {
+    return(NA_integer_)
+  }
+  if (!is.logical(history$certificate_passed)) {
+    return(NA_integer_)
+  }
+  passed <- which(history$certificate_passed)
+  if (length(passed)) as.integer(history$attempt[[passed[[1L]]]]) else NA_integer_
+}
+
 result_stage_seconds <- function(x, field) {
   stages <- x$stage_seconds %||% result_restart_field(x, "stage_seconds") %||% NULL
   if (is.null(stages) || !field %in% names(stages)) {
@@ -1175,6 +1217,14 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
       stage_native_iteration_seconds = result_stage_seconds(fit, "native_iteration"),
       stage_golub_kahan_ritz_seconds = result_stage_seconds(fit, "ritz"),
       stage_retry_overhead_seconds = result_stage_seconds(fit, "retry_overhead"),
+      attempted_subspaces = result_restart_character(fit, "attempted_subspaces"),
+      max_attempted_subspace = result_attempt_history_max(fit, "max_subspace"),
+      max_start_cols = result_attempt_history_max(fit, "start_cols"),
+      warm_started_attempts = result_attempt_history_count_true(fit, "warm_started"),
+      certified_attempt = result_certified_attempt(fit),
+      final_attempt_matvecs = result_restart_integer(fit, "final_attempt_matvecs"),
+      final_attempt_ortho_passes = result_restart_integer(fit, "final_attempt_ortho_passes"),
+      total_ortho_passes = result_restart_integer(fit, "total_ortho_passes"),
       fallback_attempted = result_restart_logical(fit, "fallback_attempted"),
       fallback_used = result_restart_logical(fit, "fallback_used"),
       fallback_method = result_restart_field(fit, "fallback_method"),
