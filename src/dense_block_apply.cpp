@@ -1257,11 +1257,11 @@ static int native_golub_kahan_run(void* impl,
 
     stage_timer = native_timer_now();
     if (j > 0) {
-      long double norm_before2 = 0.0L;
+      double norm_before2 = 0.0;
       for (int row = 0; row < m; ++row) {
-        norm_before2 += static_cast<long double>(u[row]) * u[row];
+        norm_before2 += u[row] * u[row];
       }
-      const double norm_before = sqrt(static_cast<double>(norm_before2));
+      const double norm_before = sqrt(norm_before2);
       const char trans_T = 'T';
       const char trans_N = 'N';
       const int one_col = 1;
@@ -1280,11 +1280,11 @@ static int native_golub_kahan_run(void* impl,
         } else {
           for (int prev = 0; prev < j; ++prev) {
             const double* uprev_basis = U + prev * m;
-            long double dot = 0.0L;
+            double dot = 0.0;
             for (int row = 0; row < m; ++row) {
-              dot += static_cast<long double>(uprev_basis[row]) * u[row];
+              dot += uprev_basis[row] * u[row];
             }
-            const double scalar_coeff = static_cast<double>(dot);
+            const double scalar_coeff = dot;
             for (int row = 0; row < m; ++row) {
               u[row] -= scalar_coeff * uprev_basis[row];
             }
@@ -1292,11 +1292,11 @@ static int native_golub_kahan_run(void* impl,
         }
         ++(*reorthogonalization_passes);
         if (pass == 0 && norm_before > 0.0) {
-          long double norm_after2 = 0.0L;
+          double norm_after2 = 0.0;
           for (int row = 0; row < m; ++row) {
-            norm_after2 += static_cast<long double>(u[row]) * u[row];
+            norm_after2 += u[row] * u[row];
           }
-          const double norm_after = sqrt(static_cast<double>(norm_after2));
+          const double norm_after = sqrt(norm_after2);
           if (norm_after < 0.717 * norm_before) {
             passes = 2;
           }
@@ -1343,11 +1343,11 @@ static int native_golub_kahan_run(void* impl,
     stage_timer = native_timer_now();
     {
       const int active_v = j + 1;
-      long double norm_before2 = 0.0L;
+      double norm_before2 = 0.0;
       for (int row = 0; row < n; ++row) {
-        norm_before2 += static_cast<long double>(z[row]) * z[row];
+        norm_before2 += z[row] * z[row];
       }
-      const double norm_before = sqrt(static_cast<double>(norm_before2));
+      const double norm_before = sqrt(norm_before2);
       const char trans_T = 'T';
       const char trans_N = 'N';
       const int one_col = 1;
@@ -1366,11 +1366,11 @@ static int native_golub_kahan_run(void* impl,
         } else {
           for (int prev = 0; prev <= j; ++prev) {
             const double* vprev_basis = V + prev * n;
-            long double dot = 0.0L;
+            double dot = 0.0;
             for (int row = 0; row < n; ++row) {
-              dot += static_cast<long double>(vprev_basis[row]) * z[row];
+              dot += vprev_basis[row] * z[row];
             }
-            const double scalar_coeff = static_cast<double>(dot);
+            const double scalar_coeff = dot;
             for (int row = 0; row < n; ++row) {
               z[row] -= scalar_coeff * vprev_basis[row];
             }
@@ -1378,11 +1378,11 @@ static int native_golub_kahan_run(void* impl,
         }
         ++(*reorthogonalization_passes);
         if (pass == 0 && norm_before > 0.0) {
-          long double norm_after2 = 0.0L;
+          double norm_after2 = 0.0;
           for (int row = 0; row < n; ++row) {
-            norm_after2 += static_cast<long double>(z[row]) * z[row];
+            norm_after2 += z[row] * z[row];
           }
-          const double norm_after = sqrt(static_cast<double>(norm_after2));
+          const double norm_after = sqrt(norm_after2);
           if (norm_after < 0.717 * norm_before) {
             passes = 2;
           }
@@ -7233,6 +7233,118 @@ extern "C" SEXP eigencore_bidiagonal_svd(SEXP alpha_, SEXP beta_) {
   return out_;
 }
 
+extern "C" SEXP eigencore_block_golub_kahan_ritz(SEXP V_, SEXP AV_,
+                                                 SEXP rank_, SEXP target_kind_,
+                                                 SEXP active_p_) {
+  if (!isReal(V_) || !isReal(AV_)) {
+    error("V and AV must be double matrices");
+  }
+  SEXP dimV = getAttrib(V_, R_DimSymbol);
+  SEXP dimAV = getAttrib(AV_, R_DimSymbol);
+  if (dimV == R_NilValue || dimAV == R_NilValue) {
+    error("V and AV must be matrices");
+  }
+  const int n = INTEGER(dimV)[0];
+  const int stored_p = INTEGER(dimV)[1];
+  const int m = INTEGER(dimAV)[0];
+  const int av_p = INTEGER(dimAV)[1];
+  int p = asInteger(active_p_);
+  if (p < 1 || p > stored_p || p > av_p) {
+    error("active block Golub-Kahan Ritz columns must be between 1 and ncol(V/AV)");
+  }
+  int rank = asInteger(rank_);
+  if (rank < 1) {
+    error("rank must be positive");
+  }
+  const int s = (m < p) ? m : p;
+  if (rank > s) {
+    rank = s;
+  }
+
+  std::vector<double> B(static_cast<size_t>(m) * p, 0.0);
+  for (int col = 0; col < p; ++col) {
+    std::memcpy(B.data() + static_cast<size_t>(col) * m,
+                REAL(AV_) + static_cast<size_t>(col) * m,
+                sizeof(double) * static_cast<size_t>(m));
+  }
+  std::vector<double> d_all(static_cast<size_t>(s), 0.0);
+  std::vector<double> u_all(static_cast<size_t>(m) * s, 0.0);
+  std::vector<double> vt_all(static_cast<size_t>(s) * p, 0.0);
+
+  char jobu = 'S';
+  char jobvt = 'S';
+  int info = 0;
+  int lwork = -1;
+  double work_query = 0.0;
+  F77_CALL(dgesvd)(&jobu, &jobvt, &m, &p, B.data(), &m,
+                   d_all.data(), u_all.data(), &m, vt_all.data(), &s,
+                   &work_query, &lwork, &info FCONE FCONE);
+  if (info != 0) {
+    error("LAPACK dgesvd workspace query failed with info=%d", info);
+  }
+  lwork = static_cast<int>(work_query);
+  std::vector<double> work(static_cast<size_t>(lwork), 0.0);
+  F77_CALL(dgesvd)(&jobu, &jobvt, &m, &p, B.data(), &m,
+                   d_all.data(), u_all.data(), &m, vt_all.data(), &s,
+                   work.data(), &lwork, &info FCONE FCONE);
+  if (info != 0) {
+    error("LAPACK dgesvd failed with info=%d", info);
+  }
+
+  std::vector<int> selected(static_cast<size_t>(rank));
+  const int count = selected_ritz_indices(
+    d_all.data(), s, rank, asInteger(target_kind_), selected.data()
+  );
+
+  SEXP d_ = PROTECT(allocVector(REALSXP, count));
+  SEXP u_ = PROTECT(allocMatrix(REALSXP, m, count));
+  SEXP v_ = PROTECT(allocMatrix(REALSXP, n, count));
+  SEXP avectors_ = PROTECT(allocMatrix(REALSXP, m, count));
+  SEXP coeff_ = PROTECT(allocMatrix(REALSXP, p, count));
+
+  for (int col = 0; col < count; ++col) {
+    const int idx = selected[static_cast<size_t>(col)];
+    REAL(d_)[col] = d_all[static_cast<size_t>(idx)];
+    for (int row = 0; row < m; ++row) {
+      REAL(u_)[row + static_cast<size_t>(col) * m] =
+        u_all[row + static_cast<size_t>(idx) * m];
+    }
+    for (int row = 0; row < p; ++row) {
+      REAL(coeff_)[row + static_cast<size_t>(col) * p] =
+        vt_all[idx + static_cast<size_t>(row) * s];
+    }
+  }
+
+  if (count > 0) {
+    const char notrans = 'N';
+    const double one = 1.0;
+    const double zero = 0.0;
+    F77_CALL(dgemm)(&notrans, &notrans, &n, &count, &p,
+                    &one, REAL(V_), &n, REAL(coeff_), &p,
+                    &zero, REAL(v_), &n FCONE FCONE);
+    F77_CALL(dgemm)(&notrans, &notrans, &m, &count, &p,
+                    &one, REAL(AV_), &m, REAL(coeff_), &p,
+                    &zero, REAL(avectors_), &m FCONE FCONE);
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 5));
+  SET_VECTOR_ELT(out_, 0, d_);
+  SET_VECTOR_ELT(out_, 1, u_);
+  SET_VECTOR_ELT(out_, 2, v_);
+  SET_VECTOR_ELT(out_, 3, avectors_);
+  SET_VECTOR_ELT(out_, 4, coeff_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 5));
+  SET_STRING_ELT(names_, 0, mkChar("d"));
+  SET_STRING_ELT(names_, 1, mkChar("u"));
+  SET_STRING_ELT(names_, 2, mkChar("v"));
+  SET_STRING_ELT(names_, 3, mkChar("Avectors"));
+  SET_STRING_ELT(names_, 4, mkChar("coefficients"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(7);
+  return out_;
+}
+
 #include "projection/golub_kahan_ritz.hpp"
 
 extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start_,
@@ -7926,6 +8038,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_rayleigh_ritz_symmetric", (DL_FUNC) &eigencore_rayleigh_ritz_symmetric, 2},
   {"eigencore_tridiagonal_eigen", (DL_FUNC) &eigencore_tridiagonal_eigen, 2},
   {"eigencore_bidiagonal_svd", (DL_FUNC) &eigencore_bidiagonal_svd, 2},
+  {"eigencore_block_golub_kahan_ritz", (DL_FUNC) &eigencore_block_golub_kahan_ritz, 5},
   {"eigencore_golub_kahan_ritz", (DL_FUNC) &eigencore_golub_kahan_ritz, 7},
   {"eigencore_dense_is_symmetric", (DL_FUNC) &eigencore_dense_is_symmetric, 2},
   {"eigencore_dense_symmetric_eigen", (DL_FUNC) &eigencore_dense_symmetric_eigen, 1},

@@ -139,6 +139,28 @@ test_that("sparse Gram SVD certifies exact zero singular triplets", {
   expect_certificate_clean(fit)
 })
 
+test_that("native Golub-Kahan completes exact zero singular triplets", {
+  set.seed(517)
+  M <- Matrix::rsparsematrix(160L, 4L, density = 0.1) %*%
+    Matrix::rsparsematrix(4L, 50L, density = 0.1)
+
+  fit <- svd_partial(
+    M,
+    rank = 6L,
+    target = largest(),
+    method = golub_kahan(),
+    tol = 1e-8,
+    seed = 702
+  )
+
+  expect_identical(fit$method, "native prototype Golub-Kahan")
+  expect_length(fit$d, 6L)
+  expect_equal(fit$nconv, 6L)
+  expect_true(fit$restart$zero_singular_completion)
+  expect_true(all(tail(fit$d, 2L) <= fit$restart$zero_singular_threshold))
+  expect_certificate_clean(fit)
+})
+
 test_that("Gram SVD uses selected dense eigensolve for top singular values", {
   set.seed(516)
   M <- Matrix::rsparsematrix(100, 30, density = 0.05)

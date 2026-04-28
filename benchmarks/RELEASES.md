@@ -58,6 +58,16 @@ they are machine-dependent.
   diagnostics, including accounted native stage time, reorthogonalization time
   fraction, seconds per pass, passes per iteration, native seconds per matvec,
   projected-check cost, and projected-stop savings fractions.
+- Native Golub-Kahan now completes exact zero singular triplets after
+  rank-deficient breakdown before certification. In the quick H candidate
+  surface, `rank_deficient_sparse` now reports the projected subject as
+  certified with `nconv = requested = 6`; the H gate still fails on speed, not
+  missing requested triplets.
+- An unexported reference block Golub-Kahan thick-restart SVD oracle now
+  exercises the production H contract before native C++ promotion: forced
+  restart, clustered singular subspaces, locking diagnostics, and exact zero
+  singular triplet completion. This does not change the release gate subject or
+  H status.
 - G1 native block Hermitian Lanczos is promoted for benchmark-proven regimes.
   The default `eigencore` path now passes both strict release scripts with dense
   diagnostics included:

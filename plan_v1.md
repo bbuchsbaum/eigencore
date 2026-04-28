@@ -118,7 +118,11 @@ Deliver the native engine in order. Each step ships with adversarial tests
    pass runs and lowers residual below tolerance). Use
    `docs/hegelsvd_svd_acceleration.md` as the design note for mining
    HegelSVD's adaptive QB/PCS strategy, planner regimes, and benchmark cases
-   without inheriting its dense-only assumptions.
+   without inheriting its dense-only assumptions. Treat `vendor/rsvd` as the
+   minimum public-package bar: eigencore's native randomized path must match or
+   improve `rsvd::rsvd()` singular-value/subspace accuracy on the randomized
+   benchmark bank and beat it on time-to-certified-answer in the regimes where
+   the planner is allowed to choose randomized SVD.
 6. **Generalized SPD LOBPCG** for dense, sparse, and matrix-free operators.
    This is the primary scalable V1 path for `A x = lambda B x`, especially
    smallest eigenpairs and preconditioned problems. It uses block iteration,
@@ -415,11 +419,21 @@ only, while non-quick `--strict` enforces the speed/memory/parity release gate:
   low-rank sparse, and rank-deficient sparse cases record the disabled reason
   or no useful projected checks. Release gates still fail overall: wide sparse
   is the only current SVD surface row meeting the speed gate, and it still
-  fails memory; the other rows remain speed/memory failures, with the
-  rank-deficient sparse subject not yet certified to the requested rank.
-  It is
+  fails memory; the other rows remain speed/memory failures. The
+  rank-deficient sparse certification gap was closed by completing exact zero
+  singular triplets after Golub-Kahan breakdown, so H is now blocked by
+  speed/memory rather than requested-rank accounting on that row. It is
   still much slower and more memory-hungry there, so it is not ready to replace
-  the default planner path.
+  the default planner path. An unexported
+  `reference_block_golub_kahan_thick_restart_svd()` oracle now defines the next
+  block/thick-restart SVD contract with restart, locking, clustered-subspace,
+  and exact-zero-singular-triplet tests. This is deliberately a reference
+  artifact only; it does not change planner labels or H completion status. The
+  first native-facing block-GK kernel,
+  `eigencore_block_golub_kahan_ritz`, now computes selected singular Ritz
+  slices from a right basis and cached `A V`, including active-column windows
+  and target taxonomy checks. It is scaffolding for the future native loop, not
+  a production solver.
 - shift-invert via `shift_invert(sigma)` is now wired through a reference
   Hermitian Lanczos path on the inverted operator, with three honest planner
   labels: `reference Hermitian Lanczos shift-invert (dense LU)` for dense
@@ -480,7 +494,7 @@ Working status against the sequenced milestones:
 | G1 | done | Promoted native block Hermitian Lanczos runs by default in benchmark-proven regimes; strict Hermitian sparse and dense regression gates pass against certified RSpectra/PRIMME references. |
 | H | staged, not complete | Native Golub-Kahan exists as a staging path; production thick-restart SVD and SVD performance gates remain open. |
 | I | prototype | Randomized SVD has reference implementation, normalizers, and certified refinement; native approximate engine remains open. |
-| J | partial | Native generalized SPD LOBPCG slices exist; matrix-free `B`, generalized preconditioning, and promotion remain open. |
+| J | partial | Native generalized SPD LOBPCG slices exist for built-in `B`, explicitly SPD matrix-free `B`, dense constraints, and the typed shifted-tridiagonal preconditioner; broader generalized preconditioning and promotion remain open. |
 | K | not complete | B-orthogonal block Lanczos is still a later generalized-SPD refinement path. |
 | L | reference-complete, native-open | Shift-invert works through honest reference paths; native hot loop/factorization-cache production path remains open. |
 | M | partial | Standard Hermitian LOBPCG and tridiagonal preconditioner staging are useful but not final release surfaces. |
@@ -511,9 +525,10 @@ Primary attack surfaces, in order:
 1. **H production SVD.** Replace staging/Gram-special-case dependence with a
    native thick-restarted Golub-Kahan path that wins sparse SVD time-to-certified
    answer against RSpectra/`irlba` on the PRD benchmark subset.
-2. **J generalized SPD LOBPCG promotion.** Finish matrix-free `B`,
-   generalized preconditioning, B-orthogonality diagnostics, and original
-   coordinate certification without sparse densification.
+2. **J generalized SPD LOBPCG promotion.** Broaden generalized
+   preconditioning beyond the typed shifted-tridiagonal case, harden
+   B-orthogonality diagnostics, and promote the native path only after the
+   adversarial B bank and sparse no-densification gates pass.
 3. **L native shift-invert.** Move from reference inverted-operator Lanczos to
    factorization-aware native transforms with cached solves and original
    problem residual certification.
@@ -872,7 +887,7 @@ explicitly documented as not yet G1-complete.
 | G0 | Native scalar Hermitian thick-restart staging path          | Honest planner label; certified dense/CSC path; sparse non-densification; unsupported targets routed honestly |
 | G1 | Native Hermitian block Lanczos (thick restart, locking)     | Reference bank green; beats RSpectra by PRD threshold; PRIMME parity when available; Hermitian memory gate green |
 | H | Native Golub–Kahan (thick restart, true SVD residuals)        | Reference bank green; beats RSpectra on SVD subset         |
-| I | Native randomized SVD + refinement + honest estimate cert     | HegelSVD-derived regimes ported; 2× deterministic SVD on selected approximate cases; honest degraded certificates |
+| I | Native randomized SVD + refinement + honest estimate cert     | HegelSVD-derived regimes ported; matches or improves `rsvd::rsvd()` accuracy; beats `rsvd` on time-to-certified-answer in randomized-planner regimes; 2× deterministic SVD on selected approximate cases; honest degraded certificates |
 | J | Generalized SPD LOBPCG (dense/sparse/matrix-free)             | Largest/smallest generalized SPD paths certify without sparse densification; adversarial B bank green |
 | K | Generalized SPD B-orthogonal Lanczos alternate/refinement     | Shift-invert-free generalized path passes adversarial B and agrees with LOBPCG certificates |
 | L | Shift-invert with user solve / factorization cache            | Smallest/interior works on at least one real Laplacian     |
