@@ -373,7 +373,14 @@ only, while non-quick `--strict` enforces the speed/memory/parity release gate:
   and certificates still passing. H is still not closed: those rows remain below
   the speed gate and above PRIMME/RSpectra memory in the quick fixture, so the
   remaining work is algorithmic speed and eliminating smaller R-visible result
-  allocations rather than certificate cost. A full non-quick projected-stop SVD
+  allocations rather than certificate cost. Dense Golub-Kahan now uses BLAS
+  `dgemv` block projections for two-pass reorthogonalization, while CSC keeps
+  the scalar projection loop because the sampled wide sparse row regressed with
+  BLAS call overhead. A tighter projected-stop cadence was tested and rejected:
+  it increased projected checks without reducing iterations on the sampled
+  cases. The 3-iteration quick H check still certifies the sampled rows, with
+  projected medians around `0.0037s` for wide sparse and `0.0011s` for clustered
+  dense, so this is only an incremental kernel cleanup, not an H gate closure. A full non-quick projected-stop SVD
   surface run on 2026-04-26 saved
   `inst/benchmarks/results/20260426-svd-surface-rows.rds`,
   `inst/benchmarks/results/20260426-svd-surface-gates.rds`, and

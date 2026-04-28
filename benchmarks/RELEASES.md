@@ -44,7 +44,9 @@ they are machine-dependent.
   default non-diagnostic path now goes further and returns compact native Ritz
   fits instead of Krylov bases; the same quick H rows allocate `187600` bytes
   for wide sparse and `112544` bytes for clustered dense with
-  `basis_returned = FALSE`.
+  `basis_returned = FALSE`. Dense Golub-Kahan reorthogonalization now uses
+  BLAS `dgemv` projections; CSC keeps scalar projection after the quick sparse
+  row showed BLAS overhead without iteration savings.
 - G1 native block Hermitian Lanczos is promoted for benchmark-proven regimes.
   The default `eigencore` path now passes both strict release scripts with dense
   diagnostics included:

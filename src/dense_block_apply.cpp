@@ -1089,6 +1089,7 @@ static int native_golub_kahan_run(void* impl,
                                   int target_kind,
                                   double tol,
                                   int enable_projected_stop,
+                                  int use_blas_reorthogonalization,
                                   const double* start,
                                   double* U,
                                   double* V,
@@ -1105,11 +1106,28 @@ static int native_golub_kahan_run(void* impl,
   double* z = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
   double* u = static_cast<double*>(std::calloc(static_cast<size_t>(m), sizeof(double)));
   double* u_prev = static_cast<double*>(std::calloc(static_cast<size_t>(m), sizeof(double)));
+  double* coeff = use_blas_reorthogonalization
+    ? static_cast<double*>(std::calloc(static_cast<size_t>(maxit), sizeof(double)))
+    : nullptr;
+  if (v == nullptr || z == nullptr || u == nullptr || u_prev == nullptr || coeff == nullptr) {
+    if (!use_blas_reorthogonalization && v != nullptr && z != nullptr &&
+        u != nullptr && u_prev != nullptr) {
+      // coeff is intentionally unused on the scalar sparse path.
+    } else {
+      std::free(v);
+      std::free(z);
+      std::free(u);
+      std::free(u_prev);
+      std::free(coeff);
+      return -2;
+    }
+  }
   if (v == nullptr || z == nullptr || u == nullptr || u_prev == nullptr) {
     std::free(v);
     std::free(z);
     std::free(u);
     std::free(u_prev);
+    std::free(coeff);
     return -2;
   }
 
@@ -1150,6 +1168,7 @@ static int native_golub_kahan_run(void* impl,
       std::free(z);
       std::free(u);
       std::free(u_prev);
+      std::free(coeff);
       return status;
     }
     ++(*matvecs);
@@ -1159,16 +1178,33 @@ static int native_golub_kahan_run(void* impl,
       }
     }
 
-    for (int pass = 0; pass < 2; ++pass) {
-      for (int prev = 0; prev < j; ++prev) {
-        const double* uprev_basis = U + prev * m;
-        long double dot = 0.0L;
-        for (int row = 0; row < m; ++row) {
-          dot += static_cast<long double>(uprev_basis[row]) * u[row];
-        }
-        const double coeff = static_cast<double>(dot);
-        for (int row = 0; row < m; ++row) {
-          u[row] -= coeff * uprev_basis[row];
+    if (use_blas_reorthogonalization && j > 0) {
+      const char trans_T = 'T';
+      const char trans_N = 'N';
+      const int one_col = 1;
+      const double one = 1.0;
+      const double zero = 0.0;
+      const double minus_one = -1.0;
+      for (int pass = 0; pass < 2; ++pass) {
+        F77_CALL(dgemv)(&trans_T, &m, &j, &one,
+                        U, &m, u, &one_col,
+                        &zero, coeff, &one_col FCONE);
+        F77_CALL(dgemv)(&trans_N, &m, &j, &minus_one,
+                        U, &m, coeff, &one_col,
+                        &one, u, &one_col FCONE);
+      }
+    } else {
+      for (int pass = 0; pass < 2; ++pass) {
+        for (int prev = 0; prev < j; ++prev) {
+          const double* uprev_basis = U + prev * m;
+          long double dot = 0.0L;
+          for (int row = 0; row < m; ++row) {
+            dot += static_cast<long double>(uprev_basis[row]) * u[row];
+          }
+          const double scalar_coeff = static_cast<double>(dot);
+          for (int row = 0; row < m; ++row) {
+            u[row] -= scalar_coeff * uprev_basis[row];
+          }
         }
       }
     }
@@ -1194,6 +1230,7 @@ static int native_golub_kahan_run(void* impl,
       std::free(z);
       std::free(u);
       std::free(u_prev);
+      std::free(coeff);
       return status;
     }
     ++(*matvecs);
@@ -1201,16 +1238,34 @@ static int native_golub_kahan_run(void* impl,
       z[row] -= alpha[j] * v[row];
     }
 
-    for (int pass = 0; pass < 2; ++pass) {
-      for (int prev = 0; prev <= j; ++prev) {
-        const double* vprev_basis = V + prev * n;
-        long double dot = 0.0L;
-        for (int row = 0; row < n; ++row) {
-          dot += static_cast<long double>(vprev_basis[row]) * z[row];
-        }
-        const double coeff = static_cast<double>(dot);
-        for (int row = 0; row < n; ++row) {
-          z[row] -= coeff * vprev_basis[row];
+    if (use_blas_reorthogonalization) {
+      const int active_v = j + 1;
+      const char trans_T = 'T';
+      const char trans_N = 'N';
+      const int one_col = 1;
+      const double one = 1.0;
+      const double zero = 0.0;
+      const double minus_one = -1.0;
+      for (int pass = 0; pass < 2; ++pass) {
+        F77_CALL(dgemv)(&trans_T, &n, &active_v, &one,
+                        V, &n, z, &one_col,
+                        &zero, coeff, &one_col FCONE);
+        F77_CALL(dgemv)(&trans_N, &n, &active_v, &minus_one,
+                        V, &n, coeff, &one_col,
+                        &one, z, &one_col FCONE);
+      }
+    } else {
+      for (int pass = 0; pass < 2; ++pass) {
+        for (int prev = 0; prev <= j; ++prev) {
+          const double* vprev_basis = V + prev * n;
+          long double dot = 0.0L;
+          for (int row = 0; row < n; ++row) {
+            dot += static_cast<long double>(vprev_basis[row]) * z[row];
+          }
+          const double scalar_coeff = static_cast<double>(dot);
+          for (int row = 0; row < n; ++row) {
+            z[row] -= scalar_coeff * vprev_basis[row];
+          }
         }
       }
     }
@@ -1237,6 +1292,7 @@ static int native_golub_kahan_run(void* impl,
         std::free(z);
         std::free(u);
         std::free(u_prev);
+        std::free(coeff);
         return conv_status;
       }
       *projected_nconv = nconv;
@@ -1261,6 +1317,7 @@ static int native_golub_kahan_run(void* impl,
   std::free(z);
   std::free(u);
   std::free(u_prev);
+  std::free(coeff);
   return 0;
 }
 
@@ -2038,7 +2095,8 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
     static_cast<double>(
       (static_cast<int64_t>(m) + static_cast<int64_t>(n) + 2) *
       static_cast<int64_t>(maxit) +
-      static_cast<int64_t>(2 * m + 2 * n)
+      static_cast<int64_t>(2 * m + 2 * n) +
+      static_cast<int64_t>(maxit)
     );
 
   DenseColumnMajorOperator impl = {m, n, REAL(A_)};
@@ -2051,7 +2109,8 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
   double projected_seconds = 0.0;
   const int status = native_golub_kahan_run(&impl, eigencore_dense_apply, m, n,
                                             maxit, rank, target_kind, tol,
-                                            enable_projected_stop, REAL(start_),
+                                            enable_projected_stop, 1,
+                                            REAL(start_),
                                             U_work.data(), V_work.data(),
                                             alpha_work.data(), beta_work.data(),
                                             &iterations, &matvecs,
@@ -2159,7 +2218,8 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   double projected_seconds = 0.0;
   const int status = native_golub_kahan_run(&impl, eigencore_csc_apply, m, n,
                                             maxit, rank, target_kind, tol,
-                                            enable_projected_stop, REAL(start_),
+                                            enable_projected_stop, 0,
+                                            REAL(start_),
                                             U_work.data(), V_work.data(),
                                             alpha_work.data(), beta_work.data(),
                                             &iterations, &matvecs,
@@ -6664,7 +6724,8 @@ extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start
     static_cast<double>(
       (static_cast<int64_t>(m) + static_cast<int64_t>(n) + 2) *
       static_cast<int64_t>(maxit) +
-      static_cast<int64_t>(2 * m + 2 * n)
+      static_cast<int64_t>(2 * m + 2 * n) +
+      static_cast<int64_t>(maxit)
     );
 
   DenseColumnMajorOperator impl = {m, n, REAL(A_)};
@@ -6677,7 +6738,8 @@ extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start
   double projected_seconds = 0.0;
   const int status = native_golub_kahan_run(&impl, eigencore_dense_apply, m, n,
                                             maxit, rank, target_kind, tol,
-                                            enable_projected_stop, REAL(start_),
+                                            enable_projected_stop, 1,
+                                            REAL(start_),
                                             U_work.data(), V_work.data(),
                                             alpha_work.data(), beta_work.data(),
                                             &iterations, &matvecs,
@@ -6772,7 +6834,8 @@ extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP di
   double projected_seconds = 0.0;
   const int status = native_golub_kahan_run(&impl, eigencore_csc_apply, m, n,
                                             maxit, rank, target_kind, tol,
-                                            enable_projected_stop, REAL(start_),
+                                            enable_projected_stop, 0,
+                                            REAL(start_),
                                             U_work.data(), V_work.data(),
                                             alpha_work.data(), beta_work.data(),
                                             &iterations, &matvecs,
