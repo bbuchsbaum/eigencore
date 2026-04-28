@@ -132,10 +132,15 @@ Deliver the native engine in order. Each step ships with adversarial tests
    time-to-certified-answer. The randomized certificate now also reuses the
    cached projected matrix for the right residual (`A' u - sigma v`), reducing
    the initial certificate to one full post-SVD operator apply plus cheap
-   projected algebra; the same parity row is now roughly `1.18x` faster than
-   certified `rsvd`. The `2x` randomized release gate remains open and is
-   expected to require native sketch/projection kernels and/or adaptive
-   randomized planning.
+   projected algebra; the same parity row moved to roughly `1.18x` faster than
+   certified `rsvd`. A conservative certified early-stop now checks the `q = 0`
+   range-finder result for QR-normalized randomized SVD and exits only when the
+   residual/backward-error certificate already passes. On the installed
+   large exact-low-rank dense parity row this reaches roughly `3.08x` versus
+   certified `rsvd`, closing the `2x` gate for that randomized-planner regime.
+   The broader randomized release gate remains open for slow-decay and other
+   non-exact cases and is expected to require native sketch/projection kernels
+   and/or stronger adaptive randomized planning.
 6. **Generalized SPD LOBPCG** for dense, sparse, and matrix-free operators.
    This is the primary scalable V1 path for `A x = lambda B x`, especially
    smallest eigenpairs and preconditioned problems. It uses block iteration,

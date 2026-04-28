@@ -739,6 +739,47 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
   n_iter <- max(0L, as.integer(n_iter))
   l <- min(limit, rank + oversample)
   apply_pair <- randomized_svd_apply_pair(op)
+  adaptive_stop <- isTRUE(getOption("eigencore.randomized_adaptive_stop", TRUE))
+  adaptive_candidate_allowed <- adaptive_stop && identical(normalizer, "qr")
+
+  candidate_from_Q <- function(Q) {
+    t0 <- tick()
+    B_t <- if (is.null(apply_pair$project)) {
+      apply_pair$apply_adjoint(Q)
+    } else {
+      apply_pair$project(Q)
+    }
+    add_stage("apply", t0)
+    core <- if (isTRUE(attr(B_t, "transposed", exact = TRUE))) {
+      B_t
+    } else {
+      t(B_t)
+    }
+    t0 <- tick()
+    small <- svd(core, nu = min(nrow(core), rank), nv = min(ncol(core), rank))
+    idx <- order_indices(small$d, target)
+    idx <- idx[seq_len(min(rank, length(idx)))]
+    d <- small$d[idx]
+    add_stage("small_svd", t0)
+    t0 <- tick()
+    small_u <- small$u[, idx, drop = FALSE]
+    u <- Q %*% small_u
+    v <- small$v[, idx, drop = FALSE]
+    add_stage("vector_form", t0)
+    t0 <- tick()
+    cert <- certify_randomized_svd_projection(
+      op,
+      apply_pair,
+      core = core,
+      small_u = small_u,
+      d = d,
+      u = u,
+      v = v,
+      tol = tol
+    )
+    add_stage("certificate", t0)
+    list(d = d, u = u, v = v, cert = cert)
+  }
 
   t0 <- tick()
   Omega <- matrix(stats::rnorm(n * l), nrow = n, ncol = l)
@@ -750,59 +791,46 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
   t0 <- tick()
   Q <- randomized_svd_normalize(Y, normalizer, final = n_iter == 0L)
   add_stage("normalize", t0)
-  for (iter in seq_len(n_iter)) {
-    t0 <- tick()
-    Z <- apply_pair$apply_adjoint(Q)
-    add_stage("apply", t0)
-    t0 <- tick()
-    Z <- randomized_svd_normalize(Z, normalizer, final = FALSE)
-    add_stage("normalize", t0)
-    t0 <- tick()
-    Y <- apply_pair$apply(Z)
-    add_stage("apply", t0)
-    matvecs <- matvecs + 2L
-    t0 <- tick()
-    Q <- randomized_svd_normalize(Y, normalizer, final = iter == n_iter)
-    add_stage("normalize", t0)
+  candidate <- NULL
+  initial_cert <- NULL
+  early_stop_used <- FALSE
+  iterations_used <- 1L
+  if (n_iter == 0L || isTRUE(adaptive_candidate_allowed)) {
+    candidate <- candidate_from_Q(Q)
+    matvecs <- matvecs + 1L
+    initial_cert <- candidate$cert
+    early_stop_used <- n_iter > 0L && isTRUE(candidate$cert$passed)
   }
 
-  t0 <- tick()
-  B_t <- if (is.null(apply_pair$project)) {
-    apply_pair$apply_adjoint(Q)
-  } else {
-    apply_pair$project(Q)
+  if (!early_stop_used) {
+    if (n_iter > 0L) {
+      for (iter in seq_len(n_iter)) {
+        t0 <- tick()
+        Z <- apply_pair$apply_adjoint(Q)
+        add_stage("apply", t0)
+        t0 <- tick()
+        Z <- randomized_svd_normalize(Z, normalizer, final = FALSE)
+        add_stage("normalize", t0)
+        t0 <- tick()
+        Y <- apply_pair$apply(Z)
+        add_stage("apply", t0)
+        matvecs <- matvecs + 2L
+        t0 <- tick()
+        Q <- randomized_svd_normalize(Y, normalizer, final = iter == n_iter)
+        add_stage("normalize", t0)
+      }
+      candidate <- candidate_from_Q(Q)
+      matvecs <- matvecs + 1L
+      iterations_used <- n_iter + 1L
+    }
   }
-  add_stage("apply", t0)
-  matvecs <- matvecs + 1L
-  core <- if (isTRUE(attr(B_t, "transposed", exact = TRUE))) {
-    B_t
-  } else {
-    t(B_t)
+  if (is.null(initial_cert)) {
+    initial_cert <- candidate$cert
   }
-  t0 <- tick()
-  small <- svd(core, nu = min(nrow(core), rank), nv = min(ncol(core), rank))
-  idx <- order_indices(small$d, target)
-  idx <- idx[seq_len(min(rank, length(idx)))]
-  d <- small$d[idx]
-  add_stage("small_svd", t0)
-  t0 <- tick()
-  small_u <- small$u[, idx, drop = FALSE]
-  u <- Q %*% small_u
-  v <- small$v[, idx, drop = FALSE]
-  add_stage("vector_form", t0)
-  t0 <- tick()
-  cert <- certify_randomized_svd_projection(
-    op,
-    apply_pair,
-    core = core,
-    small_u = small_u,
-    d = d,
-    u = u,
-    v = v,
-    tol = tol
-  )
-  add_stage("certificate", t0)
-  initial_cert <- cert
+  d <- candidate$d
+  u <- candidate$u
+  v <- candidate$v
+  cert <- candidate$cert
 
   refinement <- NULL
   if (isTRUE(refine) && !isTRUE(cert$passed)) {
@@ -841,7 +869,7 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
     orthogonality = cert$orthogonality,
     certificate = cert,
     stage_seconds = if (record_stages) stage_seconds else numeric(),
-    iterations = n_iter + 1L,
+    iterations = iterations_used,
     matvecs = matvecs + if (!is.null(refinement) && !inherits(refinement, "eigencore_refinement_error")) {
       refinement$matvecs
     } else {
@@ -861,6 +889,9 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
       normalizer = normalizer,
       apply_kind = apply_pair$kind,
       certificate_reuses_projection = TRUE,
+      adaptive_stop = adaptive_stop,
+      adaptive_stop_used = early_stop_used,
+      iterations_used = iterations_used,
       stage_seconds = if (record_stages) stage_seconds else numeric(),
       sample_dimension = l,
       approximate = TRUE,

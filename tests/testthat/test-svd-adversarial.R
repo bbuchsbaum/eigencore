@@ -250,9 +250,35 @@ test_that("randomized SVD records and honors normalizer choices", {
     expect_equal(fit$restart$normalizer, normalizer)
     expect_equal(fit$restart$apply_kind, "dense_direct")
     expect_true(fit$restart$certificate_reuses_projection)
+    expect_equal(fit$restart$adaptive_stop, TRUE)
+    expect_equal(fit$restart$adaptive_stop_used, identical(normalizer, "qr"))
     expect_true(fit$certificate$passed)
     expect_equal(fit$d, c(7, 4), tolerance = 1e-8)
   }
+})
+
+test_that("randomized SVD stops after q0 when projected certificate already passes", {
+  set.seed(1904)
+  A <- rectangular_with_singular_values(
+    c(9, 7, 5, 3, 2, 1, rep(0, 34)),
+    m = 80L,
+    n = 40L,
+    seed = 1904
+  )
+  fit <- svd_partial(
+    A,
+    rank = 5,
+    method = randomized(oversample = 10, n_iter = 2, refine = FALSE),
+    tol = 1e-8,
+    seed = 1904
+  )
+
+  expect_true(fit$restart$adaptive_stop)
+  expect_true(fit$restart$adaptive_stop_used)
+  expect_equal(fit$restart$iterations_used, 1L)
+  expect_equal(fit$iterations, 1L)
+  expect_true(fit$certificate$passed)
+  expect_equal(fit$d, c(9, 7, 5, 3, 2), tolerance = 1e-8)
 })
 
 test_that("randomized SVD projected certificate matches direct recomputation", {

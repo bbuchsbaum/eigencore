@@ -90,6 +90,14 @@ they are machine-dependent.
   needs a full operator apply after the small SVD. The same installed-package
   parity row now reports about `1.18x` speed versus certified `rsvd`; the
   randomized `2x` release speed gate remains open.
+- Randomized SVD now has a conservative certified early-stop for
+  QR-normalized range finding: after the initial `q = 0` sketch it computes the
+  same residual/backward-error certificate and returns immediately only if that
+  certificate passes. On the installed-package large exact-low-rank dense
+  parity row (`2000 x 500`, rank `50`, three iterations), this reaches about
+  `3.08x` speed versus certified `rsvd`, with the accuracy gate still green.
+  The quick slow-decay dense row remains a performance gap, so the broader
+  randomized release gate is not closed.
 - G1 native block Hermitian Lanczos is promoted for benchmark-proven regimes.
   The default `eigencore` path now passes both strict release scripts with dense
   diagnostics included:
