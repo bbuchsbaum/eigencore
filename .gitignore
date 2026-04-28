@@ -1,4 +1,5 @@
 .omc/
+.mote/
 .claude/
 repomix-output.txt
 *.tar.gz
