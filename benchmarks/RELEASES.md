@@ -46,7 +46,11 @@ they are machine-dependent.
   for wide sparse and `112544` bytes for clustered dense with
   `basis_returned = FALSE`. Dense Golub-Kahan reorthogonalization now uses
   BLAS `dgemv` projections; CSC keeps scalar projection after the quick sparse
-  row showed BLAS overhead without iteration savings.
+  row showed BLAS overhead without iteration savings. Native Golub-Kahan rows
+  now populate `stage_apply_seconds`, `stage_recurrence_seconds`,
+  `stage_reorthogonalization_seconds`, and `stage_projected_solve_seconds`;
+  current H samples show reorthogonalization, not operator application or
+  certification, is the primary sparse SVD hotspot.
 - G1 native block Hermitian Lanczos is promoted for benchmark-proven regimes.
   The default `eigencore` path now passes both strict release scripts with dense
   diagnostics included:

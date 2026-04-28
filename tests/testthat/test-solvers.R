@@ -823,8 +823,15 @@ test_that("native Golub-Kahan exposes adaptive subspace metadata", {
   expect_true(fit$restart$basis_returned)
   expect_true(all(c(
     "retry", "max_subspace", "iterations", "matvecs", "nconv",
-    "certificate_passed", "max_residual", "max_backward_error"
+    "certificate_passed", "max_residual", "max_backward_error",
+    "stage_apply_seconds", "stage_recurrence_seconds",
+    "stage_reorthogonalization_seconds", "stage_projected_solve_seconds"
   ) %in% names(fit$restart$history)))
+  expect_true(all(c(
+    "apply", "recurrence", "reorthogonalization", "projected_solve"
+  ) %in% names(fit$restart$stage_seconds)))
+  expect_gte(fit$restart$stage_seconds[["apply"]], 0)
+  expect_gte(fit$restart$stage_seconds[["reorthogonalization"]], 0)
   expect_equal(utils::tail(fit$restart$history$nconv, 1L), fit$nconv)
   expect_true(is.data.frame(fit$restart$prefix_history))
   expect_true(any(fit$restart$prefix_history$certificate_passed))

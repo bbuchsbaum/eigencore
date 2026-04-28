@@ -202,11 +202,25 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   total_matvecs <- 0L
   total_native_seconds <- 0
   total_ritz_seconds <- 0
+  total_native_stage_seconds <- c(
+    apply = 0,
+    recurrence = 0,
+    reorthogonalization = 0,
+    projected_solve = 0
+  )
   repeat {
     native_started <- proc.time()[["elapsed"]]
     iter <- run_native(active_maxit)
     native_elapsed <- proc.time()[["elapsed"]] - native_started
     total_native_seconds <- total_native_seconds + native_elapsed
+    native_stage_seconds <- c(
+      apply = iter$stage_apply_seconds %||% NA_real_,
+      recurrence = iter$stage_recurrence_seconds %||% NA_real_,
+      reorthogonalization = iter$stage_reorthogonalization_seconds %||% NA_real_,
+      projected_solve = iter$projected_seconds %||% NA_real_
+    )
+    total_native_stage_seconds <- total_native_stage_seconds +
+      replace(native_stage_seconds, is.na(native_stage_seconds), 0)
 
     ritz_started <- proc.time()[["elapsed"]]
     final <- if (!is.null(iter$d) && !is.null(iter$u) && !is.null(iter$v)) {
@@ -250,7 +264,11 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
       nconv = sum(final$certificate$converged),
       certificate_passed = isTRUE(final$certificate$passed),
       max_residual = final$certificate$max_residual,
-      max_backward_error = final$certificate$max_backward_error
+      max_backward_error = final$certificate$max_backward_error,
+      stage_apply_seconds = native_stage_seconds[["apply"]],
+      stage_recurrence_seconds = native_stage_seconds[["recurrence"]],
+      stage_reorthogonalization_seconds = native_stage_seconds[["reorthogonalization"]],
+      stage_projected_solve_seconds = native_stage_seconds[["projected_solve"]]
     )
 
     if (all(final$certificate$converged) || fixed_maxit || active_maxit >= limit) {
@@ -308,6 +326,10 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   final$restarts <- retries
   final$stage_seconds <- c(
     native_iteration = total_native_seconds,
+    apply = total_native_stage_seconds[["apply"]],
+    recurrence = total_native_stage_seconds[["recurrence"]],
+    reorthogonalization = total_native_stage_seconds[["reorthogonalization"]],
+    projected_solve = total_native_stage_seconds[["projected_solve"]],
     ritz = total_ritz_seconds,
     retry_overhead = 0
   )

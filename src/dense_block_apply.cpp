@@ -1101,7 +1101,10 @@ static int native_golub_kahan_run(void* impl,
                                   int* projected_nconv,
                                   double* projected_max_residual,
                                   int* projected_checks,
-                                  double* projected_seconds) {
+                                  double* projected_seconds,
+                                  double* stage_apply_seconds,
+                                  double* stage_recurrence_seconds,
+                                  double* stage_reorthogonalization_seconds) {
   double* v = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
   double* z = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
   double* u = static_cast<double*>(std::calloc(static_cast<size_t>(m), sizeof(double)));
@@ -1151,6 +1154,9 @@ static int native_golub_kahan_run(void* impl,
   *projected_max_residual = R_PosInf;
   *projected_checks = 0;
   *projected_seconds = 0.0;
+  *stage_apply_seconds = 0.0;
+  *stage_recurrence_seconds = 0.0;
+  *stage_reorthogonalization_seconds = 0.0;
   double beta_prev = 0.0;
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
   const int check_interval = (2 * k > 10) ? 2 * k : 10;
@@ -1161,8 +1167,10 @@ static int native_golub_kahan_run(void* impl,
     std::memcpy(V + j * n, v, sizeof(double) * static_cast<size_t>(n));
     std::memset(u, 0, sizeof(double) * static_cast<size_t>(m));
 
+    auto stage_timer = native_timer_now();
     int status = apply(impl, EIGENCORE_TRANSPOSE_NONE, 1, v, n,
                        1.0, 0.0, u, m, &workspace);
+    *stage_apply_seconds += native_timer_elapsed(stage_timer);
     if (status != 0) {
       std::free(v);
       std::free(z);
@@ -1172,12 +1180,15 @@ static int native_golub_kahan_run(void* impl,
       return status;
     }
     ++(*matvecs);
+    stage_timer = native_timer_now();
     if (j > 0) {
       for (int row = 0; row < m; ++row) {
         u[row] -= beta_prev * u_prev[row];
       }
     }
+    *stage_recurrence_seconds += native_timer_elapsed(stage_timer);
 
+    stage_timer = native_timer_now();
     if (use_blas_reorthogonalization && j > 0) {
       const char trans_T = 'T';
       const char trans_N = 'N';
@@ -1208,7 +1219,9 @@ static int native_golub_kahan_run(void* impl,
         }
       }
     }
+    *stage_reorthogonalization_seconds += native_timer_elapsed(stage_timer);
 
+    stage_timer = native_timer_now();
     long double alpha_norm2 = 0.0L;
     for (int row = 0; row < m; ++row) {
       alpha_norm2 += static_cast<long double>(u[row]) * u[row];
@@ -1221,10 +1234,13 @@ static int native_golub_kahan_run(void* impl,
       u[row] /= alpha[j];
     }
     std::memcpy(U + j * m, u, sizeof(double) * static_cast<size_t>(m));
+    *stage_recurrence_seconds += native_timer_elapsed(stage_timer);
 
     std::memset(z, 0, sizeof(double) * static_cast<size_t>(n));
+    stage_timer = native_timer_now();
     status = apply(impl, EIGENCORE_TRANSPOSE_ADJOINT, 1, u, m,
                    1.0, 0.0, z, n, &workspace);
+    *stage_apply_seconds += native_timer_elapsed(stage_timer);
     if (status != 0) {
       std::free(v);
       std::free(z);
@@ -1234,10 +1250,13 @@ static int native_golub_kahan_run(void* impl,
       return status;
     }
     ++(*matvecs);
+    stage_timer = native_timer_now();
     for (int row = 0; row < n; ++row) {
       z[row] -= alpha[j] * v[row];
     }
+    *stage_recurrence_seconds += native_timer_elapsed(stage_timer);
 
+    stage_timer = native_timer_now();
     if (use_blas_reorthogonalization) {
       const int active_v = j + 1;
       const char trans_T = 'T';
@@ -1269,12 +1288,15 @@ static int native_golub_kahan_run(void* impl,
         }
       }
     }
+    *stage_reorthogonalization_seconds += native_timer_elapsed(stage_timer);
 
+    stage_timer = native_timer_now();
     long double beta_norm2 = 0.0L;
     for (int row = 0; row < n; ++row) {
       beta_norm2 += static_cast<long double>(z[row]) * z[row];
     }
     beta[j] = sqrt(static_cast<double>(beta_norm2));
+    *stage_recurrence_seconds += native_timer_elapsed(stage_timer);
     const int remaining_iterations = maxit - (j + 1);
     if (enable_projected_stop && j + 1 >= k &&
         remaining_iterations >= min_projected_savings &&
@@ -1306,11 +1328,13 @@ static int native_golub_kahan_run(void* impl,
       break;
     }
 
+    stage_timer = native_timer_now();
     std::memcpy(u_prev, u, sizeof(double) * static_cast<size_t>(m));
     beta_prev = beta[j];
     for (int row = 0; row < n; ++row) {
       v[row] = z[row] / beta[j];
     }
+    *stage_recurrence_seconds += native_timer_elapsed(stage_timer);
   }
 
   std::free(v);
@@ -2107,6 +2131,9 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
   double projected_max_residual = R_PosInf;
   int projected_checks = 0;
   double projected_seconds = 0.0;
+  double stage_apply_seconds = 0.0;
+  double stage_recurrence_seconds = 0.0;
+  double stage_reorthogonalization_seconds = 0.0;
   const int status = native_golub_kahan_run(&impl, eigencore_dense_apply, m, n,
                                             maxit, rank, target_kind, tol,
                                             enable_projected_stop, 1,
@@ -2117,7 +2144,10 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
                                             &projected_stop, &projected_nconv,
                                             &projected_max_residual,
                                             &projected_checks,
-                                            &projected_seconds);
+                                            &projected_seconds,
+                                            &stage_apply_seconds,
+                                            &stage_recurrence_seconds,
+                                            &stage_reorthogonalization_seconds);
   if (status != 0) {
     error("native dense Golub-Kahan failed with status=%d", status);
   }
@@ -2139,7 +2169,7 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
   std::memcpy(REAL(beta_), beta_work.data(),
               sizeof(double) * static_cast<size_t>(iterations));
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 12));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 15));
   SET_VECTOR_ELT(out_, 0, U_);
   SET_VECTOR_ELT(out_, 1, V_);
   SET_VECTOR_ELT(out_, 2, alpha_);
@@ -2152,7 +2182,10 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
   SET_VECTOR_ELT(out_, 9, ScalarInteger(projected_checks));
   SET_VECTOR_ELT(out_, 10, ScalarReal(projected_seconds));
   SET_VECTOR_ELT(out_, 11, ScalarReal(native_workspace_bytes));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 12));
+  SET_VECTOR_ELT(out_, 12, ScalarReal(stage_apply_seconds));
+  SET_VECTOR_ELT(out_, 13, ScalarReal(stage_recurrence_seconds));
+  SET_VECTOR_ELT(out_, 14, ScalarReal(stage_reorthogonalization_seconds));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 15));
   SET_STRING_ELT(names_, 0, mkChar("U"));
   SET_STRING_ELT(names_, 1, mkChar("V"));
   SET_STRING_ELT(names_, 2, mkChar("alpha"));
@@ -2165,6 +2198,9 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
   SET_STRING_ELT(names_, 9, mkChar("projected_checks"));
   SET_STRING_ELT(names_, 10, mkChar("projected_seconds"));
   SET_STRING_ELT(names_, 11, mkChar("native_workspace_bytes"));
+  SET_STRING_ELT(names_, 12, mkChar("stage_apply_seconds"));
+  SET_STRING_ELT(names_, 13, mkChar("stage_recurrence_seconds"));
+  SET_STRING_ELT(names_, 14, mkChar("stage_reorthogonalization_seconds"));
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(6);
   return out_;
@@ -2216,6 +2252,9 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   double projected_max_residual = R_PosInf;
   int projected_checks = 0;
   double projected_seconds = 0.0;
+  double stage_apply_seconds = 0.0;
+  double stage_recurrence_seconds = 0.0;
+  double stage_reorthogonalization_seconds = 0.0;
   const int status = native_golub_kahan_run(&impl, eigencore_csc_apply, m, n,
                                             maxit, rank, target_kind, tol,
                                             enable_projected_stop, 0,
@@ -2226,7 +2265,10 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                             &projected_stop, &projected_nconv,
                                             &projected_max_residual,
                                             &projected_checks,
-                                            &projected_seconds);
+                                            &projected_seconds,
+                                            &stage_apply_seconds,
+                                            &stage_recurrence_seconds,
+                                            &stage_reorthogonalization_seconds);
   if (status != 0) {
     error("native CSC Golub-Kahan failed with status=%d", status);
   }
@@ -2248,7 +2290,7 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   std::memcpy(REAL(beta_), beta_work.data(),
               sizeof(double) * static_cast<size_t>(iterations));
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 12));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 15));
   SET_VECTOR_ELT(out_, 0, U_);
   SET_VECTOR_ELT(out_, 1, V_);
   SET_VECTOR_ELT(out_, 2, alpha_);
@@ -2261,7 +2303,10 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   SET_VECTOR_ELT(out_, 9, ScalarInteger(projected_checks));
   SET_VECTOR_ELT(out_, 10, ScalarReal(projected_seconds));
   SET_VECTOR_ELT(out_, 11, ScalarReal(native_workspace_bytes));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 12));
+  SET_VECTOR_ELT(out_, 12, ScalarReal(stage_apply_seconds));
+  SET_VECTOR_ELT(out_, 13, ScalarReal(stage_recurrence_seconds));
+  SET_VECTOR_ELT(out_, 14, ScalarReal(stage_reorthogonalization_seconds));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 15));
   SET_STRING_ELT(names_, 0, mkChar("U"));
   SET_STRING_ELT(names_, 1, mkChar("V"));
   SET_STRING_ELT(names_, 2, mkChar("alpha"));
@@ -2274,6 +2319,9 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   SET_STRING_ELT(names_, 9, mkChar("projected_checks"));
   SET_STRING_ELT(names_, 10, mkChar("projected_seconds"));
   SET_STRING_ELT(names_, 11, mkChar("native_workspace_bytes"));
+  SET_STRING_ELT(names_, 12, mkChar("stage_apply_seconds"));
+  SET_STRING_ELT(names_, 13, mkChar("stage_recurrence_seconds"));
+  SET_STRING_ELT(names_, 14, mkChar("stage_reorthogonalization_seconds"));
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(6);
   return out_;
@@ -6736,6 +6784,9 @@ extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start
   double projected_max_residual = R_PosInf;
   int projected_checks = 0;
   double projected_seconds = 0.0;
+  double stage_apply_seconds = 0.0;
+  double stage_recurrence_seconds = 0.0;
+  double stage_reorthogonalization_seconds = 0.0;
   const int status = native_golub_kahan_run(&impl, eigencore_dense_apply, m, n,
                                             maxit, rank, target_kind, tol,
                                             enable_projected_stop, 1,
@@ -6746,7 +6797,10 @@ extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start
                                             &projected_stop, &projected_nconv,
                                             &projected_max_residual,
                                             &projected_checks,
-                                            &projected_seconds);
+                                            &projected_seconds,
+                                            &stage_apply_seconds,
+                                            &stage_recurrence_seconds,
+                                            &stage_reorthogonalization_seconds);
   if (status != 0) {
     error("native dense Golub-Kahan failed with status=%d", status);
   }
@@ -6755,7 +6809,7 @@ extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start
     U_work.data(), V_work.data(), m, n, iterations, alpha_work.data(),
     beta_work.data(), rank, target_kind
   ));
-  SEXP out_ = PROTECT(allocVector(VECSXP, 12));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 15));
   SET_VECTOR_ELT(out_, 0, VECTOR_ELT(ritz_, 0));
   SET_VECTOR_ELT(out_, 1, VECTOR_ELT(ritz_, 1));
   SET_VECTOR_ELT(out_, 2, VECTOR_ELT(ritz_, 2));
@@ -6767,8 +6821,11 @@ extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start
   SET_VECTOR_ELT(out_, 8, ScalarInteger(projected_checks));
   SET_VECTOR_ELT(out_, 9, ScalarReal(projected_seconds));
   SET_VECTOR_ELT(out_, 10, ScalarReal(native_workspace_bytes));
-  SET_VECTOR_ELT(out_, 11, ScalarLogical(FALSE));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 12));
+  SET_VECTOR_ELT(out_, 11, ScalarReal(stage_apply_seconds));
+  SET_VECTOR_ELT(out_, 12, ScalarReal(stage_recurrence_seconds));
+  SET_VECTOR_ELT(out_, 13, ScalarReal(stage_reorthogonalization_seconds));
+  SET_VECTOR_ELT(out_, 14, ScalarLogical(FALSE));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 15));
   SET_STRING_ELT(names_, 0, mkChar("d"));
   SET_STRING_ELT(names_, 1, mkChar("u"));
   SET_STRING_ELT(names_, 2, mkChar("v"));
@@ -6780,7 +6837,10 @@ extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start
   SET_STRING_ELT(names_, 8, mkChar("projected_checks"));
   SET_STRING_ELT(names_, 9, mkChar("projected_seconds"));
   SET_STRING_ELT(names_, 10, mkChar("native_workspace_bytes"));
-  SET_STRING_ELT(names_, 11, mkChar("basis_returned"));
+  SET_STRING_ELT(names_, 11, mkChar("stage_apply_seconds"));
+  SET_STRING_ELT(names_, 12, mkChar("stage_recurrence_seconds"));
+  SET_STRING_ELT(names_, 13, mkChar("stage_reorthogonalization_seconds"));
+  SET_STRING_ELT(names_, 14, mkChar("basis_returned"));
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(3);
   return out_;
@@ -6832,6 +6892,9 @@ extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP di
   double projected_max_residual = R_PosInf;
   int projected_checks = 0;
   double projected_seconds = 0.0;
+  double stage_apply_seconds = 0.0;
+  double stage_recurrence_seconds = 0.0;
+  double stage_reorthogonalization_seconds = 0.0;
   const int status = native_golub_kahan_run(&impl, eigencore_csc_apply, m, n,
                                             maxit, rank, target_kind, tol,
                                             enable_projected_stop, 0,
@@ -6842,7 +6905,10 @@ extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP di
                                             &projected_stop, &projected_nconv,
                                             &projected_max_residual,
                                             &projected_checks,
-                                            &projected_seconds);
+                                            &projected_seconds,
+                                            &stage_apply_seconds,
+                                            &stage_recurrence_seconds,
+                                            &stage_reorthogonalization_seconds);
   if (status != 0) {
     error("native CSC Golub-Kahan failed with status=%d", status);
   }
@@ -6851,7 +6917,7 @@ extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP di
     U_work.data(), V_work.data(), m, n, iterations, alpha_work.data(),
     beta_work.data(), rank, target_kind
   ));
-  SEXP out_ = PROTECT(allocVector(VECSXP, 12));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 15));
   SET_VECTOR_ELT(out_, 0, VECTOR_ELT(ritz_, 0));
   SET_VECTOR_ELT(out_, 1, VECTOR_ELT(ritz_, 1));
   SET_VECTOR_ELT(out_, 2, VECTOR_ELT(ritz_, 2));
@@ -6863,8 +6929,11 @@ extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP di
   SET_VECTOR_ELT(out_, 8, ScalarInteger(projected_checks));
   SET_VECTOR_ELT(out_, 9, ScalarReal(projected_seconds));
   SET_VECTOR_ELT(out_, 10, ScalarReal(native_workspace_bytes));
-  SET_VECTOR_ELT(out_, 11, ScalarLogical(FALSE));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 12));
+  SET_VECTOR_ELT(out_, 11, ScalarReal(stage_apply_seconds));
+  SET_VECTOR_ELT(out_, 12, ScalarReal(stage_recurrence_seconds));
+  SET_VECTOR_ELT(out_, 13, ScalarReal(stage_reorthogonalization_seconds));
+  SET_VECTOR_ELT(out_, 14, ScalarLogical(FALSE));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 15));
   SET_STRING_ELT(names_, 0, mkChar("d"));
   SET_STRING_ELT(names_, 1, mkChar("u"));
   SET_STRING_ELT(names_, 2, mkChar("v"));
@@ -6876,7 +6945,10 @@ extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP di
   SET_STRING_ELT(names_, 8, mkChar("projected_checks"));
   SET_STRING_ELT(names_, 9, mkChar("projected_seconds"));
   SET_STRING_ELT(names_, 10, mkChar("native_workspace_bytes"));
-  SET_STRING_ELT(names_, 11, mkChar("basis_returned"));
+  SET_STRING_ELT(names_, 11, mkChar("stage_apply_seconds"));
+  SET_STRING_ELT(names_, 12, mkChar("stage_recurrence_seconds"));
+  SET_STRING_ELT(names_, 13, mkChar("stage_reorthogonalization_seconds"));
+  SET_STRING_ELT(names_, 14, mkChar("basis_returned"));
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(3);
   return out_;
