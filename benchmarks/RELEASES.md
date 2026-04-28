@@ -167,3 +167,9 @@ they are machine-dependent.
 - Native generalized SPD LOBPCG now has built-in dense, diagonal, and CSC A/B
   prototype slices for explicit `lobpcg()` plans. Production promotion remains
   blocked on generalized preconditioning and broader adversarial gates.
+- Generalized SPD benchmark rows now expose the promotion-critical restart
+  diagnostics: `native`, `native_kernels`, `generalized`,
+  `orthogonalization_native`, `orthogonalization_methods`, `q_rank_final`,
+  `constrained`, and `constraints_rank`. The quick sparse generalized smoke
+  check now verifies that eigencore rows certify through the native
+  B-orthogonal path rather than silently using dense/reference fallbacks.

@@ -512,6 +512,22 @@ result_block_size <- function(x) {
   x$block %||% result_restart_field(x, "block")
 }
 
+result_restart_character <- function(x, field) {
+  value <- result_restart_field(x, field)
+  if (!length(value) || all(is.na(value))) {
+    return(NA_character_)
+  }
+  paste(as.character(value), collapse = ",")
+}
+
+result_restart_integer <- function(x, field) {
+  value <- result_restart_field(x, field)
+  if (length(value) != 1L || is.na(value)) {
+    return(NA_integer_)
+  }
+  as.integer(value)
+}
+
 result_stage_seconds <- function(x, field) {
   stages <- x$stage_seconds %||% result_restart_field(x, "stage_seconds") %||% NULL
   if (is.null(stages) || !field %in% names(stages)) {
@@ -549,6 +565,14 @@ benchmark_failed_eigen_row <- function(method, seed, error) {
     ortho_passes = NA_integer_,
     locking_events = NA_integer_,
     block_size = NA_integer_,
+    native = NA,
+    native_kernels = NA,
+    generalized = NA,
+    orthogonalization_native = NA,
+    orthogonalization_methods = NA_character_,
+    q_rank_final = NA_integer_,
+    constrained = NA,
+    constraints_rank = NA_integer_,
     stage_apply_seconds = NA_real_,
     stage_recurrence_seconds = NA_real_,
     stage_reorthogonalization_seconds = NA_real_,
@@ -615,6 +639,14 @@ benchmark_eigen_case <- function(A, k, target = largest(), methods = NULL,
       ortho_passes = result_ortho_passes(fit),
       locking_events = result_locking_events(fit),
       block_size = result_block_size(fit),
+      native = result_restart_logical(fit, "native"),
+      native_kernels = result_restart_logical(fit, "native_kernels"),
+      generalized = result_restart_logical(fit, "generalized"),
+      orthogonalization_native = result_restart_logical(fit, "orthogonalization_native"),
+      orthogonalization_methods = result_restart_character(fit, "orthogonalization_methods"),
+      q_rank_final = result_restart_integer(fit, "q_rank_final"),
+      constrained = result_restart_logical(fit, "constrained"),
+      constraints_rank = result_restart_integer(fit, "constraints_rank"),
       stage_apply_seconds = result_stage_seconds(fit, "apply"),
       stage_recurrence_seconds = result_stage_seconds(fit, "recurrence"),
       stage_reorthogonalization_seconds = result_stage_seconds(fit, "reorthogonalization"),
@@ -679,6 +711,14 @@ benchmark_generalized_eigen_case <- function(A, B, k, target = smallest(),
       ortho_passes = result_ortho_passes(timed$value),
       locking_events = result_locking_events(timed$value),
       block_size = result_block_size(timed$value),
+      native = result_restart_logical(timed$value, "native"),
+      native_kernels = result_restart_logical(timed$value, "native_kernels"),
+      generalized = result_restart_logical(timed$value, "generalized"),
+      orthogonalization_native = result_restart_logical(timed$value, "orthogonalization_native"),
+      orthogonalization_methods = result_restart_character(timed$value, "orthogonalization_methods"),
+      q_rank_final = result_restart_integer(timed$value, "q_rank_final"),
+      constrained = result_restart_logical(timed$value, "constrained"),
+      constraints_rank = result_restart_integer(timed$value, "constraints_rank"),
       preconditioner_kind = result_preconditioner_field(timed$value, "kind"),
       preconditioner_native = result_preconditioner_field(timed$value, "native"),
       preconditioner_calls = result_preconditioner_calls(timed$value),

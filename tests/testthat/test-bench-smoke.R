@@ -98,6 +98,46 @@ test_that("benchmark timing resets seed for each measured iteration", {
   expect_equal(timed$value, expected)
 })
 
+test_that("generalized LOBPCG benchmark exposes native B-orthogonal diagnostics", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_if_not_installed("bench")
+
+  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
+  if (!nzchar(helper_path)) {
+    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
+  }
+  source(helper_path)
+
+  pair <- generalized_spd_pair(40, sparse = TRUE, seed = 421)
+  rows <- benchmark_generalized_eigen_case(
+    pair$A,
+    pair$B,
+    k = 2,
+    target = smallest(),
+    methods = "eigencore",
+    iterations = 1,
+    seed = 421
+  )
+
+  required <- c(
+    "native", "native_kernels", "generalized", "orthogonalization_native",
+    "orthogonalization_methods", "q_rank_final", "constrained",
+    "constraints_rank"
+  )
+  expect_true(all(required %in% names(rows)))
+
+  eig <- rows[rows$method == "eigencore", , drop = FALSE]
+  expect_true(eig$certificate_passed)
+  expect_true(eig$native)
+  expect_true(eig$native_kernels)
+  expect_true(eig$generalized)
+  expect_true(eig$orthogonalization_native)
+  expect_match(eig$orthogonalization_methods, "native_.*_b_mgs2")
+  expect_gte(eig$q_rank_final, 2L)
+  expect_false(eig$constrained)
+  expect_equal(eig$constraints_rank, 0L)
+})
+
 test_that("benchmark argument parser keeps dense diagnostics opt-in", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
 

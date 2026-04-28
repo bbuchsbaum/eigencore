@@ -537,7 +537,7 @@ Working status against the sequenced milestones:
 | G1 | done | Promoted native block Hermitian Lanczos runs by default in benchmark-proven regimes; strict Hermitian sparse and dense regression gates pass against certified RSpectra/PRIMME references. |
 | H | staged, not complete | Native Golub-Kahan exists as a staging path; production thick-restart SVD and SVD performance gates remain open. |
 | I | prototype | Randomized SVD has reference implementation, normalizers, and certified refinement; native approximate engine remains open. |
-| J | partial | Native generalized SPD LOBPCG slices exist for built-in `B`, explicitly SPD matrix-free `B`, dense constraints, and the typed shifted-tridiagonal preconditioner; broader generalized preconditioning and promotion remain open. |
+| J | partial | Native generalized SPD LOBPCG slices exist for built-in `B`, explicitly SPD matrix-free `B`, dense constraints, and the typed shifted-tridiagonal preconditioner; benchmark rows expose native/B-orthogonal/constrained diagnostics; broader generalized preconditioning and promotion remain open. |
 | K | not complete | B-orthogonal block Lanczos is still a later generalized-SPD refinement path. |
 | L | reference-complete, native-open | Shift-invert works through honest reference paths; native hot loop/factorization-cache production path remains open. |
 | M | partial | Standard Hermitian LOBPCG and tridiagonal preconditioner staging are useful but not final release surfaces. |
@@ -569,9 +569,10 @@ Primary attack surfaces, in order:
    native thick-restarted Golub-Kahan path that wins sparse SVD time-to-certified
    answer against RSpectra/`irlba` on the PRD benchmark subset.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
-   preconditioning beyond the typed shifted-tridiagonal case, harden
-   B-orthogonality diagnostics, and promote the native path only after the
-   adversarial B bank and sparse no-densification gates pass.
+   preconditioning beyond the typed shifted-tridiagonal case, keep the
+   benchmark B-orthogonality/native-path diagnostics green, and promote the
+   native path only after the adversarial B bank and sparse no-densification
+   gates pass.
 3. **L native shift-invert.** Move from reference inverted-operator Lanczos to
    factorization-aware native transforms with cached solves and original
    problem residual certification.
@@ -931,7 +932,7 @@ explicitly documented as not yet G1-complete.
 | G1 | Native Hermitian block Lanczos (thick restart, locking)     | Reference bank green; beats RSpectra by PRD threshold; PRIMME parity when available; Hermitian memory gate green |
 | H | Native Golub–Kahan (thick restart, true SVD residuals)        | Reference bank green; beats RSpectra on SVD subset         |
 | I | Native randomized SVD + refinement + honest estimate cert     | HegelSVD-derived regimes ported; matches or improves `rsvd::rsvd()` accuracy; beats `rsvd` on time-to-certified-answer in randomized-planner regimes; 2× deterministic SVD on selected approximate cases; honest degraded certificates |
-| J | Generalized SPD LOBPCG (dense/sparse/matrix-free)             | Largest/smallest generalized SPD paths certify without sparse densification; adversarial B bank green |
+| J | Generalized SPD LOBPCG (dense/sparse/matrix-free)             | Largest/smallest generalized SPD paths certify without sparse densification; benchmark rows prove native B-orthogonal execution; adversarial B bank green |
 | K | Generalized SPD B-orthogonal Lanczos alternate/refinement     | Shift-invert-free generalized path passes adversarial B and agrees with LOBPCG certificates |
 | L | Shift-invert with user solve / factorization cache            | Smallest/interior works on at least one real Laplacian     |
 | M | Standard symmetric LOBPCG refinements                         | Graph Laplacian test converges with fewer iterations      |
