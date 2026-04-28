@@ -528,7 +528,7 @@ Working status against the sequenced milestones:
 | Milestone | Status | Notes |
 |---|---|---|
 | A | mostly done | Public/reference/native layering is established; reference fallbacks must remain honestly labeled. |
-| B | mostly done | Dense, CSC, diagonal, and adjoint wrappers preserve native block-apply provenance; composed/centered/scaled native fusion remains incomplete. |
+| B | mostly done | Dense, CSC, diagonal, adjoint, and explicit built-in scaling preserve native block-apply provenance; composed/centered native fusion remains incomplete. |
 | C | substantially done | Adversarial, property, oracle, and benchmark-smoke tests are in place and expanding. |
 | D | mostly done | Typed certificates and target taxonomy are implemented enough for current paths. |
 | E | mostly done | Dense fallback is memory-budgeted; sparse densification is rejected in production paths. |

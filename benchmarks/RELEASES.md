@@ -24,6 +24,12 @@ they are machine-dependent.
   when available. This is a small operator-fusion step: planner and diagnostic
   surfaces can distinguish native adjoints from R callback operators while
   centered/scaled/composed native fusion remains open.
+- Built-in scalar, row, and column scaling now fuse to native-backed operators
+  when the parent has an explicit dense, CSC, or diagonal backing. Dense inputs
+  materialize a scaled dense operator, CSC inputs preserve sparse `dgCMatrix`
+  storage instead of densifying, and diagonal scalar scaling remains
+  diagonal-backed. Matrix-free operators continue to use the existing R-level
+  transform path.
 - G1 block Hermitian candidate baseline captured in
   `inst/benchmarks/baselines/g1_candidate_pre.csv`; regenerate it with
   `inst/benchmarks/bench-g1-candidate-baseline.R --save`. The current baseline

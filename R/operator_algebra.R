@@ -76,6 +76,10 @@ operator_scale <- function(A, scalar, name = NULL) {
   if (length(scalar) != 1L || !is.finite(scalar)) {
     stop("scalar must be one finite numeric value.", call. = FALSE)
   }
+  fused <- native_scaled_operator_or_null(A, scalar, axis = "scalar", name = name)
+  if (!is.null(fused)) {
+    return(fused)
+  }
   source <- source_or_null(A)
   if (!is.null(source)) {
     source <- scalar * source
@@ -106,6 +110,10 @@ scale_rows <- function(A, weights, name = NULL) {
   weights <- as.numeric(weights)
   if (length(weights) != A$dim[1L]) {
     stop("row weights length must equal operator row dimension.", call. = FALSE)
+  }
+  fused <- native_scaled_operator_or_null(A, weights, axis = "rows", name = name)
+  if (!is.null(fused)) {
+    return(fused)
   }
   source <- source_or_null(A)
   if (!is.null(source)) {
@@ -138,6 +146,10 @@ scale_cols <- function(A, weights, name = NULL) {
   weights <- as.numeric(weights)
   if (length(weights) != A$dim[2L]) {
     stop("column weights length must equal operator column dimension.", call. = FALSE)
+  }
+  fused <- native_scaled_operator_or_null(A, weights, axis = "cols", name = name)
+  if (!is.null(fused)) {
+    return(fused)
   }
   source <- source_or_null(A)
   if (!is.null(source)) {
@@ -327,4 +339,67 @@ combine_block <- function(out, beta = 0, Y = NULL) {
     out <- out + beta * Y
   }
   out
+}
+
+#' @keywords internal
+native_scaled_operator_or_null <- function(A, weights, axis, name = NULL) {
+  if (!isTRUE(A$metadata$native)) {
+    return(NULL)
+  }
+  scaled <- NULL
+  storage <- NULL
+
+  source <- A$metadata$source
+  if (!is.null(source)) {
+    scaled <- switch(
+      axis,
+      scalar = weights * source,
+      rows = weights * source,
+      cols = sweep(source, 2L, weights, `*`),
+      NULL
+    )
+  } else {
+    matrix <- A$metadata$matrix
+    if (is.null(matrix)) {
+      return(NULL)
+    }
+    scaled <- switch(
+      axis,
+      scalar = weights * matrix,
+      rows = Matrix::Diagonal(x = weights) %*% matrix,
+      cols = matrix %*% Matrix::Diagonal(x = weights),
+      NULL
+    )
+    if (inherits(matrix, "dgCMatrix") && inherits(scaled, "sparseMatrix")) {
+      scaled <- methods::as(scaled, "dgCMatrix")
+    }
+    if (!(inherits(scaled, "dgCMatrix") || inherits(scaled, "ddiMatrix"))) {
+      return(NULL)
+    }
+    storage <- class(scaled)[[1L]]
+  }
+
+  if (is.null(scaled)) {
+    return(NULL)
+  }
+  op <- as_operator(scaled)
+  op$name <- name %||% switch(
+    axis,
+    scalar = paste0(weights, "*", A$name),
+    rows = paste0("scale_rows(", A$name, ")"),
+    cols = paste0("scale_cols(", A$name, ")")
+  )
+  op$metadata$parent <- A
+  op$metadata$fused <- switch(
+    axis,
+    scalar = "scalar_scale",
+    rows = "scale_rows",
+    cols = "scale_cols"
+  )
+  op$metadata$axis <- axis
+  op$metadata$weights <- weights
+  if (!is.null(storage)) {
+    op$metadata$storage <- storage
+  }
+  op
 }
