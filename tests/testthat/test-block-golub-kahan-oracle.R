@@ -138,15 +138,28 @@ test_that("native block Golub-Kahan basis cycle records adaptive subspace attemp
     block = 2L,
     tol = 1e-8
   )
+  set.seed(701)
+  cold_adaptive <- eigencore:::native_block_golub_kahan_cycle_svd(
+    A,
+    rank = 5L,
+    target = largest(),
+    block = 2L,
+    tol = 1e-8,
+    adaptive_start = "initial"
+  )
 
   expect_false(fixed$certificate$passed)
   expect_true(adaptive$certificate$passed)
   expect_true(adaptive$restart$adaptive)
+  expect_equal(adaptive$restart$adaptive_start, "ritz")
   expect_gt(adaptive$restart$attempts, 1L)
   expect_equal(adaptive$restart$attempted_subspaces[[1L]],
                adaptive$restart$initial_max_subspace)
+  expect_gt(max(adaptive$restart$attempt_history$start_cols), 2L)
+  expect_true(any(adaptive$restart$attempt_history$warm_started))
   expect_true(any(adaptive$restart$attempt_history$certificate_passed))
   expect_equal(adaptive$matvecs, sum(adaptive$restart$attempt_history$matvecs))
+  expect_lt(adaptive$matvecs, cold_adaptive$matvecs)
 })
 
 test_that("reference block Golub-Kahan handles clustered singular subspaces", {

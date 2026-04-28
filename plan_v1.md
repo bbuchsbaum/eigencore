@@ -469,7 +469,14 @@ only, while non-quick `--strict` enforces the speed/memory/parity release gate:
   promotable because the from-scratch retry cost is worse than the scalar
   projected candidate and the best certified references. The next H step must
   reuse retained vectors through a real thick-restart loop; adaptive rebuilding
-  is only a convergence oracle and benchmark diagnostic.
+  is only a convergence oracle and benchmark diagnostic. A Ritz-seeded variant
+  now carries previous Ritz vectors into later adaptive attempts, cutting the
+  same quick wide-sparse diagnostic from `167` to `73` native matvecs while
+  preserving certification. It still does not improve the release surface
+  because R-visible attempt materialization and missing retained native
+  workspace dominate wall time and allocation. This narrows the production
+  requirement: implement retained-subspace restart in native code, not more
+  from-scratch adaptive cycles.
 - shift-invert via `shift_invert(sigma)` is now wired through a reference
   Hermitian Lanczos path on the inverted operator, with three honest planner
   labels: `reference Hermitian Lanczos shift-invert (dense LU)` for dense

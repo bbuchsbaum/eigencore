@@ -90,7 +90,12 @@ they are machine-dependent.
   This is useful convergence evidence, not a promotion candidate: H still needs
   restart/reuse of retained subspaces instead of rebuilding larger bases from
   scratch. The native block basis scratch buffer was also widened to the
-  operator dimension used by fallback orthogonalization work vectors.
+  operator dimension used by fallback orthogonalization work vectors. The
+  adaptive cycle now seeds later attempts with previous Ritz vectors plus a
+  fresh random block. On the same `wide_sparse` fixture this cuts total native
+  matvecs from `167` to `73`, but the installed quick row still reports about
+  `0.0090s` and `1.31MB`; the remaining loss is attempt materialization and
+  lack of a retained native restart workspace, not only operator-call count.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,

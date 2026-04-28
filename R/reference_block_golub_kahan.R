@@ -408,8 +408,10 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
                                                start = NULL,
                                                adaptive = is.null(max_subspace),
                                                max_attempts = NULL,
+                                               adaptive_start = c("ritz", "initial"),
                                                vectors = c("both", "left", "right", "none")) {
   vectors <- match.arg(vectors)
+  adaptive_start <- match.arg(adaptive_start)
   op <- as_operator(op)
   rank <- min(as.integer(rank), min(op$dim))
   n <- op$dim[[2L]]
@@ -431,6 +433,7 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
   } else {
     as.matrix(start)
   }
+  current_start <- start
 
   attempt_rows <- list()
   total_iterations <- 0L
@@ -445,7 +448,7 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
       op,
       max_subspace = current_max_subspace,
       block = block,
-      start = start
+      start = current_start
     )
     ritz <- native_block_golub_kahan_ritz(
       basis$V,
@@ -473,6 +476,7 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
         native = TRUE,
         thick_restart = FALSE,
         adaptive = adaptive,
+        adaptive_start = adaptive_start,
         attempt = attempt,
         active_cols = basis$active_cols,
         active_left_cols = basis$active_left_cols,
@@ -491,6 +495,8 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
       attempt = attempt,
       max_subspace = current_max_subspace,
       active_cols = basis$active_cols,
+      start_cols = ncol(current_start),
+      warm_started = attempt > 1L && identical(adaptive_start, "ritz"),
       iterations = basis$iterations,
       matvecs = basis$matvecs,
       ortho_passes = basis$ortho_passes,
@@ -514,6 +520,15 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
       break
     }
     current_max_subspace <- next_max_subspace
+    if (identical(adaptive_start, "ritz")) {
+      keep_cols <- min(ncol(ritz$v), max(rank, block))
+      current_start <- cbind(
+        ritz$v[, seq_len(keep_cols), drop = FALSE],
+        matrix(stats::rnorm(n * block), nrow = n, ncol = block)
+      )
+    } else {
+      current_start <- start
+    }
   }
 
   out$iterations <- total_iterations
