@@ -190,7 +190,8 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
 
     native_path <- plan$method %in% c(
       "native scalar thick-restart Hermitian Lanczos",
-      "native block Hermitian Lanczos thick-restart candidate"
+      "native block Hermitian Lanczos thick-restart candidate",
+      "native block Hermitian Lanczos (thick restart, locking)"
     )
     warning_msg <- if (native_path) {
       if (!isTRUE(iter$certificate$passed)) {

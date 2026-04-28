@@ -36,6 +36,7 @@ benchmark_args <- function(args = commandArgs(trailingOnly = TRUE)) {
     include_dense = "--include-dense" %in% args,
     svd_projected_stop = "--projected-stop" %in% args,
     iterations = iterations,
+    subject = benchmark_arg_value(args, "--subject="),
     methods = benchmark_arg_csv(args, "--methods="),
     cases = benchmark_arg_csv(args, "--cases=")
   )
@@ -711,6 +712,7 @@ evaluate_reference_gate <- function(rows, subject = "eigencore", references = se
   }
   if (!nrow(refs)) {
     return(data.frame(
+      subject = subject,
       subject_certified = isTRUE(eig$certificate_passed) && eig$nconv >= requested,
       subject_nconv = eig$nconv,
       requested = requested,
@@ -731,6 +733,7 @@ evaluate_reference_gate <- function(rows, subject = "eigencore", references = se
   speed_gate <- isTRUE(speed_ratio >= speed_ratio_required)
   memory_gate <- isTRUE(memory_ratio >= memory_ratio_required)
   data.frame(
+    subject = subject,
     subject_certified = subject_certified,
     subject_nconv = eig$nconv,
     requested = requested,

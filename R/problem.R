@@ -75,7 +75,7 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
       if (!is_hermitian) {
         "dense LAPACK eigen oracle (Lanczos requires Hermitian structure)"
       } else if (native_lanczos_supported && lanczos_block > 1L) {
-        "native block Hermitian Lanczos thick-restart candidate"
+        "native block Hermitian Lanczos (thick restart, locking)"
       } else if (native_lanczos_supported) {
         "native scalar thick-restart Hermitian Lanczos"
       } else {
@@ -114,6 +114,8 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
     "native dense generalized SPD LAPACK fallback"
   } else if (has_metric && is_hermitian) {
     "dense generalized SPD LAPACK oracle (prototype fallback)"
+  } else if (!is.null(promoted_block_lanczos_controls(problem, k))) {
+    "native block Hermitian Lanczos (thick restart, locking)"
   } else if (is_hermitian && is_native_csc && native_lanczos_target_supported(problem$target)) {
     "native scalar thick-restart Hermitian Lanczos"
   } else if (is_hermitian && is_native_csc) {
@@ -246,14 +248,21 @@ lanczos_plan_controls <- function(problem, k, method, chosen) {
   }
   is_lanczos_method <- inherits(method, "eigencore_method") &&
     identical(method$kind, "lanczos")
-  block <- if (is_lanczos_method) method$block %||% 1L else 1L
+  promoted <- if (is_lanczos_method) NULL else promoted_block_lanczos_controls(problem, k)
+  block <- if (is_lanczos_method) {
+    method$block %||% 1L
+  } else {
+    promoted$block %||% 1L
+  }
   block <- as.integer(block)
   n <- problem$A$dim[1L]
   max_restarts <- if (is_lanczos_method) method$max_restarts else NULL
   max_restarts <- as.integer(max_restarts %||% 100L)
   max_subspace <- if (is_lanczos_method) method$max_subspace else NULL
   max_subspace <- if (is.null(max_subspace)) {
-    if (block > 1L) {
+    if (!is.null(promoted$max_subspace)) {
+      promoted$max_subspace
+    } else if (block > 1L) {
       source <- source_or_null(problem$A)
       dense_full_n <- as.integer(getOption("eigencore.block_dense_full_subspace_max_n", 256L))
       if (length(dense_full_n) != 1L || is.na(dense_full_n) || dense_full_n < 1L) {
@@ -282,6 +291,53 @@ lanczos_plan_controls <- function(problem, k, method, chosen) {
     max_restarts = max_restarts,
     reorthogonalize = reorthogonalize
   )
+}
+
+#' @keywords internal
+promoted_block_lanczos_controls <- function(problem, k) {
+  if (is.null(k) || is.na(k) || length(k) != 1L) {
+    return(NULL)
+  }
+  k <- as.integer(k)
+  if (k < 16L || !is.null(problem$metric) ||
+      !identical(problem$structure$kind, "hermitian") ||
+      !native_lanczos_target_supported(problem$target)) {
+    return(NULL)
+  }
+
+  n <- as.integer(problem$A$dim[1L])
+  source <- source_or_null(problem$A)
+  storage <- problem$A$metadata$storage %||% NULL
+  dense_full_n <- as.integer(getOption("eigencore.block_dense_full_subspace_max_n", 256L))
+  if (length(dense_full_n) != 1L || is.na(dense_full_n) || dense_full_n < 1L) {
+    dense_full_n <- 256L
+  }
+
+  dense_max_fraction <- as.numeric(getOption("eigencore.dense_partial_lanczos_max_fraction", 0.25))
+  if (length(dense_max_fraction) != 1L || is.na(dense_max_fraction) ||
+      dense_max_fraction <= 0 || dense_max_fraction > 1) {
+    dense_max_fraction <- 0.25
+  }
+
+  if (is.matrix(source) && is.double(source) && n <= dense_full_n &&
+      (k / n) <= dense_max_fraction) {
+    return(list(block = 2L, max_subspace = n))
+  }
+  if (identical(storage, "dgCMatrix") && n >= 5000L) {
+    block <- 4L
+    return(list(
+      block = block,
+      max_subspace = min(n, max(default_block_lanczos_max_subspace(k, block), 16L * k))
+    ))
+  }
+  if (identical(storage, "dgCMatrix") && n >= 500L) {
+    block <- 2L
+    return(list(
+      block = block,
+      max_subspace = min(n, default_block_lanczos_max_subspace(k, block))
+    ))
+  }
+  NULL
 }
 
 #' @keywords internal

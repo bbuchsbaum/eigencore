@@ -106,6 +106,8 @@ test_that("benchmark argument parser keeps dense diagnostics opt-in", {
   expect_false(benchmark_args(c("--quick", "--block-candidate"))$include_dense)
   expect_true(benchmark_args("--projected-stop")$svd_projected_stop)
   expect_equal(benchmark_args("--iterations=2")$iterations, 2L)
+  expect_equal(benchmark_args("--subject=eigencore_golub_kahan_projected")$subject,
+               "eigencore_golub_kahan_projected")
   expect_equal(
     benchmark_args("--methods=eigencore,eigencore_golub_kahan")$methods,
     c("eigencore", "eigencore_golub_kahan")
@@ -125,6 +127,8 @@ test_that("SVD surface benchmark script is available", {
   expect_true(any(grepl("eigencore_golub_kahan_projected", lines, fixed = TRUE)))
   expect_true(any(grepl("svd_projected_stop", lines, fixed = TRUE)))
   expect_true(any(grepl("projected_stop_comparison", lines, fixed = TRUE)))
+  expect_true(any(grepl("gate_subject", lines, fixed = TRUE)))
+  expect_true(any(grepl("args$subject", lines, fixed = TRUE)))
   expect_true(any(grepl("args$methods", lines, fixed = TRUE)))
   expect_true(any(grepl("args$cases", lines, fixed = TRUE)))
   expect_true(any(grepl("rank_deficient_sparse", lines, fixed = TRUE)))
@@ -265,6 +269,36 @@ test_that("SVD benchmark can expose projected Golub-Kahan as a separate row", {
   expect_true(projected$certificate_passed)
 })
 
+test_that("SVD reference gate can evaluate an explicit H candidate subject", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+
+  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
+  if (!nzchar(helper_path)) {
+    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
+  }
+  source(helper_path)
+
+  rows <- data.frame(
+    method = c("eigencore", "eigencore_golub_kahan_projected", "RSpectra"),
+    median = c(3, 2, 1),
+    mem_alloc = c(300, 200, 100),
+    certificate_passed = c(TRUE, TRUE, TRUE),
+    nconv = c(2L, 2L, 2L)
+  )
+  gate <- evaluate_reference_gate(
+    rows[rows$method != "eigencore", , drop = FALSE],
+    subject = "eigencore_golub_kahan_projected",
+    references = "RSpectra",
+    requested = 2L,
+    speed_ratio_required = release_speed_gate("svd")
+  )
+
+  expect_equal(gate$subject, "eigencore_golub_kahan_projected")
+  expect_false(gate$passed)
+  expect_equal(gate$speed_ratio_vs_best_reference, 0.5)
+  expect_equal(gate$memory_ratio_vs_best_reference, 0.5)
+})
+
 test_that("G1 candidate baseline covers required pre-promotion cases", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
   skip_if_not_installed("bench")
@@ -315,7 +349,7 @@ test_that("benchmark harness records failed eigen references as uncertified rows
   expect_match(row$error, "bad vectors")
 })
 
-test_that("block Lanczos candidate exposes G1 counters", {
+test_that("promoted block Lanczos exposes G1 counters", {
   A <- diag(c(8, 5, 3, 1, 0))
   fit <- eig_partial(
     A,
@@ -326,7 +360,7 @@ test_that("block Lanczos candidate exposes G1 counters", {
   )
   diag <- diagnostics(fit)
 
-  expect_equal(fit$method, "native block Hermitian Lanczos thick-restart candidate")
+  expect_equal(fit$method, "native block Hermitian Lanczos (thick restart, locking)")
   expect_gte(fit$restarts, 0L)
   expect_gte(fit$locking_events, 0L)
   expect_equal(fit$block, 2L)
@@ -485,7 +519,7 @@ test_that("Hermitian benchmark harness can gate the explicit block candidate", {
   expect_gt(block_row$stage_reorthogonalization_seconds, 0)
 })
 
-test_that("G1 block candidate selects adaptive large-sparse controls", {
+test_that("G1 block controls select adaptive large-sparse settings", {
   small <- eigencore:::benchmark_block_candidate_lanczos_method(
     Matrix::Diagonal(1000L),
     20L
@@ -516,6 +550,39 @@ test_that("G1 RSpectra reference uses robust large-sparse controls", {
   expect_equal(small, list())
   expect_equal(large$ncv, 120L)
   expect_equal(large$maxitr, 20000L)
+})
+
+test_that("auto planner promotes only benchmark-proven block regimes", {
+  mid <- Matrix::bandSparse(
+    1000L,
+    k = c(-1, 0, 1),
+    diagonals = list(rep(-1, 999L), c(1, rep(2, 998L), 1), rep(-1, 999L))
+  )
+  mid_plan <- plan_solver(eigen_problem(mid, target = smallest()), k = 20L)
+  expect_equal(mid_plan$method, "native block Hermitian Lanczos (thick restart, locking)")
+  expect_equal(mid_plan$controls$block, 2L)
+  expect_equal(mid_plan$controls$max_subspace, 160L)
+
+  large <- Matrix::sparseMatrix(
+    i = 1:5000,
+    j = 1:5000,
+    x = 1,
+    dims = c(5000L, 5000L)
+  )
+  large_plan <- plan_solver(eigen_problem(large, target = smallest()), k = 20L)
+  expect_equal(large_plan$method, "native block Hermitian Lanczos (thick restart, locking)")
+  expect_equal(large_plan$controls$block, 4L)
+  expect_equal(large_plan$controls$max_subspace, 320L)
+
+  small_k <- plan_solver(eigen_problem(mid, target = smallest()), k = 5L)
+  expect_equal(small_k$method, "native scalar thick-restart Hermitian Lanczos")
+  expect_equal(small_k$controls$block, 1L)
+
+  dense <- diag(as.numeric(seq(200L, 1L)))
+  dense_plan <- plan_solver(eigen_problem(dense, target = largest()), k = 20L)
+  expect_equal(dense_plan$method, "native block Hermitian Lanczos (thick restart, locking)")
+  expect_equal(dense_plan$controls$block, 2L)
+  expect_equal(dense_plan$controls$max_subspace, 200L)
 })
 
 test_that("native Hermitian gate separates RSpectra threshold from PRIMME parity", {

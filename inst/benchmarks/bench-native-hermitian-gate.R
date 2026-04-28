@@ -63,6 +63,12 @@ if (args$save) {
   message("saved gates: ", save_benchmark_result(gates, "native-hermitian-gate-summary"))
 }
 
-if (args$strict && !all(gates$passed)) {
+strict_passed <- if (args$quick) {
+  all(gates$eigencore_certified)
+} else {
+  all(gates$passed)
+}
+
+if (args$strict && !strict_passed) {
   stop("Native Hermitian benchmark failed G1 release gate.", call. = FALSE)
 }

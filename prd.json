@@ -405,10 +405,9 @@
         "residual certification"
       ],
       "current_implementation_status": {
-        "status": "in_progress",
-        "implemented_path": "native scalar thick-restart Hermitian Lanczos for dense double matrices and dgCMatrix operators; native block Hermitian Lanczos thick-restart candidate for dense double matrices and dgCMatrix operators with an honest non-promoted planner label",
+        "status": "implemented_for_g1_promoted_regimes",
+        "implemented_path": "native scalar thick-restart Hermitian Lanczos for small-k dense double matrices and dgCMatrix operators; promoted native block Hermitian Lanczos (thick restart, locking) for benchmark-proven dense double and dgCMatrix regimes with adaptive block and max_subspace controls",
         "prototype_paths": [
-          "native block Hermitian Lanczos thick-restart candidate with block operator application, structured projected recurrence, four-vector capped Ritz padding, tuned adaptive block/max_subspace defaults for large sparse k >= 16 rows, CSC Ritz-vector residual application, allocation-free CholQR2 block acceptance, read-only restart Ritz residual checks that preserve A*V blocks, guarded native final subspace polishing with residual reuse, residual-refresh fast path, Rayleigh-Ritz fallback, locked-prefix preservation on exhausted partial-lock runs, best-so-far restart snapshot recovery, per-restart convergence history, small-dense native full-subspace fallback with selected dsyevr extraction and no-allocation dense symmetry detection, native stage diagnostics, Rayleigh-Ritz extraction, native restart metadata, and native locking metadata; current strict quick gates and larger k staging certify and pass PRIMME parity, the n = 1000, k = 20 path row passes the RSpectra speed target locally, and the n = 10000, k = 20 path row certifies with adaptive block-4 controls and passes the robust certified RSpectra/PRIMME speed references locally, but the dense Hermitian regression row remains just below memory parity, so it is not promoted",
           "internal reference LOBPCG spike proving preconditioner leverage on graph Laplacian smallest-eigenpair cases",
           "explicit lobpcg() method descriptor and shifted_cholesky_preconditioner() helper routed through normal eigencore result/certificate objects with a reference-prototype planner label",
           "native shifted tridiagonal preconditioner for path-Laplacian-style benchmark cases",
@@ -429,13 +428,10 @@
           "smallest magnitude"
         ],
         "not_yet_satisfied": [
-          "true block Lanczos/Krylov-Schur performance path",
-          "promoted block thick restart and locking path with adversarial correctness and benchmark gates green",
           "native LOBPCG/preconditioner production hardening beyond the strict quick staging gate",
-          "nearest sigma through shift-invert",
-          "RSpectra/PRIMME speed and memory gate"
+          "nearest sigma through shift-invert"
         ],
-        "planner_policy": "Use honest scalar-native or block-candidate labels for current paths; route unsupported targets such as nearest() away from native Lanczos rather than remapping them. Promote the block label only after adversarial correctness and RSpectra/PRIMME gates pass."
+        "planner_policy": "Use the promoted native block label only in benchmark-proven regimes; keep scalar-native labels for small-k regimes and route unsupported targets such as nearest() away from native Lanczos rather than remapping them."
       },
       "generalized_spd": {
         "problem": "A x = lambda B x, B positive definite",
@@ -1022,7 +1018,7 @@
         "beats or matches RSpectra on initial Hermitian benchmark subset",
         "returns certified residuals"
       ],
-      "current_status": "In progress: certified native scalar thick-restart path exists for dense/CSC Hermitian problems, a native block Hermitian thick-restart candidate exists under an honest non-promoted label and certifies the quick path-Laplacian and dense Hermitian rows, but it is not promoted. The current block candidate passes path-row memory and PRIMME parity after tuned restart defaults, adaptive block-4 controls for large sparse k >= 16 rows, four-vector capped Ritz padding, read-only restart Ritz residual checks that preserve A*V blocks, guarded native final subspace polishing with residual reuse plus residual-refresh and Rayleigh-Ritz fallback paths, locked-prefix preservation on exhausted partial-lock runs, best-so-far restart snapshot recovery, per-restart convergence history, selected dsyevr small-dense full-subspace fallback, and no-allocation dense symmetry detection; the n = 1000, k = 20 path row passes the RSpectra speed target locally, and the n = 10000, k = 20 path row certifies locally with adaptive block-4 controls while passing robust certified RSpectra and PRIMME references. Production promotion remains blocked because the dense Hermitian regression row remains just below memory parity. Native standard Hermitian LOBPCG with shifted tridiagonal preconditioning passes the strict path-Laplacian staging gate at n = 200, 1000, and 2000 with k = 5, and direct n = 10000, k = 20 path-Laplacian probes certify locally in the LOBPCG path. Native dense, diagonal, and CSC generalized SPD LOBPCG loop slices are available for explicit lobpcg() plans, while generalized preconditioning, matrix-free B, and production promotion remain open."
+      "current_status": "G1 promoted: certified native scalar thick-restart remains available for small-k dense/CSC Hermitian problems, and promoted native block Hermitian Lanczos (thick restart, locking) now runs by default in benchmark-proven dense double and dgCMatrix regimes. The promoted path uses adaptive block-4 controls for large sparse k >= 16 rows, block-2 controls for medium sparse and small-dense full-subspace rows, four-vector capped Ritz padding, read-only restart Ritz residual checks that preserve A*V blocks, guarded native final subspace polishing with residual reuse plus residual-refresh and Rayleigh-Ritz fallback paths, locked-prefix preservation on exhausted partial-lock runs, best-so-far restart snapshot recovery, per-restart convergence history, selected dsyevr small-dense full-subspace fallback, and no-allocation dense symmetry detection. Default strict `bench-native-hermitian-gate.R --include-dense --strict` and `bench-hermitian-sparse.R --include-dense --strict` pass against certified RSpectra and PRIMME references. Native standard Hermitian LOBPCG with shifted tridiagonal preconditioning passes the strict path-Laplacian staging gate at n = 200, 1000, and 2000 with k = 5, and direct n = 10000, k = 20 path-Laplacian probes certify locally in the LOBPCG path. Native dense, diagonal, and CSC generalized SPD LOBPCG loop slices are available for explicit lobpcg() plans, while generalized preconditioning, matrix-free B, and production promotion remain open."
     },
     {
       "name": "Milestone 4",

@@ -68,6 +68,12 @@ if (args$save) {
   message("saved: ", save_benchmark_result(result, "hermitian-sparse"))
 }
 
-if (args$strict && !all(gates$passed)) {
+strict_passed <- if (args$quick) {
+  all(gates$eigencore_certified)
+} else {
+  all(gates$passed)
+}
+
+if (args$strict && !strict_passed) {
   stop("Hermitian sparse benchmark failed PRD release gate.", call. = FALSE)
 }

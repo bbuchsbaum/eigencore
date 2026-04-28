@@ -441,7 +441,7 @@ test_that("native block Lanczos prototype matches dense oracle on small Hermitia
                      method = lanczos(block = 2L, max_subspace = 6L),
                      seed = 44, tol = 1e-8)
 
-  expect_equal(fit$method, "native block Hermitian Lanczos thick-restart candidate")
+  expect_equal(fit$method, "native block Hermitian Lanczos (thick restart, locking)")
   expect_equal(values(fit), c(9, 5), tolerance = 1e-8)
   expect_true(certificate(fit)$passed)
   expect_equal(fit$restart$kind, "block_full_subspace_dense_lapack")
@@ -451,18 +451,18 @@ test_that("native block Lanczos prototype matches dense oracle on small Hermitia
   expect_equal(fit$matvecs, 0L)
 })
 
-test_that("planner labels block Lanczos candidate honestly and stores controls", {
+test_that("planner labels explicit block Lanczos with production label and stores controls", {
   A <- Matrix::sparseMatrix(i = 1:4, j = 1:4, x = c(4, 3, 2, 1))
   P <- eigen_problem(A, target = largest())
   plan <- plan_solver(P, k = 2L, method = lanczos(block = 2L, max_subspace = 4L))
 
-  expect_equal(plan$method, "native block Hermitian Lanczos thick-restart candidate")
+  expect_equal(plan$method, "native block Hermitian Lanczos (thick restart, locking)")
   expect_equal(plan$controls$block, 2L)
   expect_equal(plan$controls$max_subspace, 4L)
   expect_equal(plan$controls$max_restarts, 100L)
 })
 
-test_that("auto planner does not promote block candidate before G1 gates pass", {
+test_that("auto planner keeps small-k sparse requests on scalar Lanczos", {
   A <- Matrix::sparseMatrix(i = 1:8, j = 1:8, x = 8:1)
   P <- eigen_problem(A, target = largest())
   plan <- plan_solver(P, k = 4L, method = auto())

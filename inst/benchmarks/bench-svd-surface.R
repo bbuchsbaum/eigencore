@@ -24,6 +24,7 @@ if (isTRUE(args$svd_projected_stop)) {
 if (!is.null(args$methods)) {
   methods <- args$methods
 }
+gate_subject <- args$subject %||% "eigencore"
 
 rank_deficient_sparse <- function(m, n, intrinsic_rank, density = 0.1, seed = 1L) {
   set.seed(seed)
@@ -145,7 +146,7 @@ result <- do.call(rbind, rows)
 row.names(result) <- NULL
 print(result)
 
-can_evaluate_gates <- "eigencore" %in% result$method &&
+can_evaluate_gates <- gate_subject %in% result$method &&
   any(!result$method %in% c(
     "eigencore",
     "eigencore_golub_kahan",
@@ -154,14 +155,20 @@ can_evaluate_gates <- "eigencore" %in% result$method &&
   ))
 gates <- if (isTRUE(can_evaluate_gates)) lapply(split(result, result$case), function(case_rows) {
   internal_methods <- c(
+    "eigencore",
     "eigencore_golub_kahan",
     "eigencore_golub_kahan_projected",
     "eigencore_randomized"
   )
+  gate_rows <- case_rows[
+    case_rows$method == gate_subject | !case_rows$method %in% internal_methods,
+    ,
+    drop = FALSE
+  ]
   gate <- evaluate_reference_gate(
-    case_rows[!case_rows$method %in% internal_methods, , drop = FALSE],
-    subject = "eigencore",
-    references = setdiff(unique(case_rows$method), c("eigencore", internal_methods)),
+    gate_rows,
+    subject = gate_subject,
+    references = setdiff(unique(gate_rows$method), gate_subject),
     requested = unique(case_rows$rank)[[1L]],
     speed_ratio_required = release_speed_gate("svd"),
     memory_ratio_required = release_memory_gate("svd")
