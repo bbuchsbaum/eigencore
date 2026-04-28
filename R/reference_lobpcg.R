@@ -1,7 +1,8 @@
 #' @keywords internal
 reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
                                        maxit = 200L, preconditioner = NULL,
-                                       seed = NULL, Bop = NULL) {
+                                       seed = NULL, Bop = NULL,
+                                       constraints = NULL) {
   op <- as_operator(op)
   Bop <- if (is.null(Bop)) NULL else as_operator(Bop)
   if (op$dim[1L] != op$dim[2L]) {
@@ -13,6 +14,10 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
   if (!identical(op$structure$kind, "hermitian")) {
     stop("LOBPCG requires a Hermitian operator.", call. = FALSE)
   }
+  if (!is.null(Bop) && generalized_spd_metric_checkable(Bop) &&
+      !generalized_spd_metric_known(Bop)) {
+    stop("LOBPCG metric B must be symmetric positive definite.", call. = FALSE)
+  }
   if (!is.null(seed)) {
     set.seed(seed)
   }
@@ -21,7 +26,12 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
   k <- as.integer(k)
   maxit <- as.integer(maxit)
   preconditioner_info <- eigencore_preconditioner_info(preconditioner, include_arrays = FALSE)
+  constraints_info <- lobpcg_prepare_constraints(constraints, n = n, Bop = Bop)
+  if (!is.null(constraints_info) && constraints_info$rank + k > n) {
+    stop("LOBPCG constraints leave fewer than k free dimensions.", call. = FALSE)
+  }
   X <- matrix(stats::rnorm(n * k), nrow = n, ncol = k)
+  X <- lobpcg_project_constraints(X, constraints_info, Bop = Bop)
   orth_native <- FALSE
   orth_all_native <- TRUE
   orth_methods <- character()
@@ -67,6 +77,7 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
       stop("LOBPCG preconditioner must return a block with the same dimensions as its input.", call. = FALSE)
     }
     S <- if (is.null(P)) cbind(X, W) else cbind(X, W, P)
+    S <- lobpcg_project_constraints(S, constraints_info, Bop = Bop)
     orth <- lobpcg_b_orthonormalize(S, Bop)
     record_orthogonalization(orth)
     Q <- orth$Q
@@ -82,6 +93,7 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
     }
     idx <- idx[seq_len(k)]
     X_next <- Q %*% small$vectors[, idx, drop = FALSE]
+    X_next <- lobpcg_project_constraints(X_next, constraints_info, Bop = Bop)
     P <- X_next - X
     orth <- lobpcg_b_orthonormalize(X_next, Bop)
     record_orthogonalization(orth)
@@ -108,11 +120,13 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
     convergence_history = history,
     preconditioned = !is.null(preconditioner),
     preconditioner = preconditioner_info,
+    constrained = !is.null(constraints_info),
+    constraints_rank = constraints_info$rank %||% 0L,
     generalized = !is.null(Bop),
     orthogonalization = list(
       native = orth_native,
       all_native = orth_all_native,
-      methods = orth_methods,
+      methods = unique(c(orth_methods, constraints_info$orthogonalization_method %||% character())),
       generalized = !is.null(Bop)
     )
   )
@@ -121,7 +135,7 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
 #' @keywords internal
 native_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
                                     maxit = 200L, preconditioner = NULL,
-                                    seed = NULL) {
+                                    seed = NULL, constraints = NULL) {
   op <- as_operator(op)
   if (op$dim[1L] != op$dim[2L]) {
     stop("Native LOBPCG requires a square operator.", call. = FALSE)
@@ -141,6 +155,7 @@ native_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
   maxit <- as.integer(maxit)
   preconditioner_info <- eigencore_preconditioner_info(preconditioner, include_arrays = FALSE)
   preconditioner_args <- native_lobpcg_preconditioner_args(preconditioner)
+  constraints_arg <- lobpcg_constraints_arg(constraints, n)
   start <- matrix(stats::rnorm(n * k), nrow = n, ncol = k)
   storage <- op$metadata$storage %||% NULL
   source <- source_or_null(op)
@@ -160,6 +175,7 @@ native_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
       preconditioner_args$lower,
       preconditioner_args$diag,
       preconditioner_args$upper,
+      constraints_arg,
       PACKAGE = "eigencore"
     )
   } else if (is.matrix(source) && is.double(source)) {
@@ -174,6 +190,7 @@ native_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
       preconditioner_args$lower,
       preconditioner_args$diag,
       preconditioner_args$upper,
+      constraints_arg,
       PACKAGE = "eigencore"
     )
   } else {
@@ -208,7 +225,9 @@ native_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
       generalized = FALSE
     ),
     native = TRUE,
-    q_rank_final = iter$q_rank_final
+    q_rank_final = iter$q_rank_final,
+    constrained = !is.null(constraints),
+    constraints_rank = iter$constraints_rank %||% 0L
   )
 }
 
@@ -301,7 +320,9 @@ native_lobpcg_tridiagonal_hermitian <- function(op, k, target = smallest(),
 #' @keywords internal
 native_generalized_lobpcg_hermitian <- function(op, Bop, k, target = smallest(),
                                                 tol = 1e-8, maxit = 200L,
-                                                seed = NULL) {
+                                                seed = NULL,
+                                                preconditioner = NULL,
+                                                constraints = NULL) {
   op <- as_operator(op)
   Bop <- as_operator(Bop)
   if (op$dim[1L] != op$dim[2L] || !identical(Bop$dim, op$dim)) {
@@ -310,6 +331,9 @@ native_generalized_lobpcg_hermitian <- function(op, Bop, k, target = smallest(),
   if (!identical(op$structure$kind, "hermitian") ||
       !identical(Bop$structure$kind, "hermitian")) {
     stop("Native generalized LOBPCG requires Hermitian A and B.", call. = FALSE)
+  }
+  if (!generalized_spd_metric_known(Bop)) {
+    stop("Native generalized LOBPCG requires B to be known symmetric positive definite.", call. = FALSE)
   }
   if (!native_lobpcg_target_supported(target)) {
     stop("Native generalized LOBPCG does not support target ", target_label(target), ".", call. = FALSE)
@@ -321,6 +345,9 @@ native_generalized_lobpcg_hermitian <- function(op, Bop, k, target = smallest(),
   n <- op$dim[1L]
   k <- as.integer(k)
   maxit <- as.integer(maxit)
+  preconditioner_info <- eigencore_preconditioner_info(preconditioner, include_arrays = FALSE)
+  preconditioner_args <- native_lobpcg_preconditioner_args(preconditioner)
+  constraints_arg <- lobpcg_constraints_arg(constraints, n)
   start <- matrix(stats::rnorm(n * k), nrow = n, ncol = k)
   source <- source_or_null(op)
   Bsource <- source_or_null(Bop)
@@ -337,6 +364,10 @@ native_generalized_lobpcg_hermitian <- function(op, Bop, k, target = smallest(),
       as.integer(lanczos_target_kind(target)),
       as.numeric(tol),
       start,
+      preconditioner_args$lower,
+      preconditioner_args$diag,
+      preconditioner_args$upper,
+      constraints_arg,
       PACKAGE = "eigencore"
     )
   } else if (is.matrix(source) && is.double(source) &&
@@ -354,6 +385,10 @@ native_generalized_lobpcg_hermitian <- function(op, Bop, k, target = smallest(),
       as.integer(lanczos_target_kind(target)),
       as.numeric(tol),
       start,
+      preconditioner_args$lower,
+      preconditioner_args$diag,
+      preconditioner_args$upper,
+      constraints_arg,
       PACKAGE = "eigencore"
     )
   } else if (is.matrix(source) && is.double(source) &&
@@ -371,6 +406,10 @@ native_generalized_lobpcg_hermitian <- function(op, Bop, k, target = smallest(),
       as.integer(lanczos_target_kind(target)),
       as.numeric(tol),
       start,
+      preconditioner_args$lower,
+      preconditioner_args$diag,
+      preconditioner_args$upper,
+      constraints_arg,
       PACKAGE = "eigencore"
     )
   } else if (identical(storage, "dgCMatrix") &&
@@ -392,6 +431,10 @@ native_generalized_lobpcg_hermitian <- function(op, Bop, k, target = smallest(),
       as.integer(lanczos_target_kind(target)),
       as.numeric(tol),
       start,
+      preconditioner_args$lower,
+      preconditioner_args$diag,
+      preconditioner_args$upper,
+      constraints_arg,
       PACKAGE = "eigencore"
     )
   } else if (identical(storage, "dgCMatrix") &&
@@ -413,6 +456,10 @@ native_generalized_lobpcg_hermitian <- function(op, Bop, k, target = smallest(),
       as.integer(lanczos_target_kind(target)),
       as.numeric(tol),
       start,
+      preconditioner_args$lower,
+      preconditioner_args$diag,
+      preconditioner_args$upper,
+      constraints_arg,
       PACKAGE = "eigencore"
     )
   } else if (identical(storage, "ddiMatrix") &&
@@ -435,10 +482,74 @@ native_generalized_lobpcg_hermitian <- function(op, Bop, k, target = smallest(),
       as.integer(lanczos_target_kind(target)),
       as.numeric(tol),
       start,
+      preconditioner_args$lower,
+      preconditioner_args$diag,
+      preconditioner_args$upper,
+      constraints_arg,
+      PACKAGE = "eigencore"
+    )
+  } else if (is.matrix(source) && is.double(source) &&
+    is.null(Bsource) && is.function(Bop$apply)) {
+    .Call(
+      "eigencore_lobpcg_dense_operator_b",
+      source,
+      Bop$apply,
+      as.integer(k),
+      as.integer(maxit),
+      as.integer(lanczos_target_kind(target)),
+      as.numeric(tol),
+      start,
+      preconditioner_args$lower,
+      preconditioner_args$diag,
+      preconditioner_args$upper,
+      constraints_arg,
+      PACKAGE = "eigencore"
+    )
+  } else if (identical(storage, "dgCMatrix") &&
+    is.null(Bsource) && is.function(Bop$apply)) {
+    A <- op$metadata$matrix
+    .Call(
+      "eigencore_lobpcg_csc_operator_b",
+      methods::slot(A, "i"),
+      methods::slot(A, "p"),
+      methods::slot(A, "x"),
+      methods::slot(A, "Dim"),
+      Bop$apply,
+      as.integer(k),
+      as.integer(maxit),
+      as.integer(lanczos_target_kind(target)),
+      as.numeric(tol),
+      start,
+      preconditioner_args$lower,
+      preconditioner_args$diag,
+      preconditioner_args$upper,
+      constraints_arg,
+      PACKAGE = "eigencore"
+    )
+  } else if (identical(storage, "ddiMatrix") &&
+    is.null(Bsource) && is.function(Bop$apply)) {
+    A <- op$metadata$matrix
+    a_unit <- identical(methods::slot(A, "diag"), "U")
+    a_diagonal <- if (a_unit) numeric(0) else methods::slot(A, "x")
+    .Call(
+      "eigencore_lobpcg_diagonal_operator_b",
+      as.numeric(a_diagonal),
+      isTRUE(a_unit),
+      methods::slot(A, "Dim"),
+      Bop$apply,
+      as.integer(k),
+      as.integer(maxit),
+      as.integer(lanczos_target_kind(target)),
+      as.numeric(tol),
+      start,
+      preconditioner_args$lower,
+      preconditioner_args$diag,
+      preconditioner_args$upper,
+      constraints_arg,
       PACKAGE = "eigencore"
     )
   } else {
-    stop("Native generalized LOBPCG slice currently supports dense/CSC/diagonal A with dense, diagonal, or CSC B.", call. = FALSE)
+    stop("Native generalized LOBPCG slice currently supports dense/CSC/diagonal A with dense, diagonal, CSC, or explicitly SPD matrix-free B.", call. = FALSE)
   }
 
   cert <- certify_eigen_operator_residuals(op, iter$values, iter$vectors,
@@ -459,8 +570,8 @@ native_generalized_lobpcg_hermitian <- function(op, Bop, k, target = smallest(),
     matvecs = iter$matvecs,
     preconditioner_calls = iter$preconditioner_calls,
     convergence_history = history,
-    preconditioned = FALSE,
-    preconditioner = eigencore_preconditioner_info(NULL, include_arrays = FALSE),
+    preconditioned = isTRUE(preconditioner_info$supplied),
+    preconditioner = preconditioner_info,
     generalized = TRUE,
     orthogonalization = list(
       native = TRUE,
@@ -469,21 +580,26 @@ native_generalized_lobpcg_hermitian <- function(op, Bop, k, target = smallest(),
         "native_diagonal_b_mgs2"
       } else if (identical(Bop$metadata$storage %||% NULL, "dgCMatrix")) {
         "native_csc_b_mgs2"
+      } else if (is.null(source_or_null(Bop)) && is.function(Bop$apply)) {
+        "native_matrix_free_b_mgs2"
       } else {
         "native_dense_b_mgs2"
       },
       generalized = TRUE
     ),
     native = TRUE,
-    q_rank_final = iter$q_rank_final
+    q_rank_final = iter$q_rank_final,
+    constrained = !is.null(constraints),
+    constraints_rank = iter$constraints_rank %||% 0L
   )
 }
 
 #' @keywords internal
 native_lobpcg_supported <- function(op, target = smallest(), preconditioner = NULL,
-                                    Bop = NULL) {
+                                    Bop = NULL, constraints = NULL) {
   op <- as_operator(op)
-  if (!is.null(Bop) || !identical(op$structure$kind, "hermitian") ||
+  if (!is.null(Bop) ||
+      !identical(op$structure$kind, "hermitian") ||
       !native_lobpcg_target_supported(target)) {
     return(FALSE)
   }
@@ -495,13 +611,17 @@ native_lobpcg_supported <- function(op, target = smallest(), preconditioner = NU
 
 #' @keywords internal
 native_generalized_lobpcg_supported <- function(op, Bop, target = smallest(),
-                                                preconditioner = NULL) {
+                                                preconditioner = NULL,
+                                                constraints = NULL) {
   op <- as_operator(op)
   Bop <- as_operator(Bop)
-  if (!is.null(preconditioner) ||
-      !identical(op$structure$kind, "hermitian") ||
+  if (!identical(op$structure$kind, "hermitian") ||
       !identical(Bop$structure$kind, "hermitian") ||
-      !native_lobpcg_target_supported(target)) {
+      !native_lobpcg_target_supported(target) ||
+      !native_lobpcg_preconditioner_supported(preconditioner)) {
+    return(FALSE)
+  }
+  if (!generalized_spd_metric_known(Bop)) {
     return(FALSE)
   }
   source <- source_or_null(op)
@@ -514,9 +634,130 @@ native_generalized_lobpcg_supported <- function(op, Bop, target = smallest(),
   diagonal_A <- identical(storage, "ddiMatrix")
   diagonal_B <- identical(Bstorage, "ddiMatrix")
   csc_B <- identical(Bstorage, "dgCMatrix")
-  (dense_A && (dense_B || diagonal_B || csc_B)) ||
-    (csc_A && (diagonal_B || csc_B)) ||
-    (diagonal_A && diagonal_B)
+  matrix_free_B <- is.null(Bsource) && is.function(Bop$apply)
+  (dense_A && (dense_B || diagonal_B || csc_B || matrix_free_B)) ||
+    (csc_A && (diagonal_B || csc_B || matrix_free_B)) ||
+    (diagonal_A && (diagonal_B || matrix_free_B))
+}
+
+#' @keywords internal
+native_generalized_lobpcg_label <- function() {
+  "native generalized SPD LOBPCG (B-orthogonal, residual certified)"
+}
+
+#' @keywords internal
+reference_generalized_lobpcg_label <- function() {
+  "reference generalized SPD LOBPCG (matrix-free fallback)"
+}
+
+#' @keywords internal
+should_auto_native_generalized_lobpcg <- function(problem, k) {
+  if (is.null(problem$metric) ||
+      !identical(problem$structure$kind, "hermitian") ||
+      !native_generalized_lobpcg_supported(
+        problem$A,
+        problem$metric,
+        target = problem$target,
+        preconditioner = NULL
+      )) {
+    return(FALSE)
+  }
+  k <- as.integer(k %||% NA_integer_)
+  if (length(k) != 1L || is.na(k) || k < 1L) {
+    return(FALSE)
+  }
+  n <- as.integer(problem$A$dim[1L])
+  if (k >= n) {
+    return(FALSE)
+  }
+  storage <- problem$A$metadata$storage %||% NULL
+  Bstorage <- problem$metric$metadata$storage %||% NULL
+  sparse_or_structured <- isTRUE(storage %in% c("dgCMatrix", "ddiMatrix")) ||
+    isTRUE(Bstorage %in% c("dgCMatrix", "ddiMatrix"))
+  if (sparse_or_structured) {
+    return(TRUE)
+  }
+  min_n <- as.integer(getOption("eigencore.generalized_lobpcg_min_n", 128L))
+  max_fraction <- as.numeric(getOption("eigencore.generalized_lobpcg_max_fraction", 0.25))
+  if (length(min_n) != 1L || is.na(min_n) || min_n < 1L) {
+    min_n <- 128L
+  }
+  if (length(max_fraction) != 1L || is.na(max_fraction) ||
+      max_fraction <= 0 || max_fraction > 1) {
+    max_fraction <- 0.25
+  }
+  n >= min_n && (k / n) <= max_fraction
+}
+
+#' @keywords internal
+should_auto_reference_generalized_lobpcg <- function(problem, k) {
+  if (is.null(problem$metric) ||
+      !identical(problem$structure$kind, "hermitian") ||
+      !identical(problem$metric$structure$kind, "hermitian") ||
+      !native_lobpcg_target_supported(problem$target)) {
+    return(FALSE)
+  }
+  k <- as.integer(k %||% NA_integer_)
+  if (length(k) != 1L || is.na(k) || k < 1L) {
+    return(FALSE)
+  }
+  n <- as.integer(problem$A$dim[1L])
+  if (k >= n) {
+    return(FALSE)
+  }
+  if (generalized_spd_metric_checkable(problem$metric) &&
+      !generalized_spd_metric_known(problem$metric)) {
+    return(FALSE)
+  }
+  is_matrix_free_A <- is.null(source_or_null(problem$A))
+  is_matrix_free_B <- is.null(source_or_null(problem$metric))
+  is_matrix_free_A || is_matrix_free_B
+}
+
+#' @keywords internal
+generalized_spd_metric_known <- function(Bop) {
+  Bop <- as_operator(Bop)
+  if (isTRUE(Bop$metadata$positive_definite) ||
+      isTRUE(Bop$metadata$symmetric_positive_definite) ||
+      isTRUE(Bop$metadata$spd)) {
+    return(TRUE)
+  }
+  source <- source_or_null(Bop)
+  storage <- Bop$metadata$storage %||% NULL
+  if (is.matrix(source) && is.double(source)) {
+    return(isTRUE(tryCatch({
+      chol((source + t(source)) / 2)
+      TRUE
+    }, error = function(e) FALSE)))
+  }
+  if (identical(storage, "ddiMatrix")) {
+    B <- Bop$metadata$matrix
+    values <- if (identical(methods::slot(B, "diag"), "U")) {
+      rep(1, Bop$dim[1L])
+    } else {
+      methods::slot(B, "x")
+    }
+    return(length(values) == Bop$dim[1L] &&
+      all(is.finite(values)) &&
+      all(values > 0))
+  }
+  if (identical(storage, "dgCMatrix")) {
+    B <- Bop$metadata$matrix
+    return(isTRUE(Matrix::isSymmetric(B)) && isTRUE(tryCatch({
+      Matrix::Cholesky(B, LDL = FALSE)
+      TRUE
+    }, error = function(e) FALSE)))
+  }
+  FALSE
+}
+
+#' @keywords internal
+generalized_spd_metric_checkable <- function(Bop) {
+  Bop <- as_operator(Bop)
+  storage <- Bop$metadata$storage %||% NULL
+  source <- source_or_null(Bop)
+  (is.matrix(source) && is.double(source)) ||
+    isTRUE(storage %in% c("ddiMatrix", "dgCMatrix"))
 }
 
 #' @keywords internal
@@ -548,6 +789,63 @@ native_lobpcg_preconditioner_args <- function(preconditioner) {
     diag = info$diag,
     upper = info$upper
   )
+}
+
+#' @keywords internal
+lobpcg_constraints_arg <- function(constraints, n) {
+  n <- as.integer(n)
+  if (is.null(constraints)) {
+    return(matrix(numeric(0), nrow = n, ncol = 0L))
+  }
+  Z <- as.matrix(constraints)
+  storage.mode(Z) <- "double"
+  if (nrow(Z) != n) {
+    stop("LOBPCG constraints must have one row per problem dimension.", call. = FALSE)
+  }
+  if (ncol(Z) < 1L || any(!is.finite(Z))) {
+    stop("LOBPCG constraints must be a finite numeric matrix with at least one column.", call. = FALSE)
+  }
+  Z
+}
+
+#' @keywords internal
+lobpcg_constraints_plan_reason <- function(constraints) {
+  if (is.null(constraints)) {
+    return(NULL)
+  }
+  paste0("constraints: deflating ", ncol(as.matrix(constraints)), " vector(s)")
+}
+
+#' @keywords internal
+lobpcg_prepare_constraints <- function(constraints, n, Bop = NULL) {
+  if (is.null(constraints)) {
+    return(NULL)
+  }
+  Z <- as.matrix(constraints)
+  storage.mode(Z) <- "double"
+  if (nrow(Z) != n) {
+    stop("LOBPCG constraints must have one row per problem dimension.", call. = FALSE)
+  }
+  if (ncol(Z) < 1L || any(!is.finite(Z))) {
+    stop("LOBPCG constraints must be a finite numeric matrix with at least one column.", call. = FALSE)
+  }
+  orth <- lobpcg_b_orthonormalize(Z, Bop)
+  list(
+    Q = orth$Q,
+    BQ = orth$BQ,
+    rank = ncol(orth$Q),
+    native = isTRUE(orth$native),
+    orthogonalization_method = paste0("constraints_", orth$method)
+  )
+}
+
+#' @keywords internal
+lobpcg_project_constraints <- function(X, constraints, Bop = NULL) {
+  if (is.null(constraints)) {
+    return(X)
+  }
+  BX <- if (is.null(Bop)) X else apply_operator(Bop, X)
+  X - constraints$Q %*% crossprod(constraints$Q, BX)
 }
 
 #' @keywords internal

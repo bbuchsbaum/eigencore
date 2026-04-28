@@ -199,11 +199,15 @@ randomized <- function(oversample = 10, n_iter = 2, block = NULL,
 #' @param maxit Maximum LOBPCG iterations.
 #' @param preconditioner Optional function taking a residual block and
 #'   returning a preconditioned block with the same dimensions.
+#' @param constraints Optional matrix whose columns span a subspace to deflate.
+#'   Iterates are kept orthogonal to this subspace in the Euclidean or
+#'   generalized `B` inner product. Native constrained LOBPCG is not promoted
+#'   yet; constrained problems use the honest reference path.
 #' @return An `eigencore_method` descriptor selecting LOBPCG. Built-in
 #'   standard Hermitian dense/CSC operators may use a native prototype;
 #'   unsupported cases route to the reference prototype.
 #' @export
-lobpcg <- function(maxit = 200L, preconditioner = NULL) {
+lobpcg <- function(maxit = 200L, preconditioner = NULL, constraints = NULL) {
   maxit <- as.integer(maxit)
   if (length(maxit) != 1L || is.na(maxit) || maxit < 1L) {
     stop("maxit must be a single positive integer.", call. = FALSE)
@@ -211,7 +215,20 @@ lobpcg <- function(maxit = 200L, preconditioner = NULL) {
   if (!is.null(preconditioner) && !is.function(preconditioner)) {
     stop("preconditioner must be NULL or a function.", call. = FALSE)
   }
-  new_method("lobpcg", maxit = maxit, preconditioner = preconditioner)
+  if (!is.null(constraints)) {
+    constraints <- as.matrix(constraints)
+    storage.mode(constraints) <- "double"
+    if (nrow(constraints) < 1L || ncol(constraints) < 1L ||
+        any(!is.finite(constraints))) {
+      stop("constraints must be a finite numeric matrix with at least one column.", call. = FALSE)
+    }
+  }
+  new_method(
+    "lobpcg",
+    maxit = maxit,
+    preconditioner = preconditioner,
+    constraints = constraints
+  )
 }
 
 #' Shift-invert method descriptor.

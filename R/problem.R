@@ -60,6 +60,12 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
   } else {
     NULL
   }
+  constraints_reason <- if (inherits(method, "eigencore_method") &&
+    identical(method$kind, "lobpcg")) {
+    lobpcg_constraints_plan_reason(method$constraints)
+  } else {
+    NULL
+  }
   native_lanczos_supported <- is_hermitian &&
     native_lanczos_target_supported(problem$target) &&
     (is_native_csc || is_dense_source)
@@ -83,10 +89,11 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
       }
     } else if (identical(method$kind, "lobpcg")) {
       if (native_lobpcg_supported(
-        problem$A,
-        target = problem$target,
-        preconditioner = method$preconditioner,
-        Bop = problem$metric
+          problem$A,
+          target = problem$target,
+          preconditioner = method$preconditioner,
+          Bop = problem$metric,
+          constraints = method$constraints
       )) {
         "native standard Hermitian LOBPCG prototype"
       } else if (is_hermitian && !is.null(problem$metric) &&
@@ -94,9 +101,10 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
           problem$A,
           problem$metric,
           target = problem$target,
-          preconditioner = method$preconditioner
+          preconditioner = method$preconditioner,
+          constraints = method$constraints
         )) {
-        "native generalized SPD LOBPCG prototype (built-in A/B slice)"
+        native_generalized_lobpcg_label()
       } else if (is_hermitian && is.null(problem$metric)) {
         "reference LOBPCG prototype"
       } else if (is_hermitian && !is.null(problem$metric)) {
@@ -110,6 +118,10 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
   } else if (has_shift) {
     shift_invert_plan_label(problem, has_metric, is_hermitian,
                              is_dense_source, is_native_csc)
+  } else if (has_metric && should_auto_native_generalized_lobpcg(problem, k)) {
+    native_generalized_lobpcg_label()
+  } else if (has_metric && should_auto_reference_generalized_lobpcg(problem, k)) {
+    reference_generalized_lobpcg_label()
   } else if (has_metric && is_hermitian && is_dense_source && is_dense_metric) {
     "native dense generalized SPD LAPACK fallback"
   } else if (has_metric && is_hermitian) {
@@ -138,6 +150,7 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
     if (has_metric) "metric/operator B supplied" else "standard eigenproblem",
     if (has_shift) "shift-invert transform requested" else NULL,
     preconditioner_reason,
+    constraints_reason,
     operator_kernel_reason(problem$A)
   )
 
@@ -148,6 +161,9 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
     "dense oracle prototype"
   }
   controls <- lanczos_plan_controls(problem, k = k, method = method, chosen = chosen)
+  if (grepl("LOBPCG", chosen, fixed = TRUE)) {
+    controls <- lobpcg_plan_controls(method)
+  }
   new_plan(
     problem,
     k = k,
@@ -291,6 +307,22 @@ lanczos_plan_controls <- function(problem, k, method, chosen) {
     max_restarts = max_restarts,
     reorthogonalize = reorthogonalize
   )
+}
+
+#' @keywords internal
+lobpcg_plan_controls <- function(method) {
+  is_lobpcg_method <- inherits(method, "eigencore_method") &&
+    identical(method$kind, "lobpcg")
+  maxit <- if (is_lobpcg_method) {
+    method$maxit
+  } else {
+    getOption("eigencore.lobpcg_maxit", 200L)
+  }
+  maxit <- as.integer(maxit)
+  if (length(maxit) != 1L || is.na(maxit) || maxit < 1L) {
+    maxit <- 200L
+  }
+  list(maxit = maxit)
 }
 
 #' @keywords internal

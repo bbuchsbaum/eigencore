@@ -157,6 +157,11 @@ struct DiagonalOperator {
   bool unit;
 };
 
+struct RApplyOperator {
+  int64_t rows;
+  SEXP apply;
+};
+
 struct BasisWorkspace {
   int64_t rows;
   int64_t basis_cols;
@@ -409,6 +414,66 @@ extern "C" int eigencore_diagonal_apply(void* impl,
       Y[row + block * ldy] += alpha * d * X[row + block * ldx];
     }
   }
+  return 0;
+}
+
+static int eigencore_r_operator_apply(void* impl,
+                                      EigencoreTranspose op,
+                                      int64_t block_cols,
+                                      const double* X,
+                                      int64_t ldx,
+                                      double alpha,
+                                      double beta,
+                                      double* Y,
+                                      int64_t ldy,
+                                      EigencoreWorkspace* workspace) {
+  (void) workspace;
+  if (op != EIGENCORE_TRANSPOSE_NONE) {
+    return -1;
+  }
+  RApplyOperator* fn = static_cast<RApplyOperator*>(impl);
+  const int n = static_cast<int>(fn->rows);
+  const int cols = static_cast<int>(block_cols);
+  if (ldx < n || ldy < n || cols < 1 || TYPEOF(fn->apply) != CLOSXP) {
+    return -1;
+  }
+
+  SEXP X_ = PROTECT(allocMatrix(REALSXP, n, cols));
+  SEXP Y_ = PROTECT(allocMatrix(REALSXP, n, cols));
+  for (int col = 0; col < cols; ++col) {
+    const double* x_col = X + static_cast<int64_t>(col) * ldx;
+    double* x_dst = REAL(X_) + static_cast<int64_t>(col) * n;
+    const double* y_col = Y + static_cast<int64_t>(col) * ldy;
+    double* y_dst = REAL(Y_) + static_cast<int64_t>(col) * n;
+    std::memcpy(x_dst, x_col, sizeof(double) * static_cast<size_t>(n));
+    std::memcpy(y_dst, y_col, sizeof(double) * static_cast<size_t>(n));
+  }
+  SEXP alpha_ = PROTECT(ScalarReal(alpha));
+  SEXP beta_ = PROTECT(ScalarReal(beta));
+  SEXP call = PROTECT(lang5(fn->apply, X_, alpha_, beta_, Y_));
+  SET_TAG(CDR(call), install("X"));
+  SET_TAG(CDR(CDR(call)), install("alpha"));
+  SET_TAG(CDR(CDR(CDR(call))), install("beta"));
+  SET_TAG(CDR(CDR(CDR(CDR(call)))), install("Y"));
+
+  int error_occurred = 0;
+  SEXP out_ = PROTECT(R_tryEval(call, R_GlobalEnv, &error_occurred));
+  if (error_occurred) {
+    UNPROTECT(6);
+    return -8;
+  }
+  SEXP dimY = getAttrib(out_, R_DimSymbol);
+  if (!isReal(out_) || dimY == R_NilValue ||
+      INTEGER(dimY)[0] != n || INTEGER(dimY)[1] != cols) {
+    UNPROTECT(6);
+    return -8;
+  }
+  for (int col = 0; col < cols; ++col) {
+    const double* out_col = REAL(out_) + static_cast<int64_t>(col) * n;
+    double* y_col = Y + static_cast<int64_t>(col) * ldy;
+    std::memcpy(y_col, out_col, sizeof(double) * static_cast<size_t>(n));
+  }
+  UNPROTECT(6);
   return 0;
 }
 
@@ -4804,6 +4869,72 @@ static int extract_shifted_symmetric_tridiagonal_from_csc(
   return 0;
 }
 
+static int lobpcg_project_constraints_apply(void* b_impl,
+                                            EigencoreApplyFn b_apply,
+                                            const double* Qc,
+                                            int constraint_rank,
+                                            int n,
+                                            int cols,
+                                            double* X,
+                                            double* coeff,
+                                            double* BX_work,
+                                            EigencoreWorkspace* workspace) {
+  if (constraint_rank <= 0 || cols <= 0) {
+    return 0;
+  }
+  const char trans_T = 'T';
+  const char trans_N = 'N';
+  const double one = 1.0;
+  const double zero = 0.0;
+  const double minus_one = -1.0;
+  const double* metric_X = X;
+  if (b_apply != nullptr) {
+    const int status = b_apply(b_impl, EIGENCORE_TRANSPOSE_NONE, cols, X, n,
+                               1.0, 0.0, BX_work, n, workspace);
+    if (status != 0) {
+      return status;
+    }
+    metric_X = BX_work;
+  }
+  F77_CALL(dgemm)(&trans_T, &trans_N, &constraint_rank, &cols, &n,
+                  &one, const_cast<double*>(Qc), &n,
+                  const_cast<double*>(metric_X), &n,
+                  &zero, coeff, &constraint_rank FCONE FCONE);
+  F77_CALL(dgemm)(&trans_N, &trans_N, &n, &cols, &constraint_rank,
+                  &minus_one, const_cast<double*>(Qc), &n,
+                  coeff, &constraint_rank,
+                  &one, X, &n FCONE FCONE);
+  return 0;
+}
+
+static int lobpcg_constraint_matrix(SEXP constraints_,
+                                    int n,
+                                    const double** constraints,
+                                    int* constraint_cols) {
+  *constraints = nullptr;
+  *constraint_cols = 0;
+  if (!isReal(constraints_)) {
+    return -1;
+  }
+  SEXP dimC = getAttrib(constraints_, R_DimSymbol);
+  if (dimC == R_NilValue || INTEGER(dimC)[0] != n) {
+    return -1;
+  }
+  const int cols = INTEGER(dimC)[1];
+  if (cols < 0) {
+    return -1;
+  }
+  const double* values = REAL(constraints_);
+  for (int64_t pos = 0; pos < static_cast<int64_t>(n) * cols; ++pos) {
+    if (!R_FINITE(values[pos])) {
+      return -1;
+    }
+  }
+  *constraints = values;
+  *constraint_cols = cols;
+  return 0;
+}
+
 static SEXP lobpcg_pack_result(int n, int k, const double* X,
                                const double* values,
                                const double* residuals,
@@ -4812,7 +4943,8 @@ static SEXP lobpcg_pack_result(int n, int k, const double* X,
                                const int* hist_nconv,
                                int iterations, int matvecs,
                                int preconditioner_calls,
-                               int q_rank_final) {
+                               int q_rank_final,
+                               int constraints_rank) {
   SEXP values_ = PROTECT(allocVector(REALSXP, k));
   SEXP vectors_ = PROTECT(allocMatrix(REALSXP, n, k));
   SEXP residuals_ = PROTECT(allocVector(REALSXP, k));
@@ -4830,7 +4962,7 @@ static SEXP lobpcg_pack_result(int n, int k, const double* X,
     INTEGER(hist_nconv_)[i] = hist_nconv[i];
   }
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 10));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 11));
   SET_VECTOR_ELT(out_, 0, values_);
   SET_VECTOR_ELT(out_, 1, vectors_);
   SET_VECTOR_ELT(out_, 2, residuals_);
@@ -4841,7 +4973,8 @@ static SEXP lobpcg_pack_result(int n, int k, const double* X,
   SET_VECTOR_ELT(out_, 7, ScalarInteger(matvecs));
   SET_VECTOR_ELT(out_, 8, ScalarInteger(preconditioner_calls));
   SET_VECTOR_ELT(out_, 9, ScalarInteger(q_rank_final));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 10));
+  SET_VECTOR_ELT(out_, 10, ScalarInteger(constraints_rank));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 11));
   SET_STRING_ELT(names_, 0, mkChar("values"));
   SET_STRING_ELT(names_, 1, mkChar("vectors"));
   SET_STRING_ELT(names_, 2, mkChar("residuals"));
@@ -4852,6 +4985,7 @@ static SEXP lobpcg_pack_result(int n, int k, const double* X,
   SET_STRING_ELT(names_, 7, mkChar("matvecs"));
   SET_STRING_ELT(names_, 8, mkChar("preconditioner_calls"));
   SET_STRING_ELT(names_, 9, mkChar("q_rank_final"));
+  SET_STRING_ELT(names_, 10, mkChar("constraints_rank"));
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(8);
   return out_;
@@ -4871,6 +5005,8 @@ static int native_lobpcg_run(void* impl,
                              const double* lower,
                              const double* diag,
                              const double* upper,
+                             const double* constraints,
+                             int constraint_cols,
                              double* X_out,
                              double* values_out,
                              double* residuals_out,
@@ -4880,8 +5016,10 @@ static int native_lobpcg_run(void* impl,
                              int* iterations_out,
                              int* matvecs_out,
                              int* preconditioner_calls_out,
-                             int* q_rank_final_out) {
+                             int* q_rank_final_out,
+                             int* constraints_rank_out) {
   const int max_trial_cols = 3 * k;
+  const int tmp_cols = constraint_cols > max_trial_cols ? constraint_cols : max_trial_cols;
   const size_t nk = static_cast<size_t>(n) * static_cast<size_t>(k);
   const size_t nt = static_cast<size_t>(n) * static_cast<size_t>(max_trial_cols);
   double* X = static_cast<double*>(std::calloc(nk, sizeof(double)));
@@ -4899,7 +5037,7 @@ static int native_lobpcg_run(void* impl,
   double* H = static_cast<double*>(std::calloc(static_cast<size_t>(max_trial_cols) * max_trial_cols, sizeof(double)));
   double* selected_vectors = static_cast<double*>(std::calloc(static_cast<size_t>(max_trial_cols) * k, sizeof(double)));
   double* theta = static_cast<double*>(std::calloc(static_cast<size_t>(max_trial_cols), sizeof(double)));
-  double* tmp = static_cast<double*>(std::calloc(static_cast<size_t>(max_trial_cols), sizeof(double)));
+  double* tmp = static_cast<double*>(std::calloc(static_cast<size_t>(tmp_cols), sizeof(double)));
   int* selected = static_cast<int*>(std::calloc(static_cast<size_t>(max_trial_cols), sizeof(int)));
   double* cprime = static_cast<double*>(std::calloc(static_cast<size_t>(n > 1 ? n - 1 : 1), sizeof(double)));
   double* dprime = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
@@ -4922,7 +5060,65 @@ static int native_lobpcg_run(void* impl,
 
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
   const bool generalized = b_apply != nullptr;
+  int constraint_rank = 0;
+  *constraints_rank_out = 0;
+  std::vector<double> constraint_q;
+  std::vector<double> constraint_bq;
+  std::vector<double> constraint_bscratch;
+  std::vector<double> constraint_coeff;
+  std::vector<double> constraint_bx;
+  if (constraint_cols > 0) {
+    constraint_q.assign(static_cast<size_t>(n) * constraint_cols, 0.0);
+    std::memcpy(constraint_q.data(), constraints,
+                sizeof(double) * static_cast<size_t>(n) * constraint_cols);
+    constraint_coeff.assign(static_cast<size_t>(constraint_cols) * max_trial_cols, 0.0);
+    if (generalized) {
+      constraint_bq.assign(static_cast<size_t>(n) * constraint_cols, 0.0);
+      constraint_bscratch.assign(static_cast<size_t>(n), 0.0);
+      constraint_bx.assign(static_cast<size_t>(n) * max_trial_cols, 0.0);
+      constraint_rank = lobpcg_b_orthonormalize_apply(
+        b_impl, b_apply, constraint_q.data(), n, constraint_cols,
+        100.0 * DBL_EPSILON, constraint_q.data(), constraint_bq.data(), tmp,
+        constraint_bscratch.data(), &workspace);
+    } else {
+      constraint_rank = lobpcg_orthonormalize(
+        constraint_q.data(), n, constraint_cols, 100.0 * DBL_EPSILON,
+        constraint_q.data(), tmp);
+    }
+    if (constraint_rank < 0) {
+      std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
+      std::free(BX); std::free(BXnext); std::free(W); std::free(S);
+      std::free(Q); std::free(AQ); std::free(BQ); std::free(H);
+      std::free(selected_vectors); std::free(theta); std::free(tmp);
+      std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+      return constraint_rank;
+    }
+    if (constraint_rank + k > n) {
+      std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
+      std::free(BX); std::free(BXnext); std::free(W); std::free(S);
+      std::free(Q); std::free(AQ); std::free(BQ); std::free(H);
+      std::free(selected_vectors); std::free(theta); std::free(tmp);
+      std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+      return -9;
+    }
+    *constraints_rank_out = constraint_rank;
+  }
   std::memcpy(S, start, sizeof(double) * nk);
+  if (constraint_rank > 0) {
+    const int status = lobpcg_project_constraints_apply(
+      b_impl, b_apply, constraint_q.data(), constraint_rank, n, k, S,
+      constraint_coeff.data(),
+      generalized ? constraint_bx.data() : nullptr,
+      &workspace);
+    if (status != 0) {
+      std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
+      std::free(BX); std::free(BXnext); std::free(W); std::free(S);
+      std::free(Q); std::free(AQ); std::free(BQ); std::free(H);
+      std::free(selected_vectors); std::free(theta); std::free(tmp);
+      std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+      return status;
+    }
+  }
   int q_rank = generalized
     ? lobpcg_b_orthonormalize_apply(b_impl, b_apply, S, n, k,
                                     100.0 * DBL_EPSILON, X, BX, tmp,
@@ -5017,6 +5213,20 @@ static int native_lobpcg_run(void* impl,
       std::memcpy(S + static_cast<int64_t>(trial_cols) * n, P, sizeof(double) * nk);
       trial_cols += k;
     }
+    if (constraint_rank > 0) {
+      status = lobpcg_project_constraints_apply(
+        b_impl, b_apply, constraint_q.data(), constraint_rank, n, trial_cols, S,
+        constraint_coeff.data(),
+        generalized ? constraint_bx.data() : nullptr,
+        &workspace);
+      if (status != 0) {
+        std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
+        std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
+        std::free(selected_vectors); std::free(theta); std::free(tmp);
+        std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+        return status;
+      }
+    }
     std::memset(Q, 0, sizeof(double) * nt);
     q_rank = generalized
       ? lobpcg_b_orthonormalize_apply(b_impl, b_apply, S, n, trial_cols,
@@ -5106,7 +5316,7 @@ static int native_lobpcg_run(void* impl,
 extern "C" SEXP eigencore_lobpcg_dense(SEXP A_, SEXP k_, SEXP maxit_,
                                        SEXP target_kind_, SEXP tol_,
                                        SEXP start_, SEXP lower_, SEXP diag_,
-                                       SEXP upper_) {
+                                       SEXP upper_, SEXP constraints_) {
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
   }
@@ -5125,6 +5335,11 @@ extern "C" SEXP eigencore_lobpcg_dense(SEXP A_, SEXP k_, SEXP maxit_,
   const double tol = asReal(tol_);
   const int use_tridiag = LENGTH(diag_) > 0;
   if (k < 1 || maxit < 1) error("k and maxit must be positive");
+  const double* constraints = nullptr;
+  int constraint_cols = 0;
+  if (lobpcg_constraint_matrix(constraints_, n, &constraints, &constraint_cols) != 0) {
+    error("constraints must be a double matrix with n rows");
+  }
 
   std::vector<double> X(static_cast<size_t>(n) * k, 0.0);
   std::vector<double> values(static_cast<size_t>(k), 0.0);
@@ -5132,7 +5347,7 @@ extern "C" SEXP eigencore_lobpcg_dense(SEXP A_, SEXP k_, SEXP maxit_,
   std::vector<int> converged(static_cast<size_t>(k), 0);
   std::vector<double> hist_res(static_cast<size_t>(maxit), R_PosInf);
   std::vector<int> hist_nconv(static_cast<size_t>(maxit), 0);
-  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0;
+  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0, constraints_rank = 0;
   DenseColumnMajorOperator impl = {n, n, REAL(A_)};
   const int status = native_lobpcg_run(
     &impl, eigencore_dense_apply, nullptr, nullptr,
@@ -5140,20 +5355,25 @@ extern "C" SEXP eigencore_lobpcg_dense(SEXP A_, SEXP k_, SEXP maxit_,
     use_tridiag, LENGTH(lower_) ? REAL(lower_) : nullptr,
     LENGTH(diag_) ? REAL(diag_) : nullptr,
     LENGTH(upper_) ? REAL(upper_) : nullptr,
+    constraints, constraint_cols,
     X.data(), values.data(), residuals.data(), converged.data(),
     hist_res.data(), hist_nconv.data(), &iterations, &matvecs,
-    &preconditioner_calls, &q_rank);
+    &preconditioner_calls, &q_rank, &constraints_rank);
   if (status != 0) {
     error("native dense LOBPCG failed with status=%d", status);
   }
   return lobpcg_pack_result(n, k, X.data(), values.data(), residuals.data(),
                             converged.data(), hist_res.data(), hist_nconv.data(),
-                            iterations, matvecs, preconditioner_calls, q_rank);
+                            iterations, matvecs, preconditioner_calls, q_rank,
+                            constraints_rank);
 }
 
 extern "C" SEXP eigencore_lobpcg_dense_dense_b(SEXP A_, SEXP B_, SEXP k_,
                                                SEXP maxit_, SEXP target_kind_,
-                                               SEXP tol_, SEXP start_) {
+                                               SEXP tol_, SEXP start_,
+                                               SEXP lower_, SEXP diag_,
+                                               SEXP upper_,
+                                               SEXP constraints_) {
   if (!isReal(A_) || !isReal(B_) || !isReal(start_)) {
     error("A, B, and start must be double");
   }
@@ -5172,7 +5392,13 @@ extern "C" SEXP eigencore_lobpcg_dense_dense_b(SEXP A_, SEXP B_, SEXP k_,
   const int maxit = static_cast<int>(asInteger(maxit_));
   const int target_kind = static_cast<int>(asInteger(target_kind_));
   const double tol = asReal(tol_);
+  const int use_tridiag = LENGTH(diag_) > 0;
   if (k < 1 || maxit < 1) error("k and maxit must be positive");
+  const double* constraints = nullptr;
+  int constraint_cols = 0;
+  if (lobpcg_constraint_matrix(constraints_, n, &constraints, &constraint_cols) != 0) {
+    error("constraints must be a double matrix with n rows");
+  }
 
   std::vector<double> X(static_cast<size_t>(n) * k, 0.0);
   std::vector<double> values(static_cast<size_t>(k), 0.0);
@@ -5180,29 +5406,36 @@ extern "C" SEXP eigencore_lobpcg_dense_dense_b(SEXP A_, SEXP B_, SEXP k_,
   std::vector<int> converged(static_cast<size_t>(k), 0);
   std::vector<double> hist_res(static_cast<size_t>(maxit), R_PosInf);
   std::vector<int> hist_nconv(static_cast<size_t>(maxit), 0);
-  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0;
+  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0, constraints_rank = 0;
   DenseColumnMajorOperator impl = {n, n, REAL(A_)};
   DenseColumnMajorOperator b_impl = {n, n, REAL(B_)};
   const int status = native_lobpcg_run(
     &impl, eigencore_dense_apply, &b_impl, eigencore_dense_apply,
     n, k, maxit, target_kind, tol, REAL(start_),
-    0, nullptr, nullptr, nullptr,
+    use_tridiag, LENGTH(lower_) ? REAL(lower_) : nullptr,
+    LENGTH(diag_) ? REAL(diag_) : nullptr,
+    LENGTH(upper_) ? REAL(upper_) : nullptr,
+    constraints, constraint_cols,
     X.data(), values.data(), residuals.data(), converged.data(),
     hist_res.data(), hist_nconv.data(), &iterations, &matvecs,
-    &preconditioner_calls, &q_rank);
+    &preconditioner_calls, &q_rank, &constraints_rank);
   if (status != 0) {
     error("native dense generalized LOBPCG failed with status=%d", status);
   }
   return lobpcg_pack_result(n, k, X.data(), values.data(), residuals.data(),
                             converged.data(), hist_res.data(), hist_nconv.data(),
-                            iterations, matvecs, preconditioner_calls, q_rank);
+                            iterations, matvecs, preconditioner_calls, q_rank,
+                            constraints_rank);
 }
 
 extern "C" SEXP eigencore_lobpcg_dense_diagonal_b(SEXP A_, SEXP bdiag_,
                                                   SEXP bunit_, SEXP k_,
                                                   SEXP maxit_,
                                                   SEXP target_kind_,
-                                                  SEXP tol_, SEXP start_) {
+                                                  SEXP tol_, SEXP start_,
+                                                  SEXP lower_, SEXP diag_,
+                                                  SEXP upper_,
+                                                  SEXP constraints_) {
   if (!isReal(A_) || !isReal(bdiag_) || !isReal(start_)) {
     error("A, B diagonal, and start must be double");
   }
@@ -5221,7 +5454,13 @@ extern "C" SEXP eigencore_lobpcg_dense_diagonal_b(SEXP A_, SEXP bdiag_,
   const int maxit = static_cast<int>(asInteger(maxit_));
   const int target_kind = static_cast<int>(asInteger(target_kind_));
   const double tol = asReal(tol_);
+  const int use_tridiag = LENGTH(diag_) > 0;
   if (k < 1 || maxit < 1) error("k and maxit must be positive");
+  const double* constraints = nullptr;
+  int constraint_cols = 0;
+  if (lobpcg_constraint_matrix(constraints_, n, &constraints, &constraint_cols) != 0) {
+    error("constraints must be a double matrix with n rows");
+  }
 
   std::vector<double> X(static_cast<size_t>(n) * k, 0.0);
   std::vector<double> values(static_cast<size_t>(k), 0.0);
@@ -5229,28 +5468,35 @@ extern "C" SEXP eigencore_lobpcg_dense_diagonal_b(SEXP A_, SEXP bdiag_,
   std::vector<int> converged(static_cast<size_t>(k), 0);
   std::vector<double> hist_res(static_cast<size_t>(maxit), R_PosInf);
   std::vector<int> hist_nconv(static_cast<size_t>(maxit), 0);
-  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0;
+  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0, constraints_rank = 0;
   DenseColumnMajorOperator impl = {n, n, REAL(A_)};
   DiagonalOperator b_impl = {n, REAL(bdiag_), unit};
   const int status = native_lobpcg_run(
     &impl, eigencore_dense_apply, &b_impl, eigencore_diagonal_apply,
     n, k, maxit, target_kind, tol, REAL(start_),
-    0, nullptr, nullptr, nullptr,
+    use_tridiag, LENGTH(lower_) ? REAL(lower_) : nullptr,
+    LENGTH(diag_) ? REAL(diag_) : nullptr,
+    LENGTH(upper_) ? REAL(upper_) : nullptr,
+    constraints, constraint_cols,
     X.data(), values.data(), residuals.data(), converged.data(),
     hist_res.data(), hist_nconv.data(), &iterations, &matvecs,
-    &preconditioner_calls, &q_rank);
+    &preconditioner_calls, &q_rank, &constraints_rank);
   if (status != 0) {
     error("native dense/diagonal generalized LOBPCG failed with status=%d", status);
   }
   return lobpcg_pack_result(n, k, X.data(), values.data(), residuals.data(),
                             converged.data(), hist_res.data(), hist_nconv.data(),
-                            iterations, matvecs, preconditioner_calls, q_rank);
+                            iterations, matvecs, preconditioner_calls, q_rank,
+                            constraints_rank);
 }
 
 extern "C" SEXP eigencore_lobpcg_dense_csc_b(SEXP A_, SEXP bi_, SEXP bp_,
                                              SEXP bx_, SEXP bdim_, SEXP k_,
                                              SEXP maxit_, SEXP target_kind_,
-                                             SEXP tol_, SEXP start_) {
+                                             SEXP tol_, SEXP start_,
+                                             SEXP lower_, SEXP diag_,
+                                             SEXP upper_,
+                                             SEXP constraints_) {
   if (!isReal(A_) || !isInteger(bi_) || !isInteger(bp_) ||
       !isReal(bx_) || !isInteger(bdim_) || !isReal(start_)) {
     error("invalid dense/CSC generalized LOBPCG inputs");
@@ -5269,7 +5515,13 @@ extern "C" SEXP eigencore_lobpcg_dense_csc_b(SEXP A_, SEXP bi_, SEXP bp_,
   const int maxit = static_cast<int>(asInteger(maxit_));
   const int target_kind = static_cast<int>(asInteger(target_kind_));
   const double tol = asReal(tol_);
+  const int use_tridiag = LENGTH(diag_) > 0;
   if (k < 1 || maxit < 1) error("k and maxit must be positive");
+  const double* constraints = nullptr;
+  int constraint_cols = 0;
+  if (lobpcg_constraint_matrix(constraints_, n, &constraints, &constraint_cols) != 0) {
+    error("constraints must be a double matrix with n rows");
+  }
 
   std::vector<double> X(static_cast<size_t>(n) * k, 0.0);
   std::vector<double> values(static_cast<size_t>(k), 0.0);
@@ -5277,7 +5529,7 @@ extern "C" SEXP eigencore_lobpcg_dense_csc_b(SEXP A_, SEXP bi_, SEXP bp_,
   std::vector<int> converged(static_cast<size_t>(k), 0);
   std::vector<double> hist_res(static_cast<size_t>(maxit), R_PosInf);
   std::vector<int> hist_nconv(static_cast<size_t>(maxit), 0);
-  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0;
+  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0, constraints_rank = 0;
   DenseColumnMajorOperator impl = {n, n, REAL(A_)};
   CSCOperator b_impl = {
     INTEGER(bdim_)[0], INTEGER(bdim_)[1], INTEGER(bi_), INTEGER(bp_), REAL(bx_)
@@ -5285,16 +5537,20 @@ extern "C" SEXP eigencore_lobpcg_dense_csc_b(SEXP A_, SEXP bi_, SEXP bp_,
   const int status = native_lobpcg_run(
     &impl, eigencore_dense_apply, &b_impl, eigencore_csc_apply,
     n, k, maxit, target_kind, tol, REAL(start_),
-    0, nullptr, nullptr, nullptr,
+    use_tridiag, LENGTH(lower_) ? REAL(lower_) : nullptr,
+    LENGTH(diag_) ? REAL(diag_) : nullptr,
+    LENGTH(upper_) ? REAL(upper_) : nullptr,
+    constraints, constraint_cols,
     X.data(), values.data(), residuals.data(), converged.data(),
     hist_res.data(), hist_nconv.data(), &iterations, &matvecs,
-    &preconditioner_calls, &q_rank);
+    &preconditioner_calls, &q_rank, &constraints_rank);
   if (status != 0) {
     error("native dense/CSC generalized LOBPCG failed with status=%d", status);
   }
   return lobpcg_pack_result(n, k, X.data(), values.data(), residuals.data(),
                             converged.data(), hist_res.data(), hist_nconv.data(),
-                            iterations, matvecs, preconditioner_calls, q_rank);
+                            iterations, matvecs, preconditioner_calls, q_rank,
+                            constraints_rank);
 }
 
 extern "C" SEXP eigencore_lobpcg_csc_diagonal_b(SEXP ai_, SEXP ap_, SEXP ax_,
@@ -5302,7 +5558,10 @@ extern "C" SEXP eigencore_lobpcg_csc_diagonal_b(SEXP ai_, SEXP ap_, SEXP ax_,
                                                 SEXP bunit_, SEXP k_,
                                                 SEXP maxit_,
                                                 SEXP target_kind_,
-                                                SEXP tol_, SEXP start_) {
+                                                SEXP tol_, SEXP start_,
+                                                SEXP lower_, SEXP diag_,
+                                                SEXP upper_,
+                                                SEXP constraints_) {
   if (!isInteger(ai_) || !isInteger(ap_) || !isReal(ax_) ||
       !isInteger(adim_) || !isReal(bdiag_) || !isReal(start_)) {
     error("invalid CSC/diagonal generalized LOBPCG inputs");
@@ -5321,7 +5580,13 @@ extern "C" SEXP eigencore_lobpcg_csc_diagonal_b(SEXP ai_, SEXP ap_, SEXP ax_,
   const int maxit = static_cast<int>(asInteger(maxit_));
   const int target_kind = static_cast<int>(asInteger(target_kind_));
   const double tol = asReal(tol_);
+  const int use_tridiag = LENGTH(diag_) > 0;
   if (k < 1 || maxit < 1) error("k and maxit must be positive");
+  const double* constraints = nullptr;
+  int constraint_cols = 0;
+  if (lobpcg_constraint_matrix(constraints_, n, &constraints, &constraint_cols) != 0) {
+    error("constraints must be a double matrix with n rows");
+  }
 
   std::vector<double> X(static_cast<size_t>(n) * k, 0.0);
   std::vector<double> values(static_cast<size_t>(k), 0.0);
@@ -5329,7 +5594,7 @@ extern "C" SEXP eigencore_lobpcg_csc_diagonal_b(SEXP ai_, SEXP ap_, SEXP ax_,
   std::vector<int> converged(static_cast<size_t>(k), 0);
   std::vector<double> hist_res(static_cast<size_t>(maxit), R_PosInf);
   std::vector<int> hist_nconv(static_cast<size_t>(maxit), 0);
-  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0;
+  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0, constraints_rank = 0;
   CSCOperator impl = {
     INTEGER(adim_)[0], INTEGER(adim_)[1], INTEGER(ai_), INTEGER(ap_), REAL(ax_)
   };
@@ -5337,23 +5602,30 @@ extern "C" SEXP eigencore_lobpcg_csc_diagonal_b(SEXP ai_, SEXP ap_, SEXP ax_,
   const int status = native_lobpcg_run(
     &impl, eigencore_csc_apply, &b_impl, eigencore_diagonal_apply,
     n, k, maxit, target_kind, tol, REAL(start_),
-    0, nullptr, nullptr, nullptr,
+    use_tridiag, LENGTH(lower_) ? REAL(lower_) : nullptr,
+    LENGTH(diag_) ? REAL(diag_) : nullptr,
+    LENGTH(upper_) ? REAL(upper_) : nullptr,
+    constraints, constraint_cols,
     X.data(), values.data(), residuals.data(), converged.data(),
     hist_res.data(), hist_nconv.data(), &iterations, &matvecs,
-    &preconditioner_calls, &q_rank);
+    &preconditioner_calls, &q_rank, &constraints_rank);
   if (status != 0) {
     error("native CSC/diagonal generalized LOBPCG failed with status=%d", status);
   }
   return lobpcg_pack_result(n, k, X.data(), values.data(), residuals.data(),
                             converged.data(), hist_res.data(), hist_nconv.data(),
-                            iterations, matvecs, preconditioner_calls, q_rank);
+                            iterations, matvecs, preconditioner_calls, q_rank,
+                            constraints_rank);
 }
 
 extern "C" SEXP eigencore_lobpcg_csc_csc_b(SEXP ai_, SEXP ap_, SEXP ax_,
                                            SEXP adim_, SEXP bi_, SEXP bp_,
                                            SEXP bx_, SEXP bdim_, SEXP k_,
                                            SEXP maxit_, SEXP target_kind_,
-                                           SEXP tol_, SEXP start_) {
+                                           SEXP tol_, SEXP start_,
+                                           SEXP lower_, SEXP diag_,
+                                           SEXP upper_,
+                                           SEXP constraints_) {
   if (!isInteger(ai_) || !isInteger(ap_) || !isReal(ax_) ||
       !isInteger(adim_) || !isInteger(bi_) || !isInteger(bp_) ||
       !isReal(bx_) || !isInteger(bdim_) || !isReal(start_)) {
@@ -5372,7 +5644,13 @@ extern "C" SEXP eigencore_lobpcg_csc_csc_b(SEXP ai_, SEXP ap_, SEXP ax_,
   const int maxit = static_cast<int>(asInteger(maxit_));
   const int target_kind = static_cast<int>(asInteger(target_kind_));
   const double tol = asReal(tol_);
+  const int use_tridiag = LENGTH(diag_) > 0;
   if (k < 1 || maxit < 1) error("k and maxit must be positive");
+  const double* constraints = nullptr;
+  int constraint_cols = 0;
+  if (lobpcg_constraint_matrix(constraints_, n, &constraints, &constraint_cols) != 0) {
+    error("constraints must be a double matrix with n rows");
+  }
 
   std::vector<double> X(static_cast<size_t>(n) * k, 0.0);
   std::vector<double> values(static_cast<size_t>(k), 0.0);
@@ -5380,7 +5658,7 @@ extern "C" SEXP eigencore_lobpcg_csc_csc_b(SEXP ai_, SEXP ap_, SEXP ax_,
   std::vector<int> converged(static_cast<size_t>(k), 0);
   std::vector<double> hist_res(static_cast<size_t>(maxit), R_PosInf);
   std::vector<int> hist_nconv(static_cast<size_t>(maxit), 0);
-  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0;
+  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0, constraints_rank = 0;
   CSCOperator impl = {
     INTEGER(adim_)[0], INTEGER(adim_)[1], INTEGER(ai_), INTEGER(ap_), REAL(ax_)
   };
@@ -5390,16 +5668,20 @@ extern "C" SEXP eigencore_lobpcg_csc_csc_b(SEXP ai_, SEXP ap_, SEXP ax_,
   const int status = native_lobpcg_run(
     &impl, eigencore_csc_apply, &b_impl, eigencore_csc_apply,
     n, k, maxit, target_kind, tol, REAL(start_),
-    0, nullptr, nullptr, nullptr,
+    use_tridiag, LENGTH(lower_) ? REAL(lower_) : nullptr,
+    LENGTH(diag_) ? REAL(diag_) : nullptr,
+    LENGTH(upper_) ? REAL(upper_) : nullptr,
+    constraints, constraint_cols,
     X.data(), values.data(), residuals.data(), converged.data(),
     hist_res.data(), hist_nconv.data(), &iterations, &matvecs,
-    &preconditioner_calls, &q_rank);
+    &preconditioner_calls, &q_rank, &constraints_rank);
   if (status != 0) {
     error("native CSC/CSC generalized LOBPCG failed with status=%d", status);
   }
   return lobpcg_pack_result(n, k, X.data(), values.data(), residuals.data(),
                             converged.data(), hist_res.data(), hist_nconv.data(),
-                            iterations, matvecs, preconditioner_calls, q_rank);
+                            iterations, matvecs, preconditioner_calls, q_rank,
+                            constraints_rank);
 }
 
 extern "C" SEXP eigencore_lobpcg_diagonal_diagonal_b(SEXP adiag_, SEXP aunit_,
@@ -5407,7 +5689,10 @@ extern "C" SEXP eigencore_lobpcg_diagonal_diagonal_b(SEXP adiag_, SEXP aunit_,
                                                      SEXP bunit_, SEXP k_,
                                                      SEXP maxit_,
                                                      SEXP target_kind_,
-                                                     SEXP tol_, SEXP start_) {
+                                                     SEXP tol_, SEXP start_,
+                                                     SEXP lower_, SEXP diag_,
+                                                     SEXP upper_,
+                                                     SEXP constraints_) {
   if (!isReal(adiag_) || !isInteger(adim_) || !isReal(bdiag_) ||
       !isReal(start_)) {
     error("invalid diagonal/diagonal generalized LOBPCG inputs");
@@ -5427,7 +5712,13 @@ extern "C" SEXP eigencore_lobpcg_diagonal_diagonal_b(SEXP adiag_, SEXP aunit_,
   const int maxit = static_cast<int>(asInteger(maxit_));
   const int target_kind = static_cast<int>(asInteger(target_kind_));
   const double tol = asReal(tol_);
+  const int use_tridiag = LENGTH(diag_) > 0;
   if (k < 1 || maxit < 1) error("k and maxit must be positive");
+  const double* constraints = nullptr;
+  int constraint_cols = 0;
+  if (lobpcg_constraint_matrix(constraints_, n, &constraints, &constraint_cols) != 0) {
+    error("constraints must be a double matrix with n rows");
+  }
 
   std::vector<double> X(static_cast<size_t>(n) * k, 0.0);
   std::vector<double> values(static_cast<size_t>(k), 0.0);
@@ -5435,28 +5726,184 @@ extern "C" SEXP eigencore_lobpcg_diagonal_diagonal_b(SEXP adiag_, SEXP aunit_,
   std::vector<int> converged(static_cast<size_t>(k), 0);
   std::vector<double> hist_res(static_cast<size_t>(maxit), R_PosInf);
   std::vector<int> hist_nconv(static_cast<size_t>(maxit), 0);
-  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0;
+  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0, constraints_rank = 0;
   DiagonalOperator impl = {n, REAL(adiag_), a_unit};
   DiagonalOperator b_impl = {n, REAL(bdiag_), b_unit};
   const int status = native_lobpcg_run(
     &impl, eigencore_diagonal_apply, &b_impl, eigencore_diagonal_apply,
     n, k, maxit, target_kind, tol, REAL(start_),
-    0, nullptr, nullptr, nullptr,
+    use_tridiag, LENGTH(lower_) ? REAL(lower_) : nullptr,
+    LENGTH(diag_) ? REAL(diag_) : nullptr,
+    LENGTH(upper_) ? REAL(upper_) : nullptr,
+    constraints, constraint_cols,
     X.data(), values.data(), residuals.data(), converged.data(),
     hist_res.data(), hist_nconv.data(), &iterations, &matvecs,
-    &preconditioner_calls, &q_rank);
+    &preconditioner_calls, &q_rank, &constraints_rank);
   if (status != 0) {
     error("native diagonal/diagonal generalized LOBPCG failed with status=%d", status);
   }
   return lobpcg_pack_result(n, k, X.data(), values.data(), residuals.data(),
                             converged.data(), hist_res.data(), hist_nconv.data(),
-                            iterations, matvecs, preconditioner_calls, q_rank);
+                            iterations, matvecs, preconditioner_calls, q_rank,
+                            constraints_rank);
+}
+
+static SEXP lobpcg_run_matrix_free_b(void* impl,
+                                     EigencoreApplyFn apply,
+                                     int n,
+                                     int k,
+                                     int maxit,
+                                     int target_kind,
+                                     double tol,
+                                     const double* start,
+                                     SEXP B_apply_,
+                                     SEXP lower_,
+                                     SEXP diag_,
+                                     SEXP upper_,
+                                     SEXP constraints_,
+                                     const char* label) {
+  if (TYPEOF(B_apply_) != CLOSXP) {
+    error("matrix-free B operator apply must be an R closure");
+  }
+  const int use_tridiag = LENGTH(diag_) > 0;
+  const double* constraints = nullptr;
+  int constraint_cols = 0;
+  if (lobpcg_constraint_matrix(constraints_, n, &constraints, &constraint_cols) != 0) {
+    error("constraints must be a double matrix with n rows");
+  }
+
+  std::vector<double> X(static_cast<size_t>(n) * k, 0.0);
+  std::vector<double> values(static_cast<size_t>(k), 0.0);
+  std::vector<double> residuals(static_cast<size_t>(k), R_PosInf);
+  std::vector<int> converged(static_cast<size_t>(k), 0);
+  std::vector<double> hist_res(static_cast<size_t>(maxit), R_PosInf);
+  std::vector<int> hist_nconv(static_cast<size_t>(maxit), 0);
+  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0, constraints_rank = 0;
+  RApplyOperator b_impl = {n, B_apply_};
+  const int status = native_lobpcg_run(
+    impl, apply, &b_impl, eigencore_r_operator_apply,
+    n, k, maxit, target_kind, tol, start,
+    use_tridiag, LENGTH(lower_) ? REAL(lower_) : nullptr,
+    LENGTH(diag_) ? REAL(diag_) : nullptr,
+    LENGTH(upper_) ? REAL(upper_) : nullptr,
+    constraints, constraint_cols,
+    X.data(), values.data(), residuals.data(), converged.data(),
+    hist_res.data(), hist_nconv.data(), &iterations, &matvecs,
+    &preconditioner_calls, &q_rank, &constraints_rank);
+  if (status != 0) {
+    error("native %s matrix-free-B LOBPCG failed with status=%d", label, status);
+  }
+  return lobpcg_pack_result(n, k, X.data(), values.data(), residuals.data(),
+                            converged.data(), hist_res.data(), hist_nconv.data(),
+                            iterations, matvecs, preconditioner_calls, q_rank,
+                            constraints_rank);
+}
+
+extern "C" SEXP eigencore_lobpcg_dense_operator_b(SEXP A_, SEXP B_apply_,
+                                                  SEXP k_, SEXP maxit_,
+                                                  SEXP target_kind_,
+                                                  SEXP tol_, SEXP start_,
+                                                  SEXP lower_, SEXP diag_,
+                                                  SEXP upper_,
+                                                  SEXP constraints_) {
+  if (!isReal(A_) || !isReal(start_)) {
+    error("A and start must be double");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimS = getAttrib(start_, R_DimSymbol);
+  if (dimA == R_NilValue || dimS == R_NilValue) {
+    error("A and start must be matrices");
+  }
+  const int n = INTEGER(dimA)[0];
+  const int k = static_cast<int>(asInteger(k_));
+  if (INTEGER(dimA)[1] != n || INTEGER(dimS)[0] != n || INTEGER(dimS)[1] != k) {
+    error("non-conformable dense/matrix-free generalized LOBPCG inputs");
+  }
+  const int maxit = static_cast<int>(asInteger(maxit_));
+  const int target_kind = static_cast<int>(asInteger(target_kind_));
+  const double tol = asReal(tol_);
+  if (k < 1 || maxit < 1) error("k and maxit must be positive");
+  DenseColumnMajorOperator impl = {n, n, REAL(A_)};
+  return lobpcg_run_matrix_free_b(
+    &impl, eigencore_dense_apply, n, k, maxit, target_kind, tol, REAL(start_),
+    B_apply_, lower_, diag_, upper_, constraints_, "dense");
+}
+
+extern "C" SEXP eigencore_lobpcg_csc_operator_b(SEXP ai_, SEXP ap_, SEXP ax_,
+                                                SEXP adim_, SEXP B_apply_,
+                                                SEXP k_, SEXP maxit_,
+                                                SEXP target_kind_,
+                                                SEXP tol_, SEXP start_,
+                                                SEXP lower_, SEXP diag_,
+                                                SEXP upper_,
+                                                SEXP constraints_) {
+  if (!isInteger(ai_) || !isInteger(ap_) || !isReal(ax_) ||
+      !isInteger(adim_) || !isReal(start_)) {
+    error("invalid CSC/matrix-free generalized LOBPCG inputs");
+  }
+  SEXP dimS = getAttrib(start_, R_DimSymbol);
+  if (dimS == R_NilValue || LENGTH(adim_) != 2) {
+    error("start must be a matrix and A dim must have length 2");
+  }
+  const int n = INTEGER(adim_)[0];
+  const int k = static_cast<int>(asInteger(k_));
+  if (INTEGER(adim_)[1] != n || INTEGER(dimS)[0] != n || INTEGER(dimS)[1] != k) {
+    error("non-conformable CSC/matrix-free generalized LOBPCG inputs");
+  }
+  const int maxit = static_cast<int>(asInteger(maxit_));
+  const int target_kind = static_cast<int>(asInteger(target_kind_));
+  const double tol = asReal(tol_);
+  if (k < 1 || maxit < 1) error("k and maxit must be positive");
+  CSCOperator impl = {
+    INTEGER(adim_)[0], INTEGER(adim_)[1], INTEGER(ai_), INTEGER(ap_), REAL(ax_)
+  };
+  return lobpcg_run_matrix_free_b(
+    &impl, eigencore_csc_apply, n, k, maxit, target_kind, tol, REAL(start_),
+    B_apply_, lower_, diag_, upper_, constraints_, "CSC");
+}
+
+extern "C" SEXP eigencore_lobpcg_diagonal_operator_b(SEXP adiag_,
+                                                     SEXP aunit_,
+                                                     SEXP adim_,
+                                                     SEXP B_apply_,
+                                                     SEXP k_,
+                                                     SEXP maxit_,
+                                                     SEXP target_kind_,
+                                                     SEXP tol_,
+                                                     SEXP start_,
+                                                     SEXP lower_,
+                                                     SEXP diag_,
+                                                     SEXP upper_,
+                                                     SEXP constraints_) {
+  if (!isReal(adiag_) || !isInteger(adim_) || !isReal(start_)) {
+    error("invalid diagonal/matrix-free generalized LOBPCG inputs");
+  }
+  SEXP dimS = getAttrib(start_, R_DimSymbol);
+  if (dimS == R_NilValue || LENGTH(adim_) != 2) {
+    error("start must be a matrix and A dim must have length 2");
+  }
+  const int n = INTEGER(adim_)[0];
+  const int k = static_cast<int>(asInteger(k_));
+  const bool a_unit = asLogical(aunit_) == TRUE;
+  if (INTEGER(adim_)[1] != n || INTEGER(dimS)[0] != n || INTEGER(dimS)[1] != k ||
+      (!a_unit && LENGTH(adiag_) != n)) {
+    error("non-conformable diagonal/matrix-free generalized LOBPCG inputs");
+  }
+  const int maxit = static_cast<int>(asInteger(maxit_));
+  const int target_kind = static_cast<int>(asInteger(target_kind_));
+  const double tol = asReal(tol_);
+  if (k < 1 || maxit < 1) error("k and maxit must be positive");
+  DiagonalOperator impl = {n, REAL(adiag_), a_unit};
+  return lobpcg_run_matrix_free_b(
+    &impl, eigencore_diagonal_apply, n, k, maxit, target_kind, tol, REAL(start_),
+    B_apply_, lower_, diag_, upper_, constraints_, "diagonal");
 }
 
 extern "C" SEXP eigencore_lobpcg_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                      SEXP k_, SEXP maxit_, SEXP target_kind_,
                                      SEXP tol_, SEXP start_, SEXP lower_,
-                                     SEXP diag_, SEXP upper_) {
+                                     SEXP diag_, SEXP upper_,
+                                     SEXP constraints_) {
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(start_)) {
     error("invalid CSC LOBPCG inputs");
@@ -5475,6 +5922,11 @@ extern "C" SEXP eigencore_lobpcg_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   const double tol = asReal(tol_);
   const int use_tridiag = LENGTH(diag_) > 0;
   if (k < 1 || maxit < 1) error("k and maxit must be positive");
+  const double* constraints = nullptr;
+  int constraint_cols = 0;
+  if (lobpcg_constraint_matrix(constraints_, n, &constraints, &constraint_cols) != 0) {
+    error("constraints must be a double matrix with n rows");
+  }
 
   std::vector<double> X(static_cast<size_t>(n) * k, 0.0);
   std::vector<double> values(static_cast<size_t>(k), 0.0);
@@ -5482,7 +5934,7 @@ extern "C" SEXP eigencore_lobpcg_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   std::vector<int> converged(static_cast<size_t>(k), 0);
   std::vector<double> hist_res(static_cast<size_t>(maxit), R_PosInf);
   std::vector<int> hist_nconv(static_cast<size_t>(maxit), 0);
-  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0;
+  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0, constraints_rank = 0;
   CSCOperator impl = {n, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
   const int status = native_lobpcg_run(
     &impl, eigencore_csc_apply, nullptr, nullptr,
@@ -5490,15 +5942,17 @@ extern "C" SEXP eigencore_lobpcg_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
     use_tridiag, LENGTH(lower_) ? REAL(lower_) : nullptr,
     LENGTH(diag_) ? REAL(diag_) : nullptr,
     LENGTH(upper_) ? REAL(upper_) : nullptr,
+    constraints, constraint_cols,
     X.data(), values.data(), residuals.data(), converged.data(),
     hist_res.data(), hist_nconv.data(), &iterations, &matvecs,
-    &preconditioner_calls, &q_rank);
+    &preconditioner_calls, &q_rank, &constraints_rank);
   if (status != 0) {
     error("native CSC LOBPCG failed with status=%d", status);
   }
   return lobpcg_pack_result(n, k, X.data(), values.data(), residuals.data(),
                             converged.data(), hist_res.data(), hist_nconv.data(),
-                            iterations, matvecs, preconditioner_calls, q_rank);
+                            iterations, matvecs, preconditioner_calls, q_rank,
+                            constraints_rank);
 }
 
 extern "C" SEXP eigencore_lobpcg_csc_shifted_tridiagonal(
@@ -5549,21 +6003,23 @@ extern "C" SEXP eigencore_lobpcg_csc_shifted_tridiagonal(
   std::vector<int> converged(static_cast<size_t>(k), 0);
   std::vector<double> hist_res(static_cast<size_t>(maxit), R_PosInf);
   std::vector<int> hist_nconv(static_cast<size_t>(maxit), 0);
-  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0;
+  int iterations = 0, matvecs = 0, preconditioner_calls = 0, q_rank = 0, constraints_rank = 0;
   CSCOperator impl = {n, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
   const int status = native_lobpcg_run(
     &impl, eigencore_csc_apply, nullptr, nullptr,
     n, k, maxit, target_kind, tol, REAL(start_),
     1, lower.data(), diag.data(), upper.data(),
+    nullptr, 0,
     X.data(), values.data(), residuals.data(), converged.data(),
     hist_res.data(), hist_nconv.data(), &iterations, &matvecs,
-    &preconditioner_calls, &q_rank);
+    &preconditioner_calls, &q_rank, &constraints_rank);
   if (status != 0) {
     error("native CSC shifted-tridiagonal LOBPCG failed with status=%d", status);
   }
   return lobpcg_pack_result(n, k, X.data(), values.data(), residuals.data(),
                             converged.data(), hist_res.data(), hist_nconv.data(),
-                            iterations, matvecs, preconditioner_calls, q_rank);
+                            iterations, matvecs, preconditioner_calls, q_rank,
+                            constraints_rank);
 }
 
 extern "C" SEXP eigencore_thick_restart_lanczos_dense(SEXP A_, SEXP k_,
@@ -7446,14 +7902,17 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_block_lanczos_csc", (DL_FUNC) &eigencore_block_lanczos_csc, 10},
   {"eigencore_block_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_block_thick_restart_lanczos_dense, 9},
   {"eigencore_block_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_block_thick_restart_lanczos_csc, 12},
-  {"eigencore_lobpcg_dense", (DL_FUNC) &eigencore_lobpcg_dense, 9},
-  {"eigencore_lobpcg_dense_dense_b", (DL_FUNC) &eigencore_lobpcg_dense_dense_b, 7},
-  {"eigencore_lobpcg_dense_diagonal_b", (DL_FUNC) &eigencore_lobpcg_dense_diagonal_b, 8},
-  {"eigencore_lobpcg_dense_csc_b", (DL_FUNC) &eigencore_lobpcg_dense_csc_b, 10},
-  {"eigencore_lobpcg_csc_diagonal_b", (DL_FUNC) &eigencore_lobpcg_csc_diagonal_b, 11},
-  {"eigencore_lobpcg_csc_csc_b", (DL_FUNC) &eigencore_lobpcg_csc_csc_b, 13},
-  {"eigencore_lobpcg_diagonal_diagonal_b", (DL_FUNC) &eigencore_lobpcg_diagonal_diagonal_b, 10},
-  {"eigencore_lobpcg_csc", (DL_FUNC) &eigencore_lobpcg_csc, 12},
+  {"eigencore_lobpcg_dense", (DL_FUNC) &eigencore_lobpcg_dense, 10},
+  {"eigencore_lobpcg_dense_dense_b", (DL_FUNC) &eigencore_lobpcg_dense_dense_b, 11},
+  {"eigencore_lobpcg_dense_diagonal_b", (DL_FUNC) &eigencore_lobpcg_dense_diagonal_b, 12},
+  {"eigencore_lobpcg_dense_csc_b", (DL_FUNC) &eigencore_lobpcg_dense_csc_b, 14},
+  {"eigencore_lobpcg_csc_diagonal_b", (DL_FUNC) &eigencore_lobpcg_csc_diagonal_b, 15},
+  {"eigencore_lobpcg_csc_csc_b", (DL_FUNC) &eigencore_lobpcg_csc_csc_b, 17},
+  {"eigencore_lobpcg_diagonal_diagonal_b", (DL_FUNC) &eigencore_lobpcg_diagonal_diagonal_b, 14},
+  {"eigencore_lobpcg_dense_operator_b", (DL_FUNC) &eigencore_lobpcg_dense_operator_b, 11},
+  {"eigencore_lobpcg_csc_operator_b", (DL_FUNC) &eigencore_lobpcg_csc_operator_b, 14},
+  {"eigencore_lobpcg_diagonal_operator_b", (DL_FUNC) &eigencore_lobpcg_diagonal_operator_b, 13},
+  {"eigencore_lobpcg_csc", (DL_FUNC) &eigencore_lobpcg_csc, 13},
   {"eigencore_lobpcg_csc_shifted_tridiagonal", (DL_FUNC) &eigencore_lobpcg_csc_shifted_tridiagonal, 10},
   {"eigencore_orthogonality_loss", (DL_FUNC) &eigencore_orthogonality_loss, 2},
   {"eigencore_dense_eigen_residuals", (DL_FUNC) &eigencore_dense_eigen_residuals, 4},

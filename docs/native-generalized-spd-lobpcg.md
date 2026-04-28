@@ -2,7 +2,7 @@
 
 ## Goal
 
-Extend the native standard Hermitian LOBPCG prototype to first-class
+Extend the native standard Hermitian LOBPCG path to first-class
 generalized SPD problems:
 
 ```text
@@ -74,10 +74,11 @@ The planner may use a native generalized LOBPCG label only when all are true:
   the generalized residual;
 - certification can compute residuals in original coordinates.
 
-The current implementation may use a native generalized prototype label for
+The promoted implementation uses the production native generalized label for
 built-in dense, diagonal, and CSC operator slices that satisfy those
-constraints. Matrix-free `B`, generalized preconditioners, and production
-promotion remain outside the gate.
+constraints. Matrix-free `B` can also stay in the native C++ LOBPCG loop via
+the operator apply callback when the operator carries explicit SPD metadata.
+Untyped or R-only preconditioners remain honest reference fallbacks.
 
 ## First Implementation Slices
 
@@ -94,3 +95,37 @@ promotion remain outside the gate.
    residuals against `A X - B X Lambda`.
 5. Promote planner labels only after dense and sparse generalized adversarial
    tests pass.
+
+## Current Promotion Boundary
+
+The planner now promotes supported built-in generalized SPD problems to:
+
+```text
+native generalized SPD LOBPCG (B-orthogonal, residual certified)
+```
+
+Promotion requires:
+
+- Hermitian `A` and `B`;
+- supported target semantics (`largest`, `smallest`, largest/smallest
+  magnitude);
+- dense, `dgCMatrix`, or diagonal built-in operator combinations supported by
+  the native loop;
+- explicit positive-definiteness evidence for `B` from dense Cholesky,
+  sparse Cholesky, positive diagonal metadata, or matrix-free operator metadata
+  such as `positive_definite = TRUE`;
+- no preconditioner or the native shifted-tridiagonal preconditioner;
+- optional constraints supplied as a dense deflation basis.
+
+`auto()` uses this native path for structured sparse/diagonal generalized
+problems without falling back to dense materialization, and for sufficiently
+large partial dense generalized problems. Small near-full dense generalized
+requests may still use the dense generalized LAPACK fallback.
+
+Matrix-free `B` without explicit SPD evidence is supported by an honest
+reference LOBPCG fallback when the operator supplies enough norm metadata for
+certification, and `auto()` routes there instead of trying to densify the
+operator. Explicit built-in `B` inputs that fail the SPD check are rejected
+before iteration rather than being promoted. User-supplied constraints are now
+projected inside the native C++ loop and deflate known nullspaces in the
+Euclidean or `B`-inner product.

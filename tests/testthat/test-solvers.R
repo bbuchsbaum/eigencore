@@ -132,7 +132,7 @@ test_that("native generalized SPD LOBPCG supports sparse CSC A and sparse CSC B"
   expect_true("native_csc_b_mgs2" %in% fit$restart$orthogonalization_methods)
 })
 
-test_that("preconditioned generalized SPD LOBPCG stays on honest reference fallback", {
+test_that("preconditioned generalized SPD LOBPCG uses native shifted-tridiagonal path", {
   A <- Matrix::Diagonal(x = c(1, 4, 9, 16, 25))
   B <- Matrix::Diagonal(x = c(1, 2, 3, 4, 5))
   preconditioner <- shifted_tridiagonal_preconditioner(
@@ -148,15 +148,22 @@ test_that("preconditioned generalized SPD LOBPCG stays on honest reference fallb
     preconditioner = preconditioner,
     Bop = as_operator(B)
   ))
-  expect_equal(plan$method, "reference generalized SPD LOBPCG prototype")
+  expect_true(eigencore:::native_generalized_lobpcg_supported(
+    as_operator(A),
+    as_operator(B),
+    target = smallest(),
+    preconditioner = preconditioner
+  ))
+  expect_equal(plan$method, eigencore:::native_generalized_lobpcg_label())
 
   fit <- eig_partial(A, B = B, k = 2, target = smallest(),
                      method = lobpcg(maxit = 50L, preconditioner = preconditioner),
                      seed = 30, tol = 1e-8)
 
-  expect_equal(fit$method, "reference generalized SPD LOBPCG prototype")
-  expect_false(fit$restart$native)
+  expect_equal(fit$method, eigencore:::native_generalized_lobpcg_label())
+  expect_true(fit$restart$native)
   expect_true(fit$restart$generalized)
+  expect_true(fit$restart$preconditioner_native)
   expect_true(certificate(fit)$passed)
 })
 

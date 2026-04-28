@@ -40,22 +40,36 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
       maxit = maxit, vectors = vectors, certify = certify, plan = plan
     ))
   }
-  if (inherits(method, "eigencore_method") && identical(method$kind, "lobpcg")) {
+  use_lobpcg_method <- inherits(method, "eigencore_method") && identical(method$kind, "lobpcg")
+  use_auto_generalized_lobpcg <- inherits(method, "eigencore_method") &&
+    identical(method$kind, "auto") &&
+    identical(plan$method, native_generalized_lobpcg_label())
+  use_auto_reference_generalized_lobpcg <- inherits(method, "eigencore_method") &&
+    identical(method$kind, "auto") &&
+    identical(plan$method, reference_generalized_lobpcg_label())
+  if (use_lobpcg_method || use_auto_generalized_lobpcg || use_auto_reference_generalized_lobpcg) {
     if (!identical(a$structure$kind, "hermitian")) {
       stop("lobpcg() prototype currently requires a Hermitian eigenproblem.", call. = FALSE)
     }
+    controls <- plan$controls %||% list()
+    method_preconditioner <- if (use_lobpcg_method) method$preconditioner else NULL
+    method_constraints <- if (use_lobpcg_method) method$constraints else NULL
+    method_maxit <- maxit %||% controls$maxit %||%
+      if (use_lobpcg_method) method$maxit else getOption("eigencore.lobpcg_maxit", 200L)
     use_native_lobpcg <- native_lobpcg_supported(
       a$A,
       target = a$target,
-      preconditioner = method$preconditioner,
-      Bop = a$metric
+      preconditioner = method_preconditioner,
+      Bop = a$metric,
+      constraints = method_constraints
     )
     use_native_generalized_lobpcg <- !use_native_lobpcg && !is.null(a$metric) &&
       native_generalized_lobpcg_supported(
         a$A,
         a$metric,
         target = a$target,
-        preconditioner = method$preconditioner
+        preconditioner = method_preconditioner,
+        constraints = method_constraints
       )
     iter <- if (use_native_lobpcg) {
       native_lobpcg_hermitian(
@@ -63,8 +77,9 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
         k = k,
         target = a$target,
         tol = tol,
-        maxit = maxit %||% method$maxit,
-        preconditioner = method$preconditioner
+        maxit = method_maxit,
+        preconditioner = method_preconditioner,
+        constraints = method_constraints
       )
     } else if (use_native_generalized_lobpcg) {
       native_generalized_lobpcg_hermitian(
@@ -73,7 +88,9 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
         k = k,
         target = a$target,
         tol = tol,
-        maxit = maxit %||% method$maxit
+        maxit = method_maxit,
+        preconditioner = method_preconditioner,
+        constraints = method_constraints
       )
     } else {
       reference_lobpcg_hermitian(
@@ -81,17 +98,18 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
         k = k,
         target = a$target,
         tol = tol,
-        maxit = maxit %||% method$maxit,
-        preconditioner = method$preconditioner,
-        Bop = a$metric
+        maxit = method_maxit,
+        preconditioner = method_preconditioner,
+        Bop = a$metric,
+        constraints = method_constraints
       )
     }
     warning_msg <- if (!isTRUE(iter$certificate$passed)) {
-      paste0(plan$method, " exhausted ", maxit %||% method$maxit,
+      paste0(plan$method, " exhausted ", method_maxit,
              " iterations before all ", k, " requested pairs converged")
     } else if (isTRUE(iter$native)) {
       if (isTRUE(iter$generalized)) {
-        "using native generalized SPD LOBPCG prototype slice for built-in A/B operators; production generalized preconditioning is not yet implemented"
+        character()
       } else {
         "using native standard LOBPCG prototype; locking/generalized production path not yet implemented"
       }
@@ -128,8 +146,10 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
         preconditioner_native = isTRUE(iter$preconditioner$native),
         preconditioner_calls = iter$preconditioner_calls,
         preconditioner = iter$preconditioner,
+        constrained = isTRUE(iter$constrained),
+        constraints_rank = iter$constraints_rank %||% 0L,
         generalized = isTRUE(iter$generalized),
-        maxit = maxit %||% method$maxit,
+        maxit = method_maxit,
         q_rank_final = iter$q_rank_final %||% NA_integer_
       ),
       locked = which(iter$certificate$converged),
