@@ -8,23 +8,8 @@ iterations <- if (is.na(args$iterations)) {
 } else {
   args$iterations
 }
-methods <- c(
-  "eigencore",
-  "eigencore_golub_kahan",
-  "eigencore_randomized",
-  "RSpectra",
-  "PRIMME",
-  "irlba",
-  "rsvd",
-  "base"
-)
-if (isTRUE(args$svd_projected_stop)) {
-  methods <- append(methods, "eigencore_golub_kahan_projected", after = 2L)
-}
-if (!is.null(args$methods)) {
-  methods <- args$methods
-}
-gate_subject <- args$subject %||% "eigencore"
+methods <- svd_surface_default_methods(args)
+gate_subject <- svd_surface_gate_subject(args, methods)
 
 rank_deficient_sparse <- function(m, n, intrinsic_rank, density = 0.1, seed = 1L) {
   set.seed(seed)
@@ -186,7 +171,11 @@ row.names(gates) <- NULL
 print(gates)
 
 projected_comparison <- NULL
-if (isTRUE(args$svd_projected_stop)) {
+has_projected_pair <- all(c(
+  "eigencore_golub_kahan",
+  "eigencore_golub_kahan_projected"
+) %in% result$method)
+if (isTRUE(args$svd_projected_stop) || isTRUE(args$h_candidate) || has_projected_pair) {
   projected_comparison <- projected_stop_comparison(result)
   print(projected_comparison)
 }
@@ -204,7 +193,7 @@ if (args$save) {
 
 if (args$strict) {
   if (!nrow(gates)) {
-    stop("SVD surface strict mode requires eigencore and at least one external reference.", call. = FALSE)
+    stop("SVD surface strict mode requires the gate subject and at least one external reference.", call. = FALSE)
   }
   if (!all(gates$passed)) {
     stop("SVD surface benchmark failed PRD release gate.", call. = FALSE)

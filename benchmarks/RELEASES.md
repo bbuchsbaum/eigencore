@@ -26,10 +26,13 @@ they are machine-dependent.
   certificate.
 - G1 quick tuning grid captured in
   `inst/benchmarks/baselines/g1_tuning_quick.csv`.
-- H SVD surface benchmark now supports `--subject=<method>`, so projected
-  Golub-Kahan candidate rows can be gated directly against external references
-  without changing the default `eigencore` SVD release gate. A quick
-  `eigencore_golub_kahan_projected` subject check certifies sampled
+- H SVD surface benchmark now supports `--subject=<method>` and the
+  `--h-candidate` preset, so projected Golub-Kahan candidate rows can be gated
+  directly against external references without changing the default `eigencore`
+  SVD release gate. The preset selects `eigencore_golub_kahan_projected` as the
+  subject, keeps the plain Golub-Kahan row for projected-stop comparison, and
+  errors if the requested gate subject is absent. A quick projected subject
+  check certifies sampled
   wide-sparse and clustered-dense rows, but remains well below the `1.5x` SVD
   speed gate and memory parity; H is still a performance milestone.
 - G1 native block Hermitian Lanczos is promoted for benchmark-proven regimes.

@@ -35,11 +35,59 @@ benchmark_args <- function(args = commandArgs(trailingOnly = TRUE)) {
     block_candidate = "--block-candidate" %in% args,
     include_dense = "--include-dense" %in% args,
     svd_projected_stop = "--projected-stop" %in% args,
+    h_candidate = "--h-candidate" %in% args,
     iterations = iterations,
     subject = benchmark_arg_value(args, "--subject="),
     methods = benchmark_arg_csv(args, "--methods="),
     cases = benchmark_arg_csv(args, "--cases=")
   )
+}
+
+svd_surface_default_methods <- function(args) {
+  methods <- c(
+    "eigencore",
+    "eigencore_golub_kahan",
+    "eigencore_randomized",
+    "RSpectra",
+    "PRIMME",
+    "irlba",
+    "rsvd",
+    "base"
+  )
+  if (isTRUE(args$svd_projected_stop)) {
+    methods <- append(methods, "eigencore_golub_kahan_projected", after = 2L)
+  }
+  if (isTRUE(args$h_candidate)) {
+    methods <- c(
+      "eigencore_golub_kahan",
+      "eigencore_golub_kahan_projected",
+      "RSpectra",
+      "PRIMME",
+      "irlba",
+      "rsvd",
+      "base"
+    )
+  }
+  if (!is.null(args$methods)) {
+    methods <- args$methods
+  }
+  methods
+}
+
+svd_surface_gate_subject <- function(args, methods) {
+  subject <- args$subject %||% if (isTRUE(args$h_candidate)) {
+    "eigencore_golub_kahan_projected"
+  } else {
+    "eigencore"
+  }
+  if (!subject %in% methods) {
+    stop(
+      "SVD gate subject `", subject, "` is not in the selected methods. ",
+      "Use --methods=... to include it, --projected-stop, or --h-candidate.",
+      call. = FALSE
+    )
+  }
+  subject
 }
 
 release_speed_gate <- function(kind) {

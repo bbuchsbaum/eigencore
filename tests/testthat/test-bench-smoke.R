@@ -105,6 +105,7 @@ test_that("benchmark argument parser keeps dense diagnostics opt-in", {
   expect_true(benchmark_args(c("--quick", "--block-candidate"))$quick)
   expect_false(benchmark_args(c("--quick", "--block-candidate"))$include_dense)
   expect_true(benchmark_args("--projected-stop")$svd_projected_stop)
+  expect_true(benchmark_args("--h-candidate")$h_candidate)
   expect_equal(benchmark_args("--iterations=2")$iterations, 2L)
   expect_equal(benchmark_args("--subject=eigencore_golub_kahan_projected")$subject,
                "eigencore_golub_kahan_projected")
@@ -126,15 +127,53 @@ test_that("SVD surface benchmark script is available", {
   expect_true(any(grepl("eigencore_golub_kahan", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_golub_kahan_projected", lines, fixed = TRUE)))
   expect_true(any(grepl("svd_projected_stop", lines, fixed = TRUE)))
+  expect_true(any(grepl("h_candidate", lines, fixed = TRUE)))
   expect_true(any(grepl("projected_stop_comparison", lines, fixed = TRUE)))
   expect_true(any(grepl("gate_subject", lines, fixed = TRUE)))
-  expect_true(any(grepl("args$subject", lines, fixed = TRUE)))
-  expect_true(any(grepl("args$methods", lines, fixed = TRUE)))
+  expect_true(any(grepl("svd_surface_gate_subject", lines, fixed = TRUE)))
+  expect_true(any(grepl("svd_surface_default_methods", lines, fixed = TRUE)))
   expect_true(any(grepl("args$cases", lines, fixed = TRUE)))
   expect_true(any(grepl("rank_deficient_sparse", lines, fixed = TRUE)))
   expect_true(any(grepl("clustered_dense", lines, fixed = TRUE)))
   expect_true(any(grepl("slow_decay_dense", lines, fixed = TRUE)))
   expect_true(any(grepl("benchmark_svd_case", lines, fixed = TRUE)))
+})
+
+test_that("SVD surface H candidate preset selects projected GK subject", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+
+  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
+  if (!nzchar(helper_path)) {
+    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
+  }
+  source(helper_path)
+
+  args <- benchmark_args("--h-candidate")
+  methods <- svd_surface_default_methods(args)
+  expect_equal(methods[[1L]], "eigencore_golub_kahan")
+  expect_true("eigencore_golub_kahan_projected" %in% methods)
+  expect_false("eigencore" %in% methods)
+  expect_equal(
+    svd_surface_gate_subject(args, methods),
+    "eigencore_golub_kahan_projected"
+  )
+
+  args <- benchmark_args("--subject=eigencore_golub_kahan_projected")
+  methods <- svd_surface_default_methods(args)
+  expect_error(
+    svd_surface_gate_subject(args, methods),
+    "not in the selected methods"
+  )
+
+  args <- benchmark_args(c(
+    "--subject=eigencore_golub_kahan_projected",
+    "--projected-stop"
+  ))
+  methods <- svd_surface_default_methods(args)
+  expect_equal(
+    svd_surface_gate_subject(args, methods),
+    "eigencore_golub_kahan_projected"
+  )
 })
 
 test_that("SVD benchmark harness exposes Golub-Kahan candidate separately", {

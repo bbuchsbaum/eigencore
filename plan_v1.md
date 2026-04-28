@@ -323,9 +323,13 @@ only, while non-quick `--strict` enforces the speed/memory/parity release gate:
   candidate comparisons are saved in the same surface table. It also accepts
   `--subject=<method>`, so H candidate rows such as
   `eigencore_golub_kahan_projected` can be gated directly against external
-  references without changing the default `eigencore` release gate. The first
-  quick projected-stop surface run certified the projected candidate rows and showed
-  useful but uneven movement: wide sparse dropped from about `60/120`
+  references without changing the default `eigencore` release gate. The
+  `--h-candidate` preset now selects the projected Golub-Kahan row as the gate
+  subject, includes the plain Golub-Kahan row for on/off comparison, includes
+  external references, and fails early if a requested `--subject` is missing
+  from the selected methods. The first quick projected-stop surface run
+  certified the projected candidate rows and showed useful but uneven movement:
+  wide sparse dropped from about `60/120`
   iterations/matvecs to `50/100`, clustered dense from `44/88` to `24/48`,
   slow-decay dense from `44/88` to `36/72`, while tall, rank-deficient sparse,
   and low-rank sparse did not stop early. The stop policy now also records
