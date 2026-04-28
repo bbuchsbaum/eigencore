@@ -535,7 +535,7 @@ Working status against the sequenced milestones:
 | F | largely done for current paths | Native ortho and certificate kernels exist, but not every future solver path is fully native-certificate-backed. |
 | G0 | done | Native scalar Hermitian staging path exists and certifies on dense/CSC cases. |
 | G1 | done | Promoted native block Hermitian Lanczos runs by default in benchmark-proven regimes; strict Hermitian sparse and dense regression gates pass against certified RSpectra/PRIMME references. |
-| H | staged, not complete | Native Golub-Kahan exists as a staging path; production thick-restart SVD and SVD performance gates remain open. |
+| H | staged, not complete | Native Golub-Kahan exists as a staging path; block-GK restart comparators now show Ritz-plus-random starts beat lean and cold adaptive starts on the wide-sparse fixture, but production thick-restart SVD and SVD performance gates remain open. |
 | I | prototype | Randomized SVD has reference implementation, normalizers, and certified refinement; native approximate engine remains open. |
 | J | partial | Native generalized SPD LOBPCG slices exist for built-in `B`, explicitly SPD matrix-free `B`, dense constraints, and the typed shifted-tridiagonal preconditioner; benchmark rows expose native/B-orthogonal/constrained diagnostics; broader generalized preconditioning and promotion remain open. |
 | K | not complete | B-orthogonal block Lanczos is still a later generalized-SPD refinement path. |
@@ -567,7 +567,10 @@ Primary attack surfaces, in order:
 
 1. **H production SVD.** Replace staging/Gram-special-case dependence with a
    native thick-restarted Golub-Kahan path that wins sparse SVD time-to-certified
-   answer against RSpectra/`irlba` on the PRD benchmark subset.
+   answer against RSpectra/`irlba` on the PRD benchmark subset. Current block-GK
+   comparators show retained native restart workspace is the next real
+   algorithmic surface; thinner R-level restarts trade speed for memory but do
+   not close the gate.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
    preconditioning beyond the typed shifted-tridiagonal case, keep the
    benchmark B-orthogonality/native-path diagnostics green, and promote the

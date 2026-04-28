@@ -159,6 +159,7 @@ can_evaluate_gates <- gate_subject %in% result$method &&
     "eigencore_golub_kahan",
     "eigencore_golub_kahan_projected",
     "eigencore_block_golub_kahan_cycle",
+    "eigencore_block_golub_kahan_cycle_lean",
     "eigencore_randomized"
   ))
 gates <- if (isTRUE(can_evaluate_gates)) lapply(split(result, result$case), function(case_rows) {
@@ -167,6 +168,7 @@ gates <- if (isTRUE(can_evaluate_gates)) lapply(split(result, result$case), func
     "eigencore_golub_kahan",
     "eigencore_golub_kahan_projected",
     "eigencore_block_golub_kahan_cycle",
+    "eigencore_block_golub_kahan_cycle_lean",
     "eigencore_randomized"
   )
   gate_rows <- case_rows[
@@ -200,6 +202,7 @@ memory_diagnostics <- if (isTRUE(can_evaluate_gates)) lapply(split(result, resul
     "eigencore_golub_kahan",
     "eigencore_golub_kahan_projected",
     "eigencore_block_golub_kahan_cycle",
+    "eigencore_block_golub_kahan_cycle_lean",
     "eigencore_randomized"
   )
   gate_rows <- case_rows[

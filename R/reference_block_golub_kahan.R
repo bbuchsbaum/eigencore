@@ -408,7 +408,7 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
                                                start = NULL,
                                                adaptive = is.null(max_subspace),
                                                max_attempts = NULL,
-                                               adaptive_start = c("ritz", "initial"),
+                                               adaptive_start = c("ritz", "ritz_lean", "initial"),
                                                vectors = c("both", "left", "right", "none")) {
   vectors <- match.arg(vectors)
   adaptive_start <- match.arg(adaptive_start)
@@ -496,7 +496,7 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
       max_subspace = current_max_subspace,
       active_cols = basis$active_cols,
       start_cols = ncol(current_start),
-      warm_started = attempt > 1L && identical(adaptive_start, "ritz"),
+      warm_started = attempt > 1L && adaptive_start %in% c("ritz", "ritz_lean"),
       iterations = basis$iterations,
       matvecs = basis$matvecs,
       ortho_passes = basis$ortho_passes,
@@ -526,6 +526,9 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
         ritz$v[, seq_len(keep_cols), drop = FALSE],
         matrix(stats::rnorm(n * block), nrow = n, ncol = block)
       )
+    } else if (identical(adaptive_start, "ritz_lean")) {
+      keep_cols <- min(ncol(ritz$v), max(rank, block))
+      current_start <- ritz$v[, seq_len(keep_cols), drop = FALSE]
     } else {
       current_start <- start
     }

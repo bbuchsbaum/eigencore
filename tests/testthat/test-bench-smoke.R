@@ -174,6 +174,7 @@ test_that("SVD surface benchmark script is available", {
   expect_true(any(grepl("eigencore_golub_kahan", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_golub_kahan_projected", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_block_golub_kahan_cycle", lines, fixed = TRUE)))
+  expect_true(any(grepl("eigencore_block_golub_kahan_cycle_lean", lines, fixed = TRUE)))
   expect_true(any(grepl("svd_projected_stop", lines, fixed = TRUE)))
   expect_true(any(grepl("h_candidate", lines, fixed = TRUE)))
   expect_true(any(grepl("projected_stop_comparison", lines, fixed = TRUE)))
@@ -436,6 +437,43 @@ test_that("SVD benchmark can expose native block Golub-Kahan cycle candidate", {
   expect_gte(rows$nconv, 4L)
   expect_gt(rows$matvecs, 0L)
   expect_equal(rows$block_size, 2L)
+})
+
+test_that("SVD benchmark can expose lean native block Golub-Kahan restart candidate", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_if_not_installed("bench")
+
+  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
+  if (!nzchar(helper_path)) {
+    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
+  }
+  source(helper_path)
+
+  set.seed(702)
+  A <- Matrix::t(Matrix::rsparsematrix(600, 90, density = 0.03))
+  rows <- benchmark_svd_case(
+    A,
+    rank = 5,
+    methods = c(
+      "eigencore_block_golub_kahan_cycle",
+      "eigencore_block_golub_kahan_cycle_lean"
+    ),
+    iterations = 1,
+    seed = 701
+  )
+
+  expect_true(all(c(
+    "eigencore_block_golub_kahan_cycle",
+    "eigencore_block_golub_kahan_cycle_lean"
+  ) %in% rows$method))
+
+  regular <- rows[rows$method == "eigencore_block_golub_kahan_cycle", , drop = FALSE]
+  lean <- rows[rows$method == "eigencore_block_golub_kahan_cycle_lean", , drop = FALSE]
+  expect_true(lean$certificate_passed)
+  expect_gte(lean$nconv, 5L)
+  expect_gt(lean$matvecs, 0L)
+  expect_gte(lean$restart_attempts, 1L)
+  expect_lte(lean$matvecs, regular$matvecs * 2L)
 })
 
 test_that("SVD reference gate can evaluate an explicit H candidate subject", {

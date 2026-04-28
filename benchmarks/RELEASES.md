@@ -109,6 +109,12 @@ they are machine-dependent.
   matvecs from `167` to `73`, but the installed quick row still reports about
   `0.0090s` and `1.31MB`; the remaining loss is attempt materialization and
   lack of a retained native restart workspace, not only operator-call count.
+  A lean internal comparator,
+  `eigencore_block_golub_kahan_cycle_lean`, now restarts from Ritz vectors
+  without the extra random block. On the same fixture it still certifies and
+  remains faster than cold adaptive restarts, but it needs more matvecs than
+  the default Ritz-plus-random start; keep the default speed path until a real
+  retained native restart workspace lands.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,
