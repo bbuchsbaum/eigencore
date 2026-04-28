@@ -74,6 +74,18 @@ adjoint.eigencore_operator <- function(x, ...) {
   if (is.null(x$apply_adjoint)) {
     stop("Operator does not define apply_adjoint().", call. = FALSE)
   }
+  source <- x$metadata$source
+  if (!is.null(source)) {
+    source <- t(source)
+  }
+  matrix <- x$metadata$matrix
+  if (!is.null(matrix)) {
+    matrix <- Matrix::t(matrix)
+  }
+  storage <- x$metadata$storage
+  if (!is.null(storage)) {
+    storage <- paste0("adjoint:", storage)
+  }
   linear_operator(
     dim = rev(x$dim),
     apply = x$apply_adjoint,
@@ -81,7 +93,14 @@ adjoint.eigencore_operator <- function(x, ...) {
     dtype = x$dtype,
     structure = x$structure,
     name = paste0("adjoint(", x$name, ")"),
-    metadata = list(parent = x)
+    metadata = list(
+      parent = x,
+      fused = "adjoint",
+      native = isTRUE(x$metadata$native),
+      storage = storage,
+      source = source,
+      matrix = matrix
+    )
   )
 }
 

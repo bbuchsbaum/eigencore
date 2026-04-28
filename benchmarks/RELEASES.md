@@ -17,6 +17,13 @@ they are machine-dependent.
 ## Unreleased
 
 - Benchmark plumbing added.
+- Native operator provenance now survives `adjoint()` for built-in dense,
+  CSC, and diagonal operators. The adjoint wrapper continues to use the native
+  parent apply closures, records `fused = "adjoint"`, preserves
+  `metadata$native = TRUE`, and carries an explicit transposed source/matrix
+  when available. This is a small operator-fusion step: planner and diagnostic
+  surfaces can distinguish native adjoints from R callback operators while
+  centered/scaled/composed native fusion remains open.
 - G1 block Hermitian candidate baseline captured in
   `inst/benchmarks/baselines/g1_candidate_pre.csv`; regenerate it with
   `inst/benchmarks/bench-g1-candidate-baseline.R --save`. The current baseline

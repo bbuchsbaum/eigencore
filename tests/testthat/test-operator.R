@@ -24,6 +24,34 @@ test_that("adjoint operator swaps apply directions", {
   expect_equal(op$apply(X), t(A) %*% X)
 })
 
+test_that("adjoint operator preserves native metadata for built-in kernels", {
+  dense <- matrix(rnorm(12), nrow = 3)
+  sparse <- Matrix::rsparsematrix(5, 3, density = 0.4)
+  diagonal <- Matrix::Diagonal(x = c(3, 2, 1))
+
+  dense_adj <- adjoint(as_operator(dense))
+  sparse_adj <- adjoint(as_operator(sparse))
+  diagonal_adj <- adjoint(as_operator(diagonal))
+
+  expect_true(dense_adj$metadata$native)
+  expect_true(sparse_adj$metadata$native)
+  expect_true(diagonal_adj$metadata$native)
+  expect_equal(dense_adj$metadata$fused, "adjoint")
+  expect_equal(sparse_adj$metadata$fused, "adjoint")
+  expect_equal(diagonal_adj$metadata$fused, "adjoint")
+  expect_equal(dense_adj$metadata$source, t(dense))
+  expect_s4_class(sparse_adj$metadata$matrix, "dgCMatrix")
+  expect_equal(as.matrix(sparse_adj$metadata$matrix), as.matrix(Matrix::t(sparse)))
+  expect_equal(diagonal_adj$metadata$storage, "adjoint:ddiMatrix")
+
+  X_dense <- matrix(rnorm(9), nrow = 3)
+  X_sparse <- matrix(rnorm(10), nrow = 5)
+  X_diag <- matrix(rnorm(6), nrow = 3)
+  expect_equal(dense_adj$apply(X_dense), t(dense) %*% X_dense)
+  expect_equal(sparse_adj$apply(X_sparse), as.matrix(Matrix::t(sparse) %*% X_sparse))
+  expect_equal(diagonal_adj$apply(X_diag), as.matrix(Matrix::t(diagonal) %*% X_diag))
+})
+
 test_that("dgCMatrix operator uses native CSC block apply", {
   A <- Matrix::sparseMatrix(
     i = c(1, 3, 2, 4),
