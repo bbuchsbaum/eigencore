@@ -172,6 +172,20 @@ test_that("Gram SVD uses selected dense eigensolve for top singular values", {
   expect_certificate_clean(fit)
 })
 
+test_that("wide sparse Gram SVD uses native CSC left-Gram kernel", {
+  set.seed(517)
+  M <- Matrix::t(Matrix::rsparsematrix(100, 30, density = 0.05))
+  fit <- svd_partial(M, rank = 4, target = largest(), tol = 1e-8)
+  oracle <- svd(as.matrix(M), nu = 4, nv = 4)
+
+  expect_identical(fit$restart$kind, "gram_svd_special_case")
+  expect_identical(fit$restart$gram_side, "left")
+  expect_identical(fit$restart$native_gram_kernel, "csc_left_gram")
+  expect_identical(fit$certificate$norm_bound_type, "frobenius_exact")
+  expect_equal(fit$d, oracle$d[1:4], tolerance = 1e-8)
+  expect_certificate_clean(fit)
+})
+
 test_that("sparse Gram SVD falls back when certification is weaker than Golub-Kahan", {
   set.seed(2)
   U <- Matrix::rsparsematrix(120, 2, density = 0.2)

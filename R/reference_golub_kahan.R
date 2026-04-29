@@ -476,7 +476,90 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     stop("rank must be positive.", call. = FALSE)
   }
 
+  if (identical(storage, "dgCMatrix") && m < n) {
+    native <- .Call(
+      "eigencore_csc_left_gram_svd",
+      methods::slot(A, "i"),
+      methods::slot(A, "p"),
+      methods::slot(A, "x"),
+      methods::slot(A, "Dim"),
+      as.integer(rank),
+      as.numeric(tol),
+      PACKAGE = "eigencore"
+    )
+    zero_tol <- gram_svd_zero_tolerance(native$d, tol)
+    cert <- if (any(native$d <= zero_tol)) {
+      certify_svd_operator(op, native$d, native$u, native$v, tol = tol)
+    } else {
+      new_certificate(
+        tol = tol,
+        residuals = list(
+          left = native$diagnostics$left,
+          right = native$diagnostics$right,
+          combined = native$diagnostics$combined
+        ),
+        backward_error = native$diagnostics$backward_error,
+        orthogonality = native$diagnostics$orthogonality,
+        converged = native$diagnostics$converged,
+        scale = native$diagnostics$scale,
+        norm_bound_type = "frobenius_exact"
+      )
+    }
+    u <- native$u
+    v <- native$v
+    if (vectors == "left") {
+      v <- NULL
+    } else if (vectors == "right") {
+      u <- NULL
+    } else if (vectors == "none") {
+      u <- NULL
+      v <- NULL
+    }
+    return(list(
+      d = native$d,
+      u = u,
+      v = v,
+      values = native$d,
+      residuals = cert$residuals,
+      backward_error = cert$backward_error,
+      orthogonality = cert$orthogonality,
+      certificate = cert,
+      iterations = 1L,
+      matvecs = 1L,
+      restart = list(
+        kind = "gram_svd_special_case",
+        implemented = TRUE,
+        native = TRUE,
+        gram_side = "left",
+        gram_dimension = m,
+        native_gram_kernel = "csc_left_gram",
+        zero_singular_completion = any(native$d <= zero_tol),
+        zero_singular_threshold = zero_tol,
+        certificate_reuses_gram_sides = !any(native$d <= zero_tol),
+        certified_in_original_coordinates = TRUE
+      )
+    ))
+  }
+
   if (n <= m) {
+    # NN-3: refuse a silent O(n^2) densification of crossprod(A) on a sparse
+    # operator when the right-Gram dimension exceeds the native gate. The
+    # randomized-SVD refinement path calls native_gram_svd() outside the
+    # planner gate, so we must enforce it here. Callers (e.g. randomized
+    # SVD's tryCatch) will see this as a fallback signal and stay on the
+    # honest sparse path.
+    if (identical(storage, "dgCMatrix")) {
+      gram_max <- as.integer(getOption("eigencore.gram_svd_max_dimension", 512L))
+      if (n > gram_max) {
+        stop(
+          "native_gram_svd: refusing to densify A^T A for sparse dgCMatrix ",
+          "operator with right-Gram dimension n = ", n, " > ",
+          "eigencore.gram_svd_max_dimension = ", gram_max,
+          ". Use the matrix-free SVD path instead.",
+          call. = FALSE
+        )
+      }
+    }
     gram <- as.matrix(crossprod(A))
     small <- gram_svd_eigen_slice(gram, rank, target)
     d <- sqrt(pmax(small$values, 0))

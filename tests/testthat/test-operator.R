@@ -83,6 +83,30 @@ test_that("dgCMatrix norm metadata supports deterministic operator certificates"
   expect_true(cert$passed)
 })
 
+test_that("csc_matrix_as_operator Frobenius norm matches dgCMatrix and dsCMatrix half-storage", {
+  # Build a symmetric sparse matrix with non-trivial off-diagonal entries.
+  dense <- matrix(c(
+    4, 1, 0, 2,
+    1, 5, 3, 0,
+    0, 3, 6, 1,
+    2, 0, 1, 7
+  ), nrow = 4, byrow = TRUE)
+  expected <- sqrt(sum(dense^2))
+
+  general <- methods::as(Matrix::Matrix(dense, sparse = TRUE), "generalMatrix")
+  symmetric <- methods::as(Matrix::Matrix(dense, sparse = TRUE), "symmetricMatrix")
+  expect_s4_class(general, "dgCMatrix")
+  expect_s4_class(symmetric, "dsCMatrix")
+  expect_lt(length(methods::slot(symmetric, "x")), length(methods::slot(general, "x")))
+
+  op_general <- eigencore:::csc_matrix_as_operator(general)
+  op_symmetric <- eigencore:::csc_matrix_as_operator(symmetric)
+
+  expect_equal(op_general$metadata$frobenius_norm, expected)
+  expect_equal(op_symmetric$metadata$frobenius_norm, expected)
+  expect_equal(op_general$metadata$frobenius_norm, op_symmetric$metadata$frobenius_norm)
+})
+
 test_that("ddiMatrix operator uses native diagonal block apply", {
   D <- Matrix::Diagonal(x = c(4, -2, 1))
   X <- matrix(rnorm(6), nrow = 3)

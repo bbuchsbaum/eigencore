@@ -610,7 +610,23 @@ Primary attack surfaces, in order:
    separately. Locking and a full production thick-restart policy remain open.
    The H benchmark rows expose retained-restart flags directly, including
    `retained_restart`, `retained_restart_native`, `retained_av_cache`,
-   `native_attempt_certification`, and `native_early_stop`.
+   `native_attempt_certification`, and `native_early_stop`. A native CSC
+   left-Gram SVD kernel now covers the wide sparse Gram-special-case path
+   without materializing `A A^T` through R; it forms the left Gram in C++,
+   computes selected singular triplets, and returns an exact Frobenius-scale
+   certificate from cached Gram sides. Ordinary `dgCMatrix` operator
+   construction also uses the exact `sqrt(sum(x@x^2))` Frobenius norm instead
+   of `Matrix::norm()`, while symmetric half-storage keeps the Matrix path.
+   This turns the sampled wide-sparse `eigencore` auto row from a memory
+   failure into a memory win (about `41kB` versus RSpectra's `79kB` in the
+   2026-04-29 installed quick probe), but speed remains red (about `0.74ms`
+   versus RSpectra's `0.41ms`). H is therefore still not complete: the Gram
+   special case has become a low-allocation correctness fallback, not the
+   release performance answer. The retained block-GK H subject still certifies
+   every quick surface row, but speed gates fail on all six rows and memory
+   gates pass only on the rank-deficient sparse row; the next H work must reduce
+   retained-restart algorithmic work and result/workspace materialization, not
+   just Gram-path wrapper overhead.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
    preconditioning beyond the typed shifted-diagonal and certified
    shifted-tridiagonal sparse-smallest case, keep the benchmark

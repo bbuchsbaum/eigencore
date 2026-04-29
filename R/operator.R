@@ -175,6 +175,11 @@ csc_block_apply <- function(A, X, alpha = 1, beta = 0, Y = NULL, transpose = FAL
 #' @keywords internal
 csc_matrix_as_operator <- function(x) {
   dim_x <- dim(x)
+  frobenius_norm <- if (inherits(x, "dgCMatrix") && !inherits(x, "symmetricMatrix")) {
+    sqrt(sum(methods::slot(x, "x")^2))
+  } else {
+    as.numeric(Matrix::norm(x, type = "F"))
+  }
   linear_operator(
     dim = dim_x,
     apply = function(X, alpha = 1, beta = 0, Y = NULL) {
@@ -190,7 +195,7 @@ csc_matrix_as_operator <- function(x) {
       matrix = x,
       native = TRUE,
       storage = "dgCMatrix",
-      frobenius_norm = sqrt(sum(methods::slot(x, "x")^2))
+      frobenius_norm = frobenius_norm
     )
   )
 }
