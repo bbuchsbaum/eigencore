@@ -16,6 +16,13 @@ test_that("dense operator block apply honors alpha beta Y contract", {
   expect_equal(op$apply(X, alpha = 2, beta = -0.5, Y = Y), 2 * A %*% X - 0.5 * Y)
 })
 
+test_that("native dense apply rejects dimensions beyond LP64 BLAS integer range", {
+  status <- .Call("eigencore_dense_apply_int_guard_check", PACKAGE = "eigencore")
+
+  expect_equal(status[["oversized_rows"]], -2L)
+  expect_equal(status[["oversized_block_cols"]], -2L)
+})
+
 test_that("adjoint operator swaps apply directions", {
   A <- matrix(rnorm(12), nrow = 3)
   op <- adjoint(as_operator(A))

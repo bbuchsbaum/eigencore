@@ -44,6 +44,13 @@ typedef int (*EigencoreApplyFn)(void* impl,
                                 EigencoreWorkspace* workspace);
 
 typedef struct {
+  /*
+   * ABI note: dimensions are stored as int64_t so frontends can represent
+   * large operators, but the current native BLAS/LAPACK backend is LP64 and
+   * therefore accepts only dimensions/leading dimensions <= INT_MAX at apply
+   * time. Built-in apply implementations must reject larger dimensions before
+   * narrowing to Fortran INTEGER. LAPACK64 support can relax this contract.
+   */
   int64_t rows;
   int64_t cols;
   EigencoreScalarType scalar;

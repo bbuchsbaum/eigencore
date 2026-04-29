@@ -7,6 +7,7 @@
 #include <cmath>
 #include <chrono>
 #include <cfloat>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <stdint.h>
@@ -50,6 +51,18 @@ static inline std::chrono::steady_clock::time_point native_timer_now() {
 
 static inline double native_timer_elapsed(std::chrono::steady_clock::time_point start) {
   return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
+
+static inline int eigencore_int_indexable(int64_t value) {
+  return value >= 0 && value <= static_cast<int64_t>(INT_MAX);
+}
+
+static void eigencore_apply_status_error(const char* context, int status) {
+  if (status == -2) {
+    error("%s failed: dimensions exceed LP64 BLAS/R integer range; LAPACK64 is not enabled",
+          context);
+  }
+  error("%s failed with status=%d", context, status);
 }
 
 static void combine_basis_columns_small(const double* basis,
@@ -230,6 +243,14 @@ extern "C" int eigencore_dense_apply(void* impl,
   const int64_t inner64 = (op == EIGENCORE_TRANSPOSE_ADJOINT) ? dense->rows : dense->cols;
   if (ldx < inner64 || ldy < out_rows64) {
     return -1;
+  }
+  if (!eigencore_int_indexable(out_rows64) ||
+      !eigencore_int_indexable(inner64) ||
+      !eigencore_int_indexable(block_cols) ||
+      !eigencore_int_indexable(dense->rows) ||
+      !eigencore_int_indexable(ldx) ||
+      !eigencore_int_indexable(ldy)) {
+    return -2;
   }
 
   const char transa = (op == EIGENCORE_TRANSPOSE_ADJOINT) ? 'T' : 'N';
@@ -432,6 +453,12 @@ static int eigencore_r_operator_apply(void* impl,
     return -1;
   }
   RApplyOperator* fn = static_cast<RApplyOperator*>(impl);
+  if (!eigencore_int_indexable(fn->rows) ||
+      !eigencore_int_indexable(block_cols) ||
+      !eigencore_int_indexable(ldx) ||
+      !eigencore_int_indexable(ldy)) {
+    return -2;
+  }
   const int n = static_cast<int>(fn->rows);
   const int cols = static_cast<int>(block_cols);
   if (ldx < n || ldy < n || cols < 1 || TYPEOF(fn->apply) != CLOSXP) {
@@ -529,7 +556,7 @@ extern "C" SEXP eigencore_dense_block_apply(SEXP A_, SEXP X_, SEXP alpha_,
     nullptr
   );
   if (status != 0) {
-    error("dense block apply failed");
+    eigencore_apply_status_error("dense block apply", status);
   }
 
   UNPROTECT(1);
@@ -590,7 +617,7 @@ extern "C" SEXP eigencore_csc_block_apply(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
     nullptr
   );
   if (status != 0) {
-    error("CSC block apply failed");
+    eigencore_apply_status_error("CSC block apply", status);
   }
 
   UNPROTECT(1);
@@ -634,7 +661,7 @@ extern "C" SEXP eigencore_diagonal_block_apply(SEXP x_, SEXP dim_, SEXP unit_,
     nullptr
   );
   if (status != 0) {
-    error("diagonal block apply failed");
+    eigencore_apply_status_error("diagonal block apply", status);
   }
   UNPROTECT(1);
   return out_;
@@ -700,9 +727,46 @@ extern "C" SEXP eigencore_native_apply_noalloc_check(SEXP kind_, SEXP A_,
   }
 
   if (status != 0) {
-    error("native no-allocation check apply failed");
+    eigencore_apply_status_error("native no-allocation check apply", status);
   }
   return workspace_counters(&workspace);
+}
+
+extern "C" SEXP eigencore_dense_apply_int_guard_check(void) {
+  double scalar = 0.0;
+  EigencoreWorkspace workspace = {0, 0, nullptr, 0};
+
+  DenseColumnMajorOperator too_many_rows = {
+    static_cast<int64_t>(INT_MAX) + 1,
+    1,
+    &scalar
+  };
+  const int oversized_rows_status = eigencore_dense_apply(
+    &too_many_rows, EIGENCORE_TRANSPOSE_NONE, 1,
+    &scalar, static_cast<int64_t>(INT_MAX) + 1,
+    1.0, 0.0,
+    &scalar, static_cast<int64_t>(INT_MAX) + 1,
+    &workspace
+  );
+
+  DenseColumnMajorOperator small = {1, 1, &scalar};
+  const int oversized_block_status = eigencore_dense_apply(
+    &small, EIGENCORE_TRANSPOSE_NONE, static_cast<int64_t>(INT_MAX) + 1,
+    &scalar, 1,
+    1.0, 0.0,
+    &scalar, 1,
+    &workspace
+  );
+
+  SEXP out_ = PROTECT(allocVector(INTSXP, 2));
+  INTEGER(out_)[0] = oversized_rows_status;
+  INTEGER(out_)[1] = oversized_block_status;
+  SEXP names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(names_, 0, mkChar("oversized_rows"));
+  SET_STRING_ELT(names_, 1, mkChar("oversized_block_cols"));
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(2);
+  return out_;
 }
 
 extern "C" SEXP eigencore_col_norms(SEXP X_) {
@@ -10030,6 +10094,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_csc_block_apply", (DL_FUNC) &eigencore_csc_block_apply, 9},
   {"eigencore_diagonal_block_apply", (DL_FUNC) &eigencore_diagonal_block_apply, 7},
   {"eigencore_native_apply_noalloc_check", (DL_FUNC) &eigencore_native_apply_noalloc_check, 4},
+  {"eigencore_dense_apply_int_guard_check", (DL_FUNC) &eigencore_dense_apply_int_guard_check, 0},
   {"eigencore_col_norms", (DL_FUNC) &eigencore_col_norms, 1},
   {"eigencore_mgs2", (DL_FUNC) &eigencore_mgs2, 2},
   {"eigencore_cholqr2", (DL_FUNC) &eigencore_cholqr2, 1},
