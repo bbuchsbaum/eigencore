@@ -561,6 +561,22 @@ block_golub_kahan_restart_with_random_tail <- function(prefix, n, block) {
   out
 }
 
+block_golub_kahan_restart_with_tail <- function(prefix, tail, n, block) {
+  prefix_cols <- ncol(prefix)
+  tail_cols <- min(ncol(tail), block)
+  out <- matrix(0, nrow = n, ncol = prefix_cols + block)
+  out[, seq_len(prefix_cols)] <- prefix
+  if (tail_cols > 0L) {
+    out[, seq.int(prefix_cols + 1L, prefix_cols + tail_cols)] <-
+      tail[, seq_len(tail_cols), drop = FALSE]
+  }
+  if (tail_cols < block) {
+    random_cols <- seq.int(prefix_cols + tail_cols + 1L, prefix_cols + block)
+    out[, random_cols] <- stats::rnorm(n * length(random_cols))
+  }
+  out
+}
+
 #' @keywords internal
 native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
                                                tol = 1e-8,
@@ -569,7 +585,7 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
                                                start = NULL,
                                                adaptive = is.null(max_subspace),
                                                max_attempts = NULL,
-                                               adaptive_start = c("ritz", "ritz_cached", "ritz_cached_random", "ritz_lean", "initial"),
+                                               adaptive_start = c("ritz", "ritz_cached", "ritz_cached_random", "ritz_residual", "ritz_lean", "initial"),
                                                vectors = c("both", "left", "right", "none")) {
   vectors <- match.arg(vectors)
   adaptive_start <- match.arg(adaptive_start)
@@ -620,7 +636,18 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
       start = cached_start$start,
       start_av = cached_start$start_av
     )
-    cert <- certify_svd_operator(op, ritz$d, ritz$u, ritz$v, tol = tol)
+    cert_info <- certify_svd_operator_cached_av(
+      op, ritz$d, ritz$u, ritz$v, ritz$Avectors, tol = tol,
+      return_residual_vectors = identical(adaptive_start, "ritz_residual")
+    )
+    wrapped_cert <- cert_info[["certificate", exact = TRUE]]
+    if (!is.null(wrapped_cert)) {
+      cert <- wrapped_cert
+      right_residual_vectors <- cert_info[["right_residual_vectors", exact = TRUE]]
+    } else {
+      cert <- cert_info
+      right_residual_vectors <- NULL
+    }
     out <- list(
       d = ritz$d,
       u = ritz$u,
@@ -667,7 +694,7 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
       active_cols = ritz$active_cols,
       start_cols = ncol(current_start),
       cached_start_used = isTRUE(ritz$cached_start_used),
-      warm_started = attempt > 1L && adaptive_start %in% c("ritz", "ritz_cached", "ritz_cached_random", "ritz_lean"),
+      warm_started = attempt > 1L && adaptive_start %in% c("ritz", "ritz_cached", "ritz_cached_random", "ritz_residual", "ritz_lean"),
       iterations = ritz$iterations,
       matvecs = ritz$matvecs,
       ortho_passes = ritz$ortho_passes,
@@ -711,6 +738,15 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
         block
       )
       current_start_av <- ritz$Avectors[, seq_len(keep_cols), drop = FALSE]
+    } else if (identical(adaptive_start, "ritz_residual")) {
+      keep_cols <- min(ncol(ritz$v), max(rank, block))
+      current_start <- block_golub_kahan_restart_with_tail(
+        ritz$v[, seq_len(keep_cols), drop = FALSE],
+        right_residual_vectors %||% matrix(0, n, 0L),
+        n,
+        block
+      )
+      current_start_av <- NULL
     } else if (identical(adaptive_start, "ritz_lean")) {
       keep_cols <- min(ncol(ritz$v), max(rank, block))
       current_start <- ritz$v[, seq_len(keep_cols), drop = FALSE]

@@ -155,6 +155,14 @@ they are machine-dependent.
   probe remains certified with `73` native apply calls on the default row, and
   sampled median time dropped to about `0.0106s`; this is a cleanup win, not an
   H gate closure.
+- The H restart surface now includes
+  `eigencore_block_golub_kahan_cycle_residual`, which uses right residual
+  vectors as the warm-restart exploration tail. On the source-loaded wide
+  sparse probe it certifies, but needs `87` native apply calls versus `73` for
+  the default Ritz-plus-random row, so it is evidence against residual-tail
+  restarts as the next promotion path. Existing block-GK candidates continue to
+  use the native built-in certificate path; cached `A v` is only used when the
+  residual-tail diagnostic explicitly needs residual vectors.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,

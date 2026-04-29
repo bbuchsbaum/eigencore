@@ -584,7 +584,9 @@ Primary attack surfaces, in order:
    optimize retained restart/workspace reuse before spending effort on small
    projected SVD tuning. Minor compact-fit workspace cleanup has removed
    avoidable double initialization, but the structural H gap is still retained
-   restart/workspace reuse.
+   restart/workspace reuse. A residual-tail restart diagnostic certifies but
+   costs more native apply calls than Ritz-plus-random on the wide sparse H
+   probe, so residual-tail restarts should not be promoted without new evidence.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
    preconditioning beyond the typed shifted-diagonal and shifted-tridiagonal
    cases, keep the benchmark B-orthogonality/native-path diagnostics green,

@@ -224,16 +224,27 @@ test_that("native block Golub-Kahan basis cycle records adaptive subspace attemp
     tol = 1e-8,
     adaptive_start = "ritz_cached_random"
   )
+  set.seed(701)
+  residual_adaptive <- eigencore:::native_block_golub_kahan_cycle_svd(
+    A,
+    rank = 5L,
+    target = largest(),
+    block = 2L,
+    tol = 1e-8,
+    adaptive_start = "ritz_residual"
+  )
 
   expect_false(fixed$certificate$passed)
   expect_true(adaptive$certificate$passed)
   expect_true(lean_adaptive$certificate$passed)
   expect_true(cached_adaptive$certificate$passed)
   expect_true(cached_random_adaptive$certificate$passed)
+  expect_true(residual_adaptive$certificate$passed)
   expect_true(adaptive$restart$adaptive)
   expect_equal(adaptive$restart$adaptive_start, "ritz")
   expect_equal(cached_adaptive$restart$adaptive_start, "ritz_cached")
   expect_equal(cached_random_adaptive$restart$adaptive_start, "ritz_cached_random")
+  expect_equal(residual_adaptive$restart$adaptive_start, "ritz_residual")
   expect_equal(lean_adaptive$restart$adaptive_start, "ritz_lean")
   expect_gt(adaptive$restart$attempts, 1L)
   expect_equal(adaptive$restart$attempted_subspaces[[1L]],
@@ -244,10 +255,12 @@ test_that("native block Golub-Kahan basis cycle records adaptive subspace attemp
   expect_true(any(adaptive$restart$attempt_history$warm_started))
   expect_true(any(cached_adaptive$restart$attempt_history$cached_start_used))
   expect_true(any(cached_random_adaptive$restart$attempt_history$cached_start_used))
+  expect_true(any(residual_adaptive$restart$attempt_history$warm_started))
   expect_true(any(lean_adaptive$restart$attempt_history$warm_started))
   expect_true(any(adaptive$restart$attempt_history$certificate_passed))
   expect_equal(adaptive$matvecs, sum(adaptive$restart$attempt_history$matvecs))
   expect_lt(adaptive$matvecs, cold_adaptive$matvecs)
+  expect_lte(residual_adaptive$matvecs, cold_adaptive$matvecs)
   expect_lte(cached_random_adaptive$matvecs, adaptive$matvecs)
   expect_lt(cached_adaptive$matvecs, lean_adaptive$matvecs)
   expect_lt(lean_adaptive$matvecs, cold_adaptive$matvecs)

@@ -161,6 +161,7 @@ can_evaluate_gates <- gate_subject %in% result$method &&
     "eigencore_block_golub_kahan_cycle",
     "eigencore_block_golub_kahan_cycle_cached",
     "eigencore_block_golub_kahan_cycle_cached_random",
+    "eigencore_block_golub_kahan_cycle_residual",
     "eigencore_block_golub_kahan_cycle_lean",
     "eigencore_randomized"
   ))
@@ -172,6 +173,7 @@ gates <- if (isTRUE(can_evaluate_gates)) lapply(split(result, result$case), func
     "eigencore_block_golub_kahan_cycle",
     "eigencore_block_golub_kahan_cycle_cached",
     "eigencore_block_golub_kahan_cycle_cached_random",
+    "eigencore_block_golub_kahan_cycle_residual",
     "eigencore_block_golub_kahan_cycle_lean",
     "eigencore_randomized"
   )
@@ -208,6 +210,7 @@ memory_diagnostics <- if (isTRUE(can_evaluate_gates)) lapply(split(result, resul
     "eigencore_block_golub_kahan_cycle",
     "eigencore_block_golub_kahan_cycle_cached",
     "eigencore_block_golub_kahan_cycle_cached_random",
+    "eigencore_block_golub_kahan_cycle_residual",
     "eigencore_block_golub_kahan_cycle_lean",
     "eigencore_randomized"
   )
