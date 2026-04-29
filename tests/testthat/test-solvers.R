@@ -38,6 +38,38 @@ test_that("auto keeps dense LAPACK for near-full dense Hermitian requests", {
   expect_equal(plan$method, "native dense Hermitian LAPACK fallback")
 })
 
+test_that("solve dispatch helpers follow plan method labels", {
+  expect_true(eigencore:::plan_dispatches_lanczos(list(
+    method = "native scalar thick-restart Hermitian Lanczos"
+  )))
+  expect_true(eigencore:::plan_dispatches_native_lanczos(list(
+    method = "native block Hermitian Lanczos (thick restart, locking)"
+  )))
+  expect_false(eigencore:::plan_dispatches_lanczos(list(
+    method = "native dense Hermitian LAPACK fallback"
+  )))
+
+  expect_true(eigencore:::plan_dispatches_lobpcg(list(
+    method = eigencore:::native_generalized_lobpcg_label()
+  )))
+  expect_true(eigencore:::plan_dispatches_lobpcg(list(
+    method = eigencore:::reference_generalized_lobpcg_label()
+  )))
+  expect_false(eigencore:::plan_dispatches_lobpcg(list(
+    method = "dense LAPACK general eigen oracle (prototype fallback)"
+  )))
+
+  expect_true(eigencore:::plan_dispatches_golub_kahan(list(
+    method = "native prototype Golub-Kahan"
+  )))
+  expect_true(eigencore:::plan_dispatches_golub_kahan(list(
+    method = "prototype Golub-Kahan"
+  )))
+  expect_false(eigencore:::plan_dispatches_golub_kahan(list(
+    method = "native certified Gram SVD special case"
+  )))
+})
+
 test_that("generalized SPD eigenproblem is certified in original coordinates", {
   A <- diag(c(6, 4, 2))
   B <- diag(c(3, 2, 1))

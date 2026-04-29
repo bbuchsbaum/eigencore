@@ -48,38 +48,17 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
       call. = FALSE
     )
   }
-  use_lobpcg_method <- inherits(method, "eigencore_method") && identical(method$kind, "lobpcg")
-  use_auto_generalized_lobpcg <- inherits(method, "eigencore_method") &&
-    identical(method$kind, "auto") &&
-    identical(plan$method, native_generalized_lobpcg_label())
-  use_auto_reference_generalized_lobpcg <- inherits(method, "eigencore_method") &&
-    identical(method$kind, "auto") &&
-    identical(plan$method, reference_generalized_lobpcg_label())
-  if (use_lobpcg_method || use_auto_generalized_lobpcg || use_auto_reference_generalized_lobpcg) {
+  if (plan_dispatches_lobpcg(plan)) {
     if (!identical(a$structure$kind, "hermitian")) {
       stop("lobpcg() prototype currently requires a Hermitian eigenproblem.", call. = FALSE)
     }
     controls <- plan$controls %||% list()
-    method_preconditioner <- if (use_lobpcg_method) method$preconditioner else NULL
-    method_constraints <- if (use_lobpcg_method) method$constraints else NULL
+    method_is_lobpcg <- inherits(method, "eigencore_method") && identical(method$kind, "lobpcg")
+    method_preconditioner <- if (method_is_lobpcg) method$preconditioner else NULL
+    method_constraints <- if (method_is_lobpcg) method$constraints else NULL
     method_maxit <- maxit %||% controls$maxit %||%
-      if (use_lobpcg_method) method$maxit else getOption("eigencore.lobpcg_maxit", 200L)
-    use_native_lobpcg <- native_lobpcg_supported(
-      a$A,
-      target = a$target,
-      preconditioner = method_preconditioner,
-      Bop = a$metric,
-      constraints = method_constraints
-    )
-    use_native_generalized_lobpcg <- !use_native_lobpcg && !is.null(a$metric) &&
-      native_generalized_lobpcg_supported(
-        a$A,
-        a$metric,
-        target = a$target,
-        preconditioner = method_preconditioner,
-        constraints = method_constraints
-      )
-    iter <- if (use_native_lobpcg) {
+      if (method_is_lobpcg) method$maxit else getOption("eigencore.lobpcg_maxit", 200L)
+    iter <- if (identical(plan$method, native_standard_lobpcg_label())) {
       native_lobpcg_hermitian(
         a$A,
         k = k,
@@ -89,7 +68,7 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
         preconditioner = method_preconditioner,
         constraints = method_constraints
       )
-    } else if (use_native_generalized_lobpcg) {
+    } else if (identical(plan$method, native_generalized_lobpcg_label())) {
       native_generalized_lobpcg_hermitian(
         a$A,
         a$metric,
@@ -170,8 +149,7 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
     class(result) <- "eigencore_eigen_result"
     return(result)
   }
-  use_lanczos <- should_use_lanczos(a, method, k = k)
-  if (use_lanczos) {
+  if (plan_dispatches_lanczos(plan)) {
     controls <- plan$controls %||% list()
     method_maxit <- controls$max_subspace %||%
       if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$max_subspace else NULL
@@ -181,7 +159,7 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
       if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$max_restarts else NULL
     method_block <- controls$block %||%
       if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$block else 1L
-    iter <- if (should_use_native_lanczos(a, method, k = k)) {
+    iter <- if (plan_dispatches_native_lanczos(plan)) {
       if (method_block > 1L) {
         native_block_lanczos_hermitian(
           a$A,
@@ -216,12 +194,7 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
       )
     }
 
-    native_path <- plan$method %in% c(
-      "native scalar thick-restart Hermitian Lanczos",
-      "native block Hermitian Lanczos thick-restart candidate",
-      "native block Hermitian Lanczos (thick restart, locking)"
-    )
-    warning_msg <- if (native_path) {
+    warning_msg <- if (plan_dispatches_native_lanczos(plan)) {
       if (!isTRUE(iter$certificate$passed)) {
         paste0(
           plan$method, " exhausted its current budget and did not converge all ",
@@ -272,7 +245,7 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
     return(result)
   }
 
-  if (should_use_native_dense_hermitian(a, method, k = k)) {
+  if (identical(plan$method, "native dense Hermitian LAPACK fallback")) {
     A <- materialize_dense_fallbacks(list(A = a$A), allow = allow_dense_fallback)$A
     eig <- native_dense_symmetric_eigen(A)
     idx <- order_indices(eig$values, a$target)
@@ -397,7 +370,7 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
   vectors <- match.arg(vectors)
   allow_dense_fallback <- match.arg(allow_dense_fallback)
   plan <- plan_solver(a, rank = rank, method = method)
-  if (inherits(method, "eigencore_method") && identical(method$kind, "randomized")) {
+  if (identical(plan$method, "reference randomized SVD prototype")) {
     controls <- plan$controls %||% list()
     iter <- reference_randomized_svd(
       a$A,
@@ -444,7 +417,7 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
     class(result) <- "eigencore_svd_result"
     return(result)
   }
-  if (should_use_native_gram_svd(a, method, rank = rank)) {
+  if (identical(plan$method, "native certified Gram SVD special case")) {
     iter <- native_gram_svd(
       a$A,
       rank = rank,
@@ -538,7 +511,7 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
     class(result) <- "eigencore_svd_result"
     return(result)
   }
-  if (should_use_native_retained_golub_kahan(a, method, rank = rank)) {
+  if (identical(plan$method, "native retained Golub-Kahan SVD (thick restart)")) {
     iter <- native_block_golub_kahan_retained_cycle_svd(
       a$A,
       rank = rank,
@@ -578,14 +551,13 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
     class(result) <- "eigencore_svd_result"
     return(result)
   }
-  use_gk <- should_use_golub_kahan(a, method)
-  if (use_gk) {
+  if (plan_dispatches_golub_kahan(plan)) {
     controls <- plan$controls %||% list()
     method_maxit <- controls$max_subspace %||%
       if (inherits(method, "eigencore_method") && identical(method$kind, "golub_kahan")) method$max_subspace else NULL
     method_reorth <- controls$reorthogonalize %||%
       if (inherits(method, "eigencore_method") && identical(method$kind, "golub_kahan")) method$reorthogonalize else TRUE
-    iter <- if (should_use_native_golub_kahan(a, method)) {
+    iter <- if (identical(plan$method, "native prototype Golub-Kahan")) {
       native_golub_kahan_svd(
         a$A,
         rank = rank,
@@ -644,7 +616,7 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
   }
 
   A <- materialize_dense_fallbacks(list(A = a$A), allow = allow_dense_fallback)$A
-  decomp <- if (should_use_native_dense_svd(a, method)) {
+  decomp <- if (identical(plan$method, "native dense LAPACK SVD fallback")) {
     native_dense_svd(A)
   } else {
     nu <- if (vectors %in% c("both", "left")) min(rank, nrow(A)) else 0L
@@ -680,7 +652,7 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
     target = target_label(a$target),
     plan = plan,
     certificate = cert,
-    warnings = if (should_use_native_dense_svd(a, method)) {
+    warnings = if (identical(plan$method, "native dense LAPACK SVD fallback")) {
       "using native dense LAPACK SVD fallback; iterative engine not yet implemented"
     } else {
       "using dense oracle prototype solver"
@@ -728,6 +700,47 @@ order_indices <- function(x, target) {
     },
     order(Re(x), decreasing = TRUE)
   )
+}
+
+#' @keywords internal
+native_standard_lobpcg_label <- function() {
+  "native standard Hermitian LOBPCG prototype"
+}
+
+#' @keywords internal
+plan_dispatches_lobpcg <- function(plan) {
+  plan$method %in% c(
+    native_standard_lobpcg_label(),
+    native_generalized_lobpcg_label(),
+    "reference LOBPCG prototype",
+    "reference generalized SPD LOBPCG prototype",
+    reference_generalized_lobpcg_label()
+  )
+}
+
+#' @keywords internal
+plan_dispatches_lanczos <- function(plan) {
+  plan$method %in% c(
+    "native scalar thick-restart Hermitian Lanczos",
+    "native block Hermitian Lanczos thick-restart candidate",
+    "native block Hermitian Lanczos (thick restart, locking)",
+    "reference Hermitian Lanczos (target unsupported by native path)",
+    "reference Hermitian Lanczos (prototype/oracle fallback)"
+  )
+}
+
+#' @keywords internal
+plan_dispatches_native_lanczos <- function(plan) {
+  plan$method %in% c(
+    "native scalar thick-restart Hermitian Lanczos",
+    "native block Hermitian Lanczos thick-restart candidate",
+    "native block Hermitian Lanczos (thick restart, locking)"
+  )
+}
+
+#' @keywords internal
+plan_dispatches_golub_kahan <- function(plan) {
+  plan$method %in% c("native prototype Golub-Kahan", "prototype Golub-Kahan")
 }
 
 #' @keywords internal
