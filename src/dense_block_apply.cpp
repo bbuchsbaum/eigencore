@@ -7819,11 +7819,22 @@ static SEXP block_golub_kahan_fit_pack(int n,
                                        int ortho_passes,
                                        int cached_start_used,
                                        int rank,
-                                       int target_kind) {
+                                       int target_kind,
+                                       double stage_native_iteration_seconds) {
+  auto ritz_timer = native_timer_now();
   SEXP ritz_ = PROTECT(block_golub_kahan_ritz_pack(
     V, n, AV, m, active_v, rank, target_kind
   ));
-  SEXP out_ = PROTECT(allocVector(VECSXP, 11));
+  const double stage_ritz_seconds = native_timer_elapsed(ritz_timer);
+  SEXP stage_ = PROTECT(allocVector(REALSXP, 2));
+  REAL(stage_)[0] = stage_native_iteration_seconds;
+  REAL(stage_)[1] = stage_ritz_seconds;
+  SEXP stage_names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(stage_names_, 0, mkChar("native_iteration"));
+  SET_STRING_ELT(stage_names_, 1, mkChar("ritz"));
+  setAttrib(stage_, R_NamesSymbol, stage_names_);
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 12));
   for (int i = 0; i < 5; ++i) {
     SET_VECTOR_ELT(out_, i, VECTOR_ELT(ritz_, i));
   }
@@ -7833,7 +7844,8 @@ static SEXP block_golub_kahan_fit_pack(int n,
   SET_VECTOR_ELT(out_, 8, ScalarInteger(matvecs));
   SET_VECTOR_ELT(out_, 9, ScalarInteger(ortho_passes));
   SET_VECTOR_ELT(out_, 10, ScalarLogical(cached_start_used != 0));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 11));
+  SET_VECTOR_ELT(out_, 11, stage_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 12));
   SET_STRING_ELT(names_, 0, mkChar("d"));
   SET_STRING_ELT(names_, 1, mkChar("u"));
   SET_STRING_ELT(names_, 2, mkChar("v"));
@@ -7845,8 +7857,9 @@ static SEXP block_golub_kahan_fit_pack(int n,
   SET_STRING_ELT(names_, 8, mkChar("matvecs"));
   SET_STRING_ELT(names_, 9, mkChar("ortho_passes"));
   SET_STRING_ELT(names_, 10, mkChar("cached_start_used"));
+  SET_STRING_ELT(names_, 11, mkChar("stage_seconds"));
   setAttrib(out_, R_NamesSymbol, names_);
-  UNPROTECT(3);
+  UNPROTECT(5);
   return out_;
 }
 
@@ -7884,6 +7897,7 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_fit(SEXP A_,
   int matvecs = 0;
   int ortho_passes = 0;
   int cached_start_used = 0;
+  auto stage_timer = native_timer_now();
   const int status = native_block_golub_kahan_basis_run(
     &impl, eigencore_dense_apply, m, n, max_subspace, block_size, REAL(start_),
     nullptr, 0,
@@ -7891,12 +7905,14 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_fit(SEXP A_,
     &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
     &cached_start_used
   );
+  const double stage_native_iteration_seconds = native_timer_elapsed(stage_timer);
   if (status != 0) {
     error("native dense block Golub-Kahan fit failed with status=%d", status);
   }
   return block_golub_kahan_fit_pack(
     n, m, V.data(), AV.data(), active_v, active_u, iterations, matvecs,
-    ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_)
+    ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_),
+    stage_native_iteration_seconds
   );
 }
 
@@ -7940,6 +7956,7 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_fit_cached(SEXP A_,
   int matvecs = 0;
   int ortho_passes = 0;
   int cached_start_used = 0;
+  auto stage_timer = native_timer_now();
   const int status = native_block_golub_kahan_basis_run(
     &impl, eigencore_dense_apply, m, n, max_subspace, block_size, REAL(start_),
     REAL(start_av_), start_av_cols,
@@ -7947,12 +7964,14 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_fit_cached(SEXP A_,
     &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
     &cached_start_used
   );
+  const double stage_native_iteration_seconds = native_timer_elapsed(stage_timer);
   if (status != 0) {
     error("native dense cached block Golub-Kahan fit failed with status=%d", status);
   }
   return block_golub_kahan_fit_pack(
     n, m, V.data(), AV.data(), active_v, active_u, iterations, matvecs,
-    ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_)
+    ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_),
+    stage_native_iteration_seconds
   );
 }
 
@@ -7991,6 +8010,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit(SEXP i_, SEXP p_,
   int matvecs = 0;
   int ortho_passes = 0;
   int cached_start_used = 0;
+  auto stage_timer = native_timer_now();
   const int status = native_block_golub_kahan_basis_run(
     &impl, eigencore_csc_apply, m, n, max_subspace, block_size, REAL(start_),
     nullptr, 0,
@@ -7998,12 +8018,14 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit(SEXP i_, SEXP p_,
     &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
     &cached_start_used
   );
+  const double stage_native_iteration_seconds = native_timer_elapsed(stage_timer);
   if (status != 0) {
     error("native CSC block Golub-Kahan fit failed with status=%d", status);
   }
   return block_golub_kahan_fit_pack(
     n, m, V.data(), AV.data(), active_v, active_u, iterations, matvecs,
-    ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_)
+    ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_),
+    stage_native_iteration_seconds
   );
 }
 
@@ -8048,6 +8070,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit_cached(SEXP i_, SEXP p_,
   int matvecs = 0;
   int ortho_passes = 0;
   int cached_start_used = 0;
+  auto stage_timer = native_timer_now();
   const int status = native_block_golub_kahan_basis_run(
     &impl, eigencore_csc_apply, m, n, max_subspace, block_size, REAL(start_),
     REAL(start_av_), start_av_cols,
@@ -8055,12 +8078,14 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit_cached(SEXP i_, SEXP p_,
     &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
     &cached_start_used
   );
+  const double stage_native_iteration_seconds = native_timer_elapsed(stage_timer);
   if (status != 0) {
     error("native CSC cached block Golub-Kahan fit failed with status=%d", status);
   }
   return block_golub_kahan_fit_pack(
     n, m, V.data(), AV.data(), active_v, active_u, iterations, matvecs,
-    ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_)
+    ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_),
+    stage_native_iteration_seconds
   );
 }
 

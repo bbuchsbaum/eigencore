@@ -579,7 +579,10 @@ Primary attack surfaces, in order:
    restarts are still rebuilt from R, so the bridge remains a proper native
    retained-restart workspace. Compact native block-GK fit extraction removes
    full-basis return materialization from the staging path and should remain the
-   default benchmark surface for H diagnostics.
+   default benchmark surface for H diagnostics. Its stage timings show native
+   basis iteration remains the dominant cost, with Ritz extraction secondary;
+   optimize retained restart/workspace reuse before spending effort on small
+   projected SVD tuning.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
    preconditioning beyond the typed shifted-tridiagonal case, keep the
    benchmark B-orthogonality/native-path diagnostics green, and promote the

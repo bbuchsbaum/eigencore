@@ -145,6 +145,11 @@ they are machine-dependent.
   allocation drops from about `1.30MB` to `0.37MB`; the lean comparator drops
   to about `0.28MB`. This closes a materialization gap, not the remaining
   speed/thick-restart gap.
+- Compact block-GK rows now report native iteration and Ritz extraction stage
+  timings. On the same source-loaded wide sparse probe, the default row reports
+  about `0.0066s` in native basis iteration and about `0.0026s` in Ritz
+  extraction, confirming that the next H speed work should primarily attack the
+  retained native restart/workspace path rather than R result materialization.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,

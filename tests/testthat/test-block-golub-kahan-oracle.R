@@ -118,6 +118,9 @@ test_that("native block Golub-Kahan basis cycle certifies dense and CSC full sub
     expect_equal(abs(crossprod(compact_fit$v, compact_ref$v)),
                  diag(4L), tolerance = 1e-8)
     expect_equal(compact_fit$active_cols, basis$active_cols)
+    expect_true(all(c("native_iteration", "ritz") %in% names(compact_fit$stage_seconds)))
+    expect_gt(compact_fit$stage_seconds[["native_iteration"]], 0)
+    expect_gt(compact_fit$stage_seconds[["ritz"]], 0)
     cached_basis <- eigencore:::native_block_golub_kahan_basis(
       A_in,
       max_subspace = ncol(A),
@@ -155,6 +158,7 @@ test_that("native block Golub-Kahan basis cycle certifies dense and CSC full sub
     expect_identical(fit$restart$kind, "block_golub_kahan_native_basis_cycle")
     expect_true(fit$restart$native)
     expect_false(fit$restart$basis_returned)
+    expect_true(all(c("native_iteration", "ritz") %in% names(fit$stage_seconds)))
     expect_gte(fit$restart$active_cols, 4L)
     expect_gt(fit$matvecs, 0L)
     expect_gt(fit$restart$ortho_passes, 0L)

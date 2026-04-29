@@ -601,6 +601,7 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
   total_iterations <- 0L
   total_matvecs <- 0L
   total_ortho_passes <- 0L
+  total_stage_seconds <- c(native_iteration = 0, ritz = 0)
   current_max_subspace <- initial_max_subspace
   out <- NULL
   attempt <- 0L
@@ -655,6 +656,11 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
     total_iterations <- total_iterations + ritz$iterations
     total_matvecs <- total_matvecs + ritz$matvecs
     total_ortho_passes <- total_ortho_passes + ritz$ortho_passes
+    stage_seconds <- ritz$stage_seconds %||% numeric()
+    for (stage_name in names(total_stage_seconds)) {
+      total_stage_seconds[[stage_name]] <- total_stage_seconds[[stage_name]] +
+        (stage_seconds[[stage_name]] %||% 0)
+    }
     attempt_rows[[attempt]] <- data.frame(
       attempt = attempt,
       max_subspace = current_max_subspace,
@@ -730,6 +736,8 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
   out$restart$final_attempt_ortho_passes <- attempt_rows[[attempt]]$ortho_passes
   out$restart$final_iterations <- out$restart$final_attempt_iterations
   out$restart$final_matvecs <- out$restart$final_attempt_matvecs
+  out$stage_seconds <- total_stage_seconds
+  out$restart$stage_seconds <- total_stage_seconds
   if (vectors == "left") {
     out$v <- NULL
   } else if (vectors == "right") {
