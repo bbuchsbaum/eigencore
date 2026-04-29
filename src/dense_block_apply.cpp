@@ -4503,6 +4503,423 @@ static int native_block_lanczos_run(
   return 0;
 }
 
+struct BlockLanczosBestSnapshot {
+  std::vector<double> V;
+  std::vector<double> lambda;
+  std::vector<double> residuals;
+  std::vector<int> converged;
+  std::vector<int> candidate_converged;
+  int filled = 0;
+  int locked_prefix = 0;
+  int nconv = -1;
+  double max_backward_error = R_PosInf;
+
+  BlockLanczosBestSnapshot(int n, int k_target) :
+      V(static_cast<size_t>(n) * static_cast<size_t>(k_target), 0.0),
+      lambda(static_cast<size_t>(k_target), 0.0),
+      residuals(static_cast<size_t>(k_target), R_PosInf),
+      converged(static_cast<size_t>(k_target), 0),
+      candidate_converged(static_cast<size_t>(k_target), 0) {}
+};
+
+static int block_lanczos_expand_basis_to_budget(
+    void* impl,
+    EigencoreApplyFn apply,
+    int n,
+    int m_max,
+    int block_size,
+    const double* V_locked,
+    int n_locked,
+    ThickRestartBuffers* buf,
+    EigencoreWorkspace* workspace,
+    NativeBlockStageSeconds* stages,
+    int* m_active,
+    int* previous_block_start,
+    int* previous_block_cols,
+    int* last_block_start,
+    int* last_block_cols,
+    int* iterations_out,
+    int* matvecs_out,
+    int* ortho_passes_out) {
+  while (*m_active < m_max && *last_block_cols > 0) {
+    auto timer = native_timer_now();
+    form_structured_projected_block_residual(
+      buf->V_active, buf->AV_active, buf->T_proj, m_max, n,
+      *last_block_start, *last_block_cols,
+      *previous_block_start, *previous_block_cols,
+      buf->Z_block, buf->coeff_block
+    );
+    stages->recurrence += native_timer_elapsed(timer);
+
+    const int accepted_start = *m_active;
+    timer = native_timer_now();
+    const int accepted = block_accept_columns_blas3(
+      buf->Z_block, n, *last_block_cols, V_locked, n_locked,
+      buf->V_active, m_active, m_max, buf->Z_block, block_size,
+      buf->coeff_block, buf->tmp, n,
+      block_size, ortho_passes_out,
+      false
+    );
+    stages->reorthogonalization += native_timer_elapsed(timer);
+    if (accepted == 0) {
+      break;
+    }
+
+    timer = native_timer_now();
+    const int rc = apply_active_block(impl, apply, n, accepted_start, accepted,
+                                      buf->V_active, buf->AV_active, workspace,
+                                      matvecs_out);
+    stages->apply += native_timer_elapsed(timer);
+    if (rc != 0) {
+      return rc;
+    }
+
+    timer = native_timer_now();
+    projection_update_small_self_and_cross(
+      buf->T_proj, m_max, buf->V_active, buf->AV_active, n,
+      *last_block_start, *last_block_cols, accepted_start, accepted,
+      buf->coeff_block
+    );
+    {
+      const double elapsed = native_timer_elapsed(timer);
+      stages->projected_solve += elapsed;
+      stages->projection_update += elapsed;
+    }
+    ++(*iterations_out);
+    *previous_block_start = *last_block_start;
+    *previous_block_cols = *last_block_cols;
+    *last_block_start = accepted_start;
+    *last_block_cols = accepted;
+  }
+  return 0;
+}
+
+static void block_lanczos_maybe_capture_best_snapshot(
+    int n,
+    int k_target,
+    int selected_count,
+    int n_locked,
+    double norm_a,
+    double tol,
+    const ThickRestartBuffers* buf,
+    const double* V_out,
+    const double* lambda_out,
+    const double* residuals_out,
+    BlockLanczosBestSnapshot* best) {
+  int candidate_count = 0;
+  int candidate_nconv = 0;
+  double candidate_max_backward_error = 0.0;
+  for (; candidate_count < n_locked && candidate_count < k_target; ++candidate_count) {
+    const double* vec = V_out + static_cast<int64_t>(candidate_count) * n;
+    const double scale_i = standard_eigen_lock_scale(
+      norm_a, lambda_out[candidate_count], vec, n
+    );
+    const double backward_error = residuals_out[candidate_count] / scale_i;
+    if (backward_error > candidate_max_backward_error) {
+      candidate_max_backward_error = backward_error;
+    }
+    best->candidate_converged[static_cast<size_t>(candidate_count)] =
+      (residuals_out[candidate_count] <= tol * scale_i) ? 1 : 0;
+    if (best->candidate_converged[static_cast<size_t>(candidate_count)]) {
+      ++candidate_nconv;
+    }
+  }
+  for (int p = 0; p < selected_count && candidate_count < k_target; ++p) {
+    if (buf->is_locked[p]) {
+      continue;
+    }
+    const int idx = buf->selected[p];
+    const double* vec = buf->B_v + static_cast<int64_t>(p) * n;
+    const double scale_i = standard_eigen_lock_scale(
+      norm_a, buf->theta[idx], vec, n
+    );
+    const double backward_error = buf->ritz_res[p] / scale_i;
+    if (backward_error > candidate_max_backward_error) {
+      candidate_max_backward_error = backward_error;
+    }
+    best->candidate_converged[static_cast<size_t>(candidate_count)] =
+      (buf->ritz_res[p] <= tol * scale_i) ? 1 : 0;
+    if (best->candidate_converged[static_cast<size_t>(candidate_count)]) {
+      ++candidate_nconv;
+    }
+    ++candidate_count;
+  }
+  if (candidate_count != k_target ||
+      (candidate_nconv < best->nconv ||
+       (candidate_nconv == best->nconv &&
+        candidate_max_backward_error >= best->max_backward_error))) {
+    return;
+  }
+
+  int out_col = 0;
+  for (; out_col < n_locked && out_col < k_target; ++out_col) {
+    std::memcpy(best->V.data() + static_cast<int64_t>(out_col) * n,
+                V_out + static_cast<int64_t>(out_col) * n,
+                sizeof(double) * static_cast<size_t>(n));
+    best->lambda[static_cast<size_t>(out_col)] = lambda_out[out_col];
+    best->residuals[static_cast<size_t>(out_col)] = residuals_out[out_col];
+  }
+  for (int p = 0; p < selected_count && out_col < k_target; ++p) {
+    if (buf->is_locked[p]) {
+      continue;
+    }
+    const int idx = buf->selected[p];
+    std::memcpy(best->V.data() + static_cast<int64_t>(out_col) * n,
+                buf->B_v + static_cast<int64_t>(p) * n,
+                sizeof(double) * static_cast<size_t>(n));
+    best->lambda[static_cast<size_t>(out_col)] = buf->theta[idx];
+    best->residuals[static_cast<size_t>(out_col)] = buf->ritz_res[p];
+    ++out_col;
+  }
+  best->locked_prefix = n_locked;
+  best->nconv = candidate_nconv;
+  best->max_backward_error = candidate_max_backward_error;
+  std::memcpy(best->converged.data(), best->candidate_converged.data(),
+              sizeof(int) * static_cast<size_t>(k_target));
+  best->filled = 1;
+}
+
+static int block_lanczos_restart_with_continuation_tail(
+    void* impl,
+    EigencoreApplyFn apply,
+    int n,
+    int k_target,
+    int m_max,
+    int block_size,
+    int restart_idx,
+    int selected_count,
+    int n_locked,
+    ThickRestartBuffers* buf,
+    EigencoreWorkspace* workspace,
+    NativeBlockStageSeconds* stages,
+    int* m_active,
+    int* previous_block_start,
+    int* previous_block_cols,
+    int* last_block_start,
+    int* last_block_cols,
+    double* V_out,
+    int* matvecs_out,
+    int* restarts_out,
+    int* ortho_passes_out) {
+  auto timer = native_timer_now();
+  const int remaining = k_target - n_locked;
+  int keep_room = m_max - block_size;
+  if (keep_room < 0) {
+    keep_room = 0;
+  }
+  int pad = block_size > 4 ? block_size : 4;
+  if (pad > k_target) {
+    pad = k_target;
+  }
+  int k_keep = remaining + pad;
+  if (k_keep < remaining) {
+    k_keep = remaining;
+  }
+  if (k_keep > keep_room) {
+    k_keep = keep_room;
+  }
+  int unlocked_count = 0;
+  for (int p = 0; p < selected_count; ++p) {
+    if (!buf->is_locked[p]) {
+      ++unlocked_count;
+    }
+  }
+  if (k_keep > unlocked_count) {
+    k_keep = unlocked_count;
+  }
+
+  int n_picked = 0;
+  std::memset(buf->T_proj, 0,
+              sizeof(double) * static_cast<size_t>(m_max) *
+                static_cast<size_t>(m_max));
+  for (int p = 0; p < selected_count && n_picked < k_keep; ++p) {
+    if (buf->is_locked[p]) {
+      continue;
+    }
+    const int idx = buf->selected[p];
+    std::memcpy(buf->V_active + static_cast<int64_t>(n_picked) * n,
+                buf->B_v + static_cast<int64_t>(p) * n,
+                sizeof(double) * static_cast<size_t>(n));
+    std::memcpy(buf->AV_active + static_cast<int64_t>(n_picked) * n,
+                buf->B_av + static_cast<int64_t>(p) * n,
+                sizeof(double) * static_cast<size_t>(n));
+    buf->T_proj[n_picked + static_cast<int64_t>(n_picked) * m_max] =
+      buf->theta[idx];
+    ++n_picked;
+  }
+  *m_active = n_picked;
+
+  const int tail_start = *m_active;
+  int tail_accepted = 0;
+  for (int p = 0; p < selected_count && tail_accepted < block_size && *m_active < m_max; ++p) {
+    if (buf->is_locked[p] || buf->ritz_res[p] <= 100.0 * DBL_EPSILON) {
+      continue;
+    }
+    const int idx = buf->selected[p];
+    for (int row = 0; row < n; ++row) {
+      buf->z[row] = buf->B_av[static_cast<int64_t>(p) * n + row] -
+        buf->theta[idx] * buf->B_v[static_cast<int64_t>(p) * n + row];
+    }
+    stages->restart += native_timer_elapsed(timer);
+    timer = native_timer_now();
+    tail_accepted += block_accept_work_vector(
+      V_out, n_locked, buf->V_active, m_active, m_max,
+      buf->z, buf->tmp, n, ortho_passes_out
+    );
+    stages->reorthogonalization += native_timer_elapsed(timer);
+    timer = native_timer_now();
+  }
+  for (int attempt = 0; tail_accepted == 0 && attempt < n + block_size && *m_active < m_max; ++attempt) {
+    std::memset(buf->z, 0, sizeof(double) * static_cast<size_t>(n));
+    const int idx_basis = ((restart_idx + 1) * 17 + attempt * 31) % n;
+    buf->z[idx_basis < 0 ? -idx_basis : idx_basis] = 1.0;
+    stages->restart += native_timer_elapsed(timer);
+    timer = native_timer_now();
+    tail_accepted += block_accept_work_vector(
+      V_out, n_locked, buf->V_active, m_active, m_max,
+      buf->z, buf->tmp, n, ortho_passes_out
+    );
+    stages->reorthogonalization += native_timer_elapsed(timer);
+    timer = native_timer_now();
+  }
+  stages->restart += native_timer_elapsed(timer);
+  if (tail_accepted == 0) {
+    return 1;
+  }
+
+  timer = native_timer_now();
+  int rc = apply_active_block(impl, apply, n, tail_start, tail_accepted,
+                              buf->V_active, buf->AV_active, workspace,
+                              matvecs_out);
+  stages->apply += native_timer_elapsed(timer);
+  if (rc != 0) {
+    return rc;
+  }
+
+  timer = native_timer_now();
+  projection_update_self_block(buf->T_proj, m_max, buf->V_active,
+                               buf->AV_active, n, tail_start,
+                               tail_accepted, buf->coeff_block);
+  projection_update_cross_block(buf->T_proj, m_max, buf->V_active,
+                                buf->AV_active, n,
+                                0, tail_start,
+                                tail_start, tail_accepted,
+                                buf->coeff_block);
+  {
+    const double elapsed = native_timer_elapsed(timer);
+    stages->projected_solve += elapsed;
+    stages->projection_update += elapsed;
+  }
+  *previous_block_start = 0;
+  *previous_block_cols = tail_start;
+  *last_block_start = tail_start;
+  *last_block_cols = tail_accepted;
+  *restarts_out = restart_idx + 1;
+  return 0;
+}
+
+static int block_lanczos_finalize_return(
+    void* impl,
+    EigencoreApplyFn apply,
+    int n,
+    int k_target,
+    int target_kind,
+    double tol,
+    double norm_a,
+    int selected_count_final,
+    bool have_last_rr,
+    ThickRestartBuffers* buf,
+    EigencoreWorkspace* workspace,
+    NativeBlockStageSeconds* stages,
+    const BlockLanczosBestSnapshot& best,
+    double* V_out,
+    double* lambda_out,
+    double* residuals_out,
+    int* converged_out,
+    int* n_locked,
+    int* matvecs_out) {
+  int n_returned = *n_locked;
+  if (best.filled) {
+    std::memcpy(V_out, best.V.data(),
+                sizeof(double) * static_cast<size_t>(n) *
+                  static_cast<size_t>(k_target));
+    std::memcpy(lambda_out, best.lambda.data(),
+                sizeof(double) * static_cast<size_t>(k_target));
+    std::memcpy(residuals_out, best.residuals.data(),
+                sizeof(double) * static_cast<size_t>(k_target));
+    std::memcpy(converged_out, best.converged.data(),
+                sizeof(int) * static_cast<size_t>(k_target));
+    *n_locked = best.locked_prefix;
+    n_returned = k_target;
+  } else if (have_last_rr && n_returned < k_target) {
+    for (int p = 0; p < selected_count_final && n_returned < k_target; ++p) {
+      if (buf->is_locked[p]) {
+        continue;
+      }
+      const int idx = buf->selected[p];
+      std::memcpy(V_out + static_cast<int64_t>(n_returned) * n,
+                  buf->B_v + static_cast<int64_t>(p) * n,
+                  sizeof(double) * static_cast<size_t>(n));
+      lambda_out[n_returned] = buf->theta[idx];
+      residuals_out[n_returned] = buf->ritz_res[p];
+      converged_out[n_returned] = 0;
+      ++n_returned;
+    }
+  }
+  if (n_returned != k_target) {
+    return 0;
+  }
+
+  const int locked_prefix = *n_locked;
+  const int full_best_snapshot = best.filled && best.nconv >= k_target;
+  const int polish_offset = (!full_best_snapshot &&
+                             locked_prefix > 0 && locked_prefix < k_target) ?
+    locked_prefix : 0;
+  const int polish_count = k_target - polish_offset;
+  int polished_converged = 0;
+  auto timer = native_timer_now();
+  int polish_status = 0;
+  if (polish_count > 0) {
+    polish_status = final_polish_block_ritz(
+      impl, apply, n, polish_count, target_kind, tol, norm_a,
+      V_out + static_cast<int64_t>(polish_offset) * n,
+      lambda_out + polish_offset,
+      residuals_out + polish_offset,
+      converged_out + polish_offset,
+      &polished_converged, buf, workspace, matvecs_out
+    );
+  } else {
+    polished_converged = 0;
+  }
+  {
+    const double elapsed = native_timer_elapsed(timer);
+    stages->ritz_residual += elapsed;
+    stages->ritz_final_polish += elapsed;
+  }
+  if (polish_status != 0) {
+    return polish_status;
+  }
+  *n_locked = polish_offset + polished_converged;
+  if (best.filled && polish_offset > 0 && *n_locked >= k_target) {
+    timer = native_timer_now();
+    polish_status = final_polish_block_ritz(
+      impl, apply, n, k_target, target_kind, tol, norm_a,
+      V_out, lambda_out, residuals_out, converged_out,
+      &polished_converged, buf, workspace, matvecs_out
+    );
+    {
+      const double elapsed = native_timer_elapsed(timer);
+      stages->ritz_residual += elapsed;
+      stages->ritz_final_polish += elapsed;
+    }
+    if (polish_status != 0) {
+      return polish_status;
+    }
+    *n_locked = polished_converged;
+  }
+  return 0;
+}
+
 static int native_block_thick_restart_lanczos_run(
     void* impl,
     EigencoreApplyFn apply,
@@ -4561,15 +4978,7 @@ static int native_block_thick_restart_lanczos_run(
   if (trl_buffers_alloc(&buf, n, k_target, m_max, block_size) != 0) {
     return -2;
   }
-  std::vector<double> best_V(static_cast<size_t>(n) * static_cast<size_t>(k_target), 0.0);
-  std::vector<double> best_lambda(static_cast<size_t>(k_target), 0.0);
-  std::vector<double> best_residuals(static_cast<size_t>(k_target), R_PosInf);
-  std::vector<int> best_converged(static_cast<size_t>(k_target), 0);
-  std::vector<int> candidate_converged(static_cast<size_t>(k_target), 0);
-  int best_filled = 0;
-  int best_locked_prefix = 0;
-  int best_nconv = -1;
-  double best_max_backward_error = R_PosInf;
+  BlockLanczosBestSnapshot best(n, k_target);
 
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
   int m_active = 0;
@@ -4623,53 +5032,15 @@ static int native_block_thick_restart_lanczos_run(
   bool have_last_rr = false;
 
   for (; restart_idx <= max_restarts; ++restart_idx) {
-    while (m_active < m_max && last_block_cols > 0) {
-      timer = native_timer_now();
-      form_structured_projected_block_residual(
-        buf.V_active, buf.AV_active, buf.T_proj, m_max, n,
-        last_block_start, last_block_cols,
-        previous_block_start, previous_block_cols,
-        buf.Z_block, buf.coeff_block
-      );
-      stages->recurrence += native_timer_elapsed(timer);
-      const int accepted_start = m_active;
-      timer = native_timer_now();
-      const int accepted = block_accept_columns_blas3(
-        buf.Z_block, n, last_block_cols, V_out, n_locked,
-        buf.V_active, &m_active, m_max, buf.Z_block, block_size,
-        buf.coeff_block, buf.tmp, n,
-        block_size, ortho_passes_out,
-        false
-      );
-      stages->reorthogonalization += native_timer_elapsed(timer);
-      if (accepted == 0) {
-        break;
-      }
-      timer = native_timer_now();
-      rc = apply_active_block(impl, apply, n, accepted_start, accepted,
-                              buf.V_active, buf.AV_active, &workspace,
-                              matvecs_out);
-      stages->apply += native_timer_elapsed(timer);
-      if (rc != 0) {
-        trl_buffers_free(&buf);
-        return rc;
-      }
-      timer = native_timer_now();
-      projection_update_small_self_and_cross(
-        buf.T_proj, m_max, buf.V_active, buf.AV_active, n,
-        last_block_start, last_block_cols, accepted_start, accepted,
-        buf.coeff_block
-      );
-      {
-        const double elapsed = native_timer_elapsed(timer);
-        stages->projected_solve += elapsed;
-        stages->projection_update += elapsed;
-      }
-      ++(*iterations_out);
-      previous_block_start = last_block_start;
-      previous_block_cols = last_block_cols;
-      last_block_start = accepted_start;
-      last_block_cols = accepted;
+    rc = block_lanczos_expand_basis_to_budget(
+      impl, apply, n, m_max, block_size, V_out, n_locked, &buf, &workspace,
+      stages, &m_active, &previous_block_start, &previous_block_cols,
+      &last_block_start, &last_block_cols, iterations_out, matvecs_out,
+      ortho_passes_out
+    );
+    if (rc != 0) {
+      trl_buffers_free(&buf);
+      return rc;
     }
 
     if (m_active < 1) {
@@ -4860,77 +5231,10 @@ static int native_block_thick_restart_lanczos_run(
     }
     stages->locking += native_timer_elapsed(timer);
 
-    {
-      int candidate_count = 0;
-      int candidate_nconv = 0;
-      double candidate_max_backward_error = 0.0;
-      for (; candidate_count < n_locked && candidate_count < k_target; ++candidate_count) {
-        const double* vec = V_out + static_cast<int64_t>(candidate_count) * n;
-        const double scale_i = standard_eigen_lock_scale(
-          norm_a, lambda_out[candidate_count], vec, n
-        );
-        const double backward_error = residuals_out[candidate_count] / scale_i;
-        if (backward_error > candidate_max_backward_error) {
-          candidate_max_backward_error = backward_error;
-        }
-        candidate_converged[static_cast<size_t>(candidate_count)] =
-          (residuals_out[candidate_count] <= tol * scale_i) ? 1 : 0;
-        if (candidate_converged[static_cast<size_t>(candidate_count)]) {
-          ++candidate_nconv;
-        }
-      }
-      for (int p = 0; p < selected_count && candidate_count < k_target; ++p) {
-        if (buf.is_locked[p]) {
-          continue;
-        }
-        const int idx = buf.selected[p];
-        const double* vec = buf.B_v + static_cast<int64_t>(p) * n;
-        const double scale_i = standard_eigen_lock_scale(
-          norm_a, buf.theta[idx], vec, n
-        );
-        const double backward_error = buf.ritz_res[p] / scale_i;
-        if (backward_error > candidate_max_backward_error) {
-          candidate_max_backward_error = backward_error;
-        }
-        candidate_converged[static_cast<size_t>(candidate_count)] =
-          (buf.ritz_res[p] <= tol * scale_i) ? 1 : 0;
-        if (candidate_converged[static_cast<size_t>(candidate_count)]) {
-          ++candidate_nconv;
-        }
-        ++candidate_count;
-      }
-      if (candidate_count == k_target &&
-          (candidate_nconv > best_nconv ||
-           (candidate_nconv == best_nconv &&
-            candidate_max_backward_error < best_max_backward_error))) {
-        int out_col = 0;
-        for (; out_col < n_locked && out_col < k_target; ++out_col) {
-          std::memcpy(best_V.data() + static_cast<int64_t>(out_col) * n,
-                      V_out + static_cast<int64_t>(out_col) * n,
-                      sizeof(double) * static_cast<size_t>(n));
-          best_lambda[static_cast<size_t>(out_col)] = lambda_out[out_col];
-          best_residuals[static_cast<size_t>(out_col)] = residuals_out[out_col];
-        }
-        for (int p = 0; p < selected_count && out_col < k_target; ++p) {
-          if (buf.is_locked[p]) {
-            continue;
-          }
-          const int idx = buf.selected[p];
-          std::memcpy(best_V.data() + static_cast<int64_t>(out_col) * n,
-                      buf.B_v + static_cast<int64_t>(p) * n,
-                      sizeof(double) * static_cast<size_t>(n));
-          best_lambda[static_cast<size_t>(out_col)] = buf.theta[idx];
-          best_residuals[static_cast<size_t>(out_col)] = buf.ritz_res[p];
-          ++out_col;
-        }
-        best_locked_prefix = n_locked;
-        best_nconv = candidate_nconv;
-        best_max_backward_error = candidate_max_backward_error;
-        std::memcpy(best_converged.data(), candidate_converged.data(),
-                    sizeof(int) * static_cast<size_t>(k_target));
-        best_filled = 1;
-      }
-    }
+    block_lanczos_maybe_capture_best_snapshot(
+      n, k_target, selected_count, n_locked, norm_a, tol, &buf,
+      V_out, lambda_out, residuals_out, &best
+    );
 
     if (n_locked >= k_target || restart_idx == max_restarts) {
       *restarts_out = restart_idx;
@@ -4938,197 +5242,31 @@ static int native_block_thick_restart_lanczos_run(
       break;
     }
 
-    timer = native_timer_now();
-    const int remaining = k_target - n_locked;
-    int keep_room = m_max - block_size;
-    if (keep_room < 0) {
-      keep_room = 0;
-    }
-    int k_keep = remaining + pad;
-    if (k_keep < remaining) {
-      k_keep = remaining;
-    }
-    if (k_keep > keep_room) {
-      k_keep = keep_room;
-    }
-    int unlocked_count = 0;
-    for (int p = 0; p < selected_count; ++p) {
-      if (!buf.is_locked[p]) {
-        ++unlocked_count;
-      }
-    }
-    if (k_keep > unlocked_count) {
-      k_keep = unlocked_count;
-    }
-
-    int n_picked = 0;
-    std::memset(buf.T_proj, 0,
-                sizeof(double) * static_cast<size_t>(m_max) *
-                  static_cast<size_t>(m_max));
-    for (int p = 0; p < selected_count && n_picked < k_keep; ++p) {
-      if (buf.is_locked[p]) {
-        continue;
-      }
-      const int idx = buf.selected[p];
-      std::memcpy(buf.V_active + static_cast<int64_t>(n_picked) * n,
-                  buf.B_v + static_cast<int64_t>(p) * n,
-                  sizeof(double) * static_cast<size_t>(n));
-      std::memcpy(buf.AV_active + static_cast<int64_t>(n_picked) * n,
-                  buf.B_av + static_cast<int64_t>(p) * n,
-                  sizeof(double) * static_cast<size_t>(n));
-      buf.T_proj[n_picked + static_cast<int64_t>(n_picked) * m_max] =
-        buf.theta[idx];
-      ++n_picked;
-    }
-    m_active = n_picked;
-
-    const int tail_start = m_active;
-    int tail_accepted = 0;
-    for (int p = 0; p < selected_count && tail_accepted < block_size && m_active < m_max; ++p) {
-      if (buf.is_locked[p] || buf.ritz_res[p] <= 100.0 * DBL_EPSILON) {
-        continue;
-      }
-      const int idx = buf.selected[p];
-      for (int row = 0; row < n; ++row) {
-        buf.z[row] = buf.B_av[static_cast<int64_t>(p) * n + row] -
-          buf.theta[idx] * buf.B_v[static_cast<int64_t>(p) * n + row];
-      }
-      stages->restart += native_timer_elapsed(timer);
-      timer = native_timer_now();
-      tail_accepted += block_accept_work_vector(
-        V_out, n_locked, buf.V_active, &m_active, m_max,
-        buf.z, buf.tmp, n, ortho_passes_out
-      );
-      stages->reorthogonalization += native_timer_elapsed(timer);
-      timer = native_timer_now();
-    }
-    for (int attempt = 0; tail_accepted == 0 && attempt < n + block_size && m_active < m_max; ++attempt) {
-      std::memset(buf.z, 0, sizeof(double) * static_cast<size_t>(n));
-      const int idx_basis = ((restart_idx + 1) * 17 + attempt * 31) % n;
-      buf.z[idx_basis < 0 ? -idx_basis : idx_basis] = 1.0;
-      stages->restart += native_timer_elapsed(timer);
-      timer = native_timer_now();
-      tail_accepted += block_accept_work_vector(
-        V_out, n_locked, buf.V_active, &m_active, m_max,
-        buf.z, buf.tmp, n, ortho_passes_out
-      );
-      stages->reorthogonalization += native_timer_elapsed(timer);
-      timer = native_timer_now();
-    }
-    stages->restart += native_timer_elapsed(timer);
-    if (tail_accepted == 0) {
+    rc = block_lanczos_restart_with_continuation_tail(
+      impl, apply, n, k_target, m_max, block_size, restart_idx, selected_count,
+      n_locked, &buf, &workspace, stages, &m_active, &previous_block_start,
+      &previous_block_cols, &last_block_start, &last_block_cols, V_out,
+      matvecs_out, restarts_out, ortho_passes_out
+    );
+    if (rc == 1) {
       *restarts_out = restart_idx;
       *m_active_final_out = m_active;
       break;
     }
-    timer = native_timer_now();
-    rc = apply_active_block(impl, apply, n, tail_start, tail_accepted,
-                            buf.V_active, buf.AV_active, &workspace,
-                            matvecs_out);
-    stages->apply += native_timer_elapsed(timer);
     if (rc != 0) {
       trl_buffers_free(&buf);
       return rc;
     }
-    timer = native_timer_now();
-    projection_update_self_block(buf.T_proj, m_max, buf.V_active,
-                                 buf.AV_active, n, tail_start,
-                                 tail_accepted, buf.coeff_block);
-    projection_update_cross_block(buf.T_proj, m_max, buf.V_active,
-                                  buf.AV_active, n,
-                                  0, tail_start,
-                                  tail_start, tail_accepted,
-                                  buf.coeff_block);
-    {
-      const double elapsed = native_timer_elapsed(timer);
-      stages->projected_solve += elapsed;
-      stages->projection_update += elapsed;
-    }
-    previous_block_start = 0;
-    previous_block_cols = tail_start;
-    last_block_start = tail_start;
-    last_block_cols = tail_accepted;
-    *restarts_out = restart_idx + 1;
   }
 
-  int n_returned = n_locked;
-  if (best_filled) {
-    std::memcpy(V_out, best_V.data(),
-                sizeof(double) * static_cast<size_t>(n) *
-                  static_cast<size_t>(k_target));
-    std::memcpy(lambda_out, best_lambda.data(),
-                sizeof(double) * static_cast<size_t>(k_target));
-    std::memcpy(residuals_out, best_residuals.data(),
-                sizeof(double) * static_cast<size_t>(k_target));
-    std::memcpy(converged_out, best_converged.data(),
-                sizeof(int) * static_cast<size_t>(k_target));
-    n_locked = best_locked_prefix;
-    n_returned = k_target;
-  } else if (have_last_rr && n_returned < k_target) {
-    for (int p = 0; p < selected_count_final && n_returned < k_target; ++p) {
-      if (buf.is_locked[p]) {
-        continue;
-      }
-      const int idx = buf.selected[p];
-      std::memcpy(V_out + static_cast<int64_t>(n_returned) * n,
-                  buf.B_v + static_cast<int64_t>(p) * n,
-                  sizeof(double) * static_cast<size_t>(n));
-      lambda_out[n_returned] = buf.theta[idx];
-      residuals_out[n_returned] = buf.ritz_res[p];
-      converged_out[n_returned] = 0;
-      ++n_returned;
-    }
-  }
-  if (n_returned == k_target) {
-    const int locked_prefix = n_locked;
-    const int full_best_snapshot = best_filled && best_nconv >= k_target;
-    const int polish_offset = (!full_best_snapshot &&
-                               locked_prefix > 0 && locked_prefix < k_target) ?
-      locked_prefix : 0;
-    const int polish_count = k_target - polish_offset;
-    int polished_converged = 0;
-    timer = native_timer_now();
-    int polish_status = 0;
-    if (polish_count > 0) {
-      polish_status = final_polish_block_ritz(
-        impl, apply, n, polish_count, target_kind, tol, norm_a,
-        V_out + static_cast<int64_t>(polish_offset) * n,
-        lambda_out + polish_offset,
-        residuals_out + polish_offset,
-        converged_out + polish_offset,
-        &polished_converged, &buf, &workspace, matvecs_out
-      );
-    } else {
-      polished_converged = 0;
-    }
-    {
-      const double elapsed = native_timer_elapsed(timer);
-      stages->ritz_residual += elapsed;
-      stages->ritz_final_polish += elapsed;
-    }
-    if (polish_status != 0) {
-      trl_buffers_free(&buf);
-      return polish_status;
-    }
-    n_locked = polish_offset + polished_converged;
-    if (best_filled && polish_offset > 0 && n_locked >= k_target) {
-      timer = native_timer_now();
-      polish_status = final_polish_block_ritz(
-        impl, apply, n, k_target, target_kind, tol, norm_a,
-        V_out, lambda_out, residuals_out, converged_out,
-        &polished_converged, &buf, &workspace, matvecs_out
-      );
-      {
-        const double elapsed = native_timer_elapsed(timer);
-        stages->ritz_residual += elapsed;
-        stages->ritz_final_polish += elapsed;
-      }
-      if (polish_status != 0) {
-        trl_buffers_free(&buf);
-        return polish_status;
-      }
-      n_locked = polished_converged;
-    }
+  rc = block_lanczos_finalize_return(
+    impl, apply, n, k_target, target_kind, tol, norm_a, selected_count_final,
+    have_last_rr, &buf, &workspace, stages, best, V_out, lambda_out,
+    residuals_out, converged_out, &n_locked, matvecs_out
+  );
+  if (rc != 0) {
+    trl_buffers_free(&buf);
+    return rc;
   }
   *n_locked_out = n_locked;
   *m_active_final_out = m_active;
