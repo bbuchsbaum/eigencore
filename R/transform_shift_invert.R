@@ -16,7 +16,7 @@ shift_invert_plan_label <- function(problem, has_metric, is_hermitian,
     return("reference Hermitian Lanczos shift-invert (sparse LU)")
   }
   if (is_dense_source) {
-    return("reference Hermitian Lanczos shift-invert (dense LU)")
+    return("reference Hermitian Lanczos shift-invert (dense QR)")
   }
   "shift-invert requested (provide method$solve for matrix-free A)"
 }
@@ -133,7 +133,7 @@ shift_invert_solver_dense <- function(A, sigma) {
     solve_fn = function(X) {
       qr.coef(factor, X)
     },
-    label = "dense_lu",
+    label = "dense_qr",
     M = M,
     cache = list(
       factorization = "base::qr",

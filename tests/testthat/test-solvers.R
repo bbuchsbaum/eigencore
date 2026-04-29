@@ -211,7 +211,7 @@ test_that("shift_invert dense reference path returns certified original eigenpai
   expect_equal(values(fit), 3, tolerance = 1e-8)
   expect_true(certificate(fit)$passed)
   expect_equal(fit$transform$kind, "shift_invert")
-  expect_equal(fit$transform$label_kind, "dense_lu")
+  expect_equal(fit$transform$label_kind, "dense_qr")
   expect_match(fit$warnings, "reference Hermitian Lanczos shift-invert")
 })
 

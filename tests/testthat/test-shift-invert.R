@@ -8,7 +8,7 @@ test_that("shift-invert returns interior eigenvalues nearest sigma on dense Herm
                      method = shift_invert(sigma = 2))
 
   expect_identical(fit$method,
-                   "reference Hermitian Lanczos shift-invert (dense LU)")
+                   "reference Hermitian Lanczos shift-invert (dense QR)")
   expected <- vals[order(abs(vals - 2))][1:3]
   expect_equal(sort(fit$values), sort(expected), tolerance = 1e-7)
   expect_certificate_clean(fit)
@@ -81,7 +81,7 @@ test_that("planner emits an honest shift-invert label for the chosen path", {
                         transform = shift_invert(sigma = 5))
   plan <- plan_solver(P, k = 3, method = shift_invert(sigma = 5))
   expect_identical(plan$method,
-                   "reference Hermitian Lanczos shift-invert (dense LU)")
+                   "reference Hermitian Lanczos shift-invert (dense QR)")
   expect_true(any(grepl("shift-invert transform requested", plan$reasons,
                         fixed = TRUE)))
 })
@@ -127,7 +127,7 @@ test_that("shift-invert result exposes factorization-cache provenance", {
 
   expect_s3_class(cache$key, "eigencore_shift_invert_cache_key")
   expect_equal(cache$key$sigma, 4.2)
-  expect_equal(cache$label_kind, "dense_lu")
+  expect_equal(cache$label_kind, "dense_qr")
   expect_equal(cache$factorization, "base::qr")
   expect_true(cache$factorization_cached)
   expect_equal(cache$condition_estimate_type, "dense_rcond")
