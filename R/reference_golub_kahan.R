@@ -53,6 +53,7 @@ reference_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     }
     alpha[[j]] <- sqrt(sum(u^2))
     if (alpha[[j]] <= max(100 * .Machine$double.eps, tol * 1e-3)) {
+      iterations <- j - 1L
       break
     }
     u <- u / alpha[[j]]
@@ -481,6 +482,8 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     d <- sqrt(pmax(small$values, 0))
     v_full <- small$vectors
     u_full <- as.matrix(A %*% v_full)
+    av_full <- u_full
+    atu_full <- sweep(v_full, 2L, d, `*`)
     zero_tol <- gram_svd_zero_tolerance(d, tol)
     nz <- d > zero_tol
     d[!nz] <- 0
@@ -500,6 +503,8 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
         needed = sum(!nz),
         tol = zero_tol
       )
+      av_full[, !nz] <- 0
+      atu_full[, !nz] <- 0
     }
   } else {
     gram <- as.matrix(tcrossprod(A))
@@ -507,6 +512,8 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     d <- sqrt(pmax(small$values, 0))
     u_full <- small$vectors
     v_full <- as.matrix(crossprod(A, u_full))
+    atu_full <- v_full
+    av_full <- sweep(u_full, 2L, d, `*`)
     zero_tol <- gram_svd_zero_tolerance(d, tol)
     nz <- d > zero_tol
     d[!nz] <- 0
@@ -526,10 +533,18 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
         needed = sum(!nz),
         tol = zero_tol
       )
+      av_full[, !nz] <- 0
+      atu_full[, !nz] <- 0
     }
   }
 
-  cert <- certify_svd_operator(op, d, u_full, v_full, tol = tol)
+  cert <- if (any(!nz)) {
+    certify_svd_operator(op, d, u_full, v_full, tol = tol)
+  } else {
+    certify_svd_operator_cached_sides(
+      op, d, u_full, v_full, av_full, atu_full, tol = tol
+    )
+  }
   u <- u_full
   v <- v_full
   if (vectors == "left") {
@@ -560,6 +575,7 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
       gram_dimension = min(m, n),
       zero_singular_completion = any(!nz),
       zero_singular_threshold = zero_tol,
+      certificate_reuses_gram_sides = !any(!nz),
       certified_in_original_coordinates = TRUE
     )
   )

@@ -254,6 +254,41 @@ certify_svd_operator_cached_av <- function(Aop, d, u, v, Av, tol = 1e-8,
 }
 
 #' @keywords internal
+certify_svd_operator_cached_sides <- function(Aop, d, u, v, Av, Atu,
+                                             tol = 1e-8) {
+  Av <- as.matrix(Av)
+  Atu <- as.matrix(Atu)
+  if (nrow(Av) != Aop$dim[[1L]] || ncol(Av) != length(d)) {
+    stop("Av must have nrow equal to nrow(Aop) and one column per singular value.",
+         call. = FALSE)
+  }
+  if (nrow(Atu) != Aop$dim[[2L]] || ncol(Atu) != length(d)) {
+    stop("Atu must have nrow equal to ncol(Aop) and one column per singular value.",
+         call. = FALSE)
+  }
+  left_residual_matrix <- Av - sweep(u, 2L, d, `*`)
+  right_residual_matrix <- Atu - sweep(v, 2L, d, `*`)
+  left <- col_norms(left_residual_matrix)
+  right <- col_norms(right_residual_matrix)
+  combined <- sqrt(left^2 + right^2)
+  norm_A <- operator_norm_for_certificate_info(Aop)
+  scale <- svd_backward_scale(norm_A$value, d)
+  backward <- combined / scale
+  orth_u <- max(abs(crossprod(u) - diag(length(d))))
+  orth_v <- max(abs(crossprod(v) - diag(length(d))))
+  new_certificate(
+    tol = tol,
+    residuals = list(left = left, right = right, combined = combined),
+    backward_error = backward,
+    orthogonality = c(U = orth_u, V = orth_v),
+    converged = backward <= tol,
+    scale = scale,
+    norm_bound_type = norm_A$norm_bound_type,
+    scale_is_estimate = isTRUE(norm_A$scale_is_estimate)
+  )
+}
+
+#' @keywords internal
 new_certificate <- function(tol, residuals, backward_error, orthogonality,
                             converged, scale, notes = character(),
                             certificate_type = "residual_backward_error",

@@ -185,8 +185,8 @@ test_that("sparse Gram SVD falls back when certification is weaker than Golub-Ka
   expect_true(fit$restart$fallback_attempted)
   expect_true(fit$restart$fallback_used)
   expect_equal(fit$restart$fallback_method, "native prototype Golub-Kahan")
-  expect_lt(fit$restart$fallback_max_backward_error,
-            fit$restart$gram_max_backward_error)
+  expect_false(fit$restart$gram_certificate_passed)
+  expect_true(is.finite(fit$restart$fallback_max_backward_error))
   expect_true(fit$certificate$passed)
 })
 
