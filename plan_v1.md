@@ -631,11 +631,17 @@ Primary attack surfaces, in order:
    final retained result, so R no longer rebuilds that certificate through a
    separate cached-`A v` call. Attempt history also records
    `converged_count` and `leading_converged_count`, exposing exactly when
-   partial locking would have been possible. On the quick wide-sparse retained
-   probe, attempt 1 already has one leading converged triplet, attempt 2 has
-   none under the stricter orthogonality gate, and attempt 3 certifies all five.
-   This is a locking/deflation readiness surface, not full deflation yet:
-   locked triplets are measured but not removed from later restart work.
+   partial locking would have been possible. An opt-in deflation candidate,
+   `eigencore_block_golub_kahan_retained_deflated`, now orthogonalizes new
+   basis blocks against locked left/right singular vector prefixes and reports
+   `retained_deflation` plus `retained_locked_count` in benchmark rows. It is
+   certificate guarded and remains diagnostic only: on the current quick
+   wide-sparse retained probe all five requested triplets become
+   leading-converged only on the final certified attempt, so the deflated row
+   locks zero columns, certifies, and does not improve the speed or memory gate.
+   The next H work therefore must attack the amount of retained-restart
+   projected work directly rather than assuming partial locking will appear on
+   the release benchmark surface.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
    preconditioning beyond the typed shifted-diagonal and certified
    shifted-tridiagonal sparse-smallest case, keep the benchmark

@@ -650,7 +650,8 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
                                                         start = NULL,
                                                         max_attempts = NULL,
                                                         vectors = c("both", "left", "right", "none"),
-                                                        retained_av_cache = FALSE) {
+                                                        retained_av_cache = FALSE,
+                                                        retained_deflation = FALSE) {
   vectors <- match.arg(vectors)
   op <- as_operator(op)
   abi <- native_block_golub_kahan_retained_restart_abi(
@@ -701,6 +702,7 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
         as.numeric(norm_info$value),
         as.numeric(tol),
         as.logical(use_retained_av_cache),
+        as.logical(retained_deflation),
         PACKAGE = "eigencore"
       )
     } else if (is.matrix(source) && is.double(source)) {
@@ -716,6 +718,7 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
         as.numeric(norm_info$value),
         as.numeric(tol),
         as.logical(use_retained_av_cache),
+        as.logical(retained_deflation),
         PACKAGE = "eigencore"
       )
     } else {
@@ -744,6 +747,7 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
   }
 
   cache_attempted <- isTRUE(retained_av_cache)
+  deflation_attempted <- isTRUE(retained_deflation)
   cache_failed <- FALSE
   cache_error <- NA_character_
   cache_max_backward_error <- NA_real_
@@ -835,6 +839,8 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
       thick_restart = TRUE,
       retained_restart = TRUE,
       retained_restart_native = TRUE,
+      retained_deflation = deflation_attempted,
+      retained_locked_count = ritz$retained_locked_count %||% 0L,
       retained_av_cache = any(attempt_history$cached_start_used %||% FALSE),
       retained_av_cache_attempted = cache_attempted,
       retained_av_cache_fallback = cache_failed,

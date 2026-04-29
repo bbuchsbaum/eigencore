@@ -278,6 +278,32 @@ test_that("native retained block Golub-Kahan cached AV path certifies after MGS2
   expect_true(is.na(retained$restart$retained_av_cache_failed_backward_error))
 })
 
+test_that("native retained block Golub-Kahan deflation is opt-in and certificate guarded", {
+  set.seed(702)
+  A <- Matrix::t(Matrix::rsparsematrix(600, 90, density = 0.03))
+
+  set.seed(701)
+  retained <- eigencore:::native_block_golub_kahan_retained_cycle_svd(
+    A,
+    rank = 5L,
+    target = largest(),
+    block = 2L,
+    tol = 1e-8,
+    retained_av_cache = TRUE,
+    retained_deflation = TRUE
+  )
+
+  expect_true(retained$certificate$passed)
+  expect_gte(sum(retained$certificate$converged), 5L)
+  expect_true(retained$restart$retained_deflation)
+  expect_true(retained$restart$retained_av_cache_attempted)
+  expect_false(retained$restart$retained_av_cache_fallback)
+  expect_type(retained$restart$retained_locked_count, "integer")
+  expect_gte(retained$restart$retained_locked_count, 0L)
+  expect_true("eigencore_block_golub_kahan_retained_deflated" %in%
+                eigencore:::available_svd_methods())
+})
+
 test_that("native block Golub-Kahan basis cycle records adaptive subspace attempts", {
   set.seed(702)
   A <- Matrix::t(Matrix::rsparsematrix(600, 90, density = 0.03))

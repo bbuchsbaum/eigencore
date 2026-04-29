@@ -83,6 +83,7 @@ svd_surface_default_methods <- function(args) {
       "eigencore_block_golub_kahan_cycle_lean",
       "eigencore_block_golub_kahan_retained",
       "eigencore_block_golub_kahan_retained_cached",
+      "eigencore_block_golub_kahan_retained_deflated",
       "RSpectra",
       "PRIMME",
       "irlba",
@@ -124,6 +125,7 @@ svd_internal_methods <- function() {
     "eigencore_block_golub_kahan_cycle_lean",
     "eigencore_block_golub_kahan_retained",
     "eigencore_block_golub_kahan_retained_cached",
+    "eigencore_block_golub_kahan_retained_deflated",
     "eigencore_randomized"
   )
 }
@@ -1234,6 +1236,8 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
       retained_restart = result_restart_logical(fit, "retained_restart"),
       retained_restart_native = result_restart_logical(fit, "retained_restart_native"),
       retained_av_cache = result_restart_logical(fit, "retained_av_cache"),
+      retained_deflation = result_restart_logical(fit, "retained_deflation"),
+      retained_locked_count = result_restart_integer(fit, "retained_locked_count"),
       native_attempt_certification = result_restart_logical(fit, "native_attempt_certification"),
       native_early_stop = result_restart_logical(fit, "native_early_stop"),
       retained_converged_count = result_attempt_history_max(fit, "converged_count"),
