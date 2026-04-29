@@ -4507,11 +4507,58 @@ static int block_lanczos_expand_basis_to_budget(
       buf->V_active, m_active, m_max, buf->Z_block, block_size,
       buf->coeff_block, buf->tmp, n,
       block_size, ortho_passes_out,
-      false
+      true
     );
     stages->reorthogonalization += native_timer_elapsed(timer);
     if (accepted == 0) {
-      break;
+      // Exact breakdown can occur in an invariant subspace that is not the
+      // requested target. Continue deterministically instead of locking it.
+      int continuation_accepted = 0;
+      const int continuation_start = *m_active;
+      for (int attempt = 0;
+           continuation_accepted < block_size &&
+             attempt < n + block_size &&
+             *m_active < m_max;
+           ++attempt) {
+        std::memset(buf->z, 0, sizeof(double) * static_cast<size_t>(n));
+        const int idx_basis = ((*iterations_out + 1) * 17 + attempt * 31) % n;
+        buf->z[idx_basis < 0 ? -idx_basis : idx_basis] = 1.0;
+        timer = native_timer_now();
+        continuation_accepted += block_accept_work_vector(
+          V_locked, n_locked, buf->V_active, m_active, m_max,
+          buf->z, buf->tmp, n, ortho_passes_out
+        );
+        stages->reorthogonalization += native_timer_elapsed(timer);
+      }
+      if (continuation_accepted == 0) {
+        break;
+      }
+
+      timer = native_timer_now();
+      const int rc = apply_active_block(
+        impl, apply, n, continuation_start, continuation_accepted,
+        buf->V_active, buf->AV_active, workspace, matvecs_out
+      );
+      stages->apply += native_timer_elapsed(timer);
+      if (rc != 0) {
+        return rc;
+      }
+
+      timer = native_timer_now();
+      projection_update_self_block(buf->T_proj, m_max, buf->V_active,
+                                   buf->AV_active, n, 0, *m_active,
+                                   buf->S_eig);
+      {
+        const double elapsed = native_timer_elapsed(timer);
+        stages->projected_solve += elapsed;
+        stages->projection_update += elapsed;
+      }
+      ++(*iterations_out);
+      *previous_block_start = *last_block_start;
+      *previous_block_cols = *last_block_cols;
+      *last_block_start = continuation_start;
+      *last_block_cols = continuation_accepted;
+      continue;
     }
 
     timer = native_timer_now();
@@ -4524,11 +4571,9 @@ static int block_lanczos_expand_basis_to_budget(
     }
 
     timer = native_timer_now();
-    projection_update_small_self_and_cross(
-      buf->T_proj, m_max, buf->V_active, buf->AV_active, n,
-      *last_block_start, *last_block_cols, accepted_start, accepted,
-      buf->coeff_block
-    );
+    projection_update_self_block(buf->T_proj, m_max, buf->V_active,
+                                 buf->AV_active, n, 0, *m_active,
+                                 buf->S_eig);
     {
       const double elapsed = native_timer_elapsed(timer);
       stages->projected_solve += elapsed;

@@ -177,7 +177,7 @@ test_that("native block thick-restart production path agrees with R oracle on cl
   expect_gt(fit$restart$locking_events, 0L)
 })
 
-test_that("native block thick-restart falls back rather than returning duplicate low-residual Ritz directions", {
+test_that("native block thick-restart continues through unwanted invariant starts", {
   A <- random_symmetric_with_spectrum(200L, pattern = "clustered", seed = 1L)
   truth <- sort(spectrum_pattern("clustered", 200L), decreasing = TRUE)[seq_len(5L)]
 
@@ -190,15 +190,15 @@ test_that("native block thick-restart falls back rather than returning duplicate
     tol = 1e-8
   )
 
-  expect_true(isTRUE(fit$restart$fallback_used))
-  expect_match(fit$warnings, "failed certification", fixed = TRUE)
+  expect_equal(fit$restart$kind, "block_thick_restart_candidate")
+  expect_false(isTRUE(fit$restart$fallback_used))
   expect_true(certificate(fit)$passed)
   expect_lt(certificate(fit)$max_orthogonality_loss, 1e-8)
   expect_equal(values(fit), truth, tolerance = 1e-6)
   expect_lt(max(abs(crossprod(vectors(fit)) - diag(5L))), 1e-8)
 })
 
-test_that("native block thick-restart uses scalar fallback for sparse certificate failures", {
+test_that("native block thick-restart continues sparse unwanted invariant starts", {
   vals <- sort(spectrum_pattern("clustered", 200L), decreasing = TRUE)
   A <- Matrix::sparseMatrix(
     i = seq_along(vals),
@@ -216,9 +216,8 @@ test_that("native block thick-restart uses scalar fallback for sparse certificat
     tol = 1e-8
   )
 
-  expect_true(isTRUE(fit$restart$fallback_used))
-  expect_equal(fit$restart$kind, "block_scalar_lanczos_certificate_fallback")
-  expect_match(fit$warnings, "failed certification", fixed = TRUE)
+  expect_equal(fit$restart$kind, "block_thick_restart_candidate")
+  expect_false(isTRUE(fit$restart$fallback_used))
   expect_true(certificate(fit)$passed)
   expect_equal(values(fit), truth, tolerance = 1e-6)
   expect_lt(max(abs(crossprod(vectors(fit)) - diag(5L))), 1e-8)
