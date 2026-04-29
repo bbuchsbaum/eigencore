@@ -34,6 +34,74 @@ shift_invert_apply_factory <- function(solve_fn) {
 }
 
 #' @keywords internal
+shift_invert_operator_fingerprint <- function(op) {
+  op <- as_operator(op)
+  source <- source_or_null(op)
+  storage <- op$metadata$storage %||% NULL
+  matrix <- op$metadata$matrix %||% NULL
+  if (is.matrix(source)) {
+    return(list(
+      kind = "dense",
+      dim = dim(source),
+      storage_mode = storage.mode(source),
+      values = as.vector(source)
+    ))
+  }
+  if (inherits(matrix, "sparseMatrix")) {
+    if (!inherits(matrix, "CsparseMatrix")) {
+      matrix <- methods::as(matrix, "CsparseMatrix")
+    }
+    return(list(
+      kind = storage %||% class(matrix)[[1L]],
+      class = class(matrix),
+      dim = methods::slot(matrix, "Dim"),
+      i = methods::slot(matrix, "i"),
+      p = methods::slot(matrix, "p"),
+      x = if ("x" %in% methods::slotNames(matrix)) {
+        methods::slot(matrix, "x")
+      } else {
+        numeric(0)
+      }
+    ))
+  }
+  list(
+    kind = "operator",
+    dim = op$dim,
+    name = op$name %||% NA_character_,
+    storage = storage,
+    source_available = !is.null(source)
+  )
+}
+
+#' @keywords internal
+shift_invert_factorization_cache_key <- function(Aop, sigma, Bop = NULL) {
+  sigma <- as.numeric(sigma)
+  if (length(sigma) != 1L || !is.finite(sigma)) {
+    stop("shift-invert cache key requires a single finite sigma.", call. = FALSE)
+  }
+  key <- list(
+    transform = "shift_invert",
+    sigma = sigma,
+    A = shift_invert_operator_fingerprint(Aop),
+    B = if (is.null(Bop)) NULL else shift_invert_operator_fingerprint(Bop)
+  )
+  class(key) <- "eigencore_shift_invert_cache_key"
+  key
+}
+
+#' @keywords internal
+shift_invert_factorization_cache_info <- function(Aop, sigma, Bop = NULL,
+                                                  label_kind = NA_character_) {
+  list(
+    key = shift_invert_factorization_cache_key(Aop, sigma, Bop = Bop),
+    label_kind = label_kind,
+    native = FALSE,
+    reusable_within_operator = TRUE,
+    external_cache = FALSE
+  )
+}
+
+#' @keywords internal
 shift_invert_solver_dense <- function(A, sigma) {
   M <- A - sigma * diag(nrow(A))
   cond <- tryCatch(base::rcond(M), error = function(e) NA_real_)
@@ -71,6 +139,7 @@ prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL) {
   Aop <- problem$A
   Bop <- problem$metric
   n <- Aop$dim[1L]
+  cache_info <- shift_invert_factorization_cache_info(Aop, sigma, Bop = Bop)
 
   if (!is.null(Bop)) {
     stop(
@@ -95,9 +164,16 @@ prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL) {
       apply_adjoint = NULL,
       structure = hermitian(),
       name = "shift_invert_user_solve",
-      metadata = list(native = FALSE)
+      metadata = list(
+        native = FALSE,
+        factorization_cache = modifyList(cache_info, list(label_kind = "user_solve"))
+      )
     )
-    return(list(operator = op, label_kind = "user_solve"))
+    return(list(
+      operator = op,
+      label_kind = "user_solve",
+      factorization_cache = modifyList(cache_info, list(label_kind = "user_solve"))
+    ))
   }
 
   # Build factorization from source matrix; CSC operators carry the matrix in
@@ -131,9 +207,16 @@ prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL) {
     apply_adjoint = NULL,
     structure = hermitian(),
     name = paste0("shift_invert_", prep$label),
-    metadata = list(native = FALSE)
+    metadata = list(
+      native = FALSE,
+      factorization_cache = modifyList(cache_info, list(label_kind = prep$label))
+    )
   )
-  list(operator = op, label_kind = prep$label)
+  list(
+    operator = op,
+    label_kind = prep$label,
+    factorization_cache = modifyList(cache_info, list(label_kind = prep$label))
+  )
 }
 
 #' @keywords internal
@@ -204,7 +287,8 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
     transform = list(
       kind = "shift_invert",
       sigma = sigma,
-      label_kind = prep$label_kind
+      label_kind = prep$label_kind,
+      factorization_cache = prep$factorization_cache
     ),
     warnings = paste0(
       "using reference Hermitian Lanczos shift-invert (",

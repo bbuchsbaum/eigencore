@@ -79,6 +79,53 @@ test_that("planner emits an honest shift-invert label for the chosen path", {
                         fixed = TRUE)))
 })
 
+test_that("shift-invert factorization cache keys invalidate on A, sigma, and B changes", {
+  A <- diag(c(1, 2, 4, 8))
+  B <- diag(c(1, 2, 3, 4))
+  A_changed <- A
+  A_changed[2, 2] <- 2.5
+  B_changed <- B
+  B_changed[3, 3] <- 3.5
+
+  key <- eigencore:::shift_invert_factorization_cache_key(as_operator(A), 0.25)
+  expect_identical(
+    key,
+    eigencore:::shift_invert_factorization_cache_key(as_operator(A), 0.25)
+  )
+  expect_false(identical(
+    key,
+    eigencore:::shift_invert_factorization_cache_key(as_operator(A_changed), 0.25)
+  ))
+  expect_false(identical(
+    key,
+    eigencore:::shift_invert_factorization_cache_key(as_operator(A), 0.5)
+  ))
+  expect_false(identical(
+    eigencore:::shift_invert_factorization_cache_key(
+      as_operator(A), 0.25, as_operator(B)
+    ),
+    eigencore:::shift_invert_factorization_cache_key(
+      as_operator(A), 0.25, as_operator(B_changed)
+    )
+  ))
+})
+
+test_that("shift-invert result exposes factorization-cache provenance", {
+  vals <- seq(1, 8)
+  A <- symmetric_with_spectrum(vals, seed = 91)
+
+  fit <- eig_partial(A, k = 2L, target = nearest(4.2),
+                     method = shift_invert(sigma = 4.2))
+  cache <- fit$transform$factorization_cache
+
+  expect_s3_class(cache$key, "eigencore_shift_invert_cache_key")
+  expect_equal(cache$key$sigma, 4.2)
+  expect_equal(cache$label_kind, "dense_lu")
+  expect_false(cache$native)
+  expect_true(cache$reusable_within_operator)
+  expect_false(cache$external_cache)
+})
+
 test_that("shift-invert near a true eigenvalue surfaces a clear error", {
   set.seed(17)
   vals <- c(1, 2, 3, 4, 5)
