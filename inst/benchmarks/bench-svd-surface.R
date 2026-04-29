@@ -154,31 +154,9 @@ row.names(result) <- NULL
 print(result)
 
 can_evaluate_gates <- gate_subject %in% result$method &&
-  any(!result$method %in% c(
-    "eigencore",
-    "eigencore_golub_kahan",
-    "eigencore_golub_kahan_projected",
-    "eigencore_block_golub_kahan_cycle",
-    "eigencore_block_golub_kahan_cycle_cached",
-    "eigencore_block_golub_kahan_cycle_cached_random",
-    "eigencore_block_golub_kahan_cycle_residual",
-    "eigencore_block_golub_kahan_cycle_lean",
-    "eigencore_block_golub_kahan_retained",
-    "eigencore_randomized"
-  ))
+  any(!result$method %in% svd_internal_methods())
 gates <- if (isTRUE(can_evaluate_gates)) lapply(split(result, result$case), function(case_rows) {
-  internal_methods <- c(
-    "eigencore",
-    "eigencore_golub_kahan",
-    "eigencore_golub_kahan_projected",
-    "eigencore_block_golub_kahan_cycle",
-    "eigencore_block_golub_kahan_cycle_cached",
-    "eigencore_block_golub_kahan_cycle_cached_random",
-    "eigencore_block_golub_kahan_cycle_residual",
-    "eigencore_block_golub_kahan_cycle_lean",
-    "eigencore_block_golub_kahan_retained",
-    "eigencore_randomized"
-  )
+  internal_methods <- svd_internal_methods()
   gate_rows <- case_rows[
     case_rows$method == gate_subject | !case_rows$method %in% internal_methods,
     ,
@@ -205,18 +183,7 @@ row.names(gates) <- NULL
 print(gates)
 
 memory_diagnostics <- if (isTRUE(can_evaluate_gates)) lapply(split(result, result$case), function(case_rows) {
-  internal_methods <- c(
-    "eigencore",
-    "eigencore_golub_kahan",
-    "eigencore_golub_kahan_projected",
-    "eigencore_block_golub_kahan_cycle",
-    "eigencore_block_golub_kahan_cycle_cached",
-    "eigencore_block_golub_kahan_cycle_cached_random",
-    "eigencore_block_golub_kahan_cycle_residual",
-    "eigencore_block_golub_kahan_cycle_lean",
-    "eigencore_block_golub_kahan_retained",
-    "eigencore_randomized"
-  )
+  internal_methods <- svd_internal_methods()
   gate_rows <- case_rows[
     case_rows$method == gate_subject | !case_rows$method %in% internal_methods,
     ,

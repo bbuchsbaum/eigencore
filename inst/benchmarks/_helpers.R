@@ -98,7 +98,7 @@ svd_surface_default_methods <- function(args) {
 
 svd_surface_gate_subject <- function(args, methods) {
   subject <- args$subject %||% if (isTRUE(args$h_candidate)) {
-    "eigencore_golub_kahan_projected"
+    "eigencore_block_golub_kahan_retained"
   } else {
     "eigencore"
   }
@@ -110,6 +110,22 @@ svd_surface_gate_subject <- function(args, methods) {
     )
   }
   subject
+}
+
+svd_internal_methods <- function() {
+  c(
+    "eigencore",
+    "eigencore_golub_kahan",
+    "eigencore_golub_kahan_projected",
+    "eigencore_block_golub_kahan_cycle",
+    "eigencore_block_golub_kahan_cycle_cached",
+    "eigencore_block_golub_kahan_cycle_cached_random",
+    "eigencore_block_golub_kahan_cycle_residual",
+    "eigencore_block_golub_kahan_cycle_lean",
+    "eigencore_block_golub_kahan_retained",
+    "eigencore_block_golub_kahan_retained_cached",
+    "eigencore_randomized"
+  )
 }
 
 release_speed_gate <- function(kind) {

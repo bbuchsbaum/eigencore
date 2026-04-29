@@ -191,8 +191,10 @@ test_that("benchmark argument parser keeps dense diagnostics opt-in", {
 
 test_that("SVD surface benchmark script is available", {
   script <- test_path("../../inst/benchmarks/bench-svd-surface.R")
+  helper <- test_path("../../inst/benchmarks/_helpers.R")
   expect_true(file.exists(script))
-  lines <- readLines(script, warn = FALSE)
+  expect_true(file.exists(helper))
+  lines <- c(readLines(script, warn = FALSE), readLines(helper, warn = FALSE))
   expect_true(any(grepl("eigencore_golub_kahan", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_golub_kahan_projected", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_block_golub_kahan_cycle", lines, fixed = TRUE)))
@@ -258,7 +260,7 @@ test_that("randomized-rsvd gate enforces accuracy and speed versus rsvd", {
   expect_false(failed$passed)
 })
 
-test_that("SVD surface H candidate preset selects projected GK subject", {
+test_that("SVD surface H candidate preset selects retained native SVD subject", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
 
   helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
@@ -272,11 +274,15 @@ test_that("SVD surface H candidate preset selects projected GK subject", {
   expect_equal(methods[[1L]], "eigencore_golub_kahan")
   expect_true("eigencore_golub_kahan_projected" %in% methods)
   expect_true("eigencore_block_golub_kahan_cycle" %in% methods)
+  expect_true("eigencore_block_golub_kahan_retained" %in% methods)
+  expect_true("eigencore_block_golub_kahan_retained_cached" %in% methods)
   expect_false("eigencore" %in% methods)
   expect_equal(
     svd_surface_gate_subject(args, methods),
-    "eigencore_golub_kahan_projected"
+    "eigencore_block_golub_kahan_retained"
   )
+
+  expect_true("eigencore_block_golub_kahan_retained_cached" %in% svd_internal_methods())
 
   args <- benchmark_args("--subject=eigencore_golub_kahan_projected")
   methods <- svd_surface_default_methods(args)
@@ -575,7 +581,7 @@ test_that("SVD reference gate can evaluate an explicit H candidate subject", {
   source(helper_path)
 
   rows <- data.frame(
-    method = c("eigencore", "eigencore_golub_kahan_projected", "RSpectra"),
+    method = c("eigencore", "eigencore_block_golub_kahan_retained", "RSpectra"),
     median = c(3, 2, 1),
     mem_alloc = c(300, 200, 100),
     certificate_passed = c(TRUE, TRUE, TRUE),
@@ -583,13 +589,13 @@ test_that("SVD reference gate can evaluate an explicit H candidate subject", {
   )
   gate <- evaluate_reference_gate(
     rows[rows$method != "eigencore", , drop = FALSE],
-    subject = "eigencore_golub_kahan_projected",
+    subject = "eigencore_block_golub_kahan_retained",
     references = "RSpectra",
     requested = 2L,
     speed_ratio_required = release_speed_gate("svd")
   )
 
-  expect_equal(gate$subject, "eigencore_golub_kahan_projected")
+  expect_equal(gate$subject, "eigencore_block_golub_kahan_retained")
   expect_false(gate$passed)
   expect_equal(gate$speed_ratio_vs_best_reference, 0.5)
   expect_equal(gate$memory_ratio_vs_best_reference, 0.5)
@@ -605,7 +611,7 @@ test_that("SVD memory diagnostics expose subject/reference allocation gaps", {
   source(helper_path)
 
   rows <- data.frame(
-    method = c("eigencore_golub_kahan_projected", "RSpectra", "irlba"),
+    method = c("eigencore_block_golub_kahan_retained", "RSpectra", "irlba"),
     mem_alloc = c(200, 80, 100),
     solver_mem_alloc = c(180, 50, 70),
     certificate_mem_alloc = c(20, 30, 30),
@@ -614,12 +620,12 @@ test_that("SVD memory diagnostics expose subject/reference allocation gaps", {
   )
   diagnostics <- evaluate_memory_diagnostics(
     rows,
-    subject = "eigencore_golub_kahan_projected",
+    subject = "eigencore_block_golub_kahan_retained",
     references = c("RSpectra", "irlba"),
     requested = 2L
   )
 
-  expect_equal(diagnostics$subject, "eigencore_golub_kahan_projected")
+  expect_equal(diagnostics$subject, "eigencore_block_golub_kahan_retained")
   expect_equal(diagnostics$best_reference, "RSpectra")
   expect_equal(diagnostics$total_memory_gap_bytes, 120)
   expect_equal(diagnostics$solver_memory_gap_bytes, 130)
