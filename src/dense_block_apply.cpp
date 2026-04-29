@@ -9523,19 +9523,15 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_selected(SEXP A_, SEXP k_, SEXP 
   SEXP values_ = PROTECT(allocVector(REALSXP, k));
   SEXP vectors_ = PROTECT(allocMatrix(REALSXP, n, k));
   if (n > 0) {
-    double* work_matrix = static_cast<double*>(
-      std::malloc(sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(n))
+    double* work_matrix = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(n) * static_cast<size_t>(n), sizeof(double))
     );
-    double* values_work = static_cast<double*>(
-      std::malloc(sizeof(double) * static_cast<size_t>(n))
+    double* values_work = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(n), sizeof(double))
     );
-    int* isuppz = static_cast<int*>(std::malloc(sizeof(int) * static_cast<size_t>(2 * (k > 1 ? k : 1))));
-    if (work_matrix == nullptr || values_work == nullptr || isuppz == nullptr) {
-      std::free(work_matrix);
-      std::free(values_work);
-      std::free(isuppz);
-      error("failed to allocate native dense selected eigen workspace");
-    }
+    int* isuppz = reinterpret_cast<int*>(
+      R_alloc(static_cast<size_t>(2 * (k > 1 ? k : 1)), sizeof(int))
+    );
     std::memcpy(work_matrix, REAL(A_), sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(n));
     char jobz = 'V';
     char range = 'I';
@@ -9561,9 +9557,6 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_selected(SEXP A_, SEXP k_, SEXP 
                      isuppz, &work_query, &lwork,
                      &iwork_query, &liwork, &info FCONE FCONE FCONE);
     if (info != 0) {
-      std::free(work_matrix);
-      std::free(values_work);
-      std::free(isuppz);
       error("LAPACK dsyevr workspace query failed with info=%d", info);
     }
     lwork = static_cast<int>(work_query);
@@ -9574,16 +9567,12 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_selected(SEXP A_, SEXP k_, SEXP 
     if (liwork < 10 * n) {
       liwork = 10 * n;
     }
-    double* work = static_cast<double*>(std::malloc(sizeof(double) * static_cast<size_t>(lwork)));
-    int* iwork = static_cast<int*>(std::malloc(sizeof(int) * static_cast<size_t>(liwork)));
-    if (work == nullptr || iwork == nullptr) {
-      std::free(work_matrix);
-      std::free(values_work);
-      std::free(isuppz);
-      std::free(work);
-      std::free(iwork);
-      error("failed to allocate native dense selected eigen LAPACK workspace");
-    }
+    double* work = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(lwork), sizeof(double))
+    );
+    int* iwork = reinterpret_cast<int*>(
+      R_alloc(static_cast<size_t>(liwork), sizeof(int))
+    );
     std::memcpy(work_matrix, REAL(A_), sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(n));
     F77_CALL(dsyevr)(&jobz, &range, &uplo, &n, work_matrix, &n,
                      &vl, &vu, &il, &iu, &abstol,
@@ -9595,11 +9584,6 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_selected(SEXP A_, SEXP k_, SEXP 
         REAL(values_)[col] = values_work[col];
       }
     }
-    std::free(work_matrix);
-    std::free(values_work);
-    std::free(isuppz);
-    std::free(work);
-    std::free(iwork);
     if (info != 0 || m_found != k) {
       error("LAPACK dsyevr failed with info=%d, found=%d", info, m_found);
     }
