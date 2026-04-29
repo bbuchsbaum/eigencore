@@ -817,7 +817,7 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
       kind = "block_golub_kahan_native_retained_cycle",
       implemented = TRUE,
       native = TRUE,
-      thick_restart = FALSE,
+      thick_restart = TRUE,
       retained_restart = TRUE,
       retained_restart_native = TRUE,
       retained_av_cache = any(attempt_history$cached_start_used %||% FALSE),
@@ -832,7 +832,14 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
       native_early_stop = is.data.frame(attempt_history) &&
         any(attempt_history$certificate_passed) &&
         nrow(attempt_history) < abi$max_attempts,
+      certified_attempt = if (is.data.frame(attempt_history) &&
+          any(attempt_history$certificate_passed)) {
+        which(attempt_history$certificate_passed)[[1L]]
+      } else {
+        NA_integer_
+      },
       retained_restart_abi_version = abi$version,
+      native_workspace_bytes = ritz$native_workspace_bytes %||% NA_real_,
       basis_returned = FALSE,
       adaptive = TRUE,
       adaptive_start = abi$policy,

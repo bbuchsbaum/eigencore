@@ -189,6 +189,8 @@ plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ..
     }
   } else if (should_use_native_gram_svd(problem, method, rank = rank)) {
     "native certified Gram SVD special case"
+  } else if (should_use_native_retained_golub_kahan(problem, method, rank = rank)) {
+    "native retained Golub-Kahan SVD (thick restart)"
   } else if (is_native_csc && !is.null(problem$A$apply_adjoint)) {
     "native prototype Golub-Kahan"
   } else if (is.null(source_or_null(problem$A)) && !is.null(problem$A$apply_adjoint)) {
@@ -204,6 +206,8 @@ plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ..
     if (!is.null(problem$A$apply_adjoint)) "adjoint is available" else "adjoint is missing",
     if (identical(chosen, "native certified Gram SVD special case")) {
       "small rectangular sparse problem: materializes the smaller Gram matrix as an explicit certified special case"
+    } else if (identical(chosen, "native retained Golub-Kahan SVD (thick restart)")) {
+      "sparse explicit operator uses native retained block Golub-Kahan with thick restart"
     } else {
       "default avoids normal equations"
     },
@@ -213,6 +217,8 @@ plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ..
     "native Golub-Kahan if Gram special case is disabled or uncertified"
   } else if (grepl("prototype Golub-Kahan", chosen, fixed = TRUE)) {
     "dense oracle prototype if unsupported"
+  } else if (identical(chosen, "native retained Golub-Kahan SVD (thick restart)")) {
+    "native prototype Golub-Kahan if retained restart is unsupported"
   } else {
     "dense oracle prototype"
   }
@@ -442,6 +448,12 @@ svd_plan_controls <- function(problem, rank, method, chosen) {
       requires_adjoint = TRUE,
       default_normal_equations = FALSE
     )
+    if (identical(chosen, "native retained Golub-Kahan SVD (thick restart)")) {
+      controls$retained_restart <- TRUE
+      controls$thick_restart <- TRUE
+      controls$restart_policy <- "native Ritz-plus-random retained restart"
+      controls$cached_av_retention <- FALSE
+    }
     if (!is.null(requested_max_subspace)) {
       controls$max_subspace <- min(min(dims), as.integer(requested_max_subspace))
     }

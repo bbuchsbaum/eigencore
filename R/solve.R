@@ -7,7 +7,8 @@ eig_partial <- function(A, k, target = largest(), B = NULL, method = auto(),
   if (!is.null(seed)) {
     set.seed(seed)
   }
-  P <- eigen_problem(A, metric = B, target = target, transform = if (inherits(method, "eigencore_method") && method$kind == "shift_invert") method else NULL)
+  P <- eigen_problem(A, metric = B, target = target,
+                     transform = if (is_transform_method(method)) method else NULL)
   solve(P, k = k, method = method, tol = tol, maxit = maxit, vectors = vectors,
         certify = certify, allow_dense_fallback = allow_dense_fallback)
 }
@@ -34,11 +35,18 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
                                           allow_dense_fallback = c("auto", "never", "always"), ...) {
   allow_dense_fallback <- match.arg(allow_dense_fallback)
   plan <- plan_solver(a, k = k, method = method)
-  if (inherits(a$transform, "eigencore_method") && identical(a$transform$kind, "shift_invert")) {
-    return(solve_shift_invert_hermitian(
-      a, k = k, method = a$transform, tol = tol,
-      maxit = maxit, vectors = vectors, certify = certify, plan = plan
-    ))
+  if (is_transform_method(a$transform)) {
+    if (identical(a$transform$kind, "shift_invert")) {
+      return(solve_shift_invert_hermitian(
+        a, k = k, method = a$transform, tol = tol,
+        maxit = maxit, vectors = vectors, certify = certify, plan = plan
+      ))
+    }
+    stop(
+      "transform method '", a$transform$kind,
+      "' is registered in transform_method_kinds() but has no solver dispatch wired in solve.eigencore_eigen_problem.",
+      call. = FALSE
+    )
   }
   use_lobpcg_method <- inherits(method, "eigencore_method") && identical(method$kind, "lobpcg")
   use_auto_generalized_lobpcg <- inherits(method, "eigencore_method") &&
@@ -264,7 +272,7 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
     return(result)
   }
 
-  if (should_use_native_dense_hermitian(a, method)) {
+  if (should_use_native_dense_hermitian(a, method, k = k)) {
     A <- materialize_dense_fallbacks(list(A = a$A), allow = allow_dense_fallback)$A
     eig <- native_dense_symmetric_eigen(A)
     idx <- order_indices(eig$values, a$target)
@@ -450,7 +458,8 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
         fallback_cert <- fallback_iter$certificate
         fallback_used <- isTRUE(fallback_cert$passed) ||
           (is.finite(fallback_cert$max_backward_error) &&
-            fallback_cert$max_backward_error < cert$max_backward_error)
+            (!is.finite(cert$max_backward_error) ||
+              fallback_cert$max_backward_error < cert$max_backward_error))
         if (isTRUE(fallback_used)) {
           iter <- fallback_iter
           cert <- fallback_cert
@@ -499,6 +508,46 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
         "native certified Gram SVD special case failed certification; native Golub-Kahan fallback was not better"
       } else {
         "using native certified Gram SVD special case; residuals certified in original coordinates"
+      }
+    )
+    class(result) <- "eigencore_svd_result"
+    return(result)
+  }
+  if (should_use_native_retained_golub_kahan(a, method, rank = rank)) {
+    iter <- native_block_golub_kahan_retained_cycle_svd(
+      a$A,
+      rank = rank,
+      target = a$target,
+      tol = tol,
+      vectors = vectors
+    )
+    cert <- if (isTRUE(certify) && !is.null(iter[["u"]]) && !is.null(iter[["v"]])) {
+      iter$certificate
+    } else {
+      empty_certificate(tol, note = "both left and right vectors are required for full SVD certification")
+    }
+    result <- list(
+      d = iter$d,
+      u = iter[["u"]],
+      v = iter[["v"]],
+      values = iter$d,
+      residuals = cert$residuals,
+      backward_error = cert$backward_error,
+      orthogonality = cert$orthogonality,
+      nconv = sum(cert$converged),
+      requested = rank,
+      iterations = iter$iterations,
+      matvecs = iter$matvecs,
+      stage_seconds = iter$stage_seconds %||% iter$restart$stage_seconds %||% numeric(),
+      method = plan$method,
+      target = target_label(a$target),
+      plan = plan,
+      certificate = cert,
+      restart = iter$restart,
+      warnings = if (isTRUE(cert$passed)) {
+        "using native retained Golub-Kahan SVD with thick restart"
+      } else {
+        "using native retained Golub-Kahan SVD; adaptive subspace budget exhausted before full certification"
       }
     )
     class(result) <- "eigencore_svd_result"
@@ -698,7 +747,7 @@ should_use_native_lanczos <- function(problem, method, k = NULL) {
 }
 
 #' @keywords internal
-should_use_native_dense_hermitian <- function(problem, method) {
+should_use_native_dense_hermitian <- function(problem, method, k = NULL) {
   if (!is.null(problem$metric)) {
     return(FALSE)
   }
@@ -708,7 +757,7 @@ should_use_native_dense_hermitian <- function(problem, method) {
   if (inherits(method, "eigencore_method") && !identical(method$kind, "auto")) {
     return(FALSE)
   }
-  if (auto_dense_partial_lanczos(problem, problem$requested %||% NULL)) {
+  if (auto_dense_partial_lanczos(problem, k)) {
     return(FALSE)
   }
   src <- source_or_null(problem$A)
@@ -912,6 +961,21 @@ should_use_native_golub_kahan <- function(problem, method) {
   inherits(method, "eigencore_method") &&
     identical(method$kind, "auto") &&
     identical(storage, "dgCMatrix")
+}
+
+#' @keywords internal
+should_use_native_retained_golub_kahan <- function(problem, method, rank = NULL) {
+  if (is.null(problem$A$apply_adjoint)) {
+    return(FALSE)
+  }
+  if (!inherits(method, "eigencore_method") || !identical(method$kind, "auto")) {
+    return(FALSE)
+  }
+  if (should_use_native_gram_svd(problem, method, rank = rank)) {
+    return(FALSE)
+  }
+  storage <- problem$A$metadata$storage %||% NULL
+  identical(storage, "dgCMatrix")
 }
 
 #' @keywords internal

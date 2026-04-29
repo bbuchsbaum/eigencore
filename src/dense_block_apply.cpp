@@ -2608,7 +2608,7 @@ static int block_accept_work_vector(const double* V_locked, int n_locked,
   if (*m_active >= m_max) {
     return 0;
   }
-  const int passes = (n >= 64) ? 1 : 2;
+  const int passes = 2;
   trl_orthogonalise(V_locked, n_locked, V_active, *m_active, z, tmp, n, passes);
   if (ortho_passes != nullptr) {
     *ortho_passes += passes;
@@ -2685,7 +2685,7 @@ static int block_accept_columns_blas3(const double* X, int ldx, int x_cols,
                 sizeof(double) * static_cast<size_t>(n));
   }
 
-  const int reorth_passes = (n >= 64) ? 1 : 2;
+  const int reorth_passes = 2;
   const double* active_basis = reorthogonalize_active ? V_active : nullptr;
   const int active_cols = reorthogonalize_active ? *m_active : 0;
   block_reorthogonalise_against(V_locked, n_locked, active_basis, active_cols,
@@ -2789,7 +2789,52 @@ static int apply_active_block(void* impl, EigencoreApplyFn apply,
   return rc;
 }
 
-static int native_block_golub_kahan_basis_run(void* impl,
+struct BlockGolubKahanBasisScratch {
+  double* Z_v = nullptr;
+  double* Z_u = nullptr;
+  double* coeff = nullptr;
+  double* tmp = nullptr;
+  size_t bytes = 0;
+};
+
+static void block_golub_kahan_basis_scratch_free(BlockGolubKahanBasisScratch* scratch) {
+  std::free(scratch->Z_v);
+  std::free(scratch->Z_u);
+  std::free(scratch->coeff);
+  std::free(scratch->tmp);
+  scratch->Z_v = nullptr;
+  scratch->Z_u = nullptr;
+  scratch->coeff = nullptr;
+  scratch->tmp = nullptr;
+  scratch->bytes = 0;
+}
+
+static int block_golub_kahan_basis_scratch_alloc(BlockGolubKahanBasisScratch* scratch,
+                                                 int m,
+                                                 int n,
+                                                 int max_subspace,
+                                                 int block_size) {
+  const size_t nb = static_cast<size_t>(n) * static_cast<size_t>(block_size);
+  const size_t mb = static_cast<size_t>(m) * static_cast<size_t>(block_size);
+  const int coeff_rows = (max_subspace > block_size) ? max_subspace : block_size;
+  const size_t coeff_elems = static_cast<size_t>(coeff_rows) *
+    static_cast<size_t>(block_size);
+  const size_t tmp_len = static_cast<size_t>((m > n) ? m : n);
+  scratch->Z_v = static_cast<double*>(std::calloc(nb, sizeof(double)));
+  scratch->Z_u = static_cast<double*>(std::calloc(mb, sizeof(double)));
+  scratch->coeff = static_cast<double*>(std::calloc(coeff_elems, sizeof(double)));
+  scratch->tmp = static_cast<double*>(std::calloc(tmp_len, sizeof(double)));
+  if (scratch->Z_v == nullptr || scratch->Z_u == nullptr ||
+      scratch->coeff == nullptr || scratch->tmp == nullptr) {
+    block_golub_kahan_basis_scratch_free(scratch);
+    return -2;
+  }
+  scratch->bytes = (nb + mb + coeff_elems + tmp_len) * sizeof(double);
+  return 0;
+}
+
+static int native_block_golub_kahan_basis_run_with_scratch(
+                                              void* impl,
                                               EigencoreApplyFn apply,
                                               int m,
                                               int n,
@@ -2801,6 +2846,7 @@ static int native_block_golub_kahan_basis_run(void* impl,
                                               double* V,
                                               double* AV,
                                               double* U,
+                                              BlockGolubKahanBasisScratch* scratch,
                                               int* active_v_out,
                                               int* active_u_out,
                                               int* iterations_out,
@@ -2818,29 +2864,18 @@ static int native_block_golub_kahan_basis_run(void* impl,
 
   const size_t nv = static_cast<size_t>(n) * max_subspace;
   const size_t mv = static_cast<size_t>(m) * max_subspace;
-  const size_t nb = static_cast<size_t>(n) * block_size;
-  const size_t mb = static_cast<size_t>(m) * block_size;
   std::memset(V, 0, sizeof(double) * nv);
   std::memset(AV, 0, sizeof(double) * mv);
   std::memset(U, 0, sizeof(double) * mv);
 
-  const int coeff_rows = (max_subspace > block_size) ? max_subspace : block_size;
-  double* Z_v = static_cast<double*>(std::calloc(nb, sizeof(double)));
-  double* Z_u = static_cast<double*>(std::calloc(mb, sizeof(double)));
-  double* coeff = static_cast<double*>(
-    std::calloc(static_cast<size_t>(coeff_rows) * block_size, sizeof(double))
-  );
-  const int tmp_len = (m > n) ? m : n;
-  double* tmp = static_cast<double*>(
-    std::calloc(static_cast<size_t>(tmp_len), sizeof(double))
-  );
-  if (Z_v == nullptr || Z_u == nullptr || coeff == nullptr || tmp == nullptr) {
-    std::free(Z_v);
-    std::free(Z_u);
-    std::free(coeff);
-    std::free(tmp);
+  if (scratch == nullptr || scratch->Z_v == nullptr || scratch->Z_u == nullptr ||
+      scratch->coeff == nullptr || scratch->tmp == nullptr) {
     return -2;
   }
+  double* Z_v = scratch->Z_v;
+  double* Z_u = scratch->Z_u;
+  double* coeff = scratch->coeff;
+  double* tmp = scratch->tmp;
 
   int active_v = 0;
   int active_u = 0;
@@ -2884,10 +2919,6 @@ static int native_block_golub_kahan_basis_run(void* impl,
           &suffix_workspace
         );
         if (rc_suffix != 0) {
-          std::free(Z_v);
-          std::free(Z_u);
-          std::free(coeff);
-          std::free(tmp);
           return rc_suffix;
         }
         ++(*matvecs_out);
@@ -2912,10 +2943,6 @@ static int native_block_golub_kahan_basis_run(void* impl,
     }
   }
   if (last_v_cols == 0) {
-    std::free(Z_v);
-    std::free(Z_u);
-    std::free(coeff);
-    std::free(tmp);
     return -4;
   }
 
@@ -2928,10 +2955,6 @@ static int native_block_golub_kahan_basis_run(void* impl,
                AV + static_cast<int64_t>(last_v_start) * m, m,
                &workspace);
     if (rc != 0) {
-      std::free(Z_v);
-      std::free(Z_u);
-      std::free(coeff);
-      std::free(tmp);
       return rc;
     }
     ++(*matvecs_out);
@@ -2952,10 +2975,6 @@ static int native_block_golub_kahan_basis_run(void* impl,
                U + static_cast<int64_t>(accepted_u_start) * m, m,
                1.0, 0.0, Z_v, n, &workspace);
     if (rc != 0) {
-      std::free(Z_v);
-      std::free(Z_u);
-      std::free(coeff);
-      std::free(tmp);
       return rc;
     }
     ++(*matvecs_out);
@@ -2976,10 +2995,6 @@ static int native_block_golub_kahan_basis_run(void* impl,
                AV + static_cast<int64_t>(accepted_v_start) * m, m,
                &workspace);
     if (rc != 0) {
-      std::free(Z_v);
-      std::free(Z_u);
-      std::free(coeff);
-      std::free(tmp);
       return rc;
     }
     ++(*matvecs_out);
@@ -2990,11 +3005,42 @@ static int native_block_golub_kahan_basis_run(void* impl,
 
   *active_v_out = active_v;
   *active_u_out = active_u;
-  std::free(Z_v);
-  std::free(Z_u);
-  std::free(coeff);
-  std::free(tmp);
   return 0;
+}
+
+static int native_block_golub_kahan_basis_run(void* impl,
+                                              EigencoreApplyFn apply,
+                                              int m,
+                                              int n,
+                                              int max_subspace,
+                                              int block_size,
+                                              const double* start_block,
+                                              const double* start_av_block,
+                                              int start_av_cols,
+                                              double* V,
+                                              double* AV,
+                                              double* U,
+                                              int* active_v_out,
+                                              int* active_u_out,
+                                              int* iterations_out,
+                                              int* matvecs_out,
+                                              int* ortho_passes_out,
+                                              int* cached_start_used_out) {
+  BlockGolubKahanBasisScratch scratch;
+  const int scratch_status = block_golub_kahan_basis_scratch_alloc(
+    &scratch, m, n, max_subspace, block_size
+  );
+  if (scratch_status != 0) {
+    return scratch_status;
+  }
+  const int status = native_block_golub_kahan_basis_run_with_scratch(
+    impl, apply, m, n, max_subspace, block_size, start_block,
+    start_av_block, start_av_cols, V, AV, U, &scratch,
+    active_v_out, active_u_out, iterations_out, matvecs_out,
+    ortho_passes_out, cached_start_used_out
+  );
+  block_golub_kahan_basis_scratch_free(&scratch);
+  return status;
 }
 
 static SEXP block_golub_kahan_basis_pack(int n,
@@ -8062,7 +8108,8 @@ static SEXP block_golub_kahan_retained_cycle_pack(int n,
                                                   int target_kind,
                                                   double stage_native_iteration_seconds,
                                                   double stage_restart_seconds,
-                                                  SEXP attempt_history_) {
+                                                  SEXP attempt_history_,
+                                                  double native_workspace_bytes) {
   SEXP fit_ = PROTECT(block_golub_kahan_fit_pack(
     n, m, V, AV, active_v, active_u, iterations, matvecs, ortho_passes,
     cached_start_used, rank, target_kind, stage_native_iteration_seconds
@@ -8078,14 +8125,15 @@ static SEXP block_golub_kahan_retained_cycle_pack(int n,
   SET_STRING_ELT(stage_names_, 2, mkChar("restart"));
   setAttrib(stage_, R_NamesSymbol, stage_names_);
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 14));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 15));
   for (int i = 0; i < 11; ++i) {
     SET_VECTOR_ELT(out_, i, VECTOR_ELT(fit_, i));
   }
   SET_VECTOR_ELT(out_, 11, stage_);
   SET_VECTOR_ELT(out_, 12, attempt_history_);
   SET_VECTOR_ELT(out_, 13, ScalarLogical(1));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 14));
+  SET_VECTOR_ELT(out_, 14, ScalarReal(native_workspace_bytes));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 15));
   SET_STRING_ELT(names_, 0, mkChar("d"));
   SET_STRING_ELT(names_, 1, mkChar("u"));
   SET_STRING_ELT(names_, 2, mkChar("v"));
@@ -8100,6 +8148,7 @@ static SEXP block_golub_kahan_retained_cycle_pack(int n,
   SET_STRING_ELT(names_, 11, mkChar("stage_seconds"));
   SET_STRING_ELT(names_, 12, mkChar("attempt_history"));
   SET_STRING_ELT(names_, 13, mkChar("retained_restart_native"));
+  SET_STRING_ELT(names_, 14, mkChar("native_workspace_bytes"));
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(5);
   return out_;
@@ -8397,6 +8446,19 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
   if (block_golub_kahan_fit_arrays_alloc(&arrays, n, m, final_max_subspace) != 0) {
     error("failed to allocate native retained block Golub-Kahan workspace");
   }
+  BlockGolubKahanBasisScratch basis_scratch;
+  const int retained_start_capacity = rank + block_size;
+  if (block_golub_kahan_basis_scratch_alloc(
+        &basis_scratch, m, n, final_max_subspace, retained_start_capacity
+      ) != 0) {
+    block_golub_kahan_fit_arrays_free(&arrays);
+    error("failed to allocate native retained block Golub-Kahan basis scratch");
+  }
+  const double native_workspace_bytes = static_cast<double>(
+    (static_cast<size_t>(n) * static_cast<size_t>(final_max_subspace) +
+     2 * static_cast<size_t>(m) * static_cast<size_t>(final_max_subspace)) *
+      sizeof(double) + basis_scratch.bytes
+  );
 
   std::vector<double> current_start(static_cast<size_t>(n) *
                                     static_cast<size_t>(rank + block_size), 0.0);
@@ -8443,17 +8505,18 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
     int cached_start_used = 0;
 
     auto stage_timer = native_timer_now();
-    const int status = native_block_golub_kahan_basis_run(
+    const int status = native_block_golub_kahan_basis_run_with_scratch(
       impl, apply, m, n, max_subspace, current_start_cols,
       current_start.data(),
       (use_retained_av_cache && current_start_av_cols > 0) ? current_start_av.data() : nullptr,
       use_retained_av_cache ? current_start_av_cols : 0,
-      arrays.V, arrays.AV, arrays.U,
+      arrays.V, arrays.AV, arrays.U, &basis_scratch,
       &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
       &cached_start_used
     );
     total_stage_native_iteration_seconds += native_timer_elapsed(stage_timer);
     if (status != 0) {
+      block_golub_kahan_basis_scratch_free(&basis_scratch);
       block_golub_kahan_fit_arrays_free(&arrays);
       error("native retained block Golub-Kahan cycle failed with status=%d", status);
     }
@@ -8491,6 +8554,7 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
     );
     if (certificate_passed < 0) {
       UNPROTECT(1);
+      block_golub_kahan_basis_scratch_free(&basis_scratch);
       block_golub_kahan_fit_arrays_free(&arrays);
       error("native retained block Golub-Kahan attempt certificate failed with status=%d",
             certificate_passed);
@@ -8535,6 +8599,7 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
       );
       if (normalize_status != 0) {
         UNPROTECT(1);
+        block_golub_kahan_basis_scratch_free(&basis_scratch);
         block_golub_kahan_fit_arrays_free(&arrays);
         error("native retained block Golub-Kahan cached prefix normalization failed with status=%d",
               normalize_status);
@@ -8567,8 +8632,9 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
     final_iterations, final_matvecs, final_ortho_passes,
     final_cached_start_used, rank, target_kind,
     total_stage_native_iteration_seconds, total_stage_restart_seconds,
-    history_
+    history_, native_workspace_bytes
   ));
+  block_golub_kahan_basis_scratch_free(&basis_scratch);
   block_golub_kahan_fit_arrays_free(&arrays);
   UNPROTECT(2);
   return out_;

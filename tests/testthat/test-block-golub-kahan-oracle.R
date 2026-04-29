@@ -218,6 +218,7 @@ test_that("native retained block Golub-Kahan cycle builds restart state inside n
   )
 
   expect_identical(retained$restart$kind, "block_golub_kahan_native_retained_cycle")
+  expect_true(retained$restart$thick_restart)
   expect_true(retained$restart$retained_restart)
   expect_true(retained$restart$retained_restart_native)
   expect_true(retained$restart$retained_av_cache)
@@ -228,6 +229,7 @@ test_that("native retained block Golub-Kahan cycle builds restart state inside n
   expect_true(retained$certificate$passed)
   expect_gte(sum(retained$certificate$converged), 5L)
   expect_gt(retained$matvecs, 0L)
+  expect_gt(retained$restart$native_workspace_bytes, 0)
   expect_true(is.data.frame(retained$restart$attempt_history))
   expect_gt(nrow(retained$restart$attempt_history), 1L)
   expect_true(any(retained$restart$attempt_history$cached_start_used))
@@ -243,7 +245,7 @@ test_that("native retained block Golub-Kahan cycle builds restart state inside n
   expect_gt(retained$stage_seconds[["ritz"]], 0)
 })
 
-test_that("native retained block Golub-Kahan cached AV path falls back when certification fails", {
+test_that("native retained block Golub-Kahan cached AV path certifies after MGS2 restart normalization", {
   set.seed(702)
   A <- Matrix::t(Matrix::rsparsematrix(600, 90, density = 0.03))
 
@@ -260,15 +262,14 @@ test_that("native retained block Golub-Kahan cached AV path falls back when cert
   expect_true(retained$certificate$passed)
   expect_gte(sum(retained$certificate$converged), 5L)
   expect_true(retained$restart$retained_av_cache_attempted)
-  expect_true(retained$restart$retained_av_cache_fallback)
-  expect_false(retained$restart$retained_av_cache)
-  expect_false(any(retained$restart$attempt_history$cached_start_used))
-  expect_true(retained$restart$fallback_attempted)
-  expect_true(retained$restart$fallback_used)
-  expect_equal(retained$restart$fallback_method,
-               "retained_uncached_after_cached_av_failure")
-  expect_true(is.finite(retained$restart$fallback_max_backward_error))
-  expect_true(is.finite(retained$restart$retained_av_cache_failed_backward_error))
+  expect_false(retained$restart$retained_av_cache_fallback)
+  expect_true(retained$restart$retained_av_cache)
+  expect_true(any(retained$restart$attempt_history$cached_start_used))
+  expect_false(retained$restart$fallback_attempted)
+  expect_false(retained$restart$fallback_used)
+  expect_true(is.na(retained$restart$fallback_method))
+  expect_true(is.na(retained$restart$fallback_max_backward_error))
+  expect_true(is.na(retained$restart$retained_av_cache_failed_backward_error))
 })
 
 test_that("native block Golub-Kahan basis cycle records adaptive subspace attempts", {

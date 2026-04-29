@@ -757,9 +757,9 @@ test_that("auto uses native CSC-backed Golub-Kahan for sparse rectangular SVD", 
   fit <- svd_partial(A, rank = 2, seed = 202)
 
   expect_null(eigencore:::source_or_null(op))
-  expect_equal(fit$plan$method, "native prototype Golub-Kahan")
-  expect_equal(fit$method, "native prototype Golub-Kahan")
-  expect_match(fit$warnings, "native prototype Golub-Kahan")
+  expect_equal(fit$plan$method, "native retained Golub-Kahan SVD (thick restart)")
+  expect_equal(fit$method, "native retained Golub-Kahan SVD (thick restart)")
+  expect_match(fit$warnings, "native retained Golub-Kahan")
   expect_equal(values(fit), c(9, 6), tolerance = 1e-10)
   expect_true(certificate(fit)$passed)
 })
@@ -801,51 +801,38 @@ test_that("native Golub-Kahan exposes adaptive subspace metadata", {
   )
   fit <- svd_partial(A, rank = 3, tol = 1e-8, seed = 445)
 
-  expect_equal(fit$method, "native prototype Golub-Kahan")
+  expect_equal(fit$method, "native retained Golub-Kahan SVD (thick restart)")
   expect_true(all(c(
-    "kind", "implemented", "ritz_native", "restart_policy", "retries",
-    "final_max_subspace", "fixed_max_subspace", "converged", "nconv",
-    "max_backward_error", "history", "prefix_history",
-    "first_certified_prefix", "final_prefix_iteration_overshoot",
-    "projected_stop_requested", "projected_stop_enabled",
-    "projected_stop_disable_reason", "projected_stop", "projected_nconv",
-    "projected_max_residual", "projected_checks", "projected_seconds",
-    "native_workspace_bytes", "basis_returned", "reorthogonalization_passes"
+    "kind", "implemented", "native", "thick_restart",
+    "retained_restart", "retained_restart_native",
+    "native_workspace_bytes", "basis_returned", "attempt_history"
   ) %in% names(fit$restart)))
-  expect_equal(fit$restart$kind, "adaptive_subspace_growth")
+  expect_equal(fit$restart$kind, "block_golub_kahan_native_retained_cycle")
+  expect_true(fit$restart$thick_restart)
+  expect_true(fit$restart$retained_restart)
   expect_true(fit$restart$implemented)
-  expect_true(fit$restart$ritz_native)
-  expect_match(fit$restart$restart_policy, "certificate")
-  expect_gte(fit$restart$final_max_subspace, fit$iterations)
-  expect_true(fit$restart$converged)
-  expect_equal(fit$restart$nconv, fit$nconv)
-  expect_true(fit$restart$projected_stop_enabled)
-  expect_true(fit$restart$projected_stop_requested)
-  expect_true(is.na(fit$restart$projected_stop_disable_reason))
-  expect_true(is.logical(fit$restart$projected_stop))
-  expect_gte(fit$restart$projected_nconv, 0L)
-  expect_gte(fit$restart$projected_checks, 0L)
-  expect_gte(fit$restart$projected_seconds, 0)
+  expect_true(fit$restart$retained_restart_native)
+  expect_true(fit$restart$native_attempt_certification)
+  expect_true(is.data.frame(fit$restart$attempt_history))
+  expect_true(any(fit$restart$attempt_history$certificate_passed))
+  expect_gte(fit$restart$final_max_subspace, fit$restart$final_iterations)
+  expect_gte(fit$nconv, 3L)
   expect_gt(fit$restart$native_workspace_bytes, 0)
-  expect_true(fit$restart$basis_returned)
-  expect_gt(fit$restart$reorthogonalization_passes, 0L)
+  expect_false(fit$restart$basis_returned)
+  expect_gt(fit$restart$total_ortho_passes, 0L)
   expect_true(all(c(
-    "retry", "max_subspace", "iterations", "matvecs", "nconv",
+    "attempt", "max_subspace", "iterations", "matvecs",
     "certificate_passed", "max_residual", "max_backward_error",
-    "stage_apply_seconds", "stage_recurrence_seconds",
-    "stage_reorthogonalization_seconds", "stage_projected_solve_seconds",
-    "reorthogonalization_passes"
-  ) %in% names(fit$restart$history)))
+    "ortho_passes"
+  ) %in% names(fit$restart$attempt_history)))
   expect_true(all(c(
-    "apply", "recurrence", "reorthogonalization", "projected_solve"
+    "native_iteration", "ritz", "restart"
   ) %in% names(fit$restart$stage_seconds)))
-  expect_gte(fit$restart$stage_seconds[["apply"]], 0)
-  expect_gte(fit$restart$stage_seconds[["reorthogonalization"]], 0)
-  expect_equal(utils::tail(fit$restart$history$nconv, 1L), fit$nconv)
-  expect_true(is.data.frame(fit$restart$prefix_history))
-  expect_true(any(fit$restart$prefix_history$certificate_passed))
-  expect_lte(fit$restart$first_certified_prefix, fit$restart$final_iterations)
-  expect_gte(fit$restart$final_prefix_iteration_overshoot, 0L)
+  expect_gte(fit$restart$stage_seconds[["native_iteration"]], 0)
+  expect_gte(fit$restart$stage_seconds[["ritz"]], 0)
+  expect_true(utils::tail(fit$restart$attempt_history$certificate_passed, 1L))
+  expect_lte(fit$restart$certified_attempt, fit$restart$attempts)
+  expect_gte(fit$restart$final_attempt_matvecs, 0L)
   expect_true(certificate(fit)$passed)
 })
 
