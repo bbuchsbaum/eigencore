@@ -243,4 +243,7 @@ they are machine-dependent.
   B-orthogonal path rather than silently using dense/reference fallbacks.
   The strict generalized LOBPCG gate now also emits native-contract rows for
   bare, shifted-diagonal preconditioned, and constrained generalized paths, and
-  requires their native/preconditioner/constraint diagnostics to pass.
+  requires their native/preconditioner/constraint diagnostics to pass. It now
+  also emits adversarial B contract rows for ill-conditioned diagonal, sparse
+  CSC, and explicitly SPD matrix-free B cases across largest and smallest
+  targets, including exact expected native B-orthogonalization methods.

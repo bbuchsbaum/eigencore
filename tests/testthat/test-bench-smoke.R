@@ -141,15 +141,20 @@ test_that("generalized LOBPCG benchmark exposes native B-orthogonal diagnostics"
   expect_equal(eig$constraints_rank, 0L)
 })
 
-test_that("generalized LOBPCG release script gates native preconditioned and constrained rows", {
+test_that("generalized LOBPCG release script gates native contract rows", {
   script <- test_path("../../inst/benchmarks/bench-generalized-lobpcg.R")
   expect_true(file.exists(script))
   lines <- readLines(script, warn = FALSE)
   expect_true(any(grepl("eigencore_shifted_diagonal", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_constrained", lines, fixed = TRUE)))
   expect_true(any(grepl("generalized_lobpcg_native_contract", lines, fixed = TRUE)))
+  expect_true(any(grepl("generalized_lobpcg_adversarial_b_specs", lines, fixed = TRUE)))
+  expect_true(any(grepl("generalized_lobpcg_adversarial_b_contract", lines, fixed = TRUE)))
   expect_true(any(grepl("preconditioner_gate", lines, fixed = TRUE)))
   expect_true(any(grepl("constraint_gate", lines, fixed = TRUE)))
+  expect_true(any(grepl("ill_conditioned_diagonal_b", lines, fixed = TRUE)))
+  expect_true(any(grepl("explicit_spd_matrix_free_b", lines, fixed = TRUE)))
+  expect_true(any(grepl("expected_orthogonalization", lines, fixed = TRUE)))
 })
 
 test_that("benchmark argument parser keeps dense diagnostics opt-in", {
