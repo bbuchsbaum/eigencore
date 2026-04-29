@@ -1,5 +1,16 @@
 #' @keywords internal
-reference_block_lanczos_thick_restart_hermitian <- function(op, k, target = largest(),
+#' @details
+#' Despite the historical name `reference_block_lanczos_*`, this routine
+#' implements **block-Krylov subspace iteration with reorthogonalization
+#' and thick restart**, not the three-term block Lanczos recurrence. New
+#' Krylov columns are produced from `AV[, last_block]` directly and then
+#' reorthogonalized against the current basis (lines 73-89), without the
+#' explicit alpha/beta block subtractions that distinguish a Lanczos
+#' recurrence. Use this only as the block-subspace-iteration oracle; do
+#' not rely on it as a parity reference for the native block Lanczos
+#' three-term path. The honest name is exposed below as
+#' `reference_block_subspace_iteration_thick_restart_hermitian`.
+reference_block_subspace_iteration_thick_restart_hermitian <- function(op, k, target = largest(),
                                                             tol = 1e-8,
                                                             max_subspace = NULL,
                                                             max_restarts = 100L,
@@ -182,7 +193,10 @@ reference_block_lanczos_thick_restart_hermitian <- function(op, k, target = larg
     residuals <- residuals[seq_len(k)]
   }
 
-  cert <- certify_eigen_operator_residuals(op, values, vecs, residuals, tol = tol)
+  # Recompute residuals against the freshly-cbinded vecs after pad/lock.
+  # Reusing residuals from earlier basis snapshots can declare convergence on
+  # pairs whose residuals no longer correspond to the final returned vectors.
+  cert <- certify_eigen_operator(op, values, vecs, tol = tol)
   if (!isTRUE(vectors)) {
     vecs <- NULL
   }
@@ -203,7 +217,7 @@ reference_block_lanczos_thick_restart_hermitian <- function(op, k, target = larg
     convergence_history = if (length(history)) do.call(rbind, history) else data.frame(),
     locked = seq_len(length(locked_values)),
     restart = list(
-      kind = "block_thick_restart_reference",
+      kind = "block_subspace_iteration_thick_restart_reference",
       implemented = TRUE,
       locking = "reference_loop",
       locked_count = length(locked_values),
@@ -217,6 +231,13 @@ reference_block_lanczos_thick_restart_hermitian <- function(op, k, target = larg
     )
   )
 }
+
+#' @keywords internal
+#' Deprecated alias kept until external test sites migrate. The implementation
+#' is block-Krylov subspace iteration with thick restart, not the three-term
+#' Lanczos recurrence; new callers must use the honestly-named function.
+reference_block_lanczos_thick_restart_hermitian <-
+  reference_block_subspace_iteration_thick_restart_hermitian
 
 #' @keywords internal
 reference_block_accept <- function(X, Q_lock, V, max_cols,

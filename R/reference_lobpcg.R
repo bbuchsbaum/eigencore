@@ -52,6 +52,14 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
   history_max_relative_residual <- rep(NA_real_, maxit)
   history_nconv <- rep(NA_integer_, maxit)
 
+  # NN-4: drive iteration termination from the same scale the certificate
+  # uses (eigen_backward_scale = ||A||*||v|| + |lambda|*||B||*||v||) so
+  # convergence declared here cannot disagree with cert$converged afterwards.
+  # operator_norm_for_certificate may invoke a Hutchinson estimate for
+  # matrix-free operators, so cache once outside the loop.
+  norm_A_value <- operator_norm_for_certificate(op)
+  norm_B_value <- if (is.null(Bop)) 1 else operator_norm_for_certificate(Bop)
+
   for (iter in seq_len(maxit)) {
     iterations <- iter
     AX <- apply_operator(op, X)
@@ -60,7 +68,8 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
     values <- colSums(X * AX)
     R <- AX - sweep(BX, 2L, values, `*`)
     residual_norms <- col_norms(R)
-    relative_residuals <- residual_norms / pmax(abs(values), 1)
+    scale <- eigen_backward_scale(norm_A_value, norm_B_value, values, X)
+    relative_residuals <- residual_norms / pmax(scale, .Machine$double.eps)
     history_max_relative_residual[iter] <- max(relative_residuals)
     history_nconv[iter] <- sum(relative_residuals <= tol)
     if (max(relative_residuals) <= tol) {

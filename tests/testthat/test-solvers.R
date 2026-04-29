@@ -247,10 +247,10 @@ test_that("solver paths refuse implicit sparse densification", {
   )
 
   explicit_fit <- eig_partial(A, k = 1, allow_dense_fallback = "always")
-  expect_equal(explicit_fit$plan$method, "dense LAPACK eigen oracle (prototype fallback)")
+  expect_equal(explicit_fit$plan$method, "dense LAPACK general eigen oracle (prototype fallback)")
 
   fit <- eig_partial(as.matrix(A), k = 1)
-  expect_equal(fit$plan$method, "dense LAPACK eigen oracle (prototype fallback)")
+  expect_equal(fit$plan$method, "dense LAPACK general eigen oracle (prototype fallback)")
 })
 
 test_that("RSpectra-compatible shims expose core fields", {

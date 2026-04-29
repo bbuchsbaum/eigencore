@@ -294,3 +294,19 @@ method_label <- function(method) {
   }
   method$kind
 }
+
+#' @noRd
+#' Whitelist of method kinds that act as a problem-level spectral transform.
+#' New transforms (e.g. polynomial, chebyshev) must be added here so that
+#' eig_partial and solve.eigencore_eigen_problem route them through the
+#' transform plumbing instead of dropping them silently.
+transform_method_kinds <- function() {
+  c("shift_invert")
+}
+
+#' @noRd
+is_transform_method <- function(method) {
+  inherits(method, "eigencore_method") &&
+    !is.null(method$kind) &&
+    method$kind %in% transform_method_kinds()
+}

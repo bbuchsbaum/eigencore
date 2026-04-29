@@ -121,22 +121,39 @@ shift_invert_solver_dense <- function(A, sigma) {
       call. = FALSE
     )
   }
-  factor <- qr(M)
-  if (factor$rank < nrow(M)) {
+  # LAPACK QR with explicit diag(R) tolerance gives a stricter rank check than
+  # base::qr(LINPACK), whose qr.coef silently returns NA on rank-deficient
+  # columns instead of erroring. Borderline shifts can pass the rcond gate
+  # above, so we still verify R has no near-zero diagonals before declaring
+  # the factorization usable.
+  factor <- qr(M, LAPACK = TRUE)
+  R_diag <- abs(diag(qr.R(factor)))
+  rank_tol <- max(dim(M)) * .Machine$double.eps * max(R_diag, 1)
+  if (any(R_diag <= rank_tol)) {
     stop(
       "shift_invert(sigma = ", sigma, ") produced a rank-deficient dense ",
-      "shifted operator; perturb sigma or supply a stable solve function.",
+      "shifted operator (LAPACK QR): smallest |R[i,i]| = ", min(R_diag),
+      ". Perturb sigma or supply a stable solve function.",
       call. = FALSE
     )
   }
   list(
     solve_fn = function(X) {
-      qr.coef(factor, X)
+      Z <- solve(factor, X)
+      if (anyNA(Z)) {
+        stop(
+          "shift_invert(sigma = ", sigma, ") solve returned NA values for the ",
+          "dense shifted operator; the factorization is silently rank-deficient. ",
+          "Perturb sigma or supply a stable solve function.",
+          call. = FALSE
+        )
+      }
+      Z
     },
     label = "dense_qr",
     M = M,
     cache = list(
-      factorization = "base::qr",
+      factorization = "base::qr(LAPACK=TRUE)",
       factorization_cached = TRUE,
       condition_estimate = cond,
       condition_estimate_type = "dense_rcond",
@@ -332,7 +349,14 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
   cert <- if (isTRUE(certify) && !is.null(vec) && ncol(vec) > 0L) {
     certify_eigen_operator(Aop, lambda, vec, tol = tol)
   } else {
-    empty_certificate(tol)
+    empty_certificate(
+      tol,
+      note = if (!isTRUE(certify)) {
+        "shift-invert: certification disabled by caller"
+      } else {
+        "shift-invert: no eigenpairs returned; residual certificate not computed"
+      }
+    )
   }
 
   result <- list(

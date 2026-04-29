@@ -14,7 +14,7 @@ test_that("reference block thick-restart Lanczos matches diagonal spectra", {
   expect_equal(fit$values, c(9, 5, 2), tolerance = 1e-8)
   expect_true(certificate(fit)$passed)
   expect_gt(fit$restarts, 0L)
-  expect_equal(fit$restart$kind, "block_thick_restart_reference")
+  expect_equal(fit$restart$kind, "block_subspace_iteration_thick_restart_reference")
 })
 
 test_that("reference block thick-restart Lanczos handles clustered subspaces", {

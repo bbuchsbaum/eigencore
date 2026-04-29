@@ -151,7 +151,7 @@ test_that("shift-invert result exposes factorization-cache provenance", {
   expect_s3_class(cache$key, "eigencore_shift_invert_cache_key")
   expect_equal(cache$key$sigma, 4.2)
   expect_equal(cache$label_kind, "dense_qr")
-  expect_equal(cache$factorization, "base::qr")
+  expect_equal(cache$factorization, "base::qr(LAPACK=TRUE)")
   expect_true(cache$factorization_cached)
   expect_equal(cache$condition_estimate_type, "dense_rcond")
   expect_true(is.finite(cache$condition_estimate))

@@ -10,7 +10,16 @@ compose <- function(A, B, name = NULL) {
 
   src <- source_or_null(A)
   rhs <- source_or_null(B)
-  source <- if (!is.null(src) && !is.null(rhs)) src %*% rhs else NULL
+  # NN-3: only fold source when both operands are dense double matrices.
+  # A sparse source threaded through metadata$source is later materialized
+  # via as.matrix(src) by downstream certification helpers, silently
+  # densifying a potentially huge product. A non-dense source must stay
+  # NULL here so the operator remains matrix-free.
+  source <- if (is_dense_double_matrix(src) && is_dense_double_matrix(rhs)) {
+    src %*% rhs
+  } else {
+    NULL
+  }
 
   linear_operator(
     dim = c(A$dim[1L], B$dim[2L]),
@@ -27,7 +36,13 @@ compose <- function(A, B, name = NULL) {
       NULL
     },
     dtype = common_dtype(A, B),
-    structure = if (A$dim[1L] == B$dim[2L] && identical(A$name, B$name)) hermitian() else general(),
+    # AB is Hermitian only if A and B are Hermitian AND commute (e.g. when
+    # B == A and A is Hermitian). The previous heuristic compared A$name to
+    # B$name, but names are user-controlled metadata and must never drive
+    # certificate-relevant flags. Default to general() and let the caller
+    # explicitly call symmetric() when they can prove the composition is
+    # Hermitian (cf. crossprod_operator() which always returns hermitian()).
+    structure = general(),
     name = name %||% paste0("compose(", A$name, ",", B$name, ")"),
     metadata = list(left = A, right = B, source = source, native = FALSE)
   )
@@ -44,8 +59,11 @@ operator_sum <- function(..., name = NULL) {
     stop("All summed operators must have the same dimensions.", call. = FALSE)
   }
 
+  # NN-3: only fold source when every term carries a dense double-matrix
+  # source. A single sparse-source term must collapse the fold to NULL so
+  # the summed operator stays matrix-free.
   source <- Reduce(function(a, b) {
-    if (is.null(a) || is.null(b)) NULL else a + b
+    if (is_dense_double_matrix(a) && is_dense_double_matrix(b)) a + b else NULL
   }, lapply(ops, source_or_null))
 
   linear_operator(
@@ -81,8 +99,12 @@ operator_scale <- function(A, scalar, name = NULL) {
     return(fused)
   }
   source <- source_or_null(A)
-  if (!is.null(source)) {
+  # NN-3: only fold a dense-matrix source. A sparse source would later be
+  # as.matrix()-ed by certification helpers and silently densify.
+  if (is_dense_double_matrix(source)) {
     source <- scalar * source
+  } else {
+    source <- NULL
   }
 
   linear_operator(
@@ -116,8 +138,10 @@ scale_rows <- function(A, weights, name = NULL) {
     return(fused)
   }
   source <- source_or_null(A)
-  if (!is.null(source)) {
+  if (is_dense_double_matrix(source)) {
     source <- weights * source
+  } else {
+    source <- NULL
   }
 
   linear_operator(
@@ -152,8 +176,10 @@ scale_cols <- function(A, weights, name = NULL) {
     return(fused)
   }
   source <- source_or_null(A)
-  if (!is.null(source)) {
+  if (is_dense_double_matrix(source)) {
     source <- sweep(source, 2L, weights, `*`)
+  } else {
+    source <- NULL
   }
 
   linear_operator(
@@ -181,6 +207,15 @@ center <- function(A, rows = FALSE, columns = TRUE, row_means = NULL,
                    col_means = NULL, name = NULL) {
   A <- as_operator(A)
   source <- source_or_null(A)
+  # NN-3: matrix-free centering must stay matrix-free when the underlying
+  # source is sparse. Treat a non-dense source as if no source were
+  # available so col_means/row_means must be supplied explicitly rather
+  # than computed by colMeans()/rowMeans() on a sparse object that the
+  # downstream centered_source path would later as.matrix() into a huge
+  # dense fallback.
+  if (!is.null(source) && !is_dense_double_matrix(source)) {
+    source <- NULL
+  }
   if (is.null(col_means) && isTRUE(columns)) {
     if (is.null(source)) {
       stop("col_means must be supplied for matrix-free column centering.", call. = FALSE)
@@ -329,6 +364,16 @@ source_or_null <- function(A) {
 }
 
 #' @keywords internal
+#' Returns TRUE only for plain dense double matrices, the only kind of
+#' source that operator_algebra is allowed to fold and rethread through
+#' metadata$source. Sparse, integer, or non-matrix inputs must collapse
+#' the fold to NULL so downstream certification helpers don't silently
+#' as.matrix() a huge product (NN-3 in AGENTS.md).
+is_dense_double_matrix <- function(x) {
+  !is.null(x) && is.matrix(x) && is.double(x) && !inherits(x, "Matrix")
+}
+
+#' @keywords internal
 common_dtype <- function(A, B) {
   if (identical(A$dtype, B$dtype)) A$dtype else "double"
 }
@@ -350,7 +395,7 @@ native_scaled_operator_or_null <- function(A, weights, axis, name = NULL) {
   storage <- NULL
 
   source <- A$metadata$source
-  if (!is.null(source)) {
+  if (is_dense_double_matrix(source)) {
     scaled <- switch(
       axis,
       scalar = weights * source,
@@ -359,6 +404,9 @@ native_scaled_operator_or_null <- function(A, weights, axis, name = NULL) {
       NULL
     )
   } else {
+    # Non-dense source falls through to the metadata$matrix path below;
+    # never thread a sparse object back into metadata$source.
+    source <- NULL
     matrix <- A$metadata$matrix
     if (is.null(matrix)) {
       return(NULL)

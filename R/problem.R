@@ -139,9 +139,9 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
   } else if (is_hermitian && is_dense_source) {
     "native dense Hermitian LAPACK fallback"
   } else if (is_hermitian) {
-    "dense LAPACK eigen oracle (prototype fallback)"
+    "dense LAPACK Hermitian eigen oracle (prototype fallback)"
   } else {
-    "dense LAPACK eigen oracle (prototype fallback)"
+    "dense LAPACK general eigen oracle (prototype fallback)"
   }
 
   reasons <- c(

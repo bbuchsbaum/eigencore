@@ -275,7 +275,12 @@ reference_block_golub_kahan_rr <- function(op, V, AV, target, tol) {
   }
   small <- svd(AV, nu = min(nrow(AV), ncol(AV)), nv = ncol(V))
   idx <- order_indices(small$d, target)
-  idx <- idx[seq_len(length(idx))]
+  # Defensive clamp: order_indices ranks values within length(small$d), but
+  # when the underlying SVD returns fewer numerically-significant singular
+  # values than nu (rank-deficient blocks), an index from a wider sort could
+  # exceed ncol(small$u). Drop any idx beyond the actual returned vector
+  # count rather than letting it subscript out-of-bounds.
+  idx <- idx[idx <= length(small$d) & idx <= ncol(small$u) & idx <= ncol(small$v)]
   d <- small$d[idx]
   u <- small$u[, idx, drop = FALSE]
   coeff <- small$v[, idx, drop = FALSE]

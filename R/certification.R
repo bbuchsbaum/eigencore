@@ -209,6 +209,26 @@ certify_svd_operator_cached_av <- function(Aop, d, u, v, Av, tol = 1e-8,
     }
     return(cert)
   }
+  # The cache trusts the caller's Av to be apply_operator(Aop, v). A stale or
+  # non-finite Av would silently produce wrong residuals and a passing
+  # certificate. Guard the obvious failure modes (non-finite, mismatched shape)
+  # at the entry; cache invalidation against operator/v fingerprints belongs in
+  # a follow-up since it requires plumbing fingerprints through call sites.
+  if (anyNA(Av) || any(!is.finite(Av))) {
+    stop(
+      "certify_svd_operator_cached_av: cached Av contains non-finite values; ",
+      "the cache is stale or corrupted. Recompute apply_operator(Aop, v).",
+      call. = FALSE
+    )
+  }
+  if (nrow(Av) != Aop$dim[[1L]] || ncol(Av) != length(d)) {
+    stop(
+      "certify_svd_operator_cached_av: Av must have nrow == nrow(Aop) (",
+      Aop$dim[[1L]], ") and one column per singular value (", length(d),
+      "); got ", nrow(Av), " x ", ncol(Av), ".",
+      call. = FALSE
+    )
+  }
   if (!isTRUE(return_residual_vectors)) {
     native <- native_builtin_svd_certificate_cached_av(Aop, d, u, v, Av, tol = tol)
     if (!is.null(native)) {
@@ -226,10 +246,6 @@ certify_svd_operator_cached_av <- function(Aop, d, u, v, Av, tol = 1e-8,
     return(certify_svd_operator(Aop, d, u, v, tol = tol))
   }
   Av <- as.matrix(Av)
-  if (nrow(Av) != Aop$dim[[1L]] || ncol(Av) != length(d)) {
-    stop("Av must have nrow equal to nrow(Aop) and one column per singular value.",
-         call. = FALSE)
-  }
   left_residual_matrix <- Av - sweep(u, 2L, d, `*`)
   right_residual_matrix <- apply_adjoint_operator(Aop, u) - sweep(v, 2L, d, `*`)
   left <- col_norms(left_residual_matrix)
@@ -258,6 +274,23 @@ certify_svd_operator_cached_sides <- function(Aop, d, u, v, Av, Atu,
                                              tol = 1e-8) {
   Av <- as.matrix(Av)
   Atu <- as.matrix(Atu)
+  # Same trust contract as certify_svd_operator_cached_av: stale or non-finite
+  # cached sides silently produce wrong residuals. Guard the obvious failure
+  # modes at entry.
+  if (anyNA(Av) || any(!is.finite(Av))) {
+    stop(
+      "certify_svd_operator_cached_sides: cached Av contains non-finite values; ",
+      "the cache is stale or corrupted. Recompute apply_operator(Aop, v).",
+      call. = FALSE
+    )
+  }
+  if (anyNA(Atu) || any(!is.finite(Atu))) {
+    stop(
+      "certify_svd_operator_cached_sides: cached Atu contains non-finite values; ",
+      "the cache is stale or corrupted. Recompute apply_adjoint_operator(Aop, u).",
+      call. = FALSE
+    )
+  }
   if (nrow(Av) != Aop$dim[[1L]] || ncol(Av) != length(d)) {
     stop("Av must have nrow equal to nrow(Aop) and one column per singular value.",
          call. = FALSE)

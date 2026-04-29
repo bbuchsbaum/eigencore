@@ -326,7 +326,14 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
   vals <- eig$values[idx]
   vecs <- if (vectors && !is.null(eig$vectors)) eig$vectors[, idx, drop = FALSE] else NULL
 
-  cert <- if (certify && !is.null(vecs)) {
+  # The SPD certification gate only certifies real eigenpairs. Non-Hermitian
+  # general eigenproblems can return complex eigenpairs from base::eigen(),
+  # which certify_eigen has no documented contract for. Skip certification
+  # with an explicit note rather than silently passing complex inputs through.
+  complex_eigenpairs <- is.complex(vals) ||
+    (is.complex(eig$values) && any(abs(Im(vals)) > 0)) ||
+    (!is.null(vecs) && is.complex(vecs))
+  cert <- if (certify && !is.null(vecs) && !complex_eigenpairs) {
     certify_eigen(
       A,
       vals,
@@ -334,6 +341,15 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
       B = B,
       tol = tol,
       require_orthogonality = identical(a$structure$kind, "hermitian") || !is.null(B)
+    )
+  } else if (complex_eigenpairs) {
+    empty_certificate(
+      tol,
+      note = paste0(
+        "general dense eigen oracle returned complex eigenpairs; ",
+        "the SPD certification gate has no complex contract. ",
+        "Inspect $values/$vectors directly."
+      )
     )
   } else {
     empty_certificate(tol, note = "vectors not returned; residual certificate not computed")
@@ -355,6 +371,14 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
     certificate = cert,
     warnings = if (identical(plan$method, "native dense generalized SPD LAPACK fallback")) {
       "using native dense generalized SPD LAPACK fallback; iterative engine not yet implemented"
+    } else if (identical(plan$method, "dense LAPACK general eigen oracle (prototype fallback)")) {
+      if (complex_eigenpairs) {
+        "using dense general eigen oracle prototype; LAPACK returned complex eigenpairs which are not yet certified"
+      } else {
+        "using dense general eigen oracle prototype (non-Hermitian)"
+      }
+    } else if (identical(plan$method, "dense LAPACK Hermitian eigen oracle (prototype fallback)")) {
+      "using dense Hermitian eigen oracle prototype"
     } else if (identical(plan$fallback, "dense oracle prototype")) {
       "using dense oracle prototype solver"
     } else {
@@ -717,9 +741,22 @@ should_use_lanczos <- function(problem, method, k = NULL) {
   if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) {
     return(TRUE)
   }
-  inherits(method, "eigencore_method") &&
-    identical(method$kind, "auto") &&
-    (is.null(source_or_null(problem$A)) || auto_dense_partial_lanczos(problem, k))
+  if (!(inherits(method, "eigencore_method") && identical(method$kind, "auto"))) {
+    return(FALSE)
+  }
+  # NN-3: any sparse Hermitian operator must route to the Lanczos branch
+  # (native or reference) before the dense fallback. A sparse operator
+  # carrying a sparseMatrix in metadata$matrix or metadata$source must
+  # NEVER silently densify under allow_dense_fallback = "always" when an
+  # honest reference_lanczos_hermitian path is already available.
+  src <- source_or_null(problem$A)
+  matrix_meta <- problem$A$metadata$matrix
+  has_sparse_payload <- inherits(matrix_meta, "sparseMatrix") ||
+    inherits(src, "sparseMatrix")
+  if (isTRUE(has_sparse_payload)) {
+    return(TRUE)
+  }
+  is.null(src) || auto_dense_partial_lanczos(problem, k)
 }
 
 #' @keywords internal
