@@ -284,6 +284,10 @@ test_that("SVD surface H candidate preset selects retained native SVD subject", 
 
   expect_true("eigencore_block_golub_kahan_retained_cached" %in% svd_internal_methods())
 
+  default_methods <- svd_surface_default_methods(benchmark_args(character()))
+  expect_false("eigencore_block_golub_kahan_retained" %in% default_methods)
+  expect_false("eigencore_block_golub_kahan_retained_cached" %in% default_methods)
+
   args <- benchmark_args("--subject=eigencore_golub_kahan_projected")
   methods <- svd_surface_default_methods(args)
   expect_error(

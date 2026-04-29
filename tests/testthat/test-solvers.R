@@ -808,6 +808,17 @@ test_that("explicit Golub-Kahan uses native prototype for dense rectangular SVD"
   expect_true(certificate(fit)$passed)
 })
 
+test_that("dense auto SVD stays on LAPACK fallback until retained path wins gates", {
+  A <- matrix(stats::rnorm(50 * 40), 50, 40)
+  plan <- plan_solver(svd_problem(A), rank = 5L)
+  fit <- svd_partial(A, rank = 5L, seed = 204)
+
+  expect_identical(plan$method, "native dense LAPACK SVD fallback")
+  expect_identical(fit$method, "native dense LAPACK SVD fallback")
+  expect_false(identical(fit$plan$method, "native retained Golub-Kahan SVD (thick restart)"))
+  expect_true(certificate(fit)$passed)
+})
+
 test_that("native Golub-Kahan iteration matches dense diagonal singular values", {
   A <- rbind(diag(c(7, 4, 2, 1)), matrix(0, 2, 4))
   op <- as_operator(A)

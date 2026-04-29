@@ -181,12 +181,31 @@ test_that("wide sparse Gram SVD uses native CSC left-Gram kernel", {
   expect_identical(fit$restart$kind, "gram_svd_special_case")
   expect_identical(fit$restart$gram_side, "left")
   expect_identical(fit$restart$native_gram_kernel, "csc_left_gram")
+  expect_identical(fit$restart$native_gram_eigensolver, "lapack_dsyevr")
+  expect_true(is.infinite(fit$restart$native_gram_subspace_max_backward_error))
   expect_identical(fit$certificate$norm_bound_type, "frobenius_exact")
   expect_true(all(c("gram", "eigensolve", "vector_form", "diagnostics") %in%
                     names(fit$stage_seconds)))
   expect_true(all(is.finite(fit$stage_seconds)))
   expect_true(all(fit$stage_seconds >= 0))
   expect_equal(fit$d, oracle$d[1:4], tolerance = 1e-8)
+  expect_certificate_clean(fit)
+})
+
+test_that("wide sparse Gram SVD exposes opt-in certified subspace eigensolve", {
+  old_options <- options(eigencore.csc_left_gram_subspace_attempt = TRUE)
+  on.exit(options(old_options), add = TRUE)
+  M <- cbind(
+    Matrix::Diagonal(x = c(10, 8, 6, 1, 0.5)),
+    Matrix::Matrix(0, 5, 20, sparse = TRUE)
+  )
+
+  fit <- svd_partial(M, rank = 2, target = largest(), tol = 1e-8)
+
+  expect_identical(fit$restart$kind, "gram_svd_special_case")
+  expect_identical(fit$restart$native_gram_eigensolver, "subspace_iteration")
+  expect_lte(fit$restart$native_gram_subspace_max_backward_error, 1e-8)
+  expect_equal(fit$d, c(10, 8), tolerance = 1e-10)
   expect_certificate_clean(fit)
 })
 
