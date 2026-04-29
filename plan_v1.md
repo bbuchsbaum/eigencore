@@ -582,7 +582,9 @@ Primary attack surfaces, in order:
    default benchmark surface for H diagnostics. Its stage timings show native
    basis iteration remains the dominant cost, with Ritz extraction secondary;
    optimize retained restart/workspace reuse before spending effort on small
-   projected SVD tuning.
+   projected SVD tuning. Minor compact-fit workspace cleanup has removed
+   avoidable double initialization, but the structural H gap is still retained
+   restart/workspace reuse.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
    preconditioning beyond the typed shifted-tridiagonal case, keep the
    benchmark B-orthogonality/native-path diagnostics green, and promote the

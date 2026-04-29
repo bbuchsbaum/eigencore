@@ -150,6 +150,11 @@ they are machine-dependent.
   about `0.0066s` in native basis iteration and about `0.0026s` in Ritz
   extraction, confirming that the next H speed work should primarily attack the
   retained native restart/workspace path rather than R result materialization.
+- Compact block-GK fit work arrays now use uninitialized native allocation and
+  rely on the basis runner's single explicit zeroing pass. The same wide sparse
+  probe remains certified with `73` native apply calls on the default row, and
+  sampled median time dropped to about `0.0106s`; this is a cleanup win, not an
+  H gate closure.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,

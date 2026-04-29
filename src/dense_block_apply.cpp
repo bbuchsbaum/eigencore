@@ -7863,6 +7863,37 @@ static SEXP block_golub_kahan_fit_pack(int n,
   return out_;
 }
 
+struct BlockGolubKahanFitArrays {
+  double* V = nullptr;
+  double* AV = nullptr;
+  double* U = nullptr;
+};
+
+static void block_golub_kahan_fit_arrays_free(BlockGolubKahanFitArrays* arrays) {
+  std::free(arrays->V);
+  std::free(arrays->AV);
+  std::free(arrays->U);
+  arrays->V = nullptr;
+  arrays->AV = nullptr;
+  arrays->U = nullptr;
+}
+
+static int block_golub_kahan_fit_arrays_alloc(BlockGolubKahanFitArrays* arrays,
+                                              int n,
+                                              int m,
+                                              int max_subspace) {
+  const size_t nv = static_cast<size_t>(n) * static_cast<size_t>(max_subspace);
+  const size_t mv = static_cast<size_t>(m) * static_cast<size_t>(max_subspace);
+  arrays->V = static_cast<double*>(std::malloc(nv * sizeof(double)));
+  arrays->AV = static_cast<double*>(std::malloc(mv * sizeof(double)));
+  arrays->U = static_cast<double*>(std::malloc(mv * sizeof(double)));
+  if (arrays->V == nullptr || arrays->AV == nullptr || arrays->U == nullptr) {
+    block_golub_kahan_fit_arrays_free(arrays);
+    return -1;
+  }
+  return 0;
+}
+
 extern "C" SEXP eigencore_block_golub_kahan_dense_fit(SEXP A_,
                                                       SEXP max_subspace_,
                                                       SEXP start_,
@@ -7887,9 +7918,10 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_fit(SEXP A_,
     error("max_subspace must be between 1 and ncol(A)");
   }
 
-  std::vector<double> V(static_cast<size_t>(n) * max_subspace, 0.0);
-  std::vector<double> AV(static_cast<size_t>(m) * max_subspace, 0.0);
-  std::vector<double> U(static_cast<size_t>(m) * max_subspace, 0.0);
+  BlockGolubKahanFitArrays arrays;
+  if (block_golub_kahan_fit_arrays_alloc(&arrays, n, m, max_subspace) != 0) {
+    error("failed to allocate native dense block Golub-Kahan fit workspace");
+  }
   DenseColumnMajorOperator impl = {m, n, REAL(A_)};
   int active_v = 0;
   int active_u = 0;
@@ -7901,19 +7933,23 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_fit(SEXP A_,
   const int status = native_block_golub_kahan_basis_run(
     &impl, eigencore_dense_apply, m, n, max_subspace, block_size, REAL(start_),
     nullptr, 0,
-    V.data(), AV.data(), U.data(),
+    arrays.V, arrays.AV, arrays.U,
     &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
     &cached_start_used
   );
   const double stage_native_iteration_seconds = native_timer_elapsed(stage_timer);
   if (status != 0) {
+    block_golub_kahan_fit_arrays_free(&arrays);
     error("native dense block Golub-Kahan fit failed with status=%d", status);
   }
-  return block_golub_kahan_fit_pack(
-    n, m, V.data(), AV.data(), active_v, active_u, iterations, matvecs,
+  SEXP out_ = PROTECT(block_golub_kahan_fit_pack(
+    n, m, arrays.V, arrays.AV, active_v, active_u, iterations, matvecs,
     ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_),
     stage_native_iteration_seconds
-  );
+  ));
+  block_golub_kahan_fit_arrays_free(&arrays);
+  UNPROTECT(1);
+  return out_;
 }
 
 extern "C" SEXP eigencore_block_golub_kahan_dense_fit_cached(SEXP A_,
@@ -7946,9 +7982,10 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_fit_cached(SEXP A_,
     error("max_subspace must be between 1 and ncol(A)");
   }
 
-  std::vector<double> V(static_cast<size_t>(n) * max_subspace, 0.0);
-  std::vector<double> AV(static_cast<size_t>(m) * max_subspace, 0.0);
-  std::vector<double> U(static_cast<size_t>(m) * max_subspace, 0.0);
+  BlockGolubKahanFitArrays arrays;
+  if (block_golub_kahan_fit_arrays_alloc(&arrays, n, m, max_subspace) != 0) {
+    error("failed to allocate native dense cached block Golub-Kahan fit workspace");
+  }
   DenseColumnMajorOperator impl = {m, n, REAL(A_)};
   int active_v = 0;
   int active_u = 0;
@@ -7960,19 +7997,23 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_fit_cached(SEXP A_,
   const int status = native_block_golub_kahan_basis_run(
     &impl, eigencore_dense_apply, m, n, max_subspace, block_size, REAL(start_),
     REAL(start_av_), start_av_cols,
-    V.data(), AV.data(), U.data(),
+    arrays.V, arrays.AV, arrays.U,
     &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
     &cached_start_used
   );
   const double stage_native_iteration_seconds = native_timer_elapsed(stage_timer);
   if (status != 0) {
+    block_golub_kahan_fit_arrays_free(&arrays);
     error("native dense cached block Golub-Kahan fit failed with status=%d", status);
   }
-  return block_golub_kahan_fit_pack(
-    n, m, V.data(), AV.data(), active_v, active_u, iterations, matvecs,
+  SEXP out_ = PROTECT(block_golub_kahan_fit_pack(
+    n, m, arrays.V, arrays.AV, active_v, active_u, iterations, matvecs,
     ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_),
     stage_native_iteration_seconds
-  );
+  ));
+  block_golub_kahan_fit_arrays_free(&arrays);
+  UNPROTECT(1);
+  return out_;
 }
 
 extern "C" SEXP eigencore_block_golub_kahan_csc_fit(SEXP i_, SEXP p_,
@@ -8000,9 +8041,10 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit(SEXP i_, SEXP p_,
     error("max_subspace must be between 1 and ncol(A)");
   }
 
-  std::vector<double> V(static_cast<size_t>(n) * max_subspace, 0.0);
-  std::vector<double> AV(static_cast<size_t>(m) * max_subspace, 0.0);
-  std::vector<double> U(static_cast<size_t>(m) * max_subspace, 0.0);
+  BlockGolubKahanFitArrays arrays;
+  if (block_golub_kahan_fit_arrays_alloc(&arrays, n, m, max_subspace) != 0) {
+    error("failed to allocate native CSC block Golub-Kahan fit workspace");
+  }
   CSCOperator impl = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
   int active_v = 0;
   int active_u = 0;
@@ -8014,19 +8056,23 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit(SEXP i_, SEXP p_,
   const int status = native_block_golub_kahan_basis_run(
     &impl, eigencore_csc_apply, m, n, max_subspace, block_size, REAL(start_),
     nullptr, 0,
-    V.data(), AV.data(), U.data(),
+    arrays.V, arrays.AV, arrays.U,
     &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
     &cached_start_used
   );
   const double stage_native_iteration_seconds = native_timer_elapsed(stage_timer);
   if (status != 0) {
+    block_golub_kahan_fit_arrays_free(&arrays);
     error("native CSC block Golub-Kahan fit failed with status=%d", status);
   }
-  return block_golub_kahan_fit_pack(
-    n, m, V.data(), AV.data(), active_v, active_u, iterations, matvecs,
+  SEXP out_ = PROTECT(block_golub_kahan_fit_pack(
+    n, m, arrays.V, arrays.AV, active_v, active_u, iterations, matvecs,
     ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_),
     stage_native_iteration_seconds
-  );
+  ));
+  block_golub_kahan_fit_arrays_free(&arrays);
+  UNPROTECT(1);
+  return out_;
 }
 
 extern "C" SEXP eigencore_block_golub_kahan_csc_fit_cached(SEXP i_, SEXP p_,
@@ -8060,9 +8106,10 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit_cached(SEXP i_, SEXP p_,
     error("max_subspace must be between 1 and ncol(A)");
   }
 
-  std::vector<double> V(static_cast<size_t>(n) * max_subspace, 0.0);
-  std::vector<double> AV(static_cast<size_t>(m) * max_subspace, 0.0);
-  std::vector<double> U(static_cast<size_t>(m) * max_subspace, 0.0);
+  BlockGolubKahanFitArrays arrays;
+  if (block_golub_kahan_fit_arrays_alloc(&arrays, n, m, max_subspace) != 0) {
+    error("failed to allocate native CSC cached block Golub-Kahan fit workspace");
+  }
   CSCOperator impl = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
   int active_v = 0;
   int active_u = 0;
@@ -8074,19 +8121,23 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit_cached(SEXP i_, SEXP p_,
   const int status = native_block_golub_kahan_basis_run(
     &impl, eigencore_csc_apply, m, n, max_subspace, block_size, REAL(start_),
     REAL(start_av_), start_av_cols,
-    V.data(), AV.data(), U.data(),
+    arrays.V, arrays.AV, arrays.U,
     &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
     &cached_start_used
   );
   const double stage_native_iteration_seconds = native_timer_elapsed(stage_timer);
   if (status != 0) {
+    block_golub_kahan_fit_arrays_free(&arrays);
     error("native CSC cached block Golub-Kahan fit failed with status=%d", status);
   }
-  return block_golub_kahan_fit_pack(
-    n, m, V.data(), AV.data(), active_v, active_u, iterations, matvecs,
+  SEXP out_ = PROTECT(block_golub_kahan_fit_pack(
+    n, m, arrays.V, arrays.AV, active_v, active_u, iterations, matvecs,
     ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_),
     stage_native_iteration_seconds
-  );
+  ));
+  block_golub_kahan_fit_arrays_free(&arrays);
+  UNPROTECT(1);
+  return out_;
 }
 
 #include "projection/golub_kahan_ritz.hpp"
