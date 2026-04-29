@@ -71,6 +71,15 @@ test_that("shift-invert accepts a user-supplied solve operator", {
   expect_true(fit$transform$factorization_cache$external_cache)
 })
 
+test_that("shift-invert refuses ignored public factorization handles", {
+  A <- diag(c(1, 2, 4, 8))
+  expect_error(
+    eig_partial(A, k = 1L, target = nearest(2.5),
+                method = shift_invert(sigma = 2.5, factorization = list())),
+    "factorization = .*not implemented"
+  )
+})
+
 test_that("generalized shift-invert is rejected at plan time with a roadmap note", {
   set.seed(9)
   n <- 10L

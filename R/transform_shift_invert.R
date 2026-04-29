@@ -286,6 +286,13 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
   if (length(sigma) != 1L || !is.finite(sigma)) {
     stop("shift_invert(sigma) requires a single finite numeric shift.", call. = FALSE)
   }
+  if (!is.null(method$factorization)) {
+    stop(
+      "shift_invert(factorization = ...) is not implemented yet; ",
+      "supply shift_invert(solve = ...) for a user-managed factorization cache.",
+      call. = FALSE
+    )
+  }
 
   prep <- prepare_shift_invert_operator(problem, sigma, user_solve = method$solve)
   M <- prep$operator
