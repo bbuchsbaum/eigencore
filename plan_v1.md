@@ -599,13 +599,13 @@ Primary attack surfaces, in order:
    certification and can stop on the first certified retained subspace; on the
    current wide sparse probe it still certifies on attempt 3 with `73` apply
    calls and lowers R-visible allocation versus the R adaptive cycle, but the
-   total row remains speed-gate negative. Locking, cached `A V_keep` retention,
-   and a full production thick-restart policy remain open.
-   A direct cached-`A V_keep` handoff into the current basis runner was tested
-   and rejected: it marked cached starts as used but failed the wide sparse
-   certificate. The retained row now explicitly reports `retained_av_cache =
-   FALSE` until the native restart path can rotate/normalize retained vectors
-   and their operator images together.
+   total row remains speed-gate negative. Cached `A V_keep` retention is now
+   attempted only behind the certificate gate: native Cholesky-QR normalization
+   transforms retained vectors and cached operator images together, and a failed
+   cached attempt reruns the same deterministic retained restart uncached while
+   recording `fallback_method =
+   "retained_uncached_after_cached_av_failure"`. Locking and a full production
+   thick-restart policy remain open.
    The H benchmark rows expose retained-restart flags directly, including
    `retained_restart`, `retained_restart_native`, `retained_av_cache`,
    `native_attempt_certification`, and `native_early_stop`.

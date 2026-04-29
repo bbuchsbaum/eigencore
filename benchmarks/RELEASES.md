@@ -180,13 +180,18 @@ they are machine-dependent.
   source-loaded wide sparse probe it certifies on attempt 3 with the same `73`
   apply calls as the R adaptive block-GK cycle, while R-visible allocation is
   lower (`~0.23MB` versus `~0.36MB` in the sampled row); this is a staging
-  candidate, not H closure, because locking, cached `A V_keep` retention, and
-  production thick-restart policy are still open.
-- A direct cached-`A V_keep` handoff inside the retained block-GK cycle was
-  tested and rejected: it set cached-start diagnostics but failed the wide
-  sparse certificate. The retained benchmark row therefore reports
-  `retained_av_cache = FALSE` and treats cached `A V_keep` retention as blocked
-  on a proper native restart rotation/normalization step.
+  candidate, not H closure, because cached `A V_keep` still needs benchmark
+  proof under its certificate gate, and locking plus production thick-restart
+  policy are still open.
+- Cached-`A V_keep` retention inside the retained block-GK cycle is now
+  attempted behind a certificate gate. The native path applies the same
+  Cholesky-QR normalization to retained `V_keep` and its cached operator images;
+  if the cached attempt does not certify, the wrapper reruns the same
+  deterministic retained restart without cached `A V_keep` and records
+  `fallback_method = "retained_uncached_after_cached_av_failure"`. On one wide
+  sparse probe the cached path certifies; on the benchmark seed it falls back
+  and still returns a certified row, so this is a controlled optimization rather
+  than H closure.
 - SVD benchmark rows now expose retained-restart diagnostics directly:
   `retained_restart`, `retained_restart_native`, `retained_av_cache`,
   `native_attempt_certification`, and `native_early_stop`.

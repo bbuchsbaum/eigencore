@@ -616,10 +616,11 @@ native_block_golub_kahan_retained_restart_abi <- function(op, rank,
       ),
       retained_state = c(
         "right Ritz vectors V_keep",
+        "QR-normalized cached operator images A V_keep",
         "native basis workspace V/AV/U",
         "orthogonalization scratch",
         "attempt history",
-        "cached A V_keep retention is deferred until the next ABI revision"
+        "certification-gated cached A V_keep retention with uncached fallback"
       ),
       output_schema = c(
         "d", "u", "v", "Avectors", "certificate diagnostics",
@@ -629,10 +630,11 @@ native_block_golub_kahan_retained_restart_abi <- function(op, rank,
       invariants = c(
         "no R-side restart block construction after entry",
         "retained V_keep is reorthogonalized by the native basis runner on each attempt",
+        "retained V_keep and A V_keep are transformed together by native QR normalization",
         "certification uses original operator coordinates",
         "attempt history fields match native_block_golub_kahan_cycle_svd()",
         "default policy is Ritz-plus-random until a benchmark proves otherwise",
-        "cached A V retention must not be claimed until native QR normalization transforms V_keep and A V_keep together"
+        "cached A V retention must certify or fall back to the uncached retained path"
       )
     ),
     class = "eigencore_block_golub_kahan_retained_restart_abi"
@@ -647,7 +649,8 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
                                                         block = NULL,
                                                         start = NULL,
                                                         max_attempts = NULL,
-                                                        vectors = c("both", "left", "right", "none")) {
+                                                        vectors = c("both", "left", "right", "none"),
+                                                        retained_av_cache = TRUE) {
   vectors <- match.arg(vectors)
   op <- as_operator(op)
   abi <- native_block_golub_kahan_retained_restart_abi(
@@ -680,46 +683,93 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
   norm_info <- operator_norm_for_certificate_info(op)
   source <- source_or_null(op)
   storage <- op$metadata$storage %||% NULL
-  ritz <- if (identical(storage, "dgCMatrix")) {
-    A <- op$metadata$matrix
-    .Call(
-      "eigencore_block_golub_kahan_csc_retained_cycle",
-      methods::slot(A, "i"),
-      methods::slot(A, "p"),
-      methods::slot(A, "x"),
-      methods::slot(A, "Dim"),
-      as.integer(abi$max_subspace_sequence[[1L]]),
-      start,
-      random_tails,
-      as.integer(abi$max_attempts),
-      as.integer(rank),
-      target_kind,
-      as.numeric(norm_info$value),
-      as.numeric(tol),
-      PACKAGE = "eigencore"
-    )
-  } else if (is.matrix(source) && is.double(source)) {
-    .Call(
-      "eigencore_block_golub_kahan_dense_retained_cycle",
-      source,
-      as.integer(abi$max_subspace_sequence[[1L]]),
-      start,
-      random_tails,
-      as.integer(abi$max_attempts),
-      as.integer(rank),
-      target_kind,
-      as.numeric(norm_info$value),
-      as.numeric(tol),
-      PACKAGE = "eigencore"
-    )
-  } else {
-    stop("Native retained block Golub-Kahan cycle currently supports dense double matrices and dgCMatrix operators only.",
-         call. = FALSE)
+  run_retained <- function(use_retained_av_cache) {
+    if (identical(storage, "dgCMatrix")) {
+      A <- op$metadata$matrix
+      .Call(
+        "eigencore_block_golub_kahan_csc_retained_cycle",
+        methods::slot(A, "i"),
+        methods::slot(A, "p"),
+        methods::slot(A, "x"),
+        methods::slot(A, "Dim"),
+        as.integer(abi$max_subspace_sequence[[1L]]),
+        start,
+        random_tails,
+        as.integer(abi$max_attempts),
+        as.integer(rank),
+        target_kind,
+        as.numeric(norm_info$value),
+        as.numeric(tol),
+        as.logical(use_retained_av_cache),
+        PACKAGE = "eigencore"
+      )
+    } else if (is.matrix(source) && is.double(source)) {
+      .Call(
+        "eigencore_block_golub_kahan_dense_retained_cycle",
+        source,
+        as.integer(abi$max_subspace_sequence[[1L]]),
+        start,
+        random_tails,
+        as.integer(abi$max_attempts),
+        as.integer(rank),
+        target_kind,
+        as.numeric(norm_info$value),
+        as.numeric(tol),
+        as.logical(use_retained_av_cache),
+        PACKAGE = "eigencore"
+      )
+    } else {
+      stop("Native retained block Golub-Kahan cycle currently supports dense double matrices and dgCMatrix operators only.",
+           call. = FALSE)
+    }
   }
 
-  cert <- certify_svd_operator_cached_av(
-    op, ritz$d, ritz$u, ritz$v, ritz$Avectors, tol = tol
-  )
+  cache_attempted <- isTRUE(retained_av_cache)
+  cache_failed <- FALSE
+  cache_error <- NA_character_
+  cache_max_backward_error <- NA_real_
+  cache_max_residual <- NA_real_
+  cache_iterations <- 0L
+  cache_matvecs <- 0L
+  cache_ortho_passes <- 0L
+  cache_stage_seconds <- NULL
+  ritz <- NULL
+  cert <- NULL
+  if (cache_attempted) {
+    cached <- tryCatch(
+      run_retained(TRUE),
+      error = function(e) structure(
+        list(error = conditionMessage(e)),
+        class = "eigencore_retained_av_cache_error"
+      )
+    )
+    if (inherits(cached, "eigencore_retained_av_cache_error")) {
+      cache_failed <- TRUE
+      cache_error <- cached$error
+    } else {
+      cache_iterations <- cached$iterations %||% 0L
+      cache_matvecs <- cached$matvecs %||% 0L
+      cache_ortho_passes <- cached$ortho_passes %||% 0L
+      cache_stage_seconds <- cached$stage_seconds
+      cached_cert <- certify_svd_operator_cached_av(
+        op, cached$d, cached$u, cached$v, cached$Avectors, tol = tol
+      )
+      if (isTRUE(cached_cert$passed)) {
+        ritz <- cached
+        cert <- cached_cert
+      } else {
+        cache_failed <- TRUE
+        cache_max_backward_error <- cached_cert$max_backward_error
+        cache_max_residual <- cached_cert$max_residual
+      }
+    }
+  }
+  if (is.null(ritz)) {
+    ritz <- run_retained(FALSE)
+    cert <- certify_svd_operator_cached_av(
+      op, ritz$d, ritz$u, ritz$v, ritz$Avectors, tol = tol
+    )
+  }
   attempt_history <- ritz$attempt_history
   if (is.data.frame(attempt_history) &&
       !"certificate_passed" %in% names(attempt_history)) {
@@ -733,6 +783,23 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
       attempt_history$max_residual[[last]] <- cert$max_residual
     }
   }
+  reported_iterations <- ritz$iterations + if (cache_failed) cache_iterations else 0L
+  reported_matvecs <- ritz$matvecs + if (cache_failed) cache_matvecs else 0L
+  reported_ortho_passes <- ritz$ortho_passes + if (cache_failed) cache_ortho_passes else 0L
+  reported_stage_seconds <- ritz$stage_seconds
+  if (cache_failed && !is.null(cache_stage_seconds)) {
+    merged_names <- union(names(reported_stage_seconds), names(cache_stage_seconds))
+    reported_stage_seconds <- stats::setNames(
+      vapply(
+        merged_names,
+        function(nm) {
+          (reported_stage_seconds[[nm]] %||% 0) + (cache_stage_seconds[[nm]] %||% 0)
+        },
+        numeric(1)
+      ),
+      merged_names
+    )
+  }
   out <- list(
     d = ritz$d,
     u = ritz$u,
@@ -742,10 +809,10 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
     backward_error = cert$backward_error,
     orthogonality = cert$orthogonality,
     certificate = cert,
-    iterations = ritz$iterations,
-    matvecs = ritz$matvecs,
+    iterations = reported_iterations,
+    matvecs = reported_matvecs,
     block = block,
-    stage_seconds = ritz$stage_seconds,
+    stage_seconds = reported_stage_seconds,
     restart = list(
       kind = "block_golub_kahan_native_retained_cycle",
       implemented = TRUE,
@@ -753,7 +820,14 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
       thick_restart = FALSE,
       retained_restart = TRUE,
       retained_restart_native = TRUE,
-      retained_av_cache = FALSE,
+      retained_av_cache = any(attempt_history$cached_start_used %||% FALSE),
+      retained_av_cache_attempted = cache_attempted,
+      retained_av_cache_fallback = cache_failed,
+      retained_av_cache_failed_backward_error = cache_max_backward_error,
+      retained_av_cache_failed_residual = cache_max_residual,
+      retained_av_cache_failed_iterations = if (cache_failed) cache_iterations else 0L,
+      retained_av_cache_failed_matvecs = if (cache_failed) cache_matvecs else 0L,
+      retained_av_cache_failed_ortho_passes = if (cache_failed) cache_ortho_passes else 0L,
       native_attempt_certification = TRUE,
       native_early_stop = is.data.frame(attempt_history) &&
         any(attempt_history$certificate_passed) &&
@@ -783,9 +857,14 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
         abi$max_subspace_sequence
       },
       attempt_history = attempt_history,
-      total_iterations = ritz$iterations,
-      total_matvecs = ritz$matvecs,
-      total_ortho_passes = ritz$ortho_passes,
+      total_iterations = reported_iterations,
+      total_matvecs = reported_matvecs,
+      total_ortho_passes = reported_ortho_passes,
+      fallback_attempted = cache_failed,
+      fallback_used = cache_failed,
+      fallback_method = if (cache_failed) "retained_uncached_after_cached_av_failure" else NA_character_,
+      fallback_error = if (cache_failed && !is.na(cache_error)) cache_error else NA_character_,
+      fallback_max_backward_error = if (cache_failed) cache_max_backward_error else NA_real_,
       final_attempt_iterations = if (is.data.frame(attempt_history) && nrow(attempt_history)) {
         tail(attempt_history$iterations, 1L)[[1L]]
       } else {
@@ -811,10 +890,10 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
       } else {
         NA_integer_
       },
-      ortho_passes = ritz$ortho_passes,
-      matvecs = ritz$matvecs,
+      ortho_passes = reported_ortho_passes,
+      matvecs = reported_matvecs,
       cached_start_used = isTRUE(ritz$cached_start_used),
-      stage_seconds = ritz$stage_seconds
+      stage_seconds = reported_stage_seconds
     )
   )
   out <- complete_zero_singular_triplets(op, out, rank, target, tol)

@@ -8324,6 +8324,45 @@ static int retained_cached_av_certificate_passed(void* impl,
   return passed;
 }
 
+static int normalize_retained_cached_prefix(double* V,
+                                            int n,
+                                            double* AV,
+                                            int m,
+                                            int cols) {
+  if (cols <= 0) {
+    return 0;
+  }
+  std::vector<double> gram(static_cast<size_t>(cols) * static_cast<size_t>(cols), 0.0);
+  const char trans = 'T';
+  const char notrans = 'N';
+  const char right = 'R';
+  const char uplo = 'U';
+  const char diag = 'N';
+  const double one = 1.0;
+  const double zero = 0.0;
+  int info = 0;
+
+  F77_CALL(dgemm)(&trans, &notrans, &cols, &cols, &n,
+                  &one, V, &n, V, &n,
+                  &zero, gram.data(), &cols FCONE FCONE);
+  symmetrize_packed_square(gram.data(), cols);
+  F77_CALL(dpotrf)(&uplo, &cols, gram.data(), &cols, &info FCONE);
+  if (info != 0) {
+    return -1;
+  }
+  for (int col = 0; col < cols; ++col) {
+    if (gram[col + static_cast<int64_t>(col) * cols] <= 100.0 * DBL_EPSILON) {
+      return -2;
+    }
+  }
+
+  F77_CALL(dtrsm)(&right, &uplo, &notrans, &diag, &n, &cols, &one,
+                  gram.data(), &cols, V, &n FCONE FCONE FCONE FCONE);
+  F77_CALL(dtrsm)(&right, &uplo, &notrans, &diag, &m, &cols, &one,
+                  gram.data(), &cols, AV, &m FCONE FCONE FCONE FCONE);
+  return 0;
+}
+
 template <typename ConfigureOperator>
 static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_operator,
                                                   int m,
@@ -8337,7 +8376,8 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
                                                   int rank,
                                                   int target_kind,
                                                   double norm_A,
-                                                  double tol) {
+                                                  double tol,
+                                                  int use_retained_av_cache) {
   if (block_size < 1 || rank < 1 || initial_max_subspace < rank ||
       initial_max_subspace > n || max_attempts < 1) {
     error("invalid retained block Golub-Kahan cycle controls");
@@ -8360,11 +8400,14 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
 
   std::vector<double> current_start(static_cast<size_t>(n) *
                                     static_cast<size_t>(rank + block_size), 0.0);
+  std::vector<double> current_start_av(static_cast<size_t>(m) *
+                                       static_cast<size_t>(rank), 0.0);
   std::memcpy(
     current_start.data(), initial_start,
     sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(block_size)
   );
   int current_start_cols = block_size;
+  int current_start_av_cols = 0;
 
   void* impl = nullptr;
   EigencoreApplyFn apply = nullptr;
@@ -8402,7 +8445,9 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
     auto stage_timer = native_timer_now();
     const int status = native_block_golub_kahan_basis_run(
       impl, apply, m, n, max_subspace, current_start_cols,
-      current_start.data(), nullptr, 0,
+      current_start.data(),
+      (use_retained_av_cache && current_start_av_cols > 0) ? current_start_av.data() : nullptr,
+      use_retained_av_cache ? current_start_av_cols : 0,
       arrays.V, arrays.AV, arrays.U,
       &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
       &cached_start_used
@@ -8466,14 +8511,34 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
 
     auto restart_timer = native_timer_now();
     SEXP v_ = VECTOR_ELT(ritz_, 2);
+    SEXP av_ = VECTOR_ELT(ritz_, 3);
     const int keep_cols = INTEGER(getAttrib(v_, R_DimSymbol))[1];
     current_start.assign(current_start.size(), 0.0);
+    current_start_av.assign(current_start_av.size(), 0.0);
     for (int col = 0; col < keep_cols; ++col) {
       std::memcpy(
         current_start.data() + static_cast<int64_t>(col) * n,
         REAL(v_) + static_cast<int64_t>(col) * n,
         sizeof(double) * static_cast<size_t>(n)
       );
+      if (use_retained_av_cache) {
+        std::memcpy(
+          current_start_av.data() + static_cast<int64_t>(col) * m,
+          REAL(av_) + static_cast<int64_t>(col) * m,
+          sizeof(double) * static_cast<size_t>(m)
+        );
+      }
+    }
+    if (use_retained_av_cache) {
+      const int normalize_status = normalize_retained_cached_prefix(
+        current_start.data(), n, current_start_av.data(), m, keep_cols
+      );
+      if (normalize_status != 0) {
+        UNPROTECT(1);
+        block_golub_kahan_fit_arrays_free(&arrays);
+        error("native retained block Golub-Kahan cached prefix normalization failed with status=%d",
+              normalize_status);
+      }
     }
     const double* tail = random_tails +
       static_cast<int64_t>(attempt) * static_cast<int64_t>(n) *
@@ -8486,6 +8551,7 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
       );
     }
     current_start_cols = keep_cols + block_size;
+    current_start_av_cols = use_retained_av_cache ? keep_cols : 0;
     UNPROTECT(1);
     total_stage_restart_seconds += native_timer_elapsed(restart_timer);
   }
@@ -8638,7 +8704,8 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_retained_cycle(SEXP A_,
                                                                  SEXP rank_,
                                                                  SEXP target_kind_,
                                                                  SEXP norm_A_,
-                                                                 SEXP tol_) {
+                                                                 SEXP tol_,
+                                                                 SEXP use_retained_av_cache_) {
   if (!isReal(A_) || !isReal(initial_start_) || !isReal(random_tails_)) {
     error("A, initial_start, and random_tails must be double matrices");
   }
@@ -8663,7 +8730,8 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_retained_cycle(SEXP A_,
     configure, m, n, asInteger(initial_max_subspace_), block_size,
     REAL(initial_start_), REAL(random_tails_), INTEGER(dimT)[1],
     asInteger(max_attempts_), asInteger(rank_), asInteger(target_kind_),
-    asReal(norm_A_), asReal(tol_)
+    asReal(norm_A_), asReal(tol_),
+    asLogical(use_retained_av_cache_) == TRUE
   );
 }
 
@@ -8800,7 +8868,8 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_retained_cycle(SEXP i_, SEXP p_,
                                                                SEXP rank_,
                                                                SEXP target_kind_,
                                                                SEXP norm_A_,
-                                                               SEXP tol_) {
+                                                               SEXP tol_,
+                                                               SEXP use_retained_av_cache_) {
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) ||
       !isInteger(dim_) || !isReal(initial_start_) || !isReal(random_tails_)) {
     error("invalid CSC retained block Golub-Kahan inputs");
@@ -8825,7 +8894,8 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_retained_cycle(SEXP i_, SEXP p_,
     configure, m, n, asInteger(initial_max_subspace_), block_size,
     REAL(initial_start_), REAL(random_tails_), INTEGER(dimT)[1],
     asInteger(max_attempts_), asInteger(rank_), asInteger(target_kind_),
-    asReal(norm_A_), asReal(tol_)
+    asReal(norm_A_), asReal(tol_),
+    asLogical(use_retained_av_cache_) == TRUE
   );
 }
 
@@ -9500,8 +9570,8 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_block_golub_kahan_dense_fit_cached", (DL_FUNC) &eigencore_block_golub_kahan_dense_fit_cached, 6},
   {"eigencore_block_golub_kahan_csc_fit", (DL_FUNC) &eigencore_block_golub_kahan_csc_fit, 8},
   {"eigencore_block_golub_kahan_csc_fit_cached", (DL_FUNC) &eigencore_block_golub_kahan_csc_fit_cached, 9},
-  {"eigencore_block_golub_kahan_dense_retained_cycle", (DL_FUNC) &eigencore_block_golub_kahan_dense_retained_cycle, 9},
-  {"eigencore_block_golub_kahan_csc_retained_cycle", (DL_FUNC) &eigencore_block_golub_kahan_csc_retained_cycle, 12},
+  {"eigencore_block_golub_kahan_dense_retained_cycle", (DL_FUNC) &eigencore_block_golub_kahan_dense_retained_cycle, 10},
+  {"eigencore_block_golub_kahan_csc_retained_cycle", (DL_FUNC) &eigencore_block_golub_kahan_csc_retained_cycle, 13},
   {"eigencore_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_thick_restart_lanczos_dense, 7},
   {"eigencore_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_thick_restart_lanczos_csc, 10},
   {"eigencore_block_lanczos_dense", (DL_FUNC) &eigencore_block_lanczos_dense, 7},

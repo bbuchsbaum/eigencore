@@ -537,6 +537,11 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
   expect_false(retained$retained_av_cache)
   expect_true(retained$native_attempt_certification)
   expect_false(retained$native_early_stop)
+  expect_true(retained$fallback_attempted)
+  expect_true(retained$fallback_used)
+  expect_equal(retained$fallback_method,
+               "retained_uncached_after_cached_av_failure")
+  expect_true(is.finite(retained$fallback_max_backward_error))
   expect_true(all(rows$stage_native_iteration_seconds > 0))
   expect_true(all(rows$stage_golub_kahan_ritz_seconds > 0))
   expect_gte(cached$cached_start_attempts, 1L)
