@@ -301,6 +301,29 @@ test_that("native dense SVD certificate diagnostics match R formula contract", {
   expect_equal(diag$converged, diag$backward_error <= tol)
 })
 
+test_that("cached-Av native SVD certificates match native full certificates", {
+  set.seed(222)
+  A <- matrix(rnorm(35), nrow = 7)
+  u <- qr.Q(qr(matrix(rnorm(21), nrow = 7)))
+  v <- qr.Q(qr(matrix(rnorm(15), nrow = 5)))
+  d <- c(4, 2, 1)
+  Av <- A %*% v
+  dense <- eigencore:::native_dense_svd_certificate(A, d, u, v)
+  dense_cached <- eigencore:::native_dense_svd_certificate_cached_av(A, d, u, v, Av)
+  expect_equal(dense_cached$left, dense$left, tolerance = 1e-12)
+  expect_equal(dense_cached$right, dense$right, tolerance = 1e-12)
+  expect_equal(dense_cached$combined, dense$combined, tolerance = 1e-12)
+  expect_equal(dense_cached$backward_error, dense$backward_error, tolerance = 1e-12)
+
+  S <- Matrix::Matrix(A, sparse = TRUE)
+  op <- eigencore:::as_operator(S)
+  csc <- eigencore:::certify_svd_operator(op, d, u, v)
+  csc_cached <- eigencore:::certify_svd_operator_cached_av(op, d, u, v, Av)
+  expect_equal(csc_cached$residuals$left, csc$residuals$left, tolerance = 1e-12)
+  expect_equal(csc_cached$residuals$right, csc$residuals$right, tolerance = 1e-12)
+  expect_equal(csc_cached$backward_error, csc$backward_error, tolerance = 1e-12)
+})
+
 test_that("benchmark helpers return timing rows for base and eigencore", {
   A <- diag(c(5, 4, 3, 2, 1))
   eb <- eigencore:::benchmark_eigen_methods(A, k = 2, repeats = 1, include = c("eigencore", "base"))

@@ -587,6 +587,9 @@ Primary attack surfaces, in order:
    restart/workspace reuse. A residual-tail restart diagnostic certifies but
    costs more native apply calls than Ritz-plus-random on the wide sparse H
    probe, so residual-tail restarts should not be promoted without new evidence.
+   Cached-`A v` native certificates remove a redundant left residual apply from
+   compact block-GK internal certification, but only modestly reduce allocation;
+   the main H path still runs through retained native restart/workspace design.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
    preconditioning beyond the typed shifted-diagonal and shifted-tridiagonal
    cases, keep the benchmark B-orthogonality/native-path diagnostics green,

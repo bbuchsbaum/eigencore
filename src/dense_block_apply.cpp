@@ -7224,6 +7224,36 @@ extern "C" SEXP eigencore_dense_svd_certificate(SEXP A_, SEXP d_,
   return out_;
 }
 
+static SEXP native_operator_svd_certificate_cached_av(void* impl,
+                                                      EigencoreApplyFn apply,
+                                                      int m,
+                                                      int n,
+                                                      double norm_A,
+                                                      SEXP d_,
+                                                      SEXP u_,
+                                                      SEXP v_,
+                                                      SEXP av_,
+                                                      SEXP tol_);
+
+extern "C" SEXP eigencore_dense_svd_certificate_cached_av(SEXP A_, SEXP d_,
+                                                          SEXP u_, SEXP v_,
+                                                          SEXP av_, SEXP tol_) {
+  if (!isReal(A_) || !isReal(d_) || !isReal(u_) || !isReal(v_) || !isReal(av_)) {
+    error("A, d, u, v, and Av must be double");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  if (dimA == R_NilValue) {
+    error("A must be a matrix");
+  }
+  const int m = INTEGER(dimA)[0];
+  const int n = INTEGER(dimA)[1];
+  DenseColumnMajorOperator impl = {m, n, REAL(A_)};
+  const double norm_A = frobenius_norm_dense(REAL(A_), m * n);
+  return native_operator_svd_certificate_cached_av(
+    &impl, eigencore_dense_apply, m, n, norm_A, d_, u_, v_, av_, tol_
+  );
+}
+
 static SEXP native_operator_eigen_certificate(void* impl,
                                               EigencoreApplyFn apply,
                                               int n,
@@ -7421,6 +7451,124 @@ static SEXP native_operator_svd_certificate(void* impl,
   return out_;
 }
 
+static SEXP native_operator_svd_certificate_cached_av(void* impl,
+                                                      EigencoreApplyFn apply,
+                                                      int m,
+                                                      int n,
+                                                      double norm_A,
+                                                      SEXP d_,
+                                                      SEXP u_,
+                                                      SEXP v_,
+                                                      SEXP av_,
+                                                      SEXP tol_) {
+  SEXP dimU = getAttrib(u_, R_DimSymbol);
+  SEXP dimV = getAttrib(v_, R_DimSymbol);
+  SEXP dimAV = getAttrib(av_, R_DimSymbol);
+  if (dimU == R_NilValue || dimV == R_NilValue || dimAV == R_NilValue) {
+    error("u, v, and Av must be matrices");
+  }
+  const int rowsU = INTEGER(dimU)[0];
+  const int k = INTEGER(dimU)[1];
+  const int rowsV = INTEGER(dimV)[0];
+  const int colsV = INTEGER(dimV)[1];
+  const int rowsAV = INTEGER(dimAV)[0];
+  const int colsAV = INTEGER(dimAV)[1];
+  if (rowsU != m || rowsV != n || colsV != k ||
+      rowsAV != m || colsAV != k || LENGTH(d_) != k) {
+    error("non-conformable cached-Av native operator SVD certificate inputs");
+  }
+
+  const char trans = 'T';
+  const char notrans = 'N';
+  const double one = 1.0;
+  const double zero = 0.0;
+  const double eps = DBL_EPSILON;
+  const double tol = asReal(tol_);
+  const double scale_value = fmax(norm_A, eps);
+  EigencoreWorkspace workspace = {0, 0, nullptr, 0};
+
+  SEXP right_matrix_ = PROTECT(allocMatrix(REALSXP, n, k));
+  SEXP left_ = PROTECT(allocVector(REALSXP, k));
+  SEXP right_ = PROTECT(allocVector(REALSXP, k));
+  SEXP combined_ = PROTECT(allocVector(REALSXP, k));
+  SEXP scale_ = PROTECT(allocVector(REALSXP, k));
+  SEXP backward_ = PROTECT(allocVector(REALSXP, k));
+  SEXP orth_ = PROTECT(allocVector(REALSXP, 2));
+  SEXP converged_ = PROTECT(allocVector(LGLSXP, k));
+
+  const int status = apply(impl, EIGENCORE_TRANSPOSE_ADJOINT, k,
+                           REAL(u_), m, 1.0, 0.0,
+                           REAL(right_matrix_), n, &workspace);
+  if (status != 0) {
+    error("cached-Av native operator SVD certificate adjoint apply failed with status=%d", status);
+  }
+
+  for (int col = 0; col < k; ++col) {
+    const double sigma = REAL(d_)[col];
+    const int left_offset = col * m;
+    const int right_offset = col * n;
+    double left_sum = 0.0;
+    for (int row = 0; row < m; ++row) {
+      const double residual = REAL(av_)[left_offset + row] -
+        sigma * REAL(u_)[left_offset + row];
+      left_sum += residual * residual;
+    }
+    for (int row = 0; row < n; ++row) {
+      REAL(right_matrix_)[right_offset + row] -= sigma * REAL(v_)[right_offset + row];
+    }
+    const double left = sqrt(left_sum);
+    const double right = column_norm(REAL(right_matrix_), n, col);
+    const double combined = sqrt(left * left + right * right);
+    const double backward = combined / scale_value;
+    REAL(left_)[col] = left;
+    REAL(right_)[col] = right;
+    REAL(combined_)[col] = combined;
+    REAL(scale_)[col] = scale_value;
+    REAL(backward_)[col] = backward;
+    LOGICAL(converged_)[col] = (R_FINITE(backward) && backward <= tol) ? TRUE : FALSE;
+  }
+
+  SEXP gram_u_ = PROTECT(allocMatrix(REALSXP, k, k));
+  SEXP gram_v_ = PROTECT(allocMatrix(REALSXP, k, k));
+  F77_CALL(dgemm)(&trans, &notrans, &k, &k, &m,
+                  &one, REAL(u_), &m, REAL(u_), &m,
+                  &zero, REAL(gram_u_), &k FCONE FCONE);
+  F77_CALL(dgemm)(&trans, &notrans, &k, &k, &n,
+                  &one, REAL(v_), &n, REAL(v_), &n,
+                  &zero, REAL(gram_v_), &k FCONE FCONE);
+  REAL(orth_)[0] = max_orthogonality_loss(REAL(gram_u_), k);
+  REAL(orth_)[1] = max_orthogonality_loss(REAL(gram_v_), k);
+  SEXP orth_names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(orth_names_, 0, mkChar("U"));
+  SET_STRING_ELT(orth_names_, 1, mkChar("V"));
+  setAttrib(orth_, R_NamesSymbol, orth_names_);
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 9));
+  SET_VECTOR_ELT(out_, 0, left_);
+  SET_VECTOR_ELT(out_, 1, right_);
+  SET_VECTOR_ELT(out_, 2, combined_);
+  SET_VECTOR_ELT(out_, 3, backward_);
+  SET_VECTOR_ELT(out_, 4, orth_);
+  SET_VECTOR_ELT(out_, 5, scale_);
+  SET_VECTOR_ELT(out_, 6, converged_);
+  SET_VECTOR_ELT(out_, 7, ScalarReal(scale_value));
+  SET_VECTOR_ELT(out_, 8, workspace_counters(&workspace));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 9));
+  SET_STRING_ELT(names_, 0, mkChar("left"));
+  SET_STRING_ELT(names_, 1, mkChar("right"));
+  SET_STRING_ELT(names_, 2, mkChar("combined"));
+  SET_STRING_ELT(names_, 3, mkChar("backward_error"));
+  SET_STRING_ELT(names_, 4, mkChar("orthogonality"));
+  SET_STRING_ELT(names_, 5, mkChar("scale"));
+  SET_STRING_ELT(names_, 6, mkChar("converged"));
+  SET_STRING_ELT(names_, 7, mkChar("scale_value"));
+  SET_STRING_ELT(names_, 8, mkChar("workspace"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(13);
+  return out_;
+}
+
 extern "C" SEXP eigencore_csc_eigen_certificate(SEXP i_, SEXP p_, SEXP x_,
                                                 SEXP dim_, SEXP values_,
                                                 SEXP vectors_, SEXP norm_A_,
@@ -7470,6 +7618,24 @@ extern "C" SEXP eigencore_csc_svd_certificate(SEXP i_, SEXP p_, SEXP x_,
                                          asReal(norm_A_), d_, u_, v_, tol_);
 }
 
+extern "C" SEXP eigencore_csc_svd_certificate_cached_av(SEXP i_, SEXP p_, SEXP x_,
+                                                        SEXP dim_, SEXP d_,
+                                                        SEXP u_, SEXP v_,
+                                                        SEXP av_, SEXP norm_A_,
+                                                        SEXP tol_) {
+  if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
+      !isReal(d_) || !isReal(u_) || !isReal(v_) || !isReal(av_)) {
+    error("invalid cached-Av CSC SVD certificate inputs");
+  }
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  CSCOperator impl = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
+  return native_operator_svd_certificate_cached_av(
+    &impl, eigencore_csc_apply, m, n,
+    asReal(norm_A_), d_, u_, v_, av_, tol_
+  );
+}
+
 extern "C" SEXP eigencore_diagonal_svd_certificate(SEXP x_, SEXP dim_,
                                                    SEXP unit_, SEXP d_,
                                                    SEXP u_, SEXP v_,
@@ -7483,6 +7649,25 @@ extern "C" SEXP eigencore_diagonal_svd_certificate(SEXP x_, SEXP dim_,
   DiagonalOperator impl = {m, REAL(x_), LOGICAL(unit_)[0] == TRUE};
   return native_operator_svd_certificate(&impl, eigencore_diagonal_apply, m, n,
                                          asReal(norm_A_), d_, u_, v_, tol_);
+}
+
+extern "C" SEXP eigencore_diagonal_svd_certificate_cached_av(SEXP x_, SEXP dim_,
+                                                             SEXP unit_, SEXP d_,
+                                                             SEXP u_, SEXP v_,
+                                                             SEXP av_,
+                                                             SEXP norm_A_,
+                                                             SEXP tol_) {
+  if (!isReal(x_) || !isInteger(dim_) || !isLogical(unit_) ||
+      !isReal(d_) || !isReal(u_) || !isReal(v_) || !isReal(av_)) {
+    error("invalid cached-Av diagonal SVD certificate inputs");
+  }
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  DiagonalOperator impl = {m, REAL(x_), LOGICAL(unit_)[0] == TRUE};
+  return native_operator_svd_certificate_cached_av(
+    &impl, eigencore_diagonal_apply, m, n,
+    asReal(norm_A_), d_, u_, v_, av_, tol_
+  );
 }
 
 extern "C" SEXP eigencore_rayleigh_ritz_symmetric(SEXP A_, SEXP Q_) {
@@ -8834,10 +9019,13 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_dense_eigen_certificate", (DL_FUNC) &eigencore_dense_eigen_certificate, 5},
   {"eigencore_dense_svd_residuals", (DL_FUNC) &eigencore_dense_svd_residuals, 4},
   {"eigencore_dense_svd_certificate", (DL_FUNC) &eigencore_dense_svd_certificate, 5},
+  {"eigencore_dense_svd_certificate_cached_av", (DL_FUNC) &eigencore_dense_svd_certificate_cached_av, 6},
   {"eigencore_csc_eigen_certificate", (DL_FUNC) &eigencore_csc_eigen_certificate, 8},
   {"eigencore_diagonal_eigen_certificate", (DL_FUNC) &eigencore_diagonal_eigen_certificate, 7},
   {"eigencore_csc_svd_certificate", (DL_FUNC) &eigencore_csc_svd_certificate, 9},
+  {"eigencore_csc_svd_certificate_cached_av", (DL_FUNC) &eigencore_csc_svd_certificate_cached_av, 10},
   {"eigencore_diagonal_svd_certificate", (DL_FUNC) &eigencore_diagonal_svd_certificate, 8},
+  {"eigencore_diagonal_svd_certificate_cached_av", (DL_FUNC) &eigencore_diagonal_svd_certificate_cached_av, 9},
   {"eigencore_rayleigh_ritz_symmetric", (DL_FUNC) &eigencore_rayleigh_ritz_symmetric, 2},
   {"eigencore_tridiagonal_eigen", (DL_FUNC) &eigencore_tridiagonal_eigen, 2},
   {"eigencore_bidiagonal_svd", (DL_FUNC) &eigencore_bidiagonal_svd, 2},

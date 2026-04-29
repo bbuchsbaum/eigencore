@@ -202,12 +202,28 @@ certify_svd_operator <- function(Aop, d, u, v, tol = 1e-8) {
 #' @keywords internal
 certify_svd_operator_cached_av <- function(Aop, d, u, v, Av, tol = 1e-8,
                                            return_residual_vectors = FALSE) {
-  if (!isTRUE(return_residual_vectors)) {
-    return(certify_svd_operator(Aop, d, u, v, tol = tol))
-  }
   if (is.null(Av)) {
     cert <- certify_svd_operator(Aop, d, u, v, tol = tol)
-    return(list(certificate = cert, right_residual_vectors = NULL))
+    if (isTRUE(return_residual_vectors)) {
+      return(list(certificate = cert, right_residual_vectors = NULL))
+    }
+    return(cert)
+  }
+  if (!isTRUE(return_residual_vectors)) {
+    native <- native_builtin_svd_certificate_cached_av(Aop, d, u, v, Av, tol = tol)
+    if (!is.null(native)) {
+      diag <- native$diagnostics
+      return(new_certificate(
+        tol = tol,
+        residuals = list(left = diag$left, right = diag$right, combined = diag$combined),
+        backward_error = diag$backward_error,
+        orthogonality = diag$orthogonality,
+        converged = diag$converged,
+        scale = diag$scale,
+        norm_bound_type = native$norm_bound_type
+      ))
+    }
+    return(certify_svd_operator(Aop, d, u, v, tol = tol))
   }
   Av <- as.matrix(Av)
   if (nrow(Av) != Aop$dim[[1L]] || ncol(Av) != length(d)) {
@@ -372,6 +388,20 @@ native_dense_svd_certificate <- function(A, d, u, v, tol = 1e-8) {
 }
 
 #' @keywords internal
+native_dense_svd_certificate_cached_av <- function(A, d, u, v, Av, tol = 1e-8) {
+  .Call(
+    "eigencore_dense_svd_certificate_cached_av",
+    as.matrix(A),
+    as.numeric(d),
+    as.matrix(u),
+    as.matrix(v),
+    as.matrix(Av),
+    as.numeric(tol),
+    PACKAGE = "eigencore"
+  )
+}
+
+#' @keywords internal
 native_builtin_eigen_certificate <- function(Aop, values, vectors, Bop = NULL, tol = 1e-8) {
   storage <- Aop$metadata$storage %||% NULL
   source <- source_or_null(Aop)
@@ -471,6 +501,58 @@ native_builtin_svd_certificate <- function(Aop, d, u, v, tol = 1e-8) {
         as.numeric(d),
         as.matrix(u),
         as.matrix(v),
+        as.numeric(Aop$metadata$frobenius_norm),
+        as.numeric(tol),
+        PACKAGE = "eigencore"
+      ),
+      norm_bound_type = "frobenius_metadata"
+    ))
+  }
+  NULL
+}
+
+#' @keywords internal
+native_builtin_svd_certificate_cached_av <- function(Aop, d, u, v, Av, tol = 1e-8) {
+  storage <- Aop$metadata$storage %||% NULL
+  source <- source_or_null(Aop)
+  if (is.matrix(source) && is.double(source)) {
+    return(list(
+      diagnostics = native_dense_svd_certificate_cached_av(source, d, u, v, Av, tol = tol),
+      norm_bound_type = "frobenius_exact"
+    ))
+  }
+  if (identical(storage, "dgCMatrix")) {
+    A <- Aop$metadata$matrix
+    return(list(
+      diagnostics = .Call(
+        "eigencore_csc_svd_certificate_cached_av",
+        methods::slot(A, "i"),
+        methods::slot(A, "p"),
+        methods::slot(A, "x"),
+        methods::slot(A, "Dim"),
+        as.numeric(d),
+        as.matrix(u),
+        as.matrix(v),
+        as.matrix(Av),
+        as.numeric(Aop$metadata$frobenius_norm),
+        as.numeric(tol),
+        PACKAGE = "eigencore"
+      ),
+      norm_bound_type = "frobenius_metadata"
+    ))
+  }
+  if (identical(storage, "ddiMatrix")) {
+    A <- Aop$metadata$matrix
+    return(list(
+      diagnostics = .Call(
+        "eigencore_diagonal_svd_certificate_cached_av",
+        methods::slot(A, "x"),
+        methods::slot(A, "Dim"),
+        identical(methods::slot(A, "diag"), "U"),
+        as.numeric(d),
+        as.matrix(u),
+        as.matrix(v),
+        as.matrix(Av),
         as.numeric(Aop$metadata$frobenius_norm),
         as.numeric(tol),
         PACKAGE = "eigencore"

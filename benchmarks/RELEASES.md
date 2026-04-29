@@ -163,6 +163,14 @@ they are machine-dependent.
   restarts as the next promotion path. Existing block-GK candidates continue to
   use the native built-in certificate path; cached `A v` is only used when the
   residual-tail diagnostic explicitly needs residual vectors.
+- Native SVD certificates now have a cached-`A v` path for dense, CSC, and
+  diagonal built-in operators. Compact block-GK rows use the selected Ritz
+  `A v` block already formed during extraction, avoiding a redundant left-side
+  operator apply during solver-internal certification while preserving native
+  certificate formulas. On the same wide sparse probe, the default block-GK
+  row remains certified with `73` apply calls and R-visible allocation drops
+  modestly (`~0.37MB` to `~0.36MB`); this is an incremental certification
+  cleanup, not the retained-restart speed breakthrough.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,
