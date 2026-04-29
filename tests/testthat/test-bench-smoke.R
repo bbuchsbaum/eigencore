@@ -441,6 +441,7 @@ test_that("SVD benchmark can expose native block Golub-Kahan cycle candidate", {
   expect_gte(rows$nconv, 4L)
   expect_gt(rows$matvecs, 0L)
   expect_equal(rows$block_size, 2L)
+  expect_false(rows$basis_returned)
 })
 
 test_that("SVD benchmark can expose lean native block Golub-Kahan restart candidate", {
@@ -494,6 +495,10 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
   expect_gte(lean$certified_attempt, 1L)
   expect_equal(lean$final_attempt_matvecs, lean$final_matvecs)
   expect_gte(lean$total_ortho_passes, lean$final_attempt_ortho_passes)
+  expect_false(regular$basis_returned)
+  expect_false(cached$basis_returned)
+  expect_false(cached_random$basis_returned)
+  expect_false(lean$basis_returned)
   expect_gte(cached$cached_start_attempts, 1L)
   expect_gte(cached_random$cached_start_attempts, 1L)
   expect_lt(cached$matvecs, lean$matvecs)

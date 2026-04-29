@@ -431,6 +431,100 @@ native_block_golub_kahan_basis <- function(op, max_subspace, block = NULL,
   }
 }
 
+#' @keywords internal
+native_block_golub_kahan_fit <- function(op, max_subspace, rank,
+                                         target = largest(), block = NULL,
+                                         start = NULL, start_av = NULL) {
+  op <- as_operator(op)
+  if (is.null(op$apply_adjoint)) {
+    stop("Native block Golub-Kahan fit requires an adjoint operator.", call. = FALSE)
+  }
+  n <- op$dim[[2L]]
+  block <- as.integer(block %||% 2L)
+  if (length(block) != 1L || is.na(block) || block < 1L) {
+    stop("block must be a positive integer.", call. = FALSE)
+  }
+  max_subspace <- min(n, as.integer(max_subspace))
+  if (length(max_subspace) != 1L || is.na(max_subspace) || max_subspace < 1L) {
+    stop("max_subspace must be a positive integer.", call. = FALSE)
+  }
+  start <- if (is.null(start)) {
+    matrix(stats::rnorm(n * block), nrow = n, ncol = block)
+  } else {
+    as.matrix(start)
+  }
+  if (nrow(start) != n || ncol(start) < 1L) {
+    stop("start must have nrow equal to ncol(op) and at least one column.", call. = FALSE)
+  }
+  if (!is.null(start_av)) {
+    start_av <- as.matrix(start_av)
+    if (nrow(start_av) != op$dim[[1L]] || ncol(start_av) > ncol(start)) {
+      stop("start_av must have nrow equal to nrow(op) and no more columns than start.", call. = FALSE)
+    }
+  }
+
+  target_kind <- as.integer(native_svd_target_kind(target))
+  storage <- op$metadata$storage %||% NULL
+  source <- source_or_null(op)
+  if (identical(storage, "dgCMatrix")) {
+    A <- op$metadata$matrix
+    if (is.null(start_av)) {
+      .Call(
+        "eigencore_block_golub_kahan_csc_fit",
+        methods::slot(A, "i"),
+        methods::slot(A, "p"),
+        methods::slot(A, "x"),
+        methods::slot(A, "Dim"),
+        as.integer(max_subspace),
+        start,
+        as.integer(rank),
+        target_kind,
+        PACKAGE = "eigencore"
+      )
+    } else {
+      .Call(
+        "eigencore_block_golub_kahan_csc_fit_cached",
+        methods::slot(A, "i"),
+        methods::slot(A, "p"),
+        methods::slot(A, "x"),
+        methods::slot(A, "Dim"),
+        as.integer(max_subspace),
+        start,
+        as.integer(rank),
+        target_kind,
+        start_av,
+        PACKAGE = "eigencore"
+      )
+    }
+  } else if (is.matrix(source) && is.double(source)) {
+    if (is.null(start_av)) {
+      .Call(
+        "eigencore_block_golub_kahan_dense_fit",
+        source,
+        as.integer(max_subspace),
+        start,
+        as.integer(rank),
+        target_kind,
+        PACKAGE = "eigencore"
+      )
+    } else {
+      .Call(
+        "eigencore_block_golub_kahan_dense_fit_cached",
+        source,
+        as.integer(max_subspace),
+        start,
+        as.integer(rank),
+        target_kind,
+        start_av,
+        PACKAGE = "eigencore"
+      )
+    }
+  } else {
+    stop("Native block Golub-Kahan fit currently supports dense double matrices and dgCMatrix operators only.",
+         call. = FALSE)
+  }
+}
+
 block_golub_kahan_normalize_cached_start <- function(start, start_av) {
   if (is.null(start_av)) {
     return(list(start = start, start_av = NULL))
@@ -516,19 +610,14 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
       current_start,
       current_start_av
     )
-    basis <- native_block_golub_kahan_basis(
+    ritz <- native_block_golub_kahan_fit(
       op,
       max_subspace = current_max_subspace,
+      rank = rank,
+      target = target,
       block = block,
       start = cached_start$start,
       start_av = cached_start$start_av
-    )
-    ritz <- native_block_golub_kahan_ritz(
-      basis$V,
-      basis$AV,
-      rank = rank,
-      target = target,
-      active_cols = basis$active_cols
     )
     cert <- certify_svd_operator(op, ritz$d, ritz$u, ritz$v, tol = tol)
     out <- list(
@@ -540,41 +629,42 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
       backward_error = cert$backward_error,
       orthogonality = cert$orthogonality,
       certificate = cert,
-      iterations = basis$iterations,
-      matvecs = basis$matvecs,
+      iterations = ritz$iterations,
+      matvecs = ritz$matvecs,
       block = block,
       restart = list(
         kind = "block_golub_kahan_native_basis_cycle",
         implemented = TRUE,
         native = TRUE,
         thick_restart = FALSE,
+        basis_returned = FALSE,
         adaptive = adaptive,
         adaptive_start = adaptive_start,
         attempt = attempt,
-        active_cols = basis$active_cols,
-        active_left_cols = basis$active_left_cols,
+        active_cols = ritz$active_cols,
+        active_left_cols = ritz$active_left_cols,
         max_subspace = current_max_subspace,
         block = block,
-        ortho_passes = basis$ortho_passes,
-        matvecs = basis$matvecs,
-        cached_start_used = isTRUE(basis$cached_start_used)
+        ortho_passes = ritz$ortho_passes,
+        matvecs = ritz$matvecs,
+        cached_start_used = isTRUE(ritz$cached_start_used)
       )
     )
     out <- complete_zero_singular_triplets(op, out, rank, target, tol)
 
-    total_iterations <- total_iterations + basis$iterations
-    total_matvecs <- total_matvecs + basis$matvecs
-    total_ortho_passes <- total_ortho_passes + basis$ortho_passes
+    total_iterations <- total_iterations + ritz$iterations
+    total_matvecs <- total_matvecs + ritz$matvecs
+    total_ortho_passes <- total_ortho_passes + ritz$ortho_passes
     attempt_rows[[attempt]] <- data.frame(
       attempt = attempt,
       max_subspace = current_max_subspace,
-      active_cols = basis$active_cols,
+      active_cols = ritz$active_cols,
       start_cols = ncol(current_start),
-      cached_start_used = isTRUE(basis$cached_start_used),
+      cached_start_used = isTRUE(ritz$cached_start_used),
       warm_started = attempt > 1L && adaptive_start %in% c("ritz", "ritz_cached", "ritz_cached_random", "ritz_lean"),
-      iterations = basis$iterations,
-      matvecs = basis$matvecs,
-      ortho_passes = basis$ortho_passes,
+      iterations = ritz$iterations,
+      matvecs = ritz$matvecs,
+      ortho_passes = ritz$ortho_passes,
       certificate_passed = isTRUE(out$certificate$passed),
       max_backward_error = out$certificate$max_backward_error,
       max_residual = out$certificate$max_residual

@@ -137,6 +137,14 @@ they are machine-dependent.
   therefore diagnostic only, not a promotion. Restart-block construction now
   avoids one `cbind()` copy in the default Ritz-plus-random path, reducing the
   same probe's allocation slightly (`~1.31MB` to `~1.30MB`).
+- Native block-GK staging now has a compact fit path: the adaptive cycle keeps
+  full right bases and cached `A V` inside C for Ritz extraction and returns
+  only selected singular triplets plus diagnostics to R. On the same
+  source-loaded wide sparse probe, the default block-GK candidate still
+  certifies in three attempts with `73` native apply calls, but R-visible
+  allocation drops from about `1.30MB` to `0.37MB`; the lean comparator drops
+  to about `0.28MB`. This closes a materialization gap, not the remaining
+  speed/thick-restart gap.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,

@@ -87,16 +87,37 @@ test_that("native block Golub-Kahan basis cycle certifies dense and CSC full sub
 
   for (A_in in list(A, A_csc)) {
     set.seed(706)
+    start <- matrix(stats::rnorm(ncol(A) * 2L), nrow = ncol(A), ncol = 2L)
     basis <- eigencore:::native_block_golub_kahan_basis(
       A_in,
       max_subspace = ncol(A),
-      block = 2L
+      block = 2L,
+      start = start
+    )
+    compact_fit <- eigencore:::native_block_golub_kahan_fit(
+      A_in,
+      max_subspace = ncol(A),
+      rank = 4L,
+      target = largest(),
+      block = 2L,
+      start = start
+    )
+    compact_ref <- eigencore:::native_block_golub_kahan_ritz(
+      basis$V,
+      basis$AV,
+      rank = 4L,
+      target = largest(),
+      active_cols = basis$active_cols
     )
 
     expect_false("U" %in% names(basis))
     expect_true(all(c("V", "AV", "active_cols", "active_left_cols") %in% names(basis)))
     expect_equal(dim(basis$V), c(ncol(A), ncol(A)))
     expect_equal(dim(basis$AV), c(nrow(A), ncol(A)))
+    expect_equal(compact_fit$d, compact_ref$d, tolerance = 1e-10)
+    expect_equal(abs(crossprod(compact_fit$v, compact_ref$v)),
+                 diag(4L), tolerance = 1e-8)
+    expect_equal(compact_fit$active_cols, basis$active_cols)
     cached_basis <- eigencore:::native_block_golub_kahan_basis(
       A_in,
       max_subspace = ncol(A),
@@ -133,6 +154,7 @@ test_that("native block Golub-Kahan basis cycle certifies dense and CSC full sub
 
     expect_identical(fit$restart$kind, "block_golub_kahan_native_basis_cycle")
     expect_true(fit$restart$native)
+    expect_false(fit$restart$basis_returned)
     expect_gte(fit$restart$active_cols, 4L)
     expect_gt(fit$matvecs, 0L)
     expect_gt(fit$restart$ortho_passes, 0L)

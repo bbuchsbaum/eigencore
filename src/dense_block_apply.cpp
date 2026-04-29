@@ -7687,26 +7687,10 @@ extern "C" SEXP eigencore_bidiagonal_svd(SEXP alpha_, SEXP beta_) {
   return out_;
 }
 
-extern "C" SEXP eigencore_block_golub_kahan_ritz(SEXP V_, SEXP AV_,
-                                                 SEXP rank_, SEXP target_kind_,
-                                                 SEXP active_p_) {
-  if (!isReal(V_) || !isReal(AV_)) {
-    error("V and AV must be double matrices");
-  }
-  SEXP dimV = getAttrib(V_, R_DimSymbol);
-  SEXP dimAV = getAttrib(AV_, R_DimSymbol);
-  if (dimV == R_NilValue || dimAV == R_NilValue) {
-    error("V and AV must be matrices");
-  }
-  const int n = INTEGER(dimV)[0];
-  const int stored_p = INTEGER(dimV)[1];
-  const int m = INTEGER(dimAV)[0];
-  const int av_p = INTEGER(dimAV)[1];
-  int p = asInteger(active_p_);
-  if (p < 1 || p > stored_p || p > av_p) {
-    error("active block Golub-Kahan Ritz columns must be between 1 and ncol(V/AV)");
-  }
-  int rank = asInteger(rank_);
+static SEXP block_golub_kahan_ritz_pack(const double* V, int n,
+                                        const double* AV, int m,
+                                        int p, int rank,
+                                        int target_kind) {
   if (rank < 1) {
     error("rank must be positive");
   }
@@ -7718,7 +7702,7 @@ extern "C" SEXP eigencore_block_golub_kahan_ritz(SEXP V_, SEXP AV_,
   std::vector<double> B(static_cast<size_t>(m) * p, 0.0);
   for (int col = 0; col < p; ++col) {
     std::memcpy(B.data() + static_cast<size_t>(col) * m,
-                REAL(AV_) + static_cast<size_t>(col) * m,
+                AV + static_cast<size_t>(col) * m,
                 sizeof(double) * static_cast<size_t>(m));
   }
   std::vector<double> d_all(static_cast<size_t>(s), 0.0);
@@ -7747,7 +7731,7 @@ extern "C" SEXP eigencore_block_golub_kahan_ritz(SEXP V_, SEXP AV_,
 
   std::vector<int> selected(static_cast<size_t>(rank));
   const int count = selected_ritz_indices(
-    d_all.data(), s, rank, asInteger(target_kind_), selected.data()
+    d_all.data(), s, rank, target_kind, selected.data()
   );
 
   SEXP d_ = PROTECT(allocVector(REALSXP, count));
@@ -7774,10 +7758,10 @@ extern "C" SEXP eigencore_block_golub_kahan_ritz(SEXP V_, SEXP AV_,
     const double one = 1.0;
     const double zero = 0.0;
     F77_CALL(dgemm)(&notrans, &notrans, &n, &count, &p,
-                    &one, REAL(V_), &n, REAL(coeff_), &p,
+                    &one, V, &n, REAL(coeff_), &p,
                     &zero, REAL(v_), &n FCONE FCONE);
     F77_CALL(dgemm)(&notrans, &notrans, &m, &count, &p,
-                    &one, REAL(AV_), &m, REAL(coeff_), &p,
+                    &one, AV, &m, REAL(coeff_), &p,
                     &zero, REAL(avectors_), &m FCONE FCONE);
   }
 
@@ -7797,6 +7781,287 @@ extern "C" SEXP eigencore_block_golub_kahan_ritz(SEXP V_, SEXP AV_,
 
   UNPROTECT(7);
   return out_;
+}
+
+extern "C" SEXP eigencore_block_golub_kahan_ritz(SEXP V_, SEXP AV_,
+                                                 SEXP rank_, SEXP target_kind_,
+                                                 SEXP active_p_) {
+  if (!isReal(V_) || !isReal(AV_)) {
+    error("V and AV must be double matrices");
+  }
+  SEXP dimV = getAttrib(V_, R_DimSymbol);
+  SEXP dimAV = getAttrib(AV_, R_DimSymbol);
+  if (dimV == R_NilValue || dimAV == R_NilValue) {
+    error("V and AV must be matrices");
+  }
+  const int n = INTEGER(dimV)[0];
+  const int stored_p = INTEGER(dimV)[1];
+  const int m = INTEGER(dimAV)[0];
+  const int av_p = INTEGER(dimAV)[1];
+  int p = asInteger(active_p_);
+  if (p < 1 || p > stored_p || p > av_p) {
+    error("active block Golub-Kahan Ritz columns must be between 1 and ncol(V/AV)");
+  }
+  return block_golub_kahan_ritz_pack(
+    REAL(V_), n, REAL(AV_), m, p,
+    asInteger(rank_), asInteger(target_kind_)
+  );
+}
+
+static SEXP block_golub_kahan_fit_pack(int n,
+                                       int m,
+                                       double* V,
+                                       double* AV,
+                                       int active_v,
+                                       int active_u,
+                                       int iterations,
+                                       int matvecs,
+                                       int ortho_passes,
+                                       int cached_start_used,
+                                       int rank,
+                                       int target_kind) {
+  SEXP ritz_ = PROTECT(block_golub_kahan_ritz_pack(
+    V, n, AV, m, active_v, rank, target_kind
+  ));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 11));
+  for (int i = 0; i < 5; ++i) {
+    SET_VECTOR_ELT(out_, i, VECTOR_ELT(ritz_, i));
+  }
+  SET_VECTOR_ELT(out_, 5, ScalarInteger(active_v));
+  SET_VECTOR_ELT(out_, 6, ScalarInteger(active_u));
+  SET_VECTOR_ELT(out_, 7, ScalarInteger(iterations));
+  SET_VECTOR_ELT(out_, 8, ScalarInteger(matvecs));
+  SET_VECTOR_ELT(out_, 9, ScalarInteger(ortho_passes));
+  SET_VECTOR_ELT(out_, 10, ScalarLogical(cached_start_used != 0));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 11));
+  SET_STRING_ELT(names_, 0, mkChar("d"));
+  SET_STRING_ELT(names_, 1, mkChar("u"));
+  SET_STRING_ELT(names_, 2, mkChar("v"));
+  SET_STRING_ELT(names_, 3, mkChar("Avectors"));
+  SET_STRING_ELT(names_, 4, mkChar("coefficients"));
+  SET_STRING_ELT(names_, 5, mkChar("active_cols"));
+  SET_STRING_ELT(names_, 6, mkChar("active_left_cols"));
+  SET_STRING_ELT(names_, 7, mkChar("iterations"));
+  SET_STRING_ELT(names_, 8, mkChar("matvecs"));
+  SET_STRING_ELT(names_, 9, mkChar("ortho_passes"));
+  SET_STRING_ELT(names_, 10, mkChar("cached_start_used"));
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(3);
+  return out_;
+}
+
+extern "C" SEXP eigencore_block_golub_kahan_dense_fit(SEXP A_,
+                                                      SEXP max_subspace_,
+                                                      SEXP start_,
+                                                      SEXP rank_,
+                                                      SEXP target_kind_) {
+  if (!isReal(A_) || !isReal(start_)) {
+    error("A and start must be double matrices");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimS = getAttrib(start_, R_DimSymbol);
+  if (dimA == R_NilValue || dimS == R_NilValue) {
+    error("A and start must be matrices");
+  }
+  const int m = INTEGER(dimA)[0];
+  const int n = INTEGER(dimA)[1];
+  const int block_size = INTEGER(dimS)[1];
+  int max_subspace = asInteger(max_subspace_);
+  if (INTEGER(dimS)[0] != n || block_size < 1) {
+    error("start must have nrow equal to ncol(A) and at least one column");
+  }
+  if (max_subspace < 1 || max_subspace > n) {
+    error("max_subspace must be between 1 and ncol(A)");
+  }
+
+  std::vector<double> V(static_cast<size_t>(n) * max_subspace, 0.0);
+  std::vector<double> AV(static_cast<size_t>(m) * max_subspace, 0.0);
+  std::vector<double> U(static_cast<size_t>(m) * max_subspace, 0.0);
+  DenseColumnMajorOperator impl = {m, n, REAL(A_)};
+  int active_v = 0;
+  int active_u = 0;
+  int iterations = 0;
+  int matvecs = 0;
+  int ortho_passes = 0;
+  int cached_start_used = 0;
+  const int status = native_block_golub_kahan_basis_run(
+    &impl, eigencore_dense_apply, m, n, max_subspace, block_size, REAL(start_),
+    nullptr, 0,
+    V.data(), AV.data(), U.data(),
+    &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
+    &cached_start_used
+  );
+  if (status != 0) {
+    error("native dense block Golub-Kahan fit failed with status=%d", status);
+  }
+  return block_golub_kahan_fit_pack(
+    n, m, V.data(), AV.data(), active_v, active_u, iterations, matvecs,
+    ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_)
+  );
+}
+
+extern "C" SEXP eigencore_block_golub_kahan_dense_fit_cached(SEXP A_,
+                                                             SEXP max_subspace_,
+                                                             SEXP start_,
+                                                             SEXP rank_,
+                                                             SEXP target_kind_,
+                                                             SEXP start_av_) {
+  if (!isReal(A_) || !isReal(start_) || !isReal(start_av_)) {
+    error("A, start, and start_av must be double matrices");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimS = getAttrib(start_, R_DimSymbol);
+  SEXP dimAV = getAttrib(start_av_, R_DimSymbol);
+  if (dimA == R_NilValue || dimS == R_NilValue || dimAV == R_NilValue) {
+    error("A, start, and start_av must be matrices");
+  }
+  const int m = INTEGER(dimA)[0];
+  const int n = INTEGER(dimA)[1];
+  const int block_size = INTEGER(dimS)[1];
+  const int start_av_cols = INTEGER(dimAV)[1];
+  int max_subspace = asInteger(max_subspace_);
+  if (INTEGER(dimS)[0] != n || block_size < 1) {
+    error("start must have nrow equal to ncol(A) and at least one column");
+  }
+  if (INTEGER(dimAV)[0] != m || start_av_cols < 1 || start_av_cols > block_size) {
+    error("start_av must have nrow equal to nrow(A) and between 1 and ncol(start) columns");
+  }
+  if (max_subspace < 1 || max_subspace > n) {
+    error("max_subspace must be between 1 and ncol(A)");
+  }
+
+  std::vector<double> V(static_cast<size_t>(n) * max_subspace, 0.0);
+  std::vector<double> AV(static_cast<size_t>(m) * max_subspace, 0.0);
+  std::vector<double> U(static_cast<size_t>(m) * max_subspace, 0.0);
+  DenseColumnMajorOperator impl = {m, n, REAL(A_)};
+  int active_v = 0;
+  int active_u = 0;
+  int iterations = 0;
+  int matvecs = 0;
+  int ortho_passes = 0;
+  int cached_start_used = 0;
+  const int status = native_block_golub_kahan_basis_run(
+    &impl, eigencore_dense_apply, m, n, max_subspace, block_size, REAL(start_),
+    REAL(start_av_), start_av_cols,
+    V.data(), AV.data(), U.data(),
+    &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
+    &cached_start_used
+  );
+  if (status != 0) {
+    error("native dense cached block Golub-Kahan fit failed with status=%d", status);
+  }
+  return block_golub_kahan_fit_pack(
+    n, m, V.data(), AV.data(), active_v, active_u, iterations, matvecs,
+    ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_)
+  );
+}
+
+extern "C" SEXP eigencore_block_golub_kahan_csc_fit(SEXP i_, SEXP p_,
+                                                    SEXP x_, SEXP dim_,
+                                                    SEXP max_subspace_,
+                                                    SEXP start_,
+                                                    SEXP rank_,
+                                                    SEXP target_kind_) {
+  if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) ||
+      !isInteger(dim_) || !isReal(start_)) {
+    error("invalid CSC block Golub-Kahan fit inputs");
+  }
+  SEXP dimS = getAttrib(start_, R_DimSymbol);
+  if (dimS == R_NilValue || LENGTH(dim_) != 2) {
+    error("start must be a matrix and dim must have length 2");
+  }
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  const int block_size = INTEGER(dimS)[1];
+  int max_subspace = asInteger(max_subspace_);
+  if (INTEGER(dimS)[0] != n || block_size < 1) {
+    error("start must have nrow equal to ncol(A) and at least one column");
+  }
+  if (max_subspace < 1 || max_subspace > n) {
+    error("max_subspace must be between 1 and ncol(A)");
+  }
+
+  std::vector<double> V(static_cast<size_t>(n) * max_subspace, 0.0);
+  std::vector<double> AV(static_cast<size_t>(m) * max_subspace, 0.0);
+  std::vector<double> U(static_cast<size_t>(m) * max_subspace, 0.0);
+  CSCOperator impl = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
+  int active_v = 0;
+  int active_u = 0;
+  int iterations = 0;
+  int matvecs = 0;
+  int ortho_passes = 0;
+  int cached_start_used = 0;
+  const int status = native_block_golub_kahan_basis_run(
+    &impl, eigencore_csc_apply, m, n, max_subspace, block_size, REAL(start_),
+    nullptr, 0,
+    V.data(), AV.data(), U.data(),
+    &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
+    &cached_start_used
+  );
+  if (status != 0) {
+    error("native CSC block Golub-Kahan fit failed with status=%d", status);
+  }
+  return block_golub_kahan_fit_pack(
+    n, m, V.data(), AV.data(), active_v, active_u, iterations, matvecs,
+    ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_)
+  );
+}
+
+extern "C" SEXP eigencore_block_golub_kahan_csc_fit_cached(SEXP i_, SEXP p_,
+                                                           SEXP x_, SEXP dim_,
+                                                           SEXP max_subspace_,
+                                                           SEXP start_,
+                                                           SEXP rank_,
+                                                           SEXP target_kind_,
+                                                           SEXP start_av_) {
+  if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) ||
+      !isInteger(dim_) || !isReal(start_) || !isReal(start_av_)) {
+    error("invalid cached CSC block Golub-Kahan fit inputs");
+  }
+  SEXP dimS = getAttrib(start_, R_DimSymbol);
+  SEXP dimAV = getAttrib(start_av_, R_DimSymbol);
+  if (dimS == R_NilValue || dimAV == R_NilValue || LENGTH(dim_) != 2) {
+    error("start and start_av must be matrices and dim must have length 2");
+  }
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  const int block_size = INTEGER(dimS)[1];
+  const int start_av_cols = INTEGER(dimAV)[1];
+  int max_subspace = asInteger(max_subspace_);
+  if (INTEGER(dimS)[0] != n || block_size < 1) {
+    error("start must have nrow equal to ncol(A) and at least one column");
+  }
+  if (INTEGER(dimAV)[0] != m || start_av_cols < 1 || start_av_cols > block_size) {
+    error("start_av must have nrow equal to nrow(A) and between 1 and ncol(start) columns");
+  }
+  if (max_subspace < 1 || max_subspace > n) {
+    error("max_subspace must be between 1 and ncol(A)");
+  }
+
+  std::vector<double> V(static_cast<size_t>(n) * max_subspace, 0.0);
+  std::vector<double> AV(static_cast<size_t>(m) * max_subspace, 0.0);
+  std::vector<double> U(static_cast<size_t>(m) * max_subspace, 0.0);
+  CSCOperator impl = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
+  int active_v = 0;
+  int active_u = 0;
+  int iterations = 0;
+  int matvecs = 0;
+  int ortho_passes = 0;
+  int cached_start_used = 0;
+  const int status = native_block_golub_kahan_basis_run(
+    &impl, eigencore_csc_apply, m, n, max_subspace, block_size, REAL(start_),
+    REAL(start_av_), start_av_cols,
+    V.data(), AV.data(), U.data(),
+    &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
+    &cached_start_used
+  );
+  if (status != 0) {
+    error("native CSC cached block Golub-Kahan fit failed with status=%d", status);
+  }
+  return block_golub_kahan_fit_pack(
+    n, m, V.data(), AV.data(), active_v, active_u, iterations, matvecs,
+    ortho_passes, cached_start_used, asInteger(rank_), asInteger(target_kind_)
+  );
 }
 
 #include "projection/golub_kahan_ritz.hpp"
@@ -8466,6 +8731,10 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_block_golub_kahan_dense_basis_cached", (DL_FUNC) &eigencore_block_golub_kahan_dense_basis_cached, 4},
   {"eigencore_block_golub_kahan_csc_basis", (DL_FUNC) &eigencore_block_golub_kahan_csc_basis, 6},
   {"eigencore_block_golub_kahan_csc_basis_cached", (DL_FUNC) &eigencore_block_golub_kahan_csc_basis_cached, 7},
+  {"eigencore_block_golub_kahan_dense_fit", (DL_FUNC) &eigencore_block_golub_kahan_dense_fit, 5},
+  {"eigencore_block_golub_kahan_dense_fit_cached", (DL_FUNC) &eigencore_block_golub_kahan_dense_fit_cached, 6},
+  {"eigencore_block_golub_kahan_csc_fit", (DL_FUNC) &eigencore_block_golub_kahan_csc_fit, 8},
+  {"eigencore_block_golub_kahan_csc_fit_cached", (DL_FUNC) &eigencore_block_golub_kahan_csc_fit_cached, 9},
   {"eigencore_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_thick_restart_lanczos_dense, 7},
   {"eigencore_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_thick_restart_lanczos_csc, 10},
   {"eigencore_block_lanczos_dense", (DL_FUNC) &eigencore_block_lanczos_dense, 7},

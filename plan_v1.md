@@ -535,7 +535,7 @@ Working status against the sequenced milestones:
 | F | largely done for current paths | Native ortho and certificate kernels exist, but not every future solver path is fully native-certificate-backed. |
 | G0 | done | Native scalar Hermitian staging path exists and certifies on dense/CSC cases. |
 | G1 | done | Promoted native block Hermitian Lanczos runs by default in benchmark-proven regimes; strict Hermitian sparse and dense regression gates pass against certified RSpectra/PRIMME references. |
-| H | staged, not complete | Native Golub-Kahan exists as a staging path; block-GK restart comparators now include cached Ritz-vector `A V` paths with and without a random exploration tail and expose restart-efficiency diagnostics, but production thick-restart SVD and SVD performance gates remain open. |
+| H | staged, not complete | Native Golub-Kahan exists as a staging path; block-GK restart comparators now include cached Ritz-vector `A V` paths with and without a random exploration tail, compact native fit extraction, and restart-efficiency diagnostics, but production thick-restart SVD and SVD performance gates remain open. |
 | I | prototype | Randomized SVD has reference implementation, normalizers, and certified refinement; native approximate engine remains open. |
 | J | partial | Native generalized SPD LOBPCG slices exist for built-in `B`, explicitly SPD matrix-free `B`, dense constraints, and the typed shifted-tridiagonal preconditioner; benchmark rows expose native/B-orthogonal/constrained diagnostics; broader generalized preconditioning and promotion remain open. |
 | K | not complete | B-orthogonal block Lanczos is still a later generalized-SPD refinement path. |
@@ -577,7 +577,9 @@ Primary attack surfaces, in order:
    cached Ritz-start comparators reuse exact `A V` for retained vectors; the
    random-tail variant confirms that prefix caching alone is not enough while
    restarts are still rebuilt from R, so the bridge remains a proper native
-   retained-restart workspace.
+   retained-restart workspace. Compact native block-GK fit extraction removes
+   full-basis return materialization from the staging path and should remain the
+   default benchmark surface for H diagnostics.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
    preconditioning beyond the typed shifted-tridiagonal case, keep the
    benchmark B-orthogonality/native-path diagnostics green, and promote the
