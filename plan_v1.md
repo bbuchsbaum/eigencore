@@ -606,6 +606,9 @@ Primary attack surfaces, in order:
    certificate. The retained row now explicitly reports `retained_av_cache =
    FALSE` until the native restart path can rotate/normalize retained vectors
    and their operator images together.
+   The H benchmark rows expose retained-restart flags directly, including
+   `retained_restart`, `retained_restart_native`, `retained_av_cache`,
+   `native_attempt_certification`, and `native_early_stop`.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
    preconditioning beyond the typed shifted-diagonal and certified
    shifted-tridiagonal sparse-smallest case, keep the benchmark

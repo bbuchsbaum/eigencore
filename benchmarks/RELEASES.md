@@ -187,6 +187,9 @@ they are machine-dependent.
   sparse certificate. The retained benchmark row therefore reports
   `retained_av_cache = FALSE` and treats cached `A V_keep` retention as blocked
   on a proper native restart rotation/normalization step.
+- SVD benchmark rows now expose retained-restart diagnostics directly:
+  `retained_restart`, `retained_restart_native`, `retained_av_cache`,
+  `native_attempt_certification`, and `native_early_stop`.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,

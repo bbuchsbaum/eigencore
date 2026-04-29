@@ -51,6 +51,8 @@ test_that("benchmark harness produces certificate-inclusive rows", {
     "projected_stop_disable_reason", "projected_stop", "projected_nconv",
     "projected_max_residual", "projected_checks", "projected_seconds",
     "native_workspace_bytes", "basis_returned", "reorthogonalization_passes",
+    "retained_restart", "retained_restart_native", "retained_av_cache",
+    "native_attempt_certification", "native_early_stop",
     "native_stage_accounted_seconds",
     "stage_reorthogonalization_fraction",
     "reorthogonalization_seconds_per_pass",
@@ -483,7 +485,8 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
       "eigencore_block_golub_kahan_cycle_cached",
       "eigencore_block_golub_kahan_cycle_cached_random",
       "eigencore_block_golub_kahan_cycle_residual",
-      "eigencore_block_golub_kahan_cycle_lean"
+      "eigencore_block_golub_kahan_cycle_lean",
+      "eigencore_block_golub_kahan_retained"
     ),
     iterations = 1,
     seed = 701
@@ -494,7 +497,8 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
     "eigencore_block_golub_kahan_cycle_cached",
     "eigencore_block_golub_kahan_cycle_cached_random",
     "eigencore_block_golub_kahan_cycle_residual",
-    "eigencore_block_golub_kahan_cycle_lean"
+    "eigencore_block_golub_kahan_cycle_lean",
+    "eigencore_block_golub_kahan_retained"
   ) %in% rows$method))
 
   regular <- rows[rows$method == "eigencore_block_golub_kahan_cycle", , drop = FALSE]
@@ -502,14 +506,17 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
   cached_random <- rows[rows$method == "eigencore_block_golub_kahan_cycle_cached_random", , drop = FALSE]
   residual <- rows[rows$method == "eigencore_block_golub_kahan_cycle_residual", , drop = FALSE]
   lean <- rows[rows$method == "eigencore_block_golub_kahan_cycle_lean", , drop = FALSE]
+  retained <- rows[rows$method == "eigencore_block_golub_kahan_retained", , drop = FALSE]
   expect_true(cached$certificate_passed)
   expect_true(cached_random$certificate_passed)
   expect_true(residual$certificate_passed)
   expect_true(lean$certificate_passed)
+  expect_true(retained$certificate_passed)
   expect_gte(cached$nconv, 5L)
   expect_gte(cached_random$nconv, 5L)
   expect_gte(residual$nconv, 5L)
   expect_gte(lean$nconv, 5L)
+  expect_gte(retained$nconv, 5L)
   expect_gt(lean$matvecs, 0L)
   expect_gte(lean$restart_attempts, 1L)
   expect_match(lean$attempted_subspaces, ",")
@@ -524,10 +531,17 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
   expect_false(cached_random$basis_returned)
   expect_false(residual$basis_returned)
   expect_false(lean$basis_returned)
+  expect_false(retained$basis_returned)
+  expect_true(retained$retained_restart)
+  expect_true(retained$retained_restart_native)
+  expect_false(retained$retained_av_cache)
+  expect_true(retained$native_attempt_certification)
+  expect_false(retained$native_early_stop)
   expect_true(all(rows$stage_native_iteration_seconds > 0))
   expect_true(all(rows$stage_golub_kahan_ritz_seconds > 0))
   expect_gte(cached$cached_start_attempts, 1L)
   expect_gte(cached_random$cached_start_attempts, 1L)
+  expect_equal(retained$cached_start_attempts, 0L)
   expect_lt(cached$matvecs, lean$matvecs)
   expect_lte(cached_random$matvecs, regular$matvecs)
   expect_lte(lean$matvecs, regular$matvecs * 2L)
