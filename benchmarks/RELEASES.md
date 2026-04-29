@@ -191,7 +191,10 @@ they are machine-dependent.
   `fallback_method = "retained_uncached_after_cached_av_failure"`. On one wide
   sparse probe the cached path certifies; on the benchmark seed it falls back
   and still returns a certified row, so this is a controlled optimization rather
-  than H closure.
+  than H closure. The primary `eigencore_block_golub_kahan_retained` H row now
+  keeps this cache disabled so it remains the stable uncached retained baseline;
+  `eigencore_block_golub_kahan_retained_cached` tracks the guarded cached
+  experiment separately.
 - SVD benchmark rows now expose retained-restart diagnostics directly:
   `retained_restart`, `retained_restart_native`, `retained_av_cache`,
   `native_attempt_certification`, and `native_early_stop`.

@@ -82,6 +82,7 @@ svd_surface_default_methods <- function(args) {
       "eigencore_block_golub_kahan_cycle_residual",
       "eigencore_block_golub_kahan_cycle_lean",
       "eigencore_block_golub_kahan_retained",
+      "eigencore_block_golub_kahan_retained_cached",
       "RSpectra",
       "PRIMME",
       "irlba",

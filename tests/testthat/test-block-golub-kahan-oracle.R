@@ -213,7 +213,8 @@ test_that("native retained block Golub-Kahan cycle builds restart state inside n
     rank = 5L,
     target = largest(),
     block = 2L,
-    tol = 1e-8
+    tol = 1e-8,
+    retained_av_cache = TRUE
   )
 
   expect_identical(retained$restart$kind, "block_golub_kahan_native_retained_cycle")
@@ -252,7 +253,8 @@ test_that("native retained block Golub-Kahan cached AV path falls back when cert
     rank = 5L,
     target = largest(),
     block = 2L,
-    tol = 1e-8
+    tol = 1e-8,
+    retained_av_cache = TRUE
   )
 
   expect_true(retained$certificate$passed)

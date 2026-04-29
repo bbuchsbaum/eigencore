@@ -486,7 +486,8 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
       "eigencore_block_golub_kahan_cycle_cached_random",
       "eigencore_block_golub_kahan_cycle_residual",
       "eigencore_block_golub_kahan_cycle_lean",
-      "eigencore_block_golub_kahan_retained"
+      "eigencore_block_golub_kahan_retained",
+      "eigencore_block_golub_kahan_retained_cached"
     ),
     iterations = 1,
     seed = 701
@@ -498,7 +499,8 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
     "eigencore_block_golub_kahan_cycle_cached_random",
     "eigencore_block_golub_kahan_cycle_residual",
     "eigencore_block_golub_kahan_cycle_lean",
-    "eigencore_block_golub_kahan_retained"
+    "eigencore_block_golub_kahan_retained",
+    "eigencore_block_golub_kahan_retained_cached"
   ) %in% rows$method))
 
   regular <- rows[rows$method == "eigencore_block_golub_kahan_cycle", , drop = FALSE]
@@ -507,16 +509,19 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
   residual <- rows[rows$method == "eigencore_block_golub_kahan_cycle_residual", , drop = FALSE]
   lean <- rows[rows$method == "eigencore_block_golub_kahan_cycle_lean", , drop = FALSE]
   retained <- rows[rows$method == "eigencore_block_golub_kahan_retained", , drop = FALSE]
+  retained_cached <- rows[rows$method == "eigencore_block_golub_kahan_retained_cached", , drop = FALSE]
   expect_true(cached$certificate_passed)
   expect_true(cached_random$certificate_passed)
   expect_true(residual$certificate_passed)
   expect_true(lean$certificate_passed)
   expect_true(retained$certificate_passed)
+  expect_true(retained_cached$certificate_passed)
   expect_gte(cached$nconv, 5L)
   expect_gte(cached_random$nconv, 5L)
   expect_gte(residual$nconv, 5L)
   expect_gte(lean$nconv, 5L)
   expect_gte(retained$nconv, 5L)
+  expect_gte(retained_cached$nconv, 5L)
   expect_gt(lean$matvecs, 0L)
   expect_gte(lean$restart_attempts, 1L)
   expect_match(lean$attempted_subspaces, ",")
@@ -532,21 +537,29 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
   expect_false(residual$basis_returned)
   expect_false(lean$basis_returned)
   expect_false(retained$basis_returned)
+  expect_false(retained_cached$basis_returned)
   expect_true(retained$retained_restart)
   expect_true(retained$retained_restart_native)
   expect_false(retained$retained_av_cache)
   expect_true(retained$native_attempt_certification)
   expect_false(retained$native_early_stop)
-  expect_true(retained$fallback_attempted)
-  expect_true(retained$fallback_used)
-  expect_equal(retained$fallback_method,
+  expect_false(retained$fallback_attempted)
+  expect_false(retained$fallback_used)
+  expect_true(retained_cached$retained_restart)
+  expect_true(retained_cached$retained_restart_native)
+  expect_false(retained_cached$retained_av_cache)
+  expect_true(retained_cached$native_attempt_certification)
+  expect_true(retained_cached$fallback_attempted)
+  expect_true(retained_cached$fallback_used)
+  expect_equal(retained_cached$fallback_method,
                "retained_uncached_after_cached_av_failure")
-  expect_true(is.finite(retained$fallback_max_backward_error))
+  expect_true(is.finite(retained_cached$fallback_max_backward_error))
   expect_true(all(rows$stage_native_iteration_seconds > 0))
   expect_true(all(rows$stage_golub_kahan_ritz_seconds > 0))
   expect_gte(cached$cached_start_attempts, 1L)
   expect_gte(cached_random$cached_start_attempts, 1L)
   expect_equal(retained$cached_start_attempts, 0L)
+  expect_equal(retained_cached$cached_start_attempts, 0L)
   expect_lt(cached$matvecs, lean$matvecs)
   expect_lte(cached_random$matvecs, regular$matvecs)
   expect_lte(lean$matvecs, regular$matvecs * 2L)

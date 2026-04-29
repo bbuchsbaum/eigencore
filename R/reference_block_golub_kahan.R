@@ -650,7 +650,7 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
                                                         start = NULL,
                                                         max_attempts = NULL,
                                                         vectors = c("both", "left", "right", "none"),
-                                                        retained_av_cache = TRUE) {
+                                                        retained_av_cache = FALSE) {
   vectors <- match.arg(vectors)
   op <- as_operator(op)
   abi <- native_block_golub_kahan_retained_restart_abi(

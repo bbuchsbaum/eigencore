@@ -604,8 +604,10 @@ Primary attack surfaces, in order:
    transforms retained vectors and cached operator images together, and a failed
    cached attempt reruns the same deterministic retained restart uncached while
    recording `fallback_method =
-   "retained_uncached_after_cached_av_failure"`. Locking and a full production
-   thick-restart policy remain open.
+   "retained_uncached_after_cached_av_failure"`. The primary retained H row
+   keeps this cache disabled as the stable uncached baseline, while
+   `eigencore_block_golub_kahan_retained_cached` tracks the guarded experiment
+   separately. Locking and a full production thick-restart policy remain open.
    The H benchmark rows expose retained-restart flags directly, including
    `retained_restart`, `retained_restart_native`, `retained_av_cache`,
    `native_attempt_certification`, and `native_early_stop`.
