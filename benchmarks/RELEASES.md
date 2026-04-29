@@ -175,11 +175,13 @@ they are machine-dependent.
   `eigencore_block_golub_kahan_retained`, the first native retained restart
   candidate. It constructs Ritz-plus-random restart blocks inside C, returns
   compact selected triplets, and keeps certification on the existing native
-  cached-`A v` path. On the source-loaded wide sparse probe it certifies with
-  the same `73` apply calls as the R adaptive block-GK cycle, while R-visible
-  allocation drops from about `0.36MB` to about `0.20MB`; this is a staging
-  candidate, not H closure, because per-attempt native certification, locking,
-  and production thick-restart policy are still open.
+  cached-`A v` path. It now also performs native per-attempt cached-`A v`
+  certification and can stop on the first certified retained subspace. On the
+  source-loaded wide sparse probe it certifies on attempt 3 with the same `73`
+  apply calls as the R adaptive block-GK cycle, while R-visible allocation is
+  lower (`~0.23MB` versus `~0.36MB` in the sampled row); this is a staging
+  candidate, not H closure, because locking, cached `A V_keep` retention, and
+  production thick-restart policy are still open.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,

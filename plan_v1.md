@@ -595,8 +595,12 @@ Primary attack surfaces, in order:
    Ritz-plus-random restart blocks inside C, returns compact selected triplets,
    and on the wide sparse probe certifies with the same `73` apply calls while
    reducing R-visible allocation versus the R adaptive cycle. It is a staging
-   row, not H closure: it does not yet do per-attempt native certification,
-   locking, or a full production thick-restart policy.
+   row, not H closure. It now performs native per-attempt cached-`A v`
+   certification and can stop on the first certified retained subspace; on the
+   current wide sparse probe it still certifies on attempt 3 with `73` apply
+   calls and lowers R-visible allocation versus the R adaptive cycle, but the
+   total row remains speed-gate negative. Locking, cached `A V_keep` retention,
+   and a full production thick-restart policy remain open.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
    preconditioning beyond the typed shifted-diagonal and certified
    shifted-tridiagonal sparse-smallest case, keep the benchmark

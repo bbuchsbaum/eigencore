@@ -218,6 +218,7 @@ test_that("native retained block Golub-Kahan cycle builds restart state inside n
   expect_identical(retained$restart$kind, "block_golub_kahan_native_retained_cycle")
   expect_true(retained$restart$retained_restart)
   expect_true(retained$restart$retained_restart_native)
+  expect_true(retained$restart$native_attempt_certification)
   expect_equal(retained$restart$retained_restart_abi_version, 1L)
   expect_true(retained$certificate$passed)
   expect_gte(sum(retained$certificate$converged), 5L)
@@ -226,6 +227,8 @@ test_that("native retained block Golub-Kahan cycle builds restart state inside n
   expect_gt(nrow(retained$restart$attempt_history), 1L)
   expect_true(all(retained$restart$attempt_history$warm_started[-1L]))
   expect_true(any(retained$restart$attempt_history$certificate_passed))
+  expect_true(all(is.finite(retained$restart$attempt_history$max_backward_error)))
+  expect_true(all(is.finite(retained$restart$attempt_history$max_residual)))
   expect_equal(retained$restart$attempted_subspaces,
                retained$restart$attempt_history$max_subspace)
   expect_false(retained$restart$basis_returned)

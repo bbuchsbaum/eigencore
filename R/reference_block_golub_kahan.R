@@ -677,6 +677,7 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
     ncol = block * restart_count
   )
   target_kind <- as.integer(abi$target_kind)
+  norm_info <- operator_norm_for_certificate_info(op)
   source <- source_or_null(op)
   storage <- op$metadata$storage %||% NULL
   ritz <- if (identical(storage, "dgCMatrix")) {
@@ -693,6 +694,8 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
       as.integer(abi$max_attempts),
       as.integer(rank),
       target_kind,
+      as.numeric(norm_info$value),
+      as.numeric(tol),
       PACKAGE = "eigencore"
     )
   } else if (is.matrix(source) && is.double(source)) {
@@ -705,6 +708,8 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
       as.integer(abi$max_attempts),
       as.integer(rank),
       target_kind,
+      as.numeric(norm_info$value),
+      as.numeric(tol),
       PACKAGE = "eigencore"
     )
   } else {
@@ -716,7 +721,8 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
     op, ritz$d, ritz$u, ritz$v, ritz$Avectors, tol = tol
   )
   attempt_history <- ritz$attempt_history
-  if (is.data.frame(attempt_history)) {
+  if (is.data.frame(attempt_history) &&
+      !"certificate_passed" %in% names(attempt_history)) {
     attempt_history$certificate_passed <- FALSE
     attempt_history$max_backward_error <- Inf
     attempt_history$max_residual <- Inf
@@ -747,18 +753,34 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
       thick_restart = FALSE,
       retained_restart = TRUE,
       retained_restart_native = TRUE,
+      native_attempt_certification = TRUE,
+      native_early_stop = is.data.frame(attempt_history) &&
+        any(attempt_history$certificate_passed) &&
+        nrow(attempt_history) < abi$max_attempts,
       retained_restart_abi_version = abi$version,
       basis_returned = FALSE,
       adaptive = TRUE,
       adaptive_start = abi$policy,
-      attempts = abi$max_attempts,
-      attempt = abi$max_attempts,
+      attempts = if (is.data.frame(attempt_history)) nrow(attempt_history) else abi$max_attempts,
+      attempt = if (is.data.frame(attempt_history)) nrow(attempt_history) else abi$max_attempts,
       active_cols = ritz$active_cols,
       active_left_cols = ritz$active_left_cols,
       initial_max_subspace = abi$max_subspace_sequence[[1L]],
-      max_subspace = tail(abi$max_subspace_sequence, 1L)[[1L]],
-      final_max_subspace = tail(abi$max_subspace_sequence, 1L)[[1L]],
-      attempted_subspaces = abi$max_subspace_sequence,
+      max_subspace = if (is.data.frame(attempt_history) && nrow(attempt_history)) {
+        tail(attempt_history$max_subspace, 1L)[[1L]]
+      } else {
+        tail(abi$max_subspace_sequence, 1L)[[1L]]
+      },
+      final_max_subspace = if (is.data.frame(attempt_history) && nrow(attempt_history)) {
+        tail(attempt_history$max_subspace, 1L)[[1L]]
+      } else {
+        tail(abi$max_subspace_sequence, 1L)[[1L]]
+      },
+      attempted_subspaces = if (is.data.frame(attempt_history) && nrow(attempt_history)) {
+        attempt_history$max_subspace
+      } else {
+        abi$max_subspace_sequence
+      },
       attempt_history = attempt_history,
       total_iterations = ritz$iterations,
       total_matvecs = ritz$matvecs,
