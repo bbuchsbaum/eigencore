@@ -268,6 +268,120 @@ test_that("native generalized LOBPCG accepts native shifted-diagonal preconditio
   expect_true(certificate(fit)$passed)
 })
 
+test_that("adversarial generalized B bank stays native for largest and smallest targets", {
+  csc_n <- 10L
+  csc_A <- Matrix::bandSparse(
+    csc_n,
+    k = c(-1, 0, 1),
+    diagonals = list(rep(-1, csc_n - 1L), rep(2.5, csc_n), rep(-1, csc_n - 1L))
+  )
+  csc_B <- methods::as(Matrix::bandSparse(
+    csc_n,
+    k = c(-1, 0, 1),
+    diagonals = list(
+      rep(-0.05, csc_n - 1L),
+      seq(1.2, 2, length.out = csc_n),
+      rep(-0.05, csc_n - 1L)
+    )
+  ), "dgCMatrix")
+
+  mf_n <- 9L
+  mf_bdiag <- seq(0.75, 2.5, length.out = mf_n)
+  mf_B_dense <- diag(mf_bdiag)
+  mf_B <- linear_operator(
+    dim = c(mf_n, mf_n),
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      out <- alpha * (mf_bdiag * X)
+      if (!is.null(Y) && beta != 0) {
+        out <- out + beta * Y
+      }
+      out
+    },
+    apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) {
+      out <- alpha * (mf_bdiag * X)
+      if (!is.null(Y) && beta != 0) {
+        out <- out + beta * Y
+      }
+      out
+    },
+    structure = hermitian(),
+    metadata = list(
+      frobenius_norm = sqrt(sum(mf_bdiag^2)),
+      positive_definite = TRUE
+    )
+  )
+
+  cases <- list(
+    list(
+      name = "ill_conditioned_diagonal_b",
+      A = Matrix::Diagonal(x = c(1, 3, 7, 12, 20, 33, 50, 80)),
+      B = Matrix::Diagonal(x = 10^seq(-3, 3, length.out = 8L)),
+      B_dense = diag(10^seq(-3, 3, length.out = 8L)),
+      orthogonalization = "native_diagonal_b_mgs2",
+      seed = 901L
+    ),
+    list(
+      name = "sparse_csc_b",
+      A = csc_A,
+      B = csc_B,
+      B_dense = as.matrix(csc_B),
+      orthogonalization = "native_csc_b_mgs2",
+      seed = 902L
+    ),
+    list(
+      name = "explicit_spd_matrix_free_b",
+      A = Matrix::Diagonal(x = seq(2, 18, by = 2)),
+      B = mf_B,
+      B_dense = mf_B_dense,
+      orthogonalization = "native_matrix_free_b_mgs2",
+      seed = 903L
+    )
+  )
+
+  for (case in cases) {
+    for (target in list(smallest(), largest())) {
+      problem <- eigen_problem(case$A, metric = case$B, target = target)
+      plan <- plan_solver(problem, k = 2L, method = lobpcg(maxit = 220L))
+      expect_equal(plan$method, eigencore:::native_generalized_lobpcg_label())
+
+      fit <- eig_partial(
+        case$A,
+        B = case$B,
+        k = 2L,
+        target = target,
+        method = lobpcg(maxit = 220L),
+        seed = case$seed,
+        tol = 1e-8,
+        allow_dense_fallback = "never"
+      )
+      oracle <- eigencore:::dense_generalized_spd_eigen(
+        as.matrix(case$A),
+        case$B_dense
+      )
+      idx <- eigencore:::order_indices(oracle$values, target)[seq_len(2L)]
+      expected <- oracle$values[idx]
+      relative_value_error <- max(
+        abs(values(fit) - expected) / pmax(1, abs(expected))
+      )
+
+      expect_equal(fit$method, eigencore:::native_generalized_lobpcg_label())
+      expect_true(fit$restart$native)
+      expect_true(fit$restart$native_kernels)
+      expect_true(fit$restart$generalized)
+      expect_equal(fit$restart$orthogonalization_methods, case$orthogonalization)
+      expect_equal(fit$nconv, 2L)
+      expect_true(certificate(fit)$passed)
+      expect_lte(certificate(fit)$max_backward_error, 1e-8)
+      expect_lte(relative_value_error, 1e-6)
+      expect_equal(
+        crossprod(vectors(fit), case$B_dense %*% vectors(fit)),
+        diag(2L),
+        tolerance = 1e-8
+      )
+    }
+  }
+})
+
 test_that("generalized constraints deflate known nullspace on native path", {
   A <- Matrix::Diagonal(x = c(0, 1, 4, 9))
   B <- Matrix::Diagonal(x = c(1, 2, 3, 4))

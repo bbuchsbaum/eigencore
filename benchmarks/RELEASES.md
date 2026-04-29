@@ -215,6 +215,10 @@ they are machine-dependent.
   shifted-tridiagonal typed preconditioners are accepted by the generalized
   native path; broader generalized preconditioning and promotion gates remain
   open.
+- The generalized LOBPCG adversarial B bank now checks largest and smallest
+  native paths for ill-conditioned diagonal B, sparse CSC B, and explicitly SPD
+  matrix-free B, with `allow_dense_fallback = "never"` and B-orthonormality
+  checked against dense oracle values.
 - Generalized SPD benchmark rows now expose the promotion-critical restart
   diagnostics: `native`, `native_kernels`, `generalized`,
   `orthogonalization_native`, `orthogonalization_methods`, `q_rank_final`,
