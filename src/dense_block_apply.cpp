@@ -75,67 +75,7 @@ static void combine_basis_columns_small(const double* basis,
   std::memset(out, 0,
               sizeof(double) * static_cast<size_t>(n) *
                 static_cast<size_t>(out_cols));
-  int p = 0;
-  for (; p + 7 < out_cols; p += 8) {
-    double* y0 = out + static_cast<int64_t>(p) * n;
-    double* y1 = out + static_cast<int64_t>(p + 1) * n;
-    double* y2 = out + static_cast<int64_t>(p + 2) * n;
-    double* y3 = out + static_cast<int64_t>(p + 3) * n;
-    double* y4 = out + static_cast<int64_t>(p + 4) * n;
-    double* y5 = out + static_cast<int64_t>(p + 5) * n;
-    double* y6 = out + static_cast<int64_t>(p + 6) * n;
-    double* y7 = out + static_cast<int64_t>(p + 7) * n;
-    for (int col = 0; col < basis_cols; ++col) {
-      const double a0 = coeff[col + static_cast<int64_t>(p) * coeff_ld];
-      const double a1 = coeff[col + static_cast<int64_t>(p + 1) * coeff_ld];
-      const double a2 = coeff[col + static_cast<int64_t>(p + 2) * coeff_ld];
-      const double a3 = coeff[col + static_cast<int64_t>(p + 3) * coeff_ld];
-      const double a4 = coeff[col + static_cast<int64_t>(p + 4) * coeff_ld];
-      const double a5 = coeff[col + static_cast<int64_t>(p + 5) * coeff_ld];
-      const double a6 = coeff[col + static_cast<int64_t>(p + 6) * coeff_ld];
-      const double a7 = coeff[col + static_cast<int64_t>(p + 7) * coeff_ld];
-      if (a0 == 0.0 && a1 == 0.0 && a2 == 0.0 && a3 == 0.0 &&
-          a4 == 0.0 && a5 == 0.0 && a6 == 0.0 && a7 == 0.0) {
-        continue;
-      }
-      const double* x = basis + static_cast<int64_t>(col) * n;
-      for (int row = 0; row < n; ++row) {
-        const double xr = x[row];
-        y0[row] += a0 * xr;
-        y1[row] += a1 * xr;
-        y2[row] += a2 * xr;
-        y3[row] += a3 * xr;
-        y4[row] += a4 * xr;
-        y5[row] += a5 * xr;
-        y6[row] += a6 * xr;
-        y7[row] += a7 * xr;
-      }
-    }
-  }
-  for (; p + 3 < out_cols; p += 4) {
-    double* y0 = out + static_cast<int64_t>(p) * n;
-    double* y1 = out + static_cast<int64_t>(p + 1) * n;
-    double* y2 = out + static_cast<int64_t>(p + 2) * n;
-    double* y3 = out + static_cast<int64_t>(p + 3) * n;
-    for (int col = 0; col < basis_cols; ++col) {
-      const double a0 = coeff[col + static_cast<int64_t>(p) * coeff_ld];
-      const double a1 = coeff[col + static_cast<int64_t>(p + 1) * coeff_ld];
-      const double a2 = coeff[col + static_cast<int64_t>(p + 2) * coeff_ld];
-      const double a3 = coeff[col + static_cast<int64_t>(p + 3) * coeff_ld];
-      if (a0 == 0.0 && a1 == 0.0 && a2 == 0.0 && a3 == 0.0) {
-        continue;
-      }
-      const double* x = basis + static_cast<int64_t>(col) * n;
-      for (int row = 0; row < n; ++row) {
-        const double xr = x[row];
-        y0[row] += a0 * xr;
-        y1[row] += a1 * xr;
-        y2[row] += a2 * xr;
-        y3[row] += a3 * xr;
-      }
-    }
-  }
-  for (; p < out_cols; ++p) {
+  for (int p = 0; p < out_cols; ++p) {
     double* y = out + static_cast<int64_t>(p) * n;
     for (int col = 0; col < basis_cols; ++col) {
       const double a = coeff[col + static_cast<int64_t>(p) * coeff_ld];
@@ -849,17 +789,11 @@ static int selected_ritz_indices(const double* values,
                                  int target_kind,
                                  int* selected) {
   const int count = (k < n) ? k : n;
+  std::vector<bool> taken(static_cast<size_t>(n), false);
   for (int i = 0; i < count; ++i) {
     int best = -1;
     for (int j = 0; j < n; ++j) {
-      bool already = false;
-      for (int prev = 0; prev < i; ++prev) {
-        if (selected[prev] == j) {
-          already = true;
-          break;
-        }
-      }
-      if (already) {
+      if (taken[static_cast<size_t>(j)]) {
         continue;
       }
       if (best < 0 || ritz_value_better(values[j], values[best], target_kind)) {
@@ -867,6 +801,9 @@ static int selected_ritz_indices(const double* values,
       }
     }
     selected[i] = best;
+    if (best >= 0) {
+      taken[static_cast<size_t>(best)] = true;
+    }
   }
   return count;
 }
