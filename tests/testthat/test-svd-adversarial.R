@@ -182,6 +182,10 @@ test_that("wide sparse Gram SVD uses native CSC left-Gram kernel", {
   expect_identical(fit$restart$gram_side, "left")
   expect_identical(fit$restart$native_gram_kernel, "csc_left_gram")
   expect_identical(fit$certificate$norm_bound_type, "frobenius_exact")
+  expect_true(all(c("gram", "eigensolve", "vector_form", "diagnostics") %in%
+                    names(fit$stage_seconds)))
+  expect_true(all(is.finite(fit$stage_seconds)))
+  expect_true(all(fit$stage_seconds >= 0))
   expect_equal(fit$d, oracle$d[1:4], tolerance = 1e-8)
   expect_certificate_clean(fit)
 })

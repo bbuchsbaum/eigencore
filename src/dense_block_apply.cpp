@@ -9610,6 +9610,12 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   const int* Ap = INTEGER(p_);
   const double* Ax = REAL(x_);
 
+  auto stage_timer = native_timer_now();
+  double stage_gram_seconds = 0.0;
+  double stage_eigensolve_seconds = 0.0;
+  double stage_vector_form_seconds = 0.0;
+  double stage_diagnostics_seconds = 0.0;
+
   std::vector<double> gram(static_cast<size_t>(m) * static_cast<size_t>(m), 0.0);
   for (int col = 0; col < n; ++col) {
     const int start = Ap[col];
@@ -9637,7 +9643,9 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   }
   const double norm_A = sqrt(frob2 > 0.0 ? frob2 : 0.0);
   const double scale_value = norm_A > DBL_EPSILON ? norm_A : DBL_EPSILON;
+  stage_gram_seconds = native_timer_elapsed(stage_timer);
 
+  stage_timer = native_timer_now();
   std::vector<double> values(static_cast<size_t>(rank), 0.0);
   SEXP u_ = PROTECT(allocMatrix(REALSXP, m, rank));
   if (m > 0) {
@@ -9684,7 +9692,9 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
       values[static_cast<size_t>(col)] = values_work[static_cast<size_t>(col)];
     }
   }
+  stage_eigensolve_seconds = native_timer_elapsed(stage_timer);
 
+  stage_timer = native_timer_now();
   SEXP d_ = PROTECT(allocVector(REALSXP, rank));
   SEXP v_ = PROTECT(allocMatrix(REALSXP, n, rank));
   std::memset(REAL(v_), 0, sizeof(double) * static_cast<size_t>(n) * rank);
@@ -9712,7 +9722,9 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
       REAL(v_)[col + static_cast<int64_t>(scol) * n] *= inv_sigma;
     }
   }
+  stage_vector_form_seconds = native_timer_elapsed(stage_timer);
 
+  stage_timer = native_timer_now();
   SEXP left_ = PROTECT(allocVector(REALSXP, rank));
   SEXP right_ = PROTECT(allocVector(REALSXP, rank));
   SEXP combined_ = PROTECT(allocVector(REALSXP, rank));
@@ -9770,6 +9782,7 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
     REAL(backward_)[scol] = left / scale_value;
     LOGICAL(converged_)[scol] = (REAL(backward_)[scol] <= tol) ? TRUE : FALSE;
   }
+  stage_diagnostics_seconds = native_timer_elapsed(stage_timer);
 
   SEXP diagnostics_ = PROTECT(allocVector(VECSXP, 7));
   SET_VECTOR_ELT(diagnostics_, 0, left_);
@@ -9789,18 +9802,32 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   SET_STRING_ELT(diag_names_, 6, mkChar("scale"));
   setAttrib(diagnostics_, R_NamesSymbol, diag_names_);
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 4));
+  SEXP stage_ = PROTECT(allocVector(REALSXP, 4));
+  REAL(stage_)[0] = stage_gram_seconds;
+  REAL(stage_)[1] = stage_eigensolve_seconds;
+  REAL(stage_)[2] = stage_vector_form_seconds;
+  REAL(stage_)[3] = stage_diagnostics_seconds;
+  SEXP stage_names_ = PROTECT(allocVector(STRSXP, 4));
+  SET_STRING_ELT(stage_names_, 0, mkChar("gram"));
+  SET_STRING_ELT(stage_names_, 1, mkChar("eigensolve"));
+  SET_STRING_ELT(stage_names_, 2, mkChar("vector_form"));
+  SET_STRING_ELT(stage_names_, 3, mkChar("diagnostics"));
+  setAttrib(stage_, R_NamesSymbol, stage_names_);
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 5));
   SET_VECTOR_ELT(out_, 0, d_);
   SET_VECTOR_ELT(out_, 1, u_);
   SET_VECTOR_ELT(out_, 2, v_);
   SET_VECTOR_ELT(out_, 3, diagnostics_);
-  SEXP names_ = PROTECT(allocVector(STRSXP, 4));
+  SET_VECTOR_ELT(out_, 4, stage_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 5));
   SET_STRING_ELT(names_, 0, mkChar("d"));
   SET_STRING_ELT(names_, 1, mkChar("u"));
   SET_STRING_ELT(names_, 2, mkChar("v"));
   SET_STRING_ELT(names_, 3, mkChar("diagnostics"));
+  SET_STRING_ELT(names_, 4, mkChar("stage_seconds"));
   setAttrib(out_, R_NamesSymbol, names_);
-  UNPROTECT(15);
+  UNPROTECT(17);
   return out_;
 }
 

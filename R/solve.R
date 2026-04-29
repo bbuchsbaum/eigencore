@@ -493,6 +493,7 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
       requested = rank,
       iterations = iter$iterations,
       matvecs = iter$matvecs,
+      stage_seconds = iter$stage_seconds %||% iter$restart$stage_seconds %||% numeric(),
       method = if (isTRUE(fallback_used)) {
         "native prototype Golub-Kahan fallback from Gram SVD"
       } else {

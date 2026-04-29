@@ -627,6 +627,15 @@ Primary attack surfaces, in order:
    gates pass only on the rank-deficient sparse row; the next H work must reduce
    retained-restart algorithmic work and result/workspace materialization, not
    just Gram-path wrapper overhead.
+   Release-build timing now matters for H interpretation: `devtools::load_all()`
+   compiles the native file with debug `-O0` and overstates the retained
+   block-GK gap. A forced `R CMD INSTALL --preclean` quick probe shows the
+   wide-sparse auto Gram row at roughly `0.45ms` total, with solver time
+   dominating and certificate time around `2us`; RSpectra is still faster at
+   roughly `0.37ms`, so the speed gate remains red. The native CSC left-Gram
+   path now reports stage timings for Gram formation, selected eigensolve,
+   right-vector formation, and diagnostics so future H patches can target the
+   real bottleneck instead of treating Gram SVD as one opaque solver block.
    The retained native path now returns native certificate diagnostics with the
    final retained result, so R no longer rebuilds that certificate through a
    separate cached-`A v` call. Attempt history also records
