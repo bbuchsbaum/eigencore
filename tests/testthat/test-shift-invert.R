@@ -12,7 +12,17 @@ test_that("shift-invert returns interior eigenvalues nearest sigma on dense Herm
   expected <- vals[order(abs(vals - 2))][1:3]
   expect_equal(sort(fit$values), sort(expected), tolerance = 1e-7)
   expect_certificate_clean(fit)
+  direct <- eigencore:::certify_eigen_operator(as_operator(A), fit$values,
+                                               fit$vectors, tol = 1e-8)
+  expect_equal(fit$certificate$residuals, direct$residuals, tolerance = 1e-12)
+  expect_equal(fit$certificate$backward_error, direct$backward_error,
+               tolerance = 1e-12)
   expect_identical(fit$transform$kind, "shift_invert")
+  expect_identical(fit$transform$certification$problem, "original")
+  expect_false(fit$transform$certification$transformed_residuals_used)
+  expect_true(fit$plan$controls$certified_in_original_coordinates)
+  expect_identical(fit$plan$controls$transformed_operator_target,
+                   "largest_magnitude")
   expect_equal(fit$sigma, 2)
 })
 
@@ -82,6 +92,10 @@ test_that("planner emits an honest shift-invert label for the chosen path", {
   plan <- plan_solver(P, k = 3, method = shift_invert(sigma = 5))
   expect_identical(plan$method,
                    "reference Hermitian Lanczos shift-invert (dense QR)")
+  expect_true(plan$controls$certified_in_original_coordinates)
+  expect_identical(plan$controls$eigenvalue_recovery,
+                   "lambda = sigma + 1 / mu")
+  expect_match(plan$controls$certification_policy, "original eigenproblem")
   expect_true(any(grepl("shift-invert transform requested", plan$reasons,
                         fixed = TRUE)))
 })

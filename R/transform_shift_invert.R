@@ -316,7 +316,6 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
   lambda <- sigma + 1 / mu
 
   Aop <- problem$A
-  cert_pre <- certify_eigen_operator(Aop, lambda, vec, tol = tol)
 
   ord <- order_indices(lambda, problem$target)
   if (length(ord) > k) ord <- ord[seq_len(k)]
@@ -348,7 +347,12 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
       kind = "shift_invert",
       sigma = sigma,
       label_kind = prep$label_kind,
-      factorization_cache = prep$factorization_cache
+      factorization_cache = prep$factorization_cache,
+      certification = list(
+        problem = "original",
+        residual_formula = "A * x - lambda * x",
+        transformed_residuals_used = FALSE
+      )
     ),
     warnings = paste0(
       "using reference Hermitian Lanczos shift-invert (",

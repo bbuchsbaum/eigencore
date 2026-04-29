@@ -301,12 +301,23 @@ lanczos_plan_controls <- function(problem, k, method, chosen) {
   } else {
     TRUE
   }
-  list(
+  controls <- list(
     block = block,
     max_subspace = max_subspace,
     max_restarts = max_restarts,
     reorthogonalize = reorthogonalize
   )
+  if (inherits(problem$transform, "eigencore_method") &&
+      identical(problem$transform$kind, "shift_invert")) {
+    controls <- c(controls, list(
+      transform = "shift_invert",
+      transformed_operator_target = "largest_magnitude",
+      eigenvalue_recovery = "lambda = sigma + 1 / mu",
+      certified_in_original_coordinates = TRUE,
+      certification_policy = "residual certificate on original eigenproblem"
+    ))
+  }
+  controls
 }
 
 #' @keywords internal
