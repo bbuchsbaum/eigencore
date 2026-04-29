@@ -537,7 +537,7 @@ Working status against the sequenced milestones:
 | G1 | done | Promoted native block Hermitian Lanczos runs by default in benchmark-proven regimes; strict Hermitian sparse and dense regression gates pass against certified RSpectra/PRIMME references. |
 | H | staged, not complete | Native Golub-Kahan exists as a staging path; block-GK restart comparators now include cached Ritz-vector `A V` paths with and without a random exploration tail, compact native fit extraction, and restart-efficiency diagnostics, but production thick-restart SVD and SVD performance gates remain open. |
 | I | prototype | Randomized SVD has reference implementation, normalizers, and certified refinement; native approximate engine remains open. |
-| J | partial | Native generalized SPD LOBPCG slices exist for built-in `B`, explicitly SPD matrix-free `B`, dense constraints, and typed shifted-diagonal / shifted-tridiagonal preconditioners; strict benchmark rows now gate bare, preconditioned, constrained, and adversarial B native-contract diagnostics; the adversarial B bank covers largest/smallest ill-conditioned diagonal, sparse CSC, and explicitly SPD matrix-free B without dense fallback; broader generalized preconditioning and promotion remain open. |
+| J | partial | Native generalized SPD LOBPCG slices exist for built-in `B`, explicitly SPD matrix-free `B`, dense constraints, and typed shifted-diagonal / shifted-tridiagonal preconditioners; strict benchmark rows now gate bare, shifted-diagonal, shifted-tridiagonal sparse-smallest, constrained, and adversarial B native-contract diagnostics; the adversarial B bank covers largest/smallest ill-conditioned diagonal, sparse CSC, and explicitly SPD matrix-free B without dense fallback; broader generalized preconditioning and promotion remain open. |
 | K | not complete | B-orthogonal block Lanczos is still a later generalized-SPD refinement path. |
 | L | reference-complete, native-open | Shift-invert works through honest reference paths; native hot loop/factorization-cache production path remains open. |
 | M | partial | Standard Hermitian LOBPCG and tridiagonal preconditioner staging are useful but not final release surfaces. |
@@ -591,11 +591,11 @@ Primary attack surfaces, in order:
    compact block-GK internal certification, but only modestly reduce allocation;
    the main H path still runs through retained native restart/workspace design.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
-   preconditioning beyond the typed shifted-diagonal and shifted-tridiagonal
-   cases, keep the benchmark B-orthogonality/native-path diagnostics green,
-   keep the adversarial B benchmark contract green, and promote the native
-   path only after sparse no-densification gates and the remaining production
-   checks pass.
+   preconditioning beyond the typed shifted-diagonal and certified
+   shifted-tridiagonal sparse-smallest case, keep the benchmark
+   B-orthogonality/native-path diagnostics green, keep the adversarial B
+   benchmark contract green, and promote the native path only after sparse
+   no-densification gates and the remaining production checks pass.
 3. **L native shift-invert.** Move from reference inverted-operator Lanczos to
    factorization-aware native transforms with cached solves and original
    problem residual certification.

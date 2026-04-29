@@ -146,6 +146,7 @@ test_that("generalized LOBPCG release script gates native contract rows", {
   expect_true(file.exists(script))
   lines <- readLines(script, warn = FALSE)
   expect_true(any(grepl("eigencore_shifted_diagonal", lines, fixed = TRUE)))
+  expect_true(any(grepl("eigencore_shifted_tridiagonal", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_constrained", lines, fixed = TRUE)))
   expect_true(any(grepl("generalized_lobpcg_native_contract", lines, fixed = TRUE)))
   expect_true(any(grepl("generalized_lobpcg_adversarial_b_specs", lines, fixed = TRUE)))

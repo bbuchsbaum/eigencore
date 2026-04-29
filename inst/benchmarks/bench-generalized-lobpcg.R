@@ -70,7 +70,13 @@ benchmark_generalized_lobpcg_case <- function(A, B, k, target = smallest(),
                                               A_dense = NULL, B_dense = NULL) {
   methods <- intersect(
     methods,
-    c("eigencore", "eigencore_shifted_diagonal", "eigencore_constrained", "base")
+    c(
+      "eigencore",
+      "eigencore_shifted_diagonal",
+      "eigencore_shifted_tridiagonal",
+      "eigencore_constrained",
+      "base"
+    )
   )
   A_cert <- A_dense %||% as.matrix(A)
   B_cert <- B_dense %||% as.matrix(B)
@@ -88,6 +94,17 @@ benchmark_generalized_lobpcg_case <- function(A, B, k, target = smallest(),
         )
       } else if (identical(method, "eigencore_shifted_diagonal")) {
         preconditioner <- shifted_diagonal_preconditioner(Matrix::diag(A), shift = 1e-3)
+        eig_partial(
+          A,
+          B = B,
+          k = k,
+          target = target,
+          method = lobpcg(maxit = maxit, preconditioner = preconditioner),
+          tol = tol,
+          allow_dense_fallback = "never"
+        )
+      } else if (identical(method, "eigencore_shifted_tridiagonal")) {
+        preconditioner <- shifted_tridiagonal_preconditioner(A, shift = 1e-3)
         eig_partial(
           A,
           B = B,
@@ -166,6 +183,7 @@ generalized_lobpcg_native_contract <- function(rows) {
   internal <- rows[rows$method %in% c(
     "eigencore",
     "eigencore_shifted_diagonal",
+    "eigencore_shifted_tridiagonal",
     "eigencore_constrained"
   ), , drop = FALSE]
   if (!nrow(internal)) {
@@ -181,6 +199,10 @@ generalized_lobpcg_native_contract <- function(rows) {
       isTRUE(row$orthogonalization_native)
     preconditioner_gate <- if (identical(row$method, "eigencore_shifted_diagonal")) {
       identical(row$preconditioner_kind, "shifted_diagonal") &&
+        isTRUE(row$preconditioner_native) &&
+        isTRUE(row$preconditioner_calls > 0L)
+    } else if (identical(row$method, "eigencore_shifted_tridiagonal")) {
+      identical(row$preconditioner_kind, "shifted_tridiagonal") &&
         isTRUE(row$preconditioner_native) &&
         isTRUE(row$preconditioner_calls > 0L)
     } else {
@@ -355,13 +377,22 @@ case_specs <- if (args$quick) {
     list(
       case = "sparse_generalized_path_smallest",
       n = 80L, k = 3L, target = smallest(), sparse = TRUE,
-      methods = c("eigencore", "eigencore_shifted_diagonal", "base"),
+      methods = c(
+        "eigencore",
+        "eigencore_shifted_diagonal",
+        "eigencore_shifted_tridiagonal",
+        "base"
+      ),
       subject = "eigencore"
     ),
     list(
       case = "sparse_generalized_path_largest",
       n = 80L, k = 3L, target = largest(), sparse = TRUE,
-      methods = c("eigencore", "eigencore_shifted_diagonal", "base"),
+      methods = c(
+        "eigencore",
+        "eigencore_shifted_diagonal",
+        "base"
+      ),
       subject = "eigencore"
     ),
     list(
@@ -379,13 +410,22 @@ case_specs <- if (args$quick) {
     list(
       case = "sparse_generalized_path_smallest",
       n = 500L, k = 10L, target = smallest(), sparse = TRUE,
-      methods = c("eigencore", "eigencore_shifted_diagonal", "base"),
+      methods = c(
+        "eigencore",
+        "eigencore_shifted_diagonal",
+        "eigencore_shifted_tridiagonal",
+        "base"
+      ),
       subject = "eigencore"
     ),
     list(
       case = "sparse_generalized_path_largest",
       n = 500L, k = 10L, target = largest(), sparse = TRUE,
-      methods = c("eigencore", "eigencore_shifted_diagonal", "base"),
+      methods = c(
+        "eigencore",
+        "eigencore_shifted_diagonal",
+        "base"
+      ),
       subject = "eigencore"
     ),
     list(
@@ -458,7 +498,12 @@ gate_rows <- lapply(split(rows, rows$case), function(case_rows) {
   requested <- unique(case_rows$requested)
   spec <- case_by_name[[unique(case_rows$case)]]
   subject <- spec$subject %||% "eigencore"
-  internal_methods <- c("eigencore", "eigencore_shifted_diagonal", "eigencore_constrained")
+  internal_methods <- c(
+    "eigencore",
+    "eigencore_shifted_diagonal",
+    "eigencore_shifted_tridiagonal",
+    "eigencore_constrained"
+  )
   gate <- evaluate_reference_gate(
     case_rows,
     subject = subject,
