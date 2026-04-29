@@ -34,6 +34,11 @@ test_that("shift-invert handles a sparse CSC source via factorized solve", {
   expect_true(all(fit$certificate$converged))
   expect_true(fit$certificate$scale_is_estimate)
   expect_lt(max(fit$certificate$backward_error), 1e-7)
+  cache <- fit$transform$factorization_cache
+  expect_equal(cache$label_kind, "sparse_lu")
+  expect_equal(cache$factorization, "Matrix::lu")
+  expect_true(cache$factorization_cached)
+  expect_equal(cache$condition_estimate_type, "uncomputed_sparse_no_dense_rcond")
 })
 
 test_that("shift-invert accepts a user-supplied solve operator", {
@@ -52,6 +57,8 @@ test_that("shift-invert accepts a user-supplied solve operator", {
                    "reference Hermitian Lanczos shift-invert (user solve)")
   expected <- vals[order(abs(vals - sigma))][1:2]
   expect_equal(sort(fit$values), sort(expected), tolerance = 1e-7)
+  expect_equal(fit$transform$factorization_cache$factorization, "user_solve")
+  expect_true(fit$transform$factorization_cache$external_cache)
 })
 
 test_that("generalized shift-invert is rejected at plan time with a roadmap note", {
@@ -121,6 +128,10 @@ test_that("shift-invert result exposes factorization-cache provenance", {
   expect_s3_class(cache$key, "eigencore_shift_invert_cache_key")
   expect_equal(cache$key$sigma, 4.2)
   expect_equal(cache$label_kind, "dense_lu")
+  expect_equal(cache$factorization, "base::qr")
+  expect_true(cache$factorization_cached)
+  expect_equal(cache$condition_estimate_type, "dense_rcond")
+  expect_true(is.finite(cache$condition_estimate))
   expect_false(cache$native)
   expect_true(cache$reusable_within_operator)
   expect_false(cache$external_cache)

@@ -102,6 +102,15 @@ shift_invert_factorization_cache_info <- function(Aop, sigma, Bop = NULL,
 }
 
 #' @keywords internal
+shift_invert_factorization_cache_merge <- function(cache_info, label_kind,
+                                                   diagnostics = list()) {
+  modifyList(
+    modifyList(cache_info, list(label_kind = label_kind)),
+    diagnostics
+  )
+}
+
+#' @keywords internal
 shift_invert_solver_dense <- function(A, sigma) {
   M <- A - sigma * diag(nrow(A))
   cond <- tryCatch(base::rcond(M), error = function(e) NA_real_)
@@ -112,11 +121,27 @@ shift_invert_solver_dense <- function(A, sigma) {
       call. = FALSE
     )
   }
-  # Use base::solve at apply time so we don't materialize M^{-1}
+  factor <- qr(M)
+  if (factor$rank < nrow(M)) {
+    stop(
+      "shift_invert(sigma = ", sigma, ") produced a rank-deficient dense ",
+      "shifted operator; perturb sigma or supply a stable solve function.",
+      call. = FALSE
+    )
+  }
   list(
-    solve_fn = function(X) base::solve(M, X),
-    label    = "dense_lu",
-    M        = M
+    solve_fn = function(X) {
+      qr.coef(factor, X)
+    },
+    label = "dense_lu",
+    M = M,
+    cache = list(
+      factorization = "base::qr",
+      factorization_cached = TRUE,
+      condition_estimate = cond,
+      condition_estimate_type = "dense_rcond",
+      near_singular = FALSE
+    )
   )
 }
 
@@ -124,13 +149,31 @@ shift_invert_solver_dense <- function(A, sigma) {
 shift_invert_solver_csc <- function(A, sigma) {
   n <- nrow(A)
   M <- methods::as(A - sigma * Matrix::Diagonal(n), "CsparseMatrix")
+  factor <- tryCatch(
+    Matrix::lu(M),
+    error = function(e) {
+      stop(
+        "shift_invert(sigma = ", sigma, ") could not factor the sparse shifted ",
+        "operator; perturb sigma or supply a stable solve function. ",
+        conditionMessage(e),
+        call. = FALSE
+      )
+    }
+  )
   list(
     solve_fn = function(X) {
-      Z <- Matrix::solve(M, X)
+      Z <- Matrix::solve(factor, X)
       if (inherits(Z, "Matrix")) as.matrix(Z) else Z
     },
     label = "sparse_lu",
-    M     = M
+    M = M,
+    cache = list(
+      factorization = "Matrix::lu",
+      factorization_cached = TRUE,
+      condition_estimate = NA_real_,
+      condition_estimate_type = "uncomputed_sparse_no_dense_rcond",
+      near_singular = NA
+    )
   )
 }
 
@@ -166,13 +209,25 @@ prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL) {
       name = "shift_invert_user_solve",
       metadata = list(
         native = FALSE,
-        factorization_cache = modifyList(cache_info, list(label_kind = "user_solve"))
+        factorization_cache = shift_invert_factorization_cache_merge(
+          cache_info,
+          "user_solve",
+          list(
+            factorization = "user_solve",
+            factorization_cached = NA,
+            condition_estimate = NA_real_,
+            condition_estimate_type = "user_supplied",
+            near_singular = NA,
+            external_cache = TRUE
+          )
+        )
       )
     )
+    cache <- op$metadata$factorization_cache
     return(list(
       operator = op,
       label_kind = "user_solve",
-      factorization_cache = modifyList(cache_info, list(label_kind = "user_solve"))
+      factorization_cache = cache
     ))
   }
 
@@ -209,13 +264,18 @@ prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL) {
     name = paste0("shift_invert_", prep$label),
     metadata = list(
       native = FALSE,
-      factorization_cache = modifyList(cache_info, list(label_kind = prep$label))
+      factorization_cache = shift_invert_factorization_cache_merge(
+        cache_info,
+        prep$label,
+        prep$cache
+      )
     )
   )
+  cache <- op$metadata$factorization_cache
   list(
     operator = op,
     label_kind = prep$label,
-    factorization_cache = modifyList(cache_info, list(label_kind = prep$label))
+    factorization_cache = cache
   )
 }
 
