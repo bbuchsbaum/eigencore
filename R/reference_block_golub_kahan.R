@@ -724,6 +724,25 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
     }
   }
 
+  retained_native_certificate <- function(ritz) {
+    diag <- ritz[["certificate_diagnostics", exact = TRUE]]
+    if (is.null(diag)) {
+      return(certify_svd_operator_cached_av(
+        op, ritz$d, ritz$u, ritz$v, ritz$Avectors, tol = tol
+      ))
+    }
+    new_certificate(
+      tol = tol,
+      residuals = list(left = diag$left, right = diag$right, combined = diag$combined),
+      backward_error = diag$backward_error,
+      orthogonality = diag$orthogonality,
+      converged = diag$converged,
+      scale = diag$scale,
+      norm_bound_type = norm_info$norm_bound_type,
+      scale_is_estimate = isTRUE(norm_info$scale_is_estimate)
+    )
+  }
+
   cache_attempted <- isTRUE(retained_av_cache)
   cache_failed <- FALSE
   cache_error <- NA_character_
@@ -751,9 +770,7 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
       cache_matvecs <- cached$matvecs %||% 0L
       cache_ortho_passes <- cached$ortho_passes %||% 0L
       cache_stage_seconds <- cached$stage_seconds
-      cached_cert <- certify_svd_operator_cached_av(
-        op, cached$d, cached$u, cached$v, cached$Avectors, tol = tol
-      )
+      cached_cert <- retained_native_certificate(cached)
       if (isTRUE(cached_cert$passed)) {
         ritz <- cached
         cert <- cached_cert
@@ -766,9 +783,7 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
   }
   if (is.null(ritz)) {
     ritz <- run_retained(FALSE)
-    cert <- certify_svd_operator_cached_av(
-      op, ritz$d, ritz$u, ritz$v, ritz$Avectors, tol = tol
-    )
+    cert <- retained_native_certificate(ritz)
   }
   attempt_history <- ritz$attempt_history
   if (is.data.frame(attempt_history) &&

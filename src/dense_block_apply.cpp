@@ -8096,6 +8096,10 @@ static SEXP block_golub_kahan_fit_pack(int n,
 
 static SEXP block_golub_kahan_retained_cycle_pack(int n,
                                                   int m,
+                                                  void* impl,
+                                                  EigencoreApplyFn apply,
+                                                  double norm_A,
+                                                  double tol,
                                                   double* V,
                                                   double* AV,
                                                   int active_v,
@@ -8114,6 +8118,12 @@ static SEXP block_golub_kahan_retained_cycle_pack(int n,
     n, m, V, AV, active_v, active_u, iterations, matvecs, ortho_passes,
     cached_start_used, rank, target_kind, stage_native_iteration_seconds
   ));
+  SEXP tol_ = PROTECT(ScalarReal(tol));
+  SEXP cert_diag_ = PROTECT(native_operator_svd_certificate_cached_av(
+    impl, apply, m, n, norm_A,
+    VECTOR_ELT(fit_, 0), VECTOR_ELT(fit_, 1), VECTOR_ELT(fit_, 2),
+    VECTOR_ELT(fit_, 3), tol_
+  ));
   SEXP old_stage_ = VECTOR_ELT(fit_, 11);
   SEXP stage_ = PROTECT(allocVector(REALSXP, 3));
   REAL(stage_)[0] = REAL(old_stage_)[0];
@@ -8125,7 +8135,7 @@ static SEXP block_golub_kahan_retained_cycle_pack(int n,
   SET_STRING_ELT(stage_names_, 2, mkChar("restart"));
   setAttrib(stage_, R_NamesSymbol, stage_names_);
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 15));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 16));
   for (int i = 0; i < 11; ++i) {
     SET_VECTOR_ELT(out_, i, VECTOR_ELT(fit_, i));
   }
@@ -8133,7 +8143,8 @@ static SEXP block_golub_kahan_retained_cycle_pack(int n,
   SET_VECTOR_ELT(out_, 12, attempt_history_);
   SET_VECTOR_ELT(out_, 13, ScalarLogical(1));
   SET_VECTOR_ELT(out_, 14, ScalarReal(native_workspace_bytes));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 15));
+  SET_VECTOR_ELT(out_, 15, cert_diag_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 16));
   SET_STRING_ELT(names_, 0, mkChar("d"));
   SET_STRING_ELT(names_, 1, mkChar("u"));
   SET_STRING_ELT(names_, 2, mkChar("v"));
@@ -8149,8 +8160,9 @@ static SEXP block_golub_kahan_retained_cycle_pack(int n,
   SET_STRING_ELT(names_, 12, mkChar("attempt_history"));
   SET_STRING_ELT(names_, 13, mkChar("retained_restart_native"));
   SET_STRING_ELT(names_, 14, mkChar("native_workspace_bytes"));
+  SET_STRING_ELT(names_, 15, mkChar("certificate_diagnostics"));
   setAttrib(out_, R_NamesSymbol, names_);
-  UNPROTECT(5);
+  UNPROTECT(7);
   return out_;
 }
 
@@ -8225,11 +8237,13 @@ static SEXP retained_attempt_history_pack(const std::vector<int>& subspaces,
                                           const std::vector<int>& matvecs,
                                           const std::vector<int>& ortho_passes,
                                           const std::vector<int>& cached_start_used,
+                                          const std::vector<int>& converged_count,
+                                          const std::vector<int>& leading_converged_count,
                                           const std::vector<int>& certificate_passed,
                                           const std::vector<double>& max_backward_error,
                                           const std::vector<double>& max_residual) {
   const int rows = static_cast<int>(subspaces.size());
-  SEXP out_ = PROTECT(allocVector(VECSXP, 12));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 14));
   SEXP attempt_ = PROTECT(allocVector(INTSXP, rows));
   SEXP subspace_ = PROTECT(allocVector(INTSXP, rows));
   SEXP active_ = PROTECT(allocVector(INTSXP, rows));
@@ -8239,6 +8253,8 @@ static SEXP retained_attempt_history_pack(const std::vector<int>& subspaces,
   SEXP iter_ = PROTECT(allocVector(INTSXP, rows));
   SEXP matvec_ = PROTECT(allocVector(INTSXP, rows));
   SEXP ortho_ = PROTECT(allocVector(INTSXP, rows));
+  SEXP conv_count_ = PROTECT(allocVector(INTSXP, rows));
+  SEXP leading_count_ = PROTECT(allocVector(INTSXP, rows));
   SEXP passed_ = PROTECT(allocVector(LGLSXP, rows));
   SEXP backward_ = PROTECT(allocVector(REALSXP, rows));
   SEXP residual_ = PROTECT(allocVector(REALSXP, rows));
@@ -8252,6 +8268,8 @@ static SEXP retained_attempt_history_pack(const std::vector<int>& subspaces,
     INTEGER(iter_)[row] = iterations[static_cast<size_t>(row)];
     INTEGER(matvec_)[row] = matvecs[static_cast<size_t>(row)];
     INTEGER(ortho_)[row] = ortho_passes[static_cast<size_t>(row)];
+    INTEGER(conv_count_)[row] = converged_count[static_cast<size_t>(row)];
+    INTEGER(leading_count_)[row] = leading_converged_count[static_cast<size_t>(row)];
     LOGICAL(passed_)[row] = certificate_passed[static_cast<size_t>(row)] ? TRUE : FALSE;
     REAL(backward_)[row] = max_backward_error[static_cast<size_t>(row)];
     REAL(residual_)[row] = max_residual[static_cast<size_t>(row)];
@@ -8265,10 +8283,12 @@ static SEXP retained_attempt_history_pack(const std::vector<int>& subspaces,
   SET_VECTOR_ELT(out_, 6, iter_);
   SET_VECTOR_ELT(out_, 7, matvec_);
   SET_VECTOR_ELT(out_, 8, ortho_);
-  SET_VECTOR_ELT(out_, 9, passed_);
-  SET_VECTOR_ELT(out_, 10, backward_);
-  SET_VECTOR_ELT(out_, 11, residual_);
-  SEXP names_ = PROTECT(allocVector(STRSXP, 12));
+  SET_VECTOR_ELT(out_, 9, conv_count_);
+  SET_VECTOR_ELT(out_, 10, leading_count_);
+  SET_VECTOR_ELT(out_, 11, passed_);
+  SET_VECTOR_ELT(out_, 12, backward_);
+  SET_VECTOR_ELT(out_, 13, residual_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 14));
   SET_STRING_ELT(names_, 0, mkChar("attempt"));
   SET_STRING_ELT(names_, 1, mkChar("max_subspace"));
   SET_STRING_ELT(names_, 2, mkChar("active_cols"));
@@ -8278,9 +8298,11 @@ static SEXP retained_attempt_history_pack(const std::vector<int>& subspaces,
   SET_STRING_ELT(names_, 6, mkChar("iterations"));
   SET_STRING_ELT(names_, 7, mkChar("matvecs"));
   SET_STRING_ELT(names_, 8, mkChar("ortho_passes"));
-  SET_STRING_ELT(names_, 9, mkChar("certificate_passed"));
-  SET_STRING_ELT(names_, 10, mkChar("max_backward_error"));
-  SET_STRING_ELT(names_, 11, mkChar("max_residual"));
+  SET_STRING_ELT(names_, 9, mkChar("converged_count"));
+  SET_STRING_ELT(names_, 10, mkChar("leading_converged_count"));
+  SET_STRING_ELT(names_, 11, mkChar("certificate_passed"));
+  SET_STRING_ELT(names_, 12, mkChar("max_backward_error"));
+  SET_STRING_ELT(names_, 13, mkChar("max_residual"));
   setAttrib(out_, R_NamesSymbol, names_);
 
   SEXP row_names_ = PROTECT(allocVector(INTSXP, rows));
@@ -8291,7 +8313,7 @@ static SEXP retained_attempt_history_pack(const std::vector<int>& subspaces,
   SEXP class_ = PROTECT(allocVector(STRSXP, 1));
   SET_STRING_ELT(class_, 0, mkChar("data.frame"));
   setAttrib(out_, R_ClassSymbol, class_);
-  UNPROTECT(16);
+  UNPROTECT(18);
   return out_;
 }
 
@@ -8307,7 +8329,9 @@ static int retained_cached_av_certificate_passed(void* impl,
                                                  int k,
                                                  double tol,
                                                  double* max_backward_error,
-                                                 double* max_residual) {
+                                                 double* max_residual,
+                                                 int* converged_count,
+                                                 int* leading_converged_count) {
   const double eps = DBL_EPSILON;
   const double scale_value = fmax(norm_A, eps);
   std::vector<double> right(static_cast<size_t>(n) * static_cast<size_t>(k), 0.0);
@@ -8321,6 +8345,9 @@ static int retained_cached_av_certificate_passed(void* impl,
   int passed = 1;
   *max_backward_error = 0.0;
   *max_residual = 0.0;
+  *converged_count = 0;
+  *leading_converged_count = 0;
+  bool still_leading = true;
   for (int col = 0; col < k; ++col) {
     const double sigma = d[col];
     double left_sum = 0.0;
@@ -8345,7 +8372,14 @@ static int retained_cached_av_certificate_passed(void* impl,
     if (combined > *max_residual || col == 0) {
       *max_residual = combined;
     }
-    if (!R_FINITE(backward) || backward > tol) {
+    const bool col_converged = R_FINITE(backward) && backward <= tol;
+    if (col_converged) {
+      ++(*converged_count);
+      if (still_leading) {
+        ++(*leading_converged_count);
+      }
+    } else {
+      still_leading = false;
       passed = 0;
     }
   }
@@ -8369,6 +8403,8 @@ static int retained_cached_av_certificate_passed(void* impl,
   const double orth_tol = (tol > sqrt(DBL_EPSILON)) ? tol : sqrt(DBL_EPSILON);
   if (orth > orth_tol) {
     passed = 0;
+    *converged_count = 0;
+    *leading_converged_count = 0;
   }
   return passed;
 }
@@ -8482,6 +8518,8 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
   std::vector<int> history_matvecs;
   std::vector<int> history_ortho_passes;
   std::vector<int> history_cached_start_used;
+  std::vector<int> history_converged_count;
+  std::vector<int> history_leading_converged_count;
   std::vector<int> history_certificate_passed;
   std::vector<double> history_max_backward_error;
   std::vector<double> history_max_residual;
@@ -8541,6 +8579,8 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
     ));
     double max_backward_error = R_PosInf;
     double max_residual = R_PosInf;
+    int converged_count = 0;
+    int leading_converged_count = 0;
     const int certificate_passed = retained_cached_av_certificate_passed(
       impl, apply, m, n, norm_A,
       REAL(VECTOR_ELT(ritz_, 0)),
@@ -8550,7 +8590,9 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
       LENGTH(VECTOR_ELT(ritz_, 0)),
       tol,
       &max_backward_error,
-      &max_residual
+      &max_residual,
+      &converged_count,
+      &leading_converged_count
     );
     if (certificate_passed < 0) {
       UNPROTECT(1);
@@ -8559,6 +8601,8 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
       error("native retained block Golub-Kahan attempt certificate failed with status=%d",
             certificate_passed);
     }
+    history_converged_count.push_back(converged_count);
+    history_leading_converged_count.push_back(leading_converged_count);
     history_certificate_passed.push_back(certificate_passed);
     history_max_backward_error.push_back(max_backward_error);
     history_max_residual.push_back(max_residual);
@@ -8624,11 +8668,14 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
   SEXP history_ = PROTECT(retained_attempt_history_pack(
     history_subspaces, history_active_cols, history_start_cols,
     history_iterations, history_matvecs, history_ortho_passes,
-    history_cached_start_used, history_certificate_passed,
+    history_cached_start_used,
+    history_converged_count, history_leading_converged_count,
+    history_certificate_passed,
     history_max_backward_error, history_max_residual
   ));
   SEXP out_ = PROTECT(block_golub_kahan_retained_cycle_pack(
-    n, m, arrays.V, arrays.AV, final_active_v, final_active_u,
+    n, m, impl, apply, norm_A, tol,
+    arrays.V, arrays.AV, final_active_v, final_active_u,
     final_iterations, final_matvecs, final_ortho_passes,
     final_cached_start_used, rank, target_kind,
     total_stage_native_iteration_seconds, total_stage_restart_seconds,

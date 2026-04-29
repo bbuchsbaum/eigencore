@@ -235,6 +235,10 @@ test_that("native retained block Golub-Kahan cycle builds restart state inside n
   expect_true(any(retained$restart$attempt_history$cached_start_used))
   expect_true(all(retained$restart$attempt_history$warm_started[-1L]))
   expect_true(any(retained$restart$attempt_history$certificate_passed))
+  expect_true(all(c("converged_count", "leading_converged_count") %in%
+                    names(retained$restart$attempt_history)))
+  expect_gte(max(retained$restart$attempt_history$converged_count), 5L)
+  expect_gte(max(retained$restart$attempt_history$leading_converged_count), 5L)
   expect_true(all(is.finite(retained$restart$attempt_history$max_backward_error)))
   expect_true(all(is.finite(retained$restart$attempt_history$max_residual)))
   expect_equal(retained$restart$attempted_subspaces,
@@ -265,6 +269,8 @@ test_that("native retained block Golub-Kahan cached AV path certifies after MGS2
   expect_false(retained$restart$retained_av_cache_fallback)
   expect_true(retained$restart$retained_av_cache)
   expect_true(any(retained$restart$attempt_history$cached_start_used))
+  expect_gte(max(retained$restart$attempt_history$converged_count), 5L)
+  expect_gte(max(retained$restart$attempt_history$leading_converged_count), 5L)
   expect_false(retained$restart$fallback_attempted)
   expect_false(retained$restart$fallback_used)
   expect_true(is.na(retained$restart$fallback_method))

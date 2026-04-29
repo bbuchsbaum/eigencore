@@ -627,6 +627,15 @@ Primary attack surfaces, in order:
    gates pass only on the rank-deficient sparse row; the next H work must reduce
    retained-restart algorithmic work and result/workspace materialization, not
    just Gram-path wrapper overhead.
+   The retained native path now returns native certificate diagnostics with the
+   final retained result, so R no longer rebuilds that certificate through a
+   separate cached-`A v` call. Attempt history also records
+   `converged_count` and `leading_converged_count`, exposing exactly when
+   partial locking would have been possible. On the quick wide-sparse retained
+   probe, attempt 1 already has one leading converged triplet, attempt 2 has
+   none under the stricter orthogonality gate, and attempt 3 certifies all five.
+   This is a locking/deflation readiness surface, not full deflation yet:
+   locked triplets are measured but not removed from later restart work.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
    preconditioning beyond the typed shifted-diagonal and certified
    shifted-tridiagonal sparse-smallest case, keep the benchmark
