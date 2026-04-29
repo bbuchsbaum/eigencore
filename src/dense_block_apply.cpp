@@ -4687,26 +4687,28 @@ static int block_lanczos_restart_with_continuation_tail(
     k_keep = unlocked_count;
   }
 
-  int n_picked = 0;
   std::memset(buf->T_proj, 0,
               sizeof(double) * static_cast<size_t>(m_max) *
                 static_cast<size_t>(m_max));
-  for (int p = 0; p < selected_count && n_picked < k_keep; ++p) {
+  *m_active = 0;
+  int n_picked = 0;
+  for (int p = 0; p < selected_count && n_picked < k_keep && *m_active < m_max; ++p) {
     if (buf->is_locked[p]) {
       continue;
     }
-    const int idx = buf->selected[p];
-    std::memcpy(buf->V_active + static_cast<int64_t>(n_picked) * n,
+    std::memcpy(buf->z,
                 buf->B_v + static_cast<int64_t>(p) * n,
                 sizeof(double) * static_cast<size_t>(n));
-    std::memcpy(buf->AV_active + static_cast<int64_t>(n_picked) * n,
-                buf->B_av + static_cast<int64_t>(p) * n,
-                sizeof(double) * static_cast<size_t>(n));
-    buf->T_proj[n_picked + static_cast<int64_t>(n_picked) * m_max] =
-      buf->theta[idx];
-    ++n_picked;
+    stages->restart += native_timer_elapsed(timer);
+    timer = native_timer_now();
+    const int accepted = block_accept_work_vector(
+      V_out, n_locked, buf->V_active, m_active, m_max,
+      buf->z, buf->tmp, n, ortho_passes_out
+    );
+    stages->reorthogonalization += native_timer_elapsed(timer);
+    timer = native_timer_now();
+    n_picked += accepted;
   }
-  *m_active = n_picked;
 
   const int tail_start = *m_active;
   int tail_accepted = 0;
@@ -4747,7 +4749,7 @@ static int block_lanczos_restart_with_continuation_tail(
   }
 
   timer = native_timer_now();
-  int rc = apply_active_block(impl, apply, n, tail_start, tail_accepted,
+  int rc = apply_active_block(impl, apply, n, 0, *m_active,
                               buf->V_active, buf->AV_active, workspace,
                               matvecs_out);
   stages->apply += native_timer_elapsed(timer);
@@ -4757,13 +4759,8 @@ static int block_lanczos_restart_with_continuation_tail(
 
   timer = native_timer_now();
   projection_update_self_block(buf->T_proj, m_max, buf->V_active,
-                               buf->AV_active, n, tail_start,
-                               tail_accepted, buf->coeff_block);
-  projection_update_cross_block(buf->T_proj, m_max, buf->V_active,
-                                buf->AV_active, n,
-                                0, tail_start,
-                                tail_start, tail_accepted,
-                                buf->coeff_block);
+                               buf->AV_active, n, 0, *m_active,
+                               buf->S_eig);
   {
     const double elapsed = native_timer_elapsed(timer);
     stages->projected_solve += elapsed;
