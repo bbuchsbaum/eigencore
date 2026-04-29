@@ -206,8 +206,10 @@ they are machine-dependent.
   `n = 200, 1000, 2000`, `k = 5`, with failed references recorded as
   uncertified rows.
 - Native generalized SPD LOBPCG now has built-in dense, diagonal, and CSC A/B
-  prototype slices for explicit `lobpcg()` plans. Production promotion remains
-  blocked on generalized preconditioning and broader adversarial gates.
+  prototype slices for explicit `lobpcg()` plans. Native shifted-diagonal and
+  shifted-tridiagonal typed preconditioners are accepted by the generalized
+  native path; broader generalized preconditioning and promotion gates remain
+  open.
 - Generalized SPD benchmark rows now expose the promotion-critical restart
   diagnostics: `native`, `native_kernels`, `generalized`,
   `orthogonalization_native`, `orthogonalization_methods`, `q_rank_final`,

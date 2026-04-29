@@ -114,7 +114,8 @@ Promotion requires:
 - explicit positive-definiteness evidence for `B` from dense Cholesky,
   sparse Cholesky, positive diagonal metadata, or matrix-free operator metadata
   such as `positive_definite = TRUE`;
-- no preconditioner or the native shifted-tridiagonal preconditioner;
+- no preconditioner, the native shifted-diagonal preconditioner, or the native
+  shifted-tridiagonal preconditioner;
 - optional constraints supplied as a dense deflation basis.
 
 `auto()` uses this native path for structured sparse/diagonal generalized

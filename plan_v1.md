@@ -537,7 +537,7 @@ Working status against the sequenced milestones:
 | G1 | done | Promoted native block Hermitian Lanczos runs by default in benchmark-proven regimes; strict Hermitian sparse and dense regression gates pass against certified RSpectra/PRIMME references. |
 | H | staged, not complete | Native Golub-Kahan exists as a staging path; block-GK restart comparators now include cached Ritz-vector `A V` paths with and without a random exploration tail, compact native fit extraction, and restart-efficiency diagnostics, but production thick-restart SVD and SVD performance gates remain open. |
 | I | prototype | Randomized SVD has reference implementation, normalizers, and certified refinement; native approximate engine remains open. |
-| J | partial | Native generalized SPD LOBPCG slices exist for built-in `B`, explicitly SPD matrix-free `B`, dense constraints, and the typed shifted-tridiagonal preconditioner; benchmark rows expose native/B-orthogonal/constrained diagnostics; broader generalized preconditioning and promotion remain open. |
+| J | partial | Native generalized SPD LOBPCG slices exist for built-in `B`, explicitly SPD matrix-free `B`, dense constraints, and typed shifted-diagonal / shifted-tridiagonal preconditioners; benchmark rows expose native/B-orthogonal/constrained diagnostics; broader generalized preconditioning and promotion remain open. |
 | K | not complete | B-orthogonal block Lanczos is still a later generalized-SPD refinement path. |
 | L | reference-complete, native-open | Shift-invert works through honest reference paths; native hot loop/factorization-cache production path remains open. |
 | M | partial | Standard Hermitian LOBPCG and tridiagonal preconditioner staging are useful but not final release surfaces. |

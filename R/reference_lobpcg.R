@@ -772,7 +772,7 @@ native_lobpcg_preconditioner_supported <- function(preconditioner) {
     return(TRUE)
   }
   info <- eigencore_preconditioner_info(preconditioner, include_arrays = FALSE)
-  isTRUE(info$native) && identical(info$kind, "shifted_tridiagonal")
+  isTRUE(info$native) && info$kind %in% c("shifted_diagonal", "shifted_tridiagonal")
 }
 
 #' @keywords internal
@@ -782,7 +782,8 @@ native_lobpcg_preconditioner_args <- function(preconditioner) {
   }
   info <- attr(preconditioner, "eigencore_preconditioner", exact = TRUE)
   if (!native_lobpcg_preconditioner_supported(preconditioner)) {
-    stop("Native LOBPCG only supports NULL or shifted_tridiagonal preconditioners.", call. = FALSE)
+    stop("Native LOBPCG only supports NULL, shifted_diagonal, or shifted_tridiagonal preconditioners.",
+         call. = FALSE)
   }
   list(
     lower = info$lower,

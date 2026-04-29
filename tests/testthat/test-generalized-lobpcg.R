@@ -211,6 +211,63 @@ test_that("native generalized LOBPCG accepts native shifted-tridiagonal precondi
   expect_true(certificate(fit)$passed)
 })
 
+test_that("native generalized LOBPCG accepts native shifted-diagonal preconditioners", {
+  A <- Matrix::Diagonal(x = c(1, 4, 9, 16, 25, 36))
+  B <- diag(c(1, 2, 3, 4, 5, 6))
+  Bop <- linear_operator(
+    dim = dim(B),
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      out <- alpha * (B %*% X)
+      if (!is.null(Y) && beta != 0) {
+        out <- out + beta * Y
+      }
+      out
+    },
+    apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) {
+      out <- alpha * (B %*% X)
+      if (!is.null(Y) && beta != 0) {
+        out <- out + beta * Y
+      }
+      out
+    },
+    structure = hermitian(),
+    metadata = list(
+      frobenius_norm = sqrt(sum(B^2)),
+      positive_definite = TRUE
+    )
+  )
+  preconditioner <- shifted_diagonal_preconditioner(A, shift = 1e-3)
+  info <- eigencore:::eigencore_preconditioner_info(preconditioner, include_arrays = FALSE)
+  method <- lobpcg(maxit = 80L, preconditioner = preconditioner)
+  problem <- eigen_problem(A, metric = Bop, target = smallest())
+  plan <- plan_solver(problem, k = 2, method = method)
+
+  expect_equal(info$kind, "shifted_diagonal")
+  expect_true(info$native)
+  expect_equal(plan$method, eigencore:::native_generalized_lobpcg_label())
+  expect_match(paste(plan$reasons, collapse = "\n"), "preconditioner: shifted_diagonal")
+
+  fit <- eig_partial(
+    A,
+    B = Bop,
+    k = 2,
+    target = smallest(),
+    method = method,
+    seed = 318,
+    tol = 1e-8,
+    allow_dense_fallback = "never"
+  )
+
+  expect_equal(fit$method, eigencore:::native_generalized_lobpcg_label())
+  expect_true(fit$restart$generalized)
+  expect_true(fit$restart$native)
+  expect_true(fit$restart$preconditioner_native)
+  expect_equal(fit$restart$preconditioner_kind, "shifted_diagonal")
+  expect_gt(fit$restart$preconditioner_calls, 0L)
+  expect_equal(crossprod(vectors(fit), B %*% vectors(fit)), diag(2), tolerance = 1e-8)
+  expect_true(certificate(fit)$passed)
+})
+
 test_that("generalized constraints deflate known nullspace on native path", {
   A <- Matrix::Diagonal(x = c(0, 1, 4, 9))
   B <- Matrix::Diagonal(x = c(1, 2, 3, 4))

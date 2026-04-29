@@ -31,6 +31,69 @@ shifted_cholesky_preconditioner <- function(A, shift = 0) {
   )
 }
 
+#' Shifted diagonal preconditioner.
+#'
+#' @param A Diagonal matrix or numeric vector containing the diagonal entries.
+#' @param shift Non-negative diagonal shift added before inversion.
+#' @return A typed native-backed preconditioner function mapping residual blocks
+#'   to preconditioned blocks.
+#' @export
+shifted_diagonal_preconditioner <- function(A, shift = 0) {
+  diag <- if (is.numeric(A) && is.null(dim(A))) {
+    as.numeric(A)
+  } else {
+    if (!inherits(A, "Matrix")) {
+      A <- Matrix::Matrix(A, sparse = TRUE)
+    }
+    n <- nrow(A)
+    if (ncol(A) != n) {
+      stop("A must be square.", call. = FALSE)
+    }
+    if (!inherits(A, "diagonalMatrix")) {
+      trip <- as.data.frame(Matrix::summary(A))
+      if (nrow(trip) && any(trip$i != trip$j)) {
+        stop("A must be diagonal.", call. = FALSE)
+      }
+    }
+    as.numeric(Matrix::diag(A))
+  }
+  if (!length(diag) || any(!is.finite(diag))) {
+    stop("A must provide at least one finite diagonal entry.", call. = FALSE)
+  }
+  shift <- as.numeric(shift)
+  if (length(shift) != 1L || is.na(shift) || shift < 0) {
+    stop("shift must be a single non-negative number.", call. = FALSE)
+  }
+  diag <- diag + shift
+  if (any(diag <= 0)) {
+    stop("shifted diagonal entries must be positive.", call. = FALSE)
+  }
+  n <- length(diag)
+  lower <- numeric(max(n - 1L, 0L))
+  upper <- numeric(max(n - 1L, 0L))
+  force(lower)
+  force(diag)
+  force(upper)
+  apply <- function(R) {
+    R <- as.matrix(R)
+    if (nrow(R) != n) {
+      stop("residual block has incompatible row count.", call. = FALSE)
+    }
+    R / diag
+  }
+  new_eigencore_preconditioner(
+    apply,
+    kind = "shifted_diagonal",
+    native = TRUE,
+    n = n,
+    shift = shift,
+    factorization = "diagonal_scale",
+    lower = lower,
+    diag = diag,
+    upper = upper
+  )
+}
+
 #' Shifted tridiagonal preconditioner.
 #'
 #' @param A Real symmetric tridiagonal matrix.
