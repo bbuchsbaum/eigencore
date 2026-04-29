@@ -5630,6 +5630,13 @@ static int native_lobpcg_run(void* impl,
     std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
     return -2;
   }
+  auto cleanup = [&]() {
+    std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
+    std::free(BX); std::free(BXnext); std::free(W); std::free(S);
+    std::free(Q); std::free(AQ); std::free(BQ); std::free(H);
+    std::free(selected_vectors); std::free(theta); std::free(tmp);
+    std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+  };
 
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
   const bool generalized = b_apply != nullptr;
@@ -5659,19 +5666,11 @@ static int native_lobpcg_run(void* impl,
         constraint_q.data(), tmp);
     }
     if (constraint_rank < 0) {
-      std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
-      std::free(BX); std::free(BXnext); std::free(W); std::free(S);
-      std::free(Q); std::free(AQ); std::free(BQ); std::free(H);
-      std::free(selected_vectors); std::free(theta); std::free(tmp);
-      std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+      cleanup();
       return constraint_rank;
     }
     if (constraint_rank + k > n) {
-      std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
-      std::free(BX); std::free(BXnext); std::free(W); std::free(S);
-      std::free(Q); std::free(AQ); std::free(BQ); std::free(H);
-      std::free(selected_vectors); std::free(theta); std::free(tmp);
-      std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+      cleanup();
       return -9;
     }
     *constraints_rank_out = constraint_rank;
@@ -5684,11 +5683,7 @@ static int native_lobpcg_run(void* impl,
       generalized ? constraint_bx.data() : nullptr,
       &workspace);
     if (status != 0) {
-      std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
-      std::free(BX); std::free(BXnext); std::free(W); std::free(S);
-      std::free(Q); std::free(AQ); std::free(BQ); std::free(H);
-      std::free(selected_vectors); std::free(theta); std::free(tmp);
-      std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+      cleanup();
       return status;
     }
   }
@@ -5698,11 +5693,7 @@ static int native_lobpcg_run(void* impl,
                                     BQ, &workspace)
     : lobpcg_orthonormalize(S, n, k, 100.0 * DBL_EPSILON, X, tmp);
   if (q_rank < k) {
-    std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
-    std::free(BX); std::free(BXnext); std::free(W); std::free(S);
-    std::free(Q); std::free(AQ); std::free(BQ); std::free(H);
-    std::free(selected_vectors); std::free(theta); std::free(tmp);
-    std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+    cleanup();
     return -4;
   }
   if (!generalized) {
@@ -5724,10 +5715,7 @@ static int native_lobpcg_run(void* impl,
     int status = apply(impl, EIGENCORE_TRANSPOSE_NONE, k, X, n,
                        1.0, 0.0, AX, n, &workspace);
     if (status != 0) {
-      std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
-      std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
-      std::free(selected_vectors); std::free(theta); std::free(tmp);
-      std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+      cleanup();
       return status;
     }
     ++(*matvecs_out);
@@ -5766,10 +5754,7 @@ static int native_lobpcg_run(void* impl,
         lower, diag, upper, n, k, R, W, cprime, dprime
       );
       if (status != 0) {
-        std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
-        std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
-        std::free(selected_vectors); std::free(theta); std::free(tmp);
-        std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+        cleanup();
         return status;
       }
       ++(*preconditioner_calls_out);
@@ -5793,10 +5778,7 @@ static int native_lobpcg_run(void* impl,
         generalized ? constraint_bx.data() : nullptr,
         &workspace);
       if (status != 0) {
-        std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
-        std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
-        std::free(selected_vectors); std::free(theta); std::free(tmp);
-        std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+        cleanup();
         return status;
       }
     }
@@ -5807,10 +5789,7 @@ static int native_lobpcg_run(void* impl,
                                       BXnext, &workspace)
       : lobpcg_orthonormalize(S, n, trial_cols, 100.0 * DBL_EPSILON, Q, tmp);
     if (q_rank < k) {
-      std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
-      std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
-      std::free(selected_vectors); std::free(theta); std::free(tmp);
-      std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+      cleanup();
       return -4;
     }
     *q_rank_final_out = q_rank;
@@ -5818,10 +5797,7 @@ static int native_lobpcg_run(void* impl,
     status = apply(impl, EIGENCORE_TRANSPOSE_NONE, q_rank, Q, n,
                    1.0, 0.0, AQ, n, &workspace);
     if (status != 0) {
-      std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
-      std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
-      std::free(selected_vectors); std::free(theta); std::free(tmp);
-      std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+      cleanup();
       return status;
     }
     ++(*matvecs_out);
@@ -5843,10 +5819,7 @@ static int native_lobpcg_run(void* impl,
     F77_CALL(dsyev)(&jobz, &uplo, &q_rank, H, &q_rank, theta,
                     dsyev_work, &lwork, &info FCONE FCONE);
     if (info != 0) {
-      std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
-      std::free(W); std::free(S); std::free(Q); std::free(AQ); std::free(H);
-      std::free(selected_vectors); std::free(theta); std::free(tmp);
-      std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+      cleanup();
       return -3;
     }
     selected_ritz_indices(theta, q_rank, k, target_kind, selected);
@@ -5878,11 +5851,7 @@ static int native_lobpcg_run(void* impl,
   }
 
   std::memcpy(X_out, X, sizeof(double) * nk);
-  std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
-  std::free(BX); std::free(BXnext); std::free(W); std::free(S);
-  std::free(Q); std::free(AQ); std::free(BQ); std::free(H);
-  std::free(selected_vectors); std::free(theta); std::free(tmp);
-  std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
+  cleanup();
   return 0;
 }
 
