@@ -177,6 +177,27 @@ test_that("native block thick-restart production path agrees with R oracle on cl
   expect_gt(fit$restart$locking_events, 0L)
 })
 
+test_that("native block thick-restart falls back rather than returning duplicate low-residual Ritz directions", {
+  A <- random_symmetric_with_spectrum(200L, pattern = "clustered", seed = 1L)
+  truth <- sort(spectrum_pattern("clustered", 200L), decreasing = TRUE)[seq_len(5L)]
+
+  fit <- eig_partial(
+    A,
+    k = 5L,
+    target = largest(),
+    method = lanczos(block = 2L, max_subspace = 35L, max_restarts = 100L),
+    seed = 1L,
+    tol = 1e-8
+  )
+
+  expect_true(isTRUE(fit$restart$fallback_used))
+  expect_match(fit$warnings, "failed certification", fixed = TRUE)
+  expect_true(certificate(fit)$passed)
+  expect_lt(certificate(fit)$max_orthogonality_loss, 1e-8)
+  expect_equal(values(fit), truth, tolerance = 1e-6)
+  expect_lt(max(abs(crossprod(vectors(fit)) - diag(5L))), 1e-8)
+})
+
 test_that("native block thick-restart production path preserves target taxonomy", {
   A <- diag(c(-9, 7, -2, 0.5, 0.1, 3))
   method <- lanczos(block = 2L, max_subspace = 6L, max_restarts = 20L)

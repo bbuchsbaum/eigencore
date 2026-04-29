@@ -319,6 +319,53 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
     )
   }
 
+  block_restart <- list(
+    kind = "block_thick_restart_candidate",
+    implemented = TRUE,
+    locking = "in_native_loop",
+    locked = locked,
+    locked_count = iter$n_locked %||% sum(iter$converged),
+    restarts_used = restarts_used,
+    max_restarts = max_restarts,
+    max_subspace = m_max,
+    final_active_subspace = iter$m_active_final %||% NA_integer_,
+    block = block,
+    ortho_passes = ortho_passes,
+    locking_events = locking_events,
+    operator_allocations = operator_allocations,
+    operator_bytes_allocated = operator_bytes_allocated,
+    stage_seconds = stage_seconds,
+    history = restart_history
+  )
+
+  if (!isTRUE(cert$passed) && is.matrix(source) && is.double(source)) {
+    fallback <- native_block_full_subspace_hermitian(
+      op,
+      k = k,
+      target = target,
+      tol = tol,
+      block = block,
+      max_subspace = n,
+      max_restarts = max_restarts,
+      vectors = vectors
+    )
+    fallback$restarts <- restarts_used
+    fallback$ortho_passes <- ortho_passes
+    fallback$locking_events <- locking_events
+    fallback$operator_allocations <- operator_allocations
+    fallback$operator_bytes_allocated <- operator_bytes_allocated
+    fallback$stage_seconds <- stage_seconds
+    fallback$convergence_history <- restart_history
+    fallback$locked <- seq_len(sum(fallback$certificate$converged))
+    fallback$restart$kind <- "block_dense_lapack_certificate_fallback"
+    fallback$restart$fallback_used <- TRUE
+    fallback$restart$fallback_reason <- "native block Lanczos certificate failed"
+    fallback$restart$failed_block_certificate <- cert
+    fallback$restart$failed_block_restart <- block_restart
+    fallback$restart$history <- restart_history
+    return(fallback)
+  }
+
   list(
     values = values,
     vectors = vec_matrix,
@@ -337,24 +384,7 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
     stage_seconds = stage_seconds,
     convergence_history = restart_history,
     locked = locked,
-    restart = list(
-      kind = "block_thick_restart_candidate",
-      implemented = TRUE,
-      locking = "in_native_loop",
-      locked = locked,
-      locked_count = iter$n_locked %||% sum(iter$converged),
-      restarts_used = restarts_used,
-      max_restarts = max_restarts,
-      max_subspace = m_max,
-      final_active_subspace = iter$m_active_final %||% NA_integer_,
-      block = block,
-      ortho_passes = ortho_passes,
-      locking_events = locking_events,
-      operator_allocations = operator_allocations,
-      operator_bytes_allocated = operator_bytes_allocated,
-      stage_seconds = stage_seconds,
-      history = restart_history
-    )
+    restart = block_restart
   )
 }
 
@@ -395,6 +425,9 @@ native_block_full_subspace_hermitian <- function(op, k, target, tol, block,
   list(
     values = values,
     vectors = vec_matrix,
+    residuals = cert$residuals,
+    backward_error = cert$backward_error,
+    orthogonality = cert$orthogonality,
     certificate = cert,
     iterations = 1L,
     matvecs = 0L,

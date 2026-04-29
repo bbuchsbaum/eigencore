@@ -2589,13 +2589,23 @@ static int vector_is_independent_from_locked(const double* V_locked,
                                              const double* v,
                                              int n) {
   const double dot_tol = 10.0 * sqrt(DBL_EPSILON);
+  const double vnorm = trl_norm2(v, n);
+  if (vnorm <= DBL_EPSILON) {
+    return 0;
+  }
   for (int col = 0; col < n_locked; ++col) {
     long double dot = 0.0L;
+    long double locked_ss = 0.0L;
     const double* locked = V_locked + static_cast<int64_t>(col) * n;
     for (int row = 0; row < n; ++row) {
       dot += static_cast<long double>(locked[row]) * v[row];
+      locked_ss += static_cast<long double>(locked[row]) * locked[row];
     }
-    if (fabs(static_cast<double>(dot)) > dot_tol) {
+    const double locked_norm = sqrt(static_cast<double>(locked_ss));
+    if (locked_norm <= DBL_EPSILON) {
+      continue;
+    }
+    if (fabs(static_cast<double>(dot)) > dot_tol * locked_norm * vnorm) {
       return 0;
     }
   }
@@ -4445,6 +4455,7 @@ struct BlockLanczosBestSnapshot {
   std::vector<double> lambda;
   std::vector<double> residuals;
   std::vector<int> converged;
+  std::vector<double> candidate_V;
   std::vector<int> candidate_converged;
   int filled = 0;
   int locked_prefix = 0;
@@ -4456,6 +4467,7 @@ struct BlockLanczosBestSnapshot {
       lambda(static_cast<size_t>(k_target), 0.0),
       residuals(static_cast<size_t>(k_target), R_PosInf),
       converged(static_cast<size_t>(k_target), 0),
+      candidate_V(static_cast<size_t>(n) * static_cast<size_t>(k_target), 0.0),
       candidate_converged(static_cast<size_t>(k_target), 0) {}
 };
 
@@ -4548,6 +4560,9 @@ static void block_lanczos_maybe_capture_best_snapshot(
   double candidate_max_backward_error = 0.0;
   for (; candidate_count < n_locked && candidate_count < k_target; ++candidate_count) {
     const double* vec = V_out + static_cast<int64_t>(candidate_count) * n;
+    std::memcpy(best->candidate_V.data() + static_cast<int64_t>(candidate_count) * n,
+                vec,
+                sizeof(double) * static_cast<size_t>(n));
     const double scale_i = standard_eigen_lock_scale(
       norm_a, lambda_out[candidate_count], vec, n
     );
@@ -4567,6 +4582,9 @@ static void block_lanczos_maybe_capture_best_snapshot(
     }
     const int idx = buf->selected[p];
     const double* vec = buf->B_v + static_cast<int64_t>(p) * n;
+    if (!vector_is_independent_from_locked(best->candidate_V.data(), candidate_count, vec, n)) {
+      continue;
+    }
     const double scale_i = standard_eigen_lock_scale(
       norm_a, buf->theta[idx], vec, n
     );
@@ -4579,6 +4597,9 @@ static void block_lanczos_maybe_capture_best_snapshot(
     if (best->candidate_converged[static_cast<size_t>(candidate_count)]) {
       ++candidate_nconv;
     }
+    std::memcpy(best->candidate_V.data() + static_cast<int64_t>(candidate_count) * n,
+                vec,
+                sizeof(double) * static_cast<size_t>(n));
     ++candidate_count;
   }
   if (candidate_count != k_target ||
@@ -4589,10 +4610,10 @@ static void block_lanczos_maybe_capture_best_snapshot(
   }
 
   int out_col = 0;
+  std::memcpy(best->V.data(), best->candidate_V.data(),
+              sizeof(double) * static_cast<size_t>(n) *
+                static_cast<size_t>(k_target));
   for (; out_col < n_locked && out_col < k_target; ++out_col) {
-    std::memcpy(best->V.data() + static_cast<int64_t>(out_col) * n,
-                V_out + static_cast<int64_t>(out_col) * n,
-                sizeof(double) * static_cast<size_t>(n));
     best->lambda[static_cast<size_t>(out_col)] = lambda_out[out_col];
     best->residuals[static_cast<size_t>(out_col)] = residuals_out[out_col];
   }
@@ -4601,9 +4622,10 @@ static void block_lanczos_maybe_capture_best_snapshot(
       continue;
     }
     const int idx = buf->selected[p];
-    std::memcpy(best->V.data() + static_cast<int64_t>(out_col) * n,
-                buf->B_v + static_cast<int64_t>(p) * n,
-                sizeof(double) * static_cast<size_t>(n));
+    const double* vec = buf->B_v + static_cast<int64_t>(p) * n;
+    if (!vector_is_independent_from_locked(best->V.data(), out_col, vec, n)) {
+      continue;
+    }
     best->lambda[static_cast<size_t>(out_col)] = buf->theta[idx];
     best->residuals[static_cast<size_t>(out_col)] = buf->ritz_res[p];
     ++out_col;
@@ -4794,8 +4816,12 @@ static int block_lanczos_finalize_return(
         continue;
       }
       const int idx = buf->selected[p];
+      const double* vec = buf->B_v + static_cast<int64_t>(p) * n;
+      if (!vector_is_independent_from_locked(V_out, n_returned, vec, n)) {
+        continue;
+      }
       std::memcpy(V_out + static_cast<int64_t>(n_returned) * n,
-                  buf->B_v + static_cast<int64_t>(p) * n,
+                  vec,
                   sizeof(double) * static_cast<size_t>(n));
       lambda_out[n_returned] = buf->theta[idx];
       residuals_out[n_returned] = buf->ritz_res[p];

@@ -157,6 +157,12 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
         "/",
         iter$restart$max_subspace %||% NA_integer_
       )
+    } else if (isTRUE(iter$restart$fallback_used)) {
+      paste0(
+        "native block Lanczos failed certification; used ",
+        iter$restart$kind,
+        " for a certified result"
+      )
     } else {
       character()
     }
