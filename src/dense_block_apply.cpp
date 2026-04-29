@@ -6953,7 +6953,7 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(
   const int max_restarts = static_cast<int>(asInteger(max_restarts_));
   const double norm_a = asReal(norm_a_);
   if (k < 1) error("k must be >= 1");
-  if (block_size < 2) error("block_size must be >= 2");
+  if (block_size < 1) error("block_size must be >= 1");
   if (INTEGER(dimS)[1] != block_size) error("start block has wrong number of columns");
   if (m_max < k + block_size) error("m_max must be >= k + block_size");
   if (m_max > n) error("m_max must be <= nrow(A)");
@@ -7028,7 +7028,7 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_csc(
   const int max_restarts = static_cast<int>(asInteger(max_restarts_));
   const double norm_a = asReal(norm_a_);
   if (k < 1) error("k must be >= 1");
-  if (block_size < 2) error("block_size must be >= 2");
+  if (block_size < 1) error("block_size must be >= 1");
   if (INTEGER(dimS)[1] != block_size) error("start block has wrong number of columns");
   if (m_max < k + block_size) error("m_max must be >= k + block_size");
   if (m_max > n) error("m_max must be <= nrow(A)");

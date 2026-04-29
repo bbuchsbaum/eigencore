@@ -98,7 +98,8 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
 #' @keywords internal
 native_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
                                      maxit = NULL, max_restarts = NULL,
-                                     vectors = TRUE) {
+                                     vectors = TRUE,
+                                     .use_block_kernel = TRUE) {
   op <- as_operator(op)
   if (op$dim[1L] != op$dim[2L]) {
     stop("Native Hermitian Lanczos requires a square operator.", call. = FALSE)
@@ -124,6 +125,40 @@ native_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
       stop("max_restarts must be non-negative.", call. = FALSE)
     }
   }
+  if (isTRUE(.use_block_kernel)) {
+    out <- native_block_lanczos_hermitian(
+      op,
+      k = k,
+      target = target,
+      tol = tol,
+      maxit = m_max,
+      block = 1L,
+      max_restarts = max_restarts,
+      vectors = vectors,
+      full_subspace = FALSE
+    )
+    out$restart$kind <- "thick_restart"
+    if (is.data.frame(out$convergence_history)) {
+      out$convergence_history$iteration <- out$convergence_history$m_active
+      out$convergence_history$n_locked <- out$convergence_history$locked_after
+    }
+    if (isTRUE(vectors) && !is.null(out$vectors)) {
+      source <- source_or_null(op)
+      Av <- if (is.matrix(source) && is.double(source)) {
+        source %*% out$vectors
+      } else {
+        apply_operator(op, out$vectors)
+      }
+      residuals <- col_norms(Av - sweep(out$vectors, 2L, out$values, `*`))
+      cert <- certify_eigen_operator_residuals(op, out$values, out$vectors,
+                                               residuals, tol = tol)
+      out$residuals <- cert$residuals
+      out$backward_error <- cert$backward_error
+      out$orthogonality <- cert$orthogonality
+      out$certificate <- cert
+    }
+    out
+  } else {
 
   start <- stats::rnorm(n)
   storage <- op$metadata$storage %||% NULL
@@ -194,13 +229,15 @@ native_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
       final_active_subspace = iter$m_active_final %||% NA_integer_
     )
   )
+  }
 }
 
 #' @keywords internal
 native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
                                            maxit = NULL, block = 2L,
                                            max_restarts = 100L,
-                                           vectors = TRUE) {
+                                           vectors = TRUE,
+                                           full_subspace = TRUE) {
   op <- as_operator(op)
   if (op$dim[1L] != op$dim[2L]) {
     stop("Native block Hermitian Lanczos requires a square operator.", call. = FALSE)
@@ -211,8 +248,8 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
 
   n <- op$dim[1L]
   block <- as.integer(block)
-  if (length(block) != 1L || is.na(block) || block < 2L) {
-    stop("native block Hermitian Lanczos requires block >= 2.", call. = FALSE)
+  if (length(block) != 1L || is.na(block) || block < 1L) {
+    stop("native block Hermitian Lanczos requires block >= 1.", call. = FALSE)
   }
   m_max <- if (is.null(maxit)) {
     min(n, default_block_lanczos_max_subspace(k, block))
@@ -231,7 +268,7 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
   storage <- op$metadata$storage %||% NULL
   source <- source_or_null(op)
   target_kind <- lanczos_target_kind(target)
-  if (is.matrix(source) && is.double(source) && m_max >= n) {
+  if (isTRUE(full_subspace) && is.matrix(source) && is.double(source) && m_max >= n) {
     return(native_block_full_subspace_hermitian(
       op,
       k = k,
@@ -362,7 +399,8 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
         tol = tol,
         maxit = m_max,
         max_restarts = max_restarts,
-        vectors = vectors
+        vectors = vectors,
+        .use_block_kernel = FALSE
       )
     }
     fallback$restarts <- restarts_used
