@@ -167,6 +167,40 @@ test_that("native block Golub-Kahan basis cycle certifies dense and CSC full sub
   }
 })
 
+test_that("retained block Golub-Kahan restart ABI fixes the native implementation contract", {
+  set.seed(701)
+  A <- Matrix::t(Matrix::rsparsematrix(600, 90, density = 0.03))
+  abi <- eigencore:::native_block_golub_kahan_retained_restart_abi(
+    A,
+    rank = 5L,
+    block = 2L,
+    max_attempts = 4L,
+    target = largest()
+  )
+
+  expect_s3_class(abi, "eigencore_block_golub_kahan_retained_restart_abi")
+  expect_equal(abi$version, 1L)
+  expect_false(abi$implemented)
+  expect_equal(abi$native_storage, "dgCMatrix")
+  expect_equal(abi$input_schema$initial_start, c(ncol(A), 2L))
+  expect_equal(abi$input_schema$tail_layout, "column-major n x (block * restart_count)")
+  expect_true(all(diff(abi$max_subspace_sequence) > 0L))
+  expect_lte(max(abi$max_subspace_sequence), ncol(A))
+  expect_true("Avectors" %in% abi$output_schema)
+  expect_true(any(grepl("no R-side restart block construction", abi$invariants, fixed = TRUE)))
+  expect_true(any(grepl("transformed together", abi$invariants, fixed = TRUE)))
+  expect_equal(unname(abi$entry_points[["csc"]]),
+               "eigencore_block_golub_kahan_csc_retained_cycle")
+
+  dense_abi <- eigencore:::native_block_golub_kahan_retained_restart_abi(
+    as.matrix(A),
+    rank = 5L,
+    block = 2L,
+    max_attempts = 2L
+  )
+  expect_equal(dense_abi$native_storage, "double_matrix")
+})
+
 test_that("native block Golub-Kahan basis cycle records adaptive subspace attempts", {
   set.seed(702)
   A <- Matrix::t(Matrix::rsparsematrix(600, 90, density = 0.03))

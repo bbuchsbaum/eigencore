@@ -525,6 +525,119 @@ native_block_golub_kahan_fit <- function(op, max_subspace, rank,
   }
 }
 
+#' @keywords internal
+native_block_golub_kahan_retained_restart_abi <- function(op, rank,
+                                                          target = largest(),
+                                                          block = NULL,
+                                                          max_attempts = NULL,
+                                                          max_subspace = NULL,
+                                                          adaptive_start = c("ritz")) {
+  adaptive_start <- match.arg(adaptive_start, choices = c("ritz"))
+  op <- as_operator(op)
+  if (is.null(op$apply_adjoint)) {
+    stop("Retained block Golub-Kahan restart ABI requires an adjoint operator.",
+         call. = FALSE)
+  }
+  storage <- op$metadata$storage %||% NULL
+  source <- source_or_null(op)
+  native_storage <- if (identical(storage, "dgCMatrix")) {
+    "dgCMatrix"
+  } else if (is.matrix(source) && is.double(source)) {
+    "double_matrix"
+  } else {
+    NA_character_
+  }
+  if (is.na(native_storage)) {
+    stop("Retained block Golub-Kahan restart ABI currently supports dense double matrices and dgCMatrix operators only.",
+         call. = FALSE)
+  }
+
+  n <- op$dim[[2L]]
+  rank <- min(as.integer(rank), min(op$dim))
+  if (length(rank) != 1L || is.na(rank) || rank < 1L) {
+    stop("rank must be a positive integer.", call. = FALSE)
+  }
+  block <- as.integer(block %||% min(8L, max(2L, ceiling(rank / 4))))
+  if (length(block) != 1L || is.na(block) || block < 1L) {
+    stop("block must be a positive integer.", call. = FALSE)
+  }
+  initial_max_subspace <- min(
+    n,
+    as.integer(max_subspace %||% max(3L * rank + 20L, 6L * block + 20L))
+  )
+  if (length(initial_max_subspace) != 1L || is.na(initial_max_subspace) ||
+      initial_max_subspace < rank) {
+    stop("max_subspace must be at least rank.", call. = FALSE)
+  }
+  max_attempts <- as.integer(max_attempts %||% 4L)
+  if (length(max_attempts) != 1L || is.na(max_attempts) || max_attempts < 1L) {
+    stop("max_attempts must be a positive integer.", call. = FALSE)
+  }
+
+  subspaces <- integer(max_attempts)
+  subspaces[[1L]] <- initial_max_subspace
+  if (max_attempts > 1L) {
+    for (attempt in seq.int(2L, max_attempts)) {
+      previous <- subspaces[[attempt - 1L]]
+      subspaces[[attempt]] <- min(
+        n,
+        max(
+          previous + max(2L * rank, 4L * block, 10L),
+          as.integer(ceiling(1.5 * previous))
+        )
+      )
+    }
+  }
+  if (any(diff(subspaces) <= 0L)) {
+    subspaces <- subspaces[c(TRUE, diff(subspaces) > 0L)]
+  }
+
+  structure(
+    list(
+      version = 1L,
+      implemented = FALSE,
+      entry_points = c(
+        dense = "eigencore_block_golub_kahan_dense_retained_cycle",
+        csc = "eigencore_block_golub_kahan_csc_retained_cycle"
+      ),
+      native_storage = native_storage,
+      dim = op$dim,
+      rank = rank,
+      target_kind = native_svd_target_kind(target),
+      policy = adaptive_start,
+      block = block,
+      max_attempts = length(subspaces),
+      max_subspace_sequence = subspaces,
+      input_schema = list(
+        initial_start = c(n, block),
+        random_tails = c(n, block, max(0L, length(subspaces) - 1L)),
+        tail_layout = "column-major n x (block * restart_count)",
+        operator = native_storage
+      ),
+      retained_state = c(
+        "right Ritz vectors V_keep",
+        "cached operator images A V_keep",
+        "native basis workspace V/AV/U",
+        "orthogonalization scratch",
+        "attempt history"
+      ),
+      output_schema = c(
+        "d", "u", "v", "Avectors", "certificate diagnostics",
+        "iterations", "matvecs", "ortho_passes", "attempt_history",
+        "stage_seconds"
+      ),
+      invariants = c(
+        "no R-side restart block construction after entry",
+        "retained V_keep and A V_keep are transformed together after QR normalization",
+        "certification uses original operator coordinates",
+        "attempt history fields match native_block_golub_kahan_cycle_svd()",
+        "default policy is Ritz-plus-random until a benchmark proves otherwise"
+      )
+    ),
+    class = "eigencore_block_golub_kahan_retained_restart_abi"
+  )
+}
+
 block_golub_kahan_normalize_cached_start <- function(start, start_av) {
   if (is.null(start_av)) {
     return(list(start = start, start_av = NULL))
