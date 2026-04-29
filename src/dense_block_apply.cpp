@@ -2859,18 +2859,28 @@ struct BlockGolubKahanBasisScratch {
   double* coeff = nullptr;
   double* tmp = nullptr;
   size_t bytes = 0;
+  bool transient = false;
 };
 
+static double* eigencore_r_alloc_zero_doubles(size_t n) {
+  double* out = reinterpret_cast<double*>(R_alloc(n > 0 ? n : 1, sizeof(double)));
+  std::memset(out, 0, sizeof(double) * n);
+  return out;
+}
+
 static void block_golub_kahan_basis_scratch_free(BlockGolubKahanBasisScratch* scratch) {
-  std::free(scratch->Z_v);
-  std::free(scratch->Z_u);
-  std::free(scratch->coeff);
-  std::free(scratch->tmp);
+  if (!scratch->transient) {
+    std::free(scratch->Z_v);
+    std::free(scratch->Z_u);
+    std::free(scratch->coeff);
+    std::free(scratch->tmp);
+  }
   scratch->Z_v = nullptr;
   scratch->Z_u = nullptr;
   scratch->coeff = nullptr;
   scratch->tmp = nullptr;
   scratch->bytes = 0;
+  scratch->transient = false;
 }
 
 static int block_golub_kahan_basis_scratch_alloc(BlockGolubKahanBasisScratch* scratch,
@@ -2884,15 +2894,11 @@ static int block_golub_kahan_basis_scratch_alloc(BlockGolubKahanBasisScratch* sc
   const size_t coeff_elems = static_cast<size_t>(coeff_rows) *
     static_cast<size_t>(block_size);
   const size_t tmp_len = static_cast<size_t>((m > n) ? m : n);
-  scratch->Z_v = static_cast<double*>(std::calloc(nb, sizeof(double)));
-  scratch->Z_u = static_cast<double*>(std::calloc(mb, sizeof(double)));
-  scratch->coeff = static_cast<double*>(std::calloc(coeff_elems, sizeof(double)));
-  scratch->tmp = static_cast<double*>(std::calloc(tmp_len, sizeof(double)));
-  if (scratch->Z_v == nullptr || scratch->Z_u == nullptr ||
-      scratch->coeff == nullptr || scratch->tmp == nullptr) {
-    block_golub_kahan_basis_scratch_free(scratch);
-    return -2;
-  }
+  scratch->Z_v = eigencore_r_alloc_zero_doubles(nb);
+  scratch->Z_u = eigencore_r_alloc_zero_doubles(mb);
+  scratch->coeff = eigencore_r_alloc_zero_doubles(coeff_elems);
+  scratch->tmp = eigencore_r_alloc_zero_doubles(tmp_len);
+  scratch->transient = true;
   scratch->bytes = (nb + mb + coeff_elems + tmp_len) * sizeof(double);
   return 0;
 }
@@ -8278,15 +8284,19 @@ struct BlockGolubKahanFitArrays {
   double* V = nullptr;
   double* AV = nullptr;
   double* U = nullptr;
+  bool transient = false;
 };
 
 static void block_golub_kahan_fit_arrays_free(BlockGolubKahanFitArrays* arrays) {
-  std::free(arrays->V);
-  std::free(arrays->AV);
-  std::free(arrays->U);
+  if (!arrays->transient) {
+    std::free(arrays->V);
+    std::free(arrays->AV);
+    std::free(arrays->U);
+  }
   arrays->V = nullptr;
   arrays->AV = nullptr;
   arrays->U = nullptr;
+  arrays->transient = false;
 }
 
 static int block_golub_kahan_fit_arrays_alloc(BlockGolubKahanFitArrays* arrays,
@@ -8295,13 +8305,10 @@ static int block_golub_kahan_fit_arrays_alloc(BlockGolubKahanFitArrays* arrays,
                                               int max_subspace) {
   const size_t nv = static_cast<size_t>(n) * static_cast<size_t>(max_subspace);
   const size_t mv = static_cast<size_t>(m) * static_cast<size_t>(max_subspace);
-  arrays->V = static_cast<double*>(std::malloc(nv * sizeof(double)));
-  arrays->AV = static_cast<double*>(std::malloc(mv * sizeof(double)));
-  arrays->U = static_cast<double*>(std::malloc(mv * sizeof(double)));
-  if (arrays->V == nullptr || arrays->AV == nullptr || arrays->U == nullptr) {
-    block_golub_kahan_fit_arrays_free(arrays);
-    return -1;
-  }
+  arrays->V = reinterpret_cast<double*>(R_alloc(nv > 0 ? nv : 1, sizeof(double)));
+  arrays->AV = reinterpret_cast<double*>(R_alloc(mv > 0 ? mv : 1, sizeof(double)));
+  arrays->U = reinterpret_cast<double*>(R_alloc(mv > 0 ? mv : 1, sizeof(double)));
+  arrays->transient = true;
   return 0;
 }
 
