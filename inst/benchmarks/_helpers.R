@@ -1266,6 +1266,13 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
       fallback_used = result_restart_logical(fit, "fallback_used"),
       fallback_method = result_restart_field(fit, "fallback_method"),
       gram_max_backward_error = result_restart_numeric(fit, "gram_max_backward_error"),
+      native_gram_eigensolver = result_restart_character(fit, "native_gram_eigensolver"),
+      normal_operator_implicit = result_restart_logical(fit, "normal_operator_implicit"),
+      materialized_gram = result_restart_logical(fit, "materialized_gram"),
+      native_implicit_normal_lanczos_max_backward_error =
+        result_restart_numeric(fit, "native_implicit_normal_lanczos_max_backward_error"),
+      native_implicit_normal_lanczos_iterations =
+        result_restart_integer(fit, "native_implicit_normal_lanczos_iterations"),
       fallback_max_backward_error = result_restart_numeric(fit, "fallback_max_backward_error"),
       preconditioner_kind = result_preconditioner_field(fit, "kind"),
       preconditioner_native = result_preconditioner_field(fit, "native"),

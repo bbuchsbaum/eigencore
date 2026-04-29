@@ -183,6 +183,8 @@ test_that("wide sparse Gram SVD uses native CSC left-Gram kernel", {
   expect_identical(fit$restart$native_gram_kernel, "csc_left_gram")
   expect_identical(fit$restart$native_gram_eigensolver, "lapack_dsyevr")
   expect_true(is.infinite(fit$restart$native_gram_subspace_max_backward_error))
+  expect_false(fit$restart$normal_operator_implicit)
+  expect_true(fit$restart$materialized_gram)
   expect_identical(fit$certificate$norm_bound_type, "frobenius_exact")
   expect_true(all(c("gram", "eigensolve", "vector_form", "diagnostics") %in%
                     names(fit$stage_seconds)))
@@ -205,6 +207,29 @@ test_that("wide sparse Gram SVD exposes opt-in certified subspace eigensolve", {
   expect_identical(fit$restart$kind, "gram_svd_special_case")
   expect_identical(fit$restart$native_gram_eigensolver, "subspace_iteration")
   expect_lte(fit$restart$native_gram_subspace_max_backward_error, 1e-8)
+  expect_equal(fit$d, c(10, 8), tolerance = 1e-10)
+  expect_certificate_clean(fit)
+})
+
+test_that("wide sparse Gram SVD exposes opt-in implicit normal Lanczos", {
+  old_options <- options(
+    eigencore.csc_left_normal_lanczos_attempt = TRUE,
+    eigencore.csc_left_gram_subspace_attempt = FALSE
+  )
+  on.exit(options(old_options), add = TRUE)
+  M <- cbind(
+    Matrix::Diagonal(x = c(10, 8, 6, 1, 0.5)),
+    Matrix::Matrix(0, 5, 20, sparse = TRUE)
+  )
+
+  fit <- svd_partial(M, rank = 2, target = largest(), tol = 1e-8)
+
+  expect_identical(fit$restart$kind, "gram_svd_special_case")
+  expect_identical(fit$restart$native_gram_eigensolver, "implicit_normal_lanczos")
+  expect_true(fit$restart$normal_operator_implicit)
+  expect_false(fit$restart$materialized_gram)
+  expect_lte(fit$restart$native_implicit_normal_lanczos_max_backward_error, 1e-8)
+  expect_lte(fit$restart$native_implicit_normal_lanczos_iterations, 5L)
   expect_equal(fit$d, c(10, 8), tolerance = 1e-10)
   expect_certificate_clean(fit)
 })
