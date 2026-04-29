@@ -34,6 +34,36 @@ shift_invert_apply_factory <- function(solve_fn) {
 }
 
 #' @keywords internal
+#' Small non-cryptographic digest of a numeric vector. Captures length,
+#' running sums, range, and a deterministic head/tail sample so two
+#' mathematically identical matrices map to identical fingerprints. Two
+#' distinct matrices with all summary statistics matching would collide,
+#' which is acceptable for shift-invert cache keys (collisions only matter
+#' if a user tries to reuse a factorization across truly distinct A).
+shift_invert_double_digest <- function(values) {
+  values <- as.numeric(values)
+  n <- length(values)
+  if (n == 0L) {
+    return("empty|0|0|0|0|0|")
+  }
+  finite <- is.finite(values)
+  fin_values <- values[finite]
+  head_n <- min(8L, n)
+  tail_n <- min(8L, n)
+  paste(
+    n,
+    format(sum(fin_values), digits = 17),
+    format(sum(fin_values * fin_values), digits = 17),
+    format(if (length(fin_values)) min(fin_values) else NA_real_, digits = 17),
+    format(if (length(fin_values)) max(fin_values) else NA_real_, digits = 17),
+    paste(format(values[seq_len(head_n)], digits = 17), collapse = "_"),
+    paste(format(values[seq.int(n - tail_n + 1L, n)], digits = 17), collapse = "_"),
+    sum(!finite),
+    sep = "|"
+  )
+}
+
+#' @keywords internal
 shift_invert_operator_fingerprint <- function(op) {
   op <- as_operator(op)
   source <- source_or_null(op)
@@ -44,24 +74,28 @@ shift_invert_operator_fingerprint <- function(op) {
       kind = "dense",
       dim = dim(source),
       storage_mode = storage.mode(source),
-      values = as.vector(source)
+      digest = shift_invert_double_digest(as.numeric(source))
     ))
   }
   if (inherits(matrix, "sparseMatrix")) {
     if (!inherits(matrix, "CsparseMatrix")) {
       matrix <- methods::as(matrix, "CsparseMatrix")
     }
+    i_slot <- methods::slot(matrix, "i")
+    p_slot <- methods::slot(matrix, "p")
+    x_slot <- if ("x" %in% methods::slotNames(matrix)) {
+      methods::slot(matrix, "x")
+    } else {
+      numeric(0)
+    }
     return(list(
       kind = storage %||% class(matrix)[[1L]],
       class = class(matrix),
       dim = methods::slot(matrix, "Dim"),
-      i = methods::slot(matrix, "i"),
-      p = methods::slot(matrix, "p"),
-      x = if ("x" %in% methods::slotNames(matrix)) {
-        methods::slot(matrix, "x")
-      } else {
-        numeric(0)
-      }
+      nnz = length(x_slot),
+      i_digest = shift_invert_double_digest(as.numeric(i_slot)),
+      p_digest = shift_invert_double_digest(as.numeric(p_slot)),
+      x_digest = shift_invert_double_digest(x_slot)
     ))
   }
   list(
@@ -177,6 +211,30 @@ shift_invert_solver_csc <- function(A, sigma) {
       )
     }
   )
+  # Cheap non-densifying near-singular diagnostic: min/max of |diag(U)| from
+  # the sparseLU factorization is O(n) work and stays sparse. A small ratio
+  # indicates a near-singular shifted operator without forming a dense rcond.
+  # This is an LU-pivot estimate, not a true condition number — it bounds
+  # the smallest singular value from above relative to the largest pivot.
+  u_diag_estimate <- tryCatch({
+    U_factor <- methods::slot(factor, "U")
+    u_diag <- abs(as.numeric(Matrix::diag(U_factor)))
+    if (length(u_diag) == 0L) {
+      list(min = NA_real_, max = NA_real_, ratio = NA_real_)
+    } else {
+      max_u <- max(u_diag, na.rm = TRUE)
+      min_u <- min(u_diag, na.rm = TRUE)
+      ratio <- if (is.finite(max_u) && max_u > 0) min_u / max_u else NA_real_
+      list(min = min_u, max = max_u, ratio = ratio)
+    }
+  }, error = function(e) {
+    list(min = NA_real_, max = NA_real_, ratio = NA_real_)
+  })
+  near_singular <- if (is.finite(u_diag_estimate$ratio)) {
+    u_diag_estimate$ratio <= sqrt(.Machine$double.eps)
+  } else {
+    NA
+  }
   list(
     solve_fn = function(X) {
       Z <- Matrix::solve(factor, X)
@@ -187,9 +245,15 @@ shift_invert_solver_csc <- function(A, sigma) {
     cache = list(
       factorization = "Matrix::lu",
       factorization_cached = TRUE,
-      condition_estimate = NA_real_,
-      condition_estimate_type = "uncomputed_sparse_no_dense_rcond",
-      near_singular = NA
+      condition_estimate = u_diag_estimate$ratio,
+      condition_estimate_type = if (is.finite(u_diag_estimate$ratio)) {
+        "sparse_lu_pivot_ratio"
+      } else {
+        "uncomputed_sparse_no_dense_rcond"
+      },
+      condition_estimate_min_pivot = u_diag_estimate$min,
+      condition_estimate_max_pivot = u_diag_estimate$max,
+      near_singular = near_singular
     )
   )
 }

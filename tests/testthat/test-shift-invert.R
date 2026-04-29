@@ -48,7 +48,10 @@ test_that("shift-invert handles a sparse CSC source via factorized solve", {
   expect_equal(cache$label_kind, "sparse_lu")
   expect_equal(cache$factorization, "Matrix::lu")
   expect_true(cache$factorization_cached)
-  expect_equal(cache$condition_estimate_type, "uncomputed_sparse_no_dense_rcond")
+  expect_equal(cache$condition_estimate_type, "sparse_lu_pivot_ratio")
+  expect_true(is.finite(cache$condition_estimate))
+  expect_gt(cache$condition_estimate, 0)
+  expect_false(isTRUE(cache$near_singular))
 })
 
 test_that("shift-invert accepts a user-supplied solve operator", {
