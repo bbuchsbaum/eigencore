@@ -374,6 +374,28 @@ is_dense_double_matrix <- function(x) {
 }
 
 #' @keywords internal
+#' Classifies an eigencore_operator into the native kernel kind it can be
+#' fed to: "csc" (dgCMatrix metadata), "dense" (dense double source), or
+#' NA_character_ when no native kernel is available. Centralizes the
+#' `identical(storage, "dgCMatrix") || (is.matrix(source) && is.double(source))`
+#' pattern that recurs across solve.R / reference_*.R predicates.
+native_kernel_kind <- function(op) {
+  if (identical(op$metadata$storage %||% NULL, "dgCMatrix")) {
+    return("csc")
+  }
+  src <- source_or_null(op)
+  if (is.matrix(src) && is.double(src)) {
+    return("dense")
+  }
+  NA_character_
+}
+
+#' @keywords internal
+has_native_kernel <- function(op) {
+  !is.na(native_kernel_kind(op))
+}
+
+#' @keywords internal
 common_dtype <- function(A, B) {
   if (identical(A$dtype, B$dtype)) A$dtype else "double"
 }

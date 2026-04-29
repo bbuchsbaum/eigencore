@@ -767,10 +767,7 @@ should_use_native_lanczos <- function(problem, method, k = NULL) {
   if (!identical(problem$structure$kind, "hermitian")) {
     return(FALSE)
   }
-  storage <- problem$A$metadata$storage %||% NULL
-  source <- source_or_null(problem$A)
-  is_supported <- identical(storage, "dgCMatrix") || (is.matrix(source) && is.double(source))
-  if (!isTRUE(is_supported)) {
+  if (!has_native_kernel(problem$A)) {
     return(FALSE)
   }
   if (!native_lanczos_target_supported(problem$target)) {
@@ -781,7 +778,8 @@ should_use_native_lanczos <- function(problem, method, k = NULL) {
   }
   inherits(method, "eigencore_method") &&
     identical(method$kind, "auto") &&
-    (identical(storage, "dgCMatrix") || auto_dense_partial_lanczos(problem, k))
+    (identical(native_kernel_kind(problem$A), "csc") ||
+       auto_dense_partial_lanczos(problem, k))
 }
 
 #' @keywords internal
@@ -987,10 +985,7 @@ should_use_native_golub_kahan <- function(problem, method) {
   if (is.null(problem$A$apply_adjoint)) {
     return(FALSE)
   }
-  storage <- problem$A$metadata$storage %||% NULL
-  source <- source_or_null(problem$A)
-  is_supported <- identical(storage, "dgCMatrix") || (is.matrix(source) && is.double(source))
-  if (!isTRUE(is_supported)) {
+  if (!has_native_kernel(problem$A)) {
     return(FALSE)
   }
   if (inherits(method, "eigencore_method") && identical(method$kind, "golub_kahan")) {
@@ -998,7 +993,7 @@ should_use_native_golub_kahan <- function(problem, method) {
   }
   inherits(method, "eigencore_method") &&
     identical(method$kind, "auto") &&
-    identical(storage, "dgCMatrix")
+    identical(native_kernel_kind(problem$A), "csc")
 }
 
 #' @keywords internal
@@ -1024,11 +1019,7 @@ should_use_native_gram_svd <- function(problem, method, rank = NULL) {
   if (!native_gram_svd_target_supported(problem$target)) {
     return(FALSE)
   }
-  storage <- problem$A$metadata$storage %||% NULL
-  source <- source_or_null(problem$A)
-  supported <- identical(storage, "dgCMatrix") ||
-    (is.matrix(source) && is.double(source))
-  if (!isTRUE(supported)) {
+  if (!has_native_kernel(problem$A)) {
     return(FALSE)
   }
   dims <- problem$A$dim
