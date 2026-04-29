@@ -221,3 +221,6 @@ they are machine-dependent.
   `constrained`, and `constraints_rank`. The quick sparse generalized smoke
   check now verifies that eigencore rows certify through the native
   B-orthogonal path rather than silently using dense/reference fallbacks.
+  The strict generalized LOBPCG gate now also emits native-contract rows for
+  bare, shifted-diagonal preconditioned, and constrained generalized paths, and
+  requires their native/preconditioner/constraint diagnostics to pass.

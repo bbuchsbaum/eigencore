@@ -65,8 +65,12 @@ with_case <- function(case, target, methods, requested, expr) {
 benchmark_generalized_lobpcg_case <- function(A, B, k, target = smallest(),
                                               methods = c("eigencore", "base"),
                                               iterations = 3L, tol = 1e-8,
-                                              seed = 1L, maxit = 200L) {
-  methods <- intersect(methods, c("eigencore", "base"))
+                                              seed = 1L, maxit = 200L,
+                                              constraints = NULL) {
+  methods <- intersect(
+    methods,
+    c("eigencore", "eigencore_shifted_diagonal", "eigencore_constrained", "base")
+  )
   rows <- lapply(methods, function(method) {
     timed <- run_timed({
       if (identical(method, "eigencore")) {
@@ -76,6 +80,30 @@ benchmark_generalized_lobpcg_case <- function(A, B, k, target = smallest(),
           k = k,
           target = target,
           method = lobpcg(maxit = maxit),
+          tol = tol,
+          allow_dense_fallback = "never"
+        )
+      } else if (identical(method, "eigencore_shifted_diagonal")) {
+        preconditioner <- shifted_diagonal_preconditioner(Matrix::diag(A), shift = 1e-3)
+        eig_partial(
+          A,
+          B = B,
+          k = k,
+          target = target,
+          method = lobpcg(maxit = maxit, preconditioner = preconditioner),
+          tol = tol,
+          allow_dense_fallback = "never"
+        )
+      } else if (identical(method, "eigencore_constrained")) {
+        if (is.null(constraints)) {
+          constraints <- matrix(c(1, rep(0, nrow(A) - 1L)), ncol = 1L)
+        }
+        eig_partial(
+          A,
+          B = B,
+          k = k,
+          target = target,
+          method = lobpcg(maxit = maxit, constraints = constraints),
           tol = tol,
           allow_dense_fallback = "never"
         )
@@ -131,29 +159,127 @@ benchmark_generalized_lobpcg_case <- function(A, B, k, target = smallest(),
   do.call(rbind, rows)
 }
 
+generalized_lobpcg_native_contract <- function(rows) {
+  internal <- rows[rows$method %in% c(
+    "eigencore",
+    "eigencore_shifted_diagonal",
+    "eigencore_constrained"
+  ), , drop = FALSE]
+  if (!nrow(internal)) {
+    return(data.frame())
+  }
+  out <- lapply(seq_len(nrow(internal)), function(i) {
+    row <- internal[i, , drop = FALSE]
+    certified <- isTRUE(row$certificate_passed) && row$nconv >= row$requested
+    native_gate <- certified &&
+      isTRUE(row$native) &&
+      isTRUE(row$native_kernels) &&
+      isTRUE(row$generalized) &&
+      isTRUE(row$orthogonalization_native)
+    preconditioner_gate <- if (identical(row$method, "eigencore_shifted_diagonal")) {
+      identical(row$preconditioner_kind, "shifted_diagonal") &&
+        isTRUE(row$preconditioner_native) &&
+        isTRUE(row$preconditioner_calls > 0L)
+    } else {
+      TRUE
+    }
+    constraint_gate <- if (identical(row$method, "eigencore_constrained")) {
+      isTRUE(row$constrained) && isTRUE(row$constraints_rank > 0L)
+    } else {
+      TRUE
+    }
+    data.frame(
+      case = row$case,
+      method = row$method,
+      requested = row$requested,
+      nconv = row$nconv,
+      native_gate = native_gate,
+      preconditioner_gate = preconditioner_gate,
+      constraint_gate = constraint_gate,
+      passed = native_gate && preconditioner_gate && constraint_gate,
+      stringsAsFactors = FALSE
+    )
+  })
+  out <- do.call(rbind, out)
+  row.names(out) <- NULL
+  out
+}
+
 case_specs <- if (args$quick) {
   list(
-    list(case = "sparse_generalized_path_smallest", n = 80L, k = 3L, target = smallest(), sparse = TRUE),
-    list(case = "sparse_generalized_path_largest", n = 80L, k = 3L, target = largest(), sparse = TRUE)
+    list(
+      case = "sparse_generalized_path_smallest",
+      n = 80L, k = 3L, target = smallest(), sparse = TRUE,
+      methods = c("eigencore", "eigencore_shifted_diagonal", "base"),
+      subject = "eigencore"
+    ),
+    list(
+      case = "sparse_generalized_path_largest",
+      n = 80L, k = 3L, target = largest(), sparse = TRUE,
+      methods = c("eigencore", "eigencore_shifted_diagonal", "base"),
+      subject = "eigencore"
+    ),
+    list(
+      case = "diagonal_generalized_constrained_largest",
+      n = 8L, k = 2L, target = largest(), sparse = FALSE,
+      methods = c("eigencore_constrained", "base"),
+      subject = "eigencore_constrained",
+      A = Matrix::Diagonal(x = c(0, 1, 4, 9, 16, 25, 36, 49)),
+      B = Matrix::Diagonal(x = c(1, 2, 3, 4, 5, 6, 7, 8)),
+      constraints = matrix(c(1, rep(0, 7L)), ncol = 1L)
+    )
   )
 } else {
   list(
-    list(case = "sparse_generalized_path_smallest", n = 500L, k = 10L, target = smallest(), sparse = TRUE),
-    list(case = "sparse_generalized_path_largest", n = 500L, k = 10L, target = largest(), sparse = TRUE),
-    list(case = "dense_generalized_partial_smallest", n = 180L, k = 8L, target = smallest(), sparse = FALSE),
-    list(case = "dense_generalized_partial_largest", n = 180L, k = 8L, target = largest(), sparse = FALSE)
+    list(
+      case = "sparse_generalized_path_smallest",
+      n = 500L, k = 10L, target = smallest(), sparse = TRUE,
+      methods = c("eigencore", "eigencore_shifted_diagonal", "base"),
+      subject = "eigencore"
+    ),
+    list(
+      case = "sparse_generalized_path_largest",
+      n = 500L, k = 10L, target = largest(), sparse = TRUE,
+      methods = c("eigencore", "eigencore_shifted_diagonal", "base"),
+      subject = "eigencore"
+    ),
+    list(
+      case = "dense_generalized_partial_smallest",
+      n = 180L, k = 8L, target = smallest(), sparse = FALSE,
+      methods = c("eigencore", "eigencore_shifted_diagonal", "base"),
+      subject = "eigencore"
+    ),
+    list(
+      case = "dense_generalized_partial_largest",
+      n = 180L, k = 8L, target = largest(), sparse = FALSE,
+      methods = c("eigencore", "eigencore_shifted_diagonal", "base"),
+      subject = "eigencore"
+    ),
+    list(
+      case = "diagonal_generalized_constrained_largest",
+      n = 80L, k = 8L, target = largest(), sparse = FALSE,
+      methods = c("eigencore_constrained", "base"),
+      subject = "eigencore_constrained",
+      A = Matrix::Diagonal(x = c(0, seq(1, 79)^2)),
+      B = Matrix::Diagonal(x = seq(1, 80)),
+      constraints = matrix(c(1, rep(0, 79L)), ncol = 1L)
+    )
   )
 }
 
-methods <- c("eigencore", "base")
 rows <- lapply(seq_along(case_specs), function(i) {
   spec <- case_specs[[i]]
-  pair <- generalized_spd_pair(
-    spec$n,
-    rank = min(12L, spec$n),
-    sparse = spec$sparse,
-    seed = 12000L + spec$n + i
-  )
+  pair <- if (!is.null(spec$A) && !is.null(spec$B)) {
+    list(A = spec$A, B = spec$B)
+  } else {
+    generalized_spd_pair(
+      spec$n,
+      rank = min(12L, spec$n),
+      sparse = spec$sparse,
+      seed = 12000L + spec$n + i
+    )
+  }
+  methods <- spec$methods %||% c("eigencore", "base")
   with_case(
     spec$case,
     eigencore:::target_label(spec$target),
@@ -167,19 +293,24 @@ rows <- lapply(seq_along(case_specs), function(i) {
       methods = methods,
       iterations = iterations,
       tol = tol,
-      seed = 12100L + spec$n + spec$k + i
+      seed = 12100L + spec$n + spec$k + i,
+      constraints = spec$constraints %||% NULL
     )
   )
 })
 rows <- do.call(rbind, rows)
 row.names(rows) <- NULL
+case_by_name <- stats::setNames(case_specs, vapply(case_specs, `[[`, character(1), "case"))
 
 gate_rows <- lapply(split(rows, rows$case), function(case_rows) {
   requested <- unique(case_rows$requested)
+  spec <- case_by_name[[unique(case_rows$case)]]
+  subject <- spec$subject %||% "eigencore"
+  internal_methods <- c("eigencore", "eigencore_shifted_diagonal", "eigencore_constrained")
   gate <- evaluate_reference_gate(
     case_rows,
-    subject = "eigencore",
-    references = setdiff(unique(case_rows$method), "eigencore"),
+    subject = subject,
+    references = setdiff(unique(case_rows$method), internal_methods),
     requested = requested[[1L]],
     speed_ratio_required = if (args$quick) 0 else release_speed_gate("generalized_eigen"),
     memory_ratio_required = if (args$quick) 0 else release_memory_gate("generalized_eigen")
@@ -191,17 +322,21 @@ gate_rows <- lapply(split(rows, rows$case), function(case_rows) {
 })
 gates <- do.call(rbind, gate_rows)
 row.names(gates) <- NULL
+native_contract <- generalized_lobpcg_native_contract(rows)
 
 cat("Generalized SPD LOBPCG benchmark rows\n")
 print(rows)
 cat("\nGeneralized SPD LOBPCG gates\n")
 print(gates)
+cat("\nGeneralized SPD LOBPCG native contracts\n")
+print(native_contract)
 
 if (args$save) {
   message("saved rows: ", save_benchmark_result(rows, "generalized-lobpcg-rows"))
   message("saved gates: ", save_benchmark_result(gates, "generalized-lobpcg-gates"))
+  message("saved native contracts: ", save_benchmark_result(native_contract, "generalized-lobpcg-native-contracts"))
 }
 
-if (args$strict && !all(gates$passed)) {
+if (args$strict && (!all(gates$passed) || !all(native_contract$passed))) {
   stop("Generalized SPD LOBPCG benchmark failed release gate.", call. = FALSE)
 }
