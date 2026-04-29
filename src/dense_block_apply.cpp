@@ -2719,6 +2719,14 @@ static void block_reorthogonalise_against(const double* V_locked, int n_locked,
   }
 }
 
+// Contract: X and Z_block MAY alias (X == Z_block && ldx == n is a supported
+// caller pattern — the per-column memcpy below would otherwise be a self-copy,
+// which is UB in standard C++ even when the bytes happen to overlap exactly).
+// When X aliases Z_block at the same leading dimension, the loader is a no-op
+// and we skip the memcpy. Distinct buffers (or X with a different stride) get
+// the explicit column copy. If callers ever start passing partially-aliased
+// regions (e.g. X == Z_block + offset) this guard is insufficient and the
+// caller must materialize a non-aliased temporary first.
 static int block_accept_columns_blas3(const double* X, int ldx, int x_cols,
                                       const double* V_locked, int n_locked,
                                       double* V_active, int* m_active,
@@ -2743,10 +2751,13 @@ static int block_accept_columns_blas3(const double* X, int ldx, int x_cols,
   if (cols <= 0) {
     return 0;
   }
-  for (int col = 0; col < cols; ++col) {
-    std::memcpy(Z_block + static_cast<int64_t>(col) * n,
-                X + static_cast<int64_t>(col) * ldx,
-                sizeof(double) * static_cast<size_t>(n));
+  const bool x_aliases_z = (X == Z_block) && (ldx == n);
+  if (!x_aliases_z) {
+    for (int col = 0; col < cols; ++col) {
+      std::memcpy(Z_block + static_cast<int64_t>(col) * n,
+                  X + static_cast<int64_t>(col) * ldx,
+                  sizeof(double) * static_cast<size_t>(n));
+    }
   }
 
   const int reorth_passes = 2;
@@ -3630,7 +3641,16 @@ struct ThickRestartBuffers {
   double* V_active;
   double* AV_active;
   double* T_proj;      // m_max x m_max structured projected problem
-  double* S_eig;       // m_max x m_max (also serves as projection scratch)
+  // S_eig is a k x k scratch matrix reused across three distinct roles inside
+  // a single solve cycle:
+  //   role 1: V^T V Gram for the orthogonality probe in final_polish_block_ritz
+  //   role 2: Cholesky factor for re-orthonormalization (dpotrf / dtrsm in-place)
+  //   role 3: V^T A V projected eigenproblem (dsyev_inplace) for full polish
+  // Each role overwrites the previous, in strict sequence within one call.
+  // Maintaining three separate buffers would cost an extra 2 * k_max^2 doubles
+  // per cycle for negligible runtime savings; the role transitions are flagged
+  // with explicit comments where they happen.
+  double* S_eig;       // m_max x m_max — see role notes above
   double* S_selected;  // selected Ritz vectors, m_max x selected_capacity
   double* theta;       // m_max
   double* B_v;         // n x selected_capacity
@@ -3752,6 +3772,7 @@ static int final_polish_block_ritz(void* impl,
   const double zero = 0.0;
   int info = 0;
 
+  // S_eig role 1: V_out^T V_out Gram for orthogonality probe.
   F77_CALL(dgemm)(&trans_T, &trans_N, &k_target, &k_target, &n,
                   &one, V_out, &n, V_out, &n,
                   &zero, buf->S_eig, &k_target FCONE FCONE);
@@ -3786,7 +3807,8 @@ static int final_polish_block_ritz(void* impl,
     }
   }
 
-  // Re-orthonormalize the returned locked vectors inside native workspace.
+  // S_eig role 2: in-place Cholesky factor of the Gram from role 1, used to
+  // re-orthonormalize V_out via right-side dtrsm. Overwrites role-1 contents.
   symmetrize_packed_square(buf->S_eig, k_target);
   F77_CALL(dpotrf)(&uplo_U, &k_target, buf->S_eig, &k_target, &info FCONE);
   if (info != 0) {
@@ -3834,6 +3856,9 @@ static int final_polish_block_ritz(void* impl,
     return 0;
   }
 
+  // S_eig role 3: V_out^T A V_out projected eigenproblem, solved in place by
+  // symmetric_eigen_inplace. Overwrites the role-2 Cholesky factor; columns of
+  // S_eig now hold the projected-problem eigenvectors used to rotate V_out.
   // Reuse A * V_out from the simple residual check; V_out has not changed.
   F77_CALL(dgemm)(&trans_T, &trans_N, &k_target, &k_target, &n,
                   &one, V_out, &n, buf->B_av, &n,
