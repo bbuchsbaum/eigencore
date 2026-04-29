@@ -171,6 +171,15 @@ they are machine-dependent.
   row remains certified with `73` apply calls and R-visible allocation drops
   modestly (`~0.37MB` to `~0.36MB`); this is an incremental certification
   cleanup, not the retained-restart speed breakthrough.
+- The H benchmark surface now includes
+  `eigencore_block_golub_kahan_retained`, the first native retained restart
+  candidate. It constructs Ritz-plus-random restart blocks inside C, returns
+  compact selected triplets, and keeps certification on the existing native
+  cached-`A v` path. On the source-loaded wide sparse probe it certifies with
+  the same `73` apply calls as the R adaptive block-GK cycle, while R-visible
+  allocation drops from about `0.36MB` to about `0.20MB`; this is a staging
+  candidate, not H closure, because per-attempt native certification, locking,
+  and production thick-restart policy are still open.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,

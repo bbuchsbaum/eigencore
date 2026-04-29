@@ -180,7 +180,7 @@ test_that("retained block Golub-Kahan restart ABI fixes the native implementatio
 
   expect_s3_class(abi, "eigencore_block_golub_kahan_retained_restart_abi")
   expect_equal(abi$version, 1L)
-  expect_false(abi$implemented)
+  expect_true(abi$implemented)
   expect_equal(abi$native_storage, "dgCMatrix")
   expect_equal(abi$input_schema$initial_start, c(ncol(A), 2L))
   expect_equal(abi$input_schema$tail_layout, "column-major n x (block * restart_count)")
@@ -188,7 +188,8 @@ test_that("retained block Golub-Kahan restart ABI fixes the native implementatio
   expect_lte(max(abi$max_subspace_sequence), ncol(A))
   expect_true("Avectors" %in% abi$output_schema)
   expect_true(any(grepl("no R-side restart block construction", abi$invariants, fixed = TRUE)))
-  expect_true(any(grepl("transformed together", abi$invariants, fixed = TRUE)))
+  expect_true(any(grepl("reorthogonalized by the native basis runner", abi$invariants, fixed = TRUE)))
+  expect_true(any(grepl("must not be claimed", abi$invariants, fixed = TRUE)))
   expect_equal(unname(abi$entry_points[["csc"]]),
                "eigencore_block_golub_kahan_csc_retained_cycle")
 
@@ -199,6 +200,38 @@ test_that("retained block Golub-Kahan restart ABI fixes the native implementatio
     max_attempts = 2L
   )
   expect_equal(dense_abi$native_storage, "double_matrix")
+})
+
+test_that("native retained block Golub-Kahan cycle builds restart state inside native code", {
+  set.seed(703)
+  A <- Matrix::t(Matrix::rsparsematrix(600, 90, density = 0.03))
+
+  set.seed(701)
+  retained <- eigencore:::native_block_golub_kahan_retained_cycle_svd(
+    A,
+    rank = 5L,
+    target = largest(),
+    block = 2L,
+    tol = 1e-8
+  )
+
+  expect_identical(retained$restart$kind, "block_golub_kahan_native_retained_cycle")
+  expect_true(retained$restart$retained_restart)
+  expect_true(retained$restart$retained_restart_native)
+  expect_equal(retained$restart$retained_restart_abi_version, 1L)
+  expect_true(retained$certificate$passed)
+  expect_gte(sum(retained$certificate$converged), 5L)
+  expect_gt(retained$matvecs, 0L)
+  expect_true(is.data.frame(retained$restart$attempt_history))
+  expect_gt(nrow(retained$restart$attempt_history), 1L)
+  expect_true(all(retained$restart$attempt_history$warm_started[-1L]))
+  expect_true(any(retained$restart$attempt_history$certificate_passed))
+  expect_equal(retained$restart$attempted_subspaces,
+               retained$restart$attempt_history$max_subspace)
+  expect_false(retained$restart$basis_returned)
+  expect_true(all(c("native_iteration", "ritz", "restart") %in% names(retained$stage_seconds)))
+  expect_gt(retained$stage_seconds[["native_iteration"]], 0)
+  expect_gt(retained$stage_seconds[["ritz"]], 0)
 })
 
 test_that("native block Golub-Kahan basis cycle records adaptive subspace attempts", {

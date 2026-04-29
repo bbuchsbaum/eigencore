@@ -535,7 +535,7 @@ Working status against the sequenced milestones:
 | F | largely done for current paths | Native ortho and certificate kernels exist, but not every future solver path is fully native-certificate-backed. |
 | G0 | done | Native scalar Hermitian staging path exists and certifies on dense/CSC cases. |
 | G1 | done | Promoted native block Hermitian Lanczos runs by default in benchmark-proven regimes; strict Hermitian sparse and dense regression gates pass against certified RSpectra/PRIMME references. |
-| H | staged, not complete | Native Golub-Kahan exists as a staging path; block-GK restart comparators now include cached Ritz-vector `A V` paths with and without a random exploration tail, compact native fit extraction, and restart-efficiency diagnostics, but production thick-restart SVD and SVD performance gates remain open. |
+| H | staged, not complete | Native Golub-Kahan exists as a staging path; block-GK restart comparators now include cached Ritz-vector `A V` paths, compact native fit extraction, restart-efficiency diagnostics, and a first native retained-restart candidate that constructs Ritz-plus-random restarts inside C. Production thick-restart SVD and SVD performance gates remain open. |
 | I | prototype | Randomized SVD has reference implementation, normalizers, and certified refinement; native approximate engine remains open. |
 | J | partial | Native generalized SPD LOBPCG slices exist for built-in `B`, explicitly SPD matrix-free `B`, dense constraints, and typed shifted-diagonal / shifted-tridiagonal preconditioners; strict benchmark rows now gate bare, shifted-diagonal, shifted-tridiagonal sparse-smallest, constrained, and adversarial B native-contract diagnostics; the adversarial B bank covers largest/smallest ill-conditioned diagonal, sparse CSC, and explicitly SPD matrix-free B without dense fallback; broader generalized preconditioning and promotion remain open. |
 | K | not complete | B-orthogonal block Lanczos is still a later generalized-SPD refinement path. |
@@ -590,6 +590,13 @@ Primary attack surfaces, in order:
    Cached-`A v` native certificates remove a redundant left residual apply from
    compact block-GK internal certification, but only modestly reduce allocation;
    the main H path still runs through retained native restart/workspace design.
+   The first retained native restart candidate is exposed only as
+   `eigencore_block_golub_kahan_retained` on the H benchmark surface. It builds
+   Ritz-plus-random restart blocks inside C, returns compact selected triplets,
+   and on the wide sparse probe certifies with the same `73` apply calls while
+   reducing R-visible allocation versus the R adaptive cycle. It is a staging
+   row, not H closure: it does not yet do per-attempt native certification,
+   locking, or a full production thick-restart policy.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
    preconditioning beyond the typed shifted-diagonal and certified
    shifted-tridiagonal sparse-smallest case, keep the benchmark

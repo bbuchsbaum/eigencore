@@ -193,6 +193,7 @@ available_svd_methods <- function() {
     "eigencore_block_golub_kahan_cycle_cached_random",
     "eigencore_block_golub_kahan_cycle_residual",
     "eigencore_block_golub_kahan_cycle_lean",
+    "eigencore_block_golub_kahan_retained",
     "eigencore_randomized",
     "base",
     if (requireNamespace("RSpectra", quietly = TRUE)) "RSpectra",
@@ -372,6 +373,16 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
         target = largest(),
         tol = tol,
         adaptive_start = "ritz_lean",
+        vectors = "both"
+      )
+    },
+    eigencore_block_golub_kahan_retained = {
+      set.seed(seed %||% 1L)
+      native_block_golub_kahan_retained_cycle_svd(
+        A,
+        rank = rank,
+        target = largest(),
+        tol = tol,
         vectors = "both"
       )
     },

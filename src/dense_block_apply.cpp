@@ -8048,6 +8048,63 @@ static SEXP block_golub_kahan_fit_pack(int n,
   return out_;
 }
 
+static SEXP block_golub_kahan_retained_cycle_pack(int n,
+                                                  int m,
+                                                  double* V,
+                                                  double* AV,
+                                                  int active_v,
+                                                  int active_u,
+                                                  int iterations,
+                                                  int matvecs,
+                                                  int ortho_passes,
+                                                  int cached_start_used,
+                                                  int rank,
+                                                  int target_kind,
+                                                  double stage_native_iteration_seconds,
+                                                  double stage_restart_seconds,
+                                                  SEXP attempt_history_) {
+  SEXP fit_ = PROTECT(block_golub_kahan_fit_pack(
+    n, m, V, AV, active_v, active_u, iterations, matvecs, ortho_passes,
+    cached_start_used, rank, target_kind, stage_native_iteration_seconds
+  ));
+  SEXP old_stage_ = VECTOR_ELT(fit_, 11);
+  SEXP stage_ = PROTECT(allocVector(REALSXP, 3));
+  REAL(stage_)[0] = REAL(old_stage_)[0];
+  REAL(stage_)[1] = REAL(old_stage_)[1];
+  REAL(stage_)[2] = stage_restart_seconds;
+  SEXP stage_names_ = PROTECT(allocVector(STRSXP, 3));
+  SET_STRING_ELT(stage_names_, 0, mkChar("native_iteration"));
+  SET_STRING_ELT(stage_names_, 1, mkChar("ritz"));
+  SET_STRING_ELT(stage_names_, 2, mkChar("restart"));
+  setAttrib(stage_, R_NamesSymbol, stage_names_);
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 14));
+  for (int i = 0; i < 11; ++i) {
+    SET_VECTOR_ELT(out_, i, VECTOR_ELT(fit_, i));
+  }
+  SET_VECTOR_ELT(out_, 11, stage_);
+  SET_VECTOR_ELT(out_, 12, attempt_history_);
+  SET_VECTOR_ELT(out_, 13, ScalarLogical(1));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 14));
+  SET_STRING_ELT(names_, 0, mkChar("d"));
+  SET_STRING_ELT(names_, 1, mkChar("u"));
+  SET_STRING_ELT(names_, 2, mkChar("v"));
+  SET_STRING_ELT(names_, 3, mkChar("Avectors"));
+  SET_STRING_ELT(names_, 4, mkChar("coefficients"));
+  SET_STRING_ELT(names_, 5, mkChar("active_cols"));
+  SET_STRING_ELT(names_, 6, mkChar("active_left_cols"));
+  SET_STRING_ELT(names_, 7, mkChar("iterations"));
+  SET_STRING_ELT(names_, 8, mkChar("matvecs"));
+  SET_STRING_ELT(names_, 9, mkChar("ortho_passes"));
+  SET_STRING_ELT(names_, 10, mkChar("cached_start_used"));
+  SET_STRING_ELT(names_, 11, mkChar("stage_seconds"));
+  SET_STRING_ELT(names_, 12, mkChar("attempt_history"));
+  SET_STRING_ELT(names_, 13, mkChar("retained_restart_native"));
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(5);
+  return out_;
+}
+
 struct BlockGolubKahanFitArrays {
   double* V = nullptr;
   double* AV = nullptr;
@@ -8077,6 +8134,250 @@ static int block_golub_kahan_fit_arrays_alloc(BlockGolubKahanFitArrays* arrays,
     return -1;
   }
   return 0;
+}
+
+static int retained_subspace_sequence(int n,
+                                      int rank,
+                                      int block_size,
+                                      int initial_max_subspace,
+                                      int max_attempts,
+                                      std::vector<int>* subspaces) {
+  if (max_attempts < 1 || initial_max_subspace < rank || initial_max_subspace > n) {
+    return -1;
+  }
+  subspaces->clear();
+  subspaces->reserve(static_cast<size_t>(max_attempts));
+  int current = initial_max_subspace;
+  subspaces->push_back(current);
+  for (int attempt = 1; attempt < max_attempts && current < n; ++attempt) {
+    const int additive = current + ((2 * rank > 4 * block_size) ? 2 * rank : 4 * block_size);
+    const int additive2 = current + 10;
+    int next = additive > additive2 ? additive : additive2;
+    const int scaled = static_cast<int>(ceil(1.5 * static_cast<double>(current)));
+    if (scaled > next) {
+      next = scaled;
+    }
+    if (next > n) {
+      next = n;
+    }
+    if (next <= current) {
+      break;
+    }
+    subspaces->push_back(next);
+    current = next;
+  }
+  return 0;
+}
+
+static SEXP retained_attempt_history_pack(const std::vector<int>& subspaces,
+                                          const std::vector<int>& active_cols,
+                                          const std::vector<int>& start_cols,
+                                          const std::vector<int>& iterations,
+                                          const std::vector<int>& matvecs,
+                                          const std::vector<int>& ortho_passes,
+                                          const std::vector<int>& cached_start_used) {
+  const int rows = static_cast<int>(subspaces.size());
+  SEXP out_ = PROTECT(allocVector(VECSXP, 9));
+  SEXP attempt_ = PROTECT(allocVector(INTSXP, rows));
+  SEXP subspace_ = PROTECT(allocVector(INTSXP, rows));
+  SEXP active_ = PROTECT(allocVector(INTSXP, rows));
+  SEXP start_ = PROTECT(allocVector(INTSXP, rows));
+  SEXP cached_ = PROTECT(allocVector(LGLSXP, rows));
+  SEXP warm_ = PROTECT(allocVector(LGLSXP, rows));
+  SEXP iter_ = PROTECT(allocVector(INTSXP, rows));
+  SEXP matvec_ = PROTECT(allocVector(INTSXP, rows));
+  SEXP ortho_ = PROTECT(allocVector(INTSXP, rows));
+  for (int row = 0; row < rows; ++row) {
+    INTEGER(attempt_)[row] = row + 1;
+    INTEGER(subspace_)[row] = subspaces[static_cast<size_t>(row)];
+    INTEGER(active_)[row] = active_cols[static_cast<size_t>(row)];
+    INTEGER(start_)[row] = start_cols[static_cast<size_t>(row)];
+    LOGICAL(cached_)[row] = cached_start_used[static_cast<size_t>(row)] ? TRUE : FALSE;
+    LOGICAL(warm_)[row] = row > 0 ? TRUE : FALSE;
+    INTEGER(iter_)[row] = iterations[static_cast<size_t>(row)];
+    INTEGER(matvec_)[row] = matvecs[static_cast<size_t>(row)];
+    INTEGER(ortho_)[row] = ortho_passes[static_cast<size_t>(row)];
+  }
+  SET_VECTOR_ELT(out_, 0, attempt_);
+  SET_VECTOR_ELT(out_, 1, subspace_);
+  SET_VECTOR_ELT(out_, 2, active_);
+  SET_VECTOR_ELT(out_, 3, start_);
+  SET_VECTOR_ELT(out_, 4, cached_);
+  SET_VECTOR_ELT(out_, 5, warm_);
+  SET_VECTOR_ELT(out_, 6, iter_);
+  SET_VECTOR_ELT(out_, 7, matvec_);
+  SET_VECTOR_ELT(out_, 8, ortho_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 9));
+  SET_STRING_ELT(names_, 0, mkChar("attempt"));
+  SET_STRING_ELT(names_, 1, mkChar("max_subspace"));
+  SET_STRING_ELT(names_, 2, mkChar("active_cols"));
+  SET_STRING_ELT(names_, 3, mkChar("start_cols"));
+  SET_STRING_ELT(names_, 4, mkChar("cached_start_used"));
+  SET_STRING_ELT(names_, 5, mkChar("warm_started"));
+  SET_STRING_ELT(names_, 6, mkChar("iterations"));
+  SET_STRING_ELT(names_, 7, mkChar("matvecs"));
+  SET_STRING_ELT(names_, 8, mkChar("ortho_passes"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  SEXP row_names_ = PROTECT(allocVector(INTSXP, rows));
+  for (int row = 0; row < rows; ++row) {
+    INTEGER(row_names_)[row] = row + 1;
+  }
+  setAttrib(out_, R_RowNamesSymbol, row_names_);
+  SEXP class_ = PROTECT(allocVector(STRSXP, 1));
+  SET_STRING_ELT(class_, 0, mkChar("data.frame"));
+  setAttrib(out_, R_ClassSymbol, class_);
+  UNPROTECT(13);
+  return out_;
+}
+
+template <typename ConfigureOperator>
+static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_operator,
+                                                  int m,
+                                                  int n,
+                                                  int initial_max_subspace,
+                                                  int block_size,
+                                                  const double* initial_start,
+                                                  const double* random_tails,
+                                                  int random_tail_cols,
+                                                  int max_attempts,
+                                                  int rank,
+                                                  int target_kind) {
+  if (block_size < 1 || rank < 1 || initial_max_subspace < rank ||
+      initial_max_subspace > n || max_attempts < 1) {
+    error("invalid retained block Golub-Kahan cycle controls");
+  }
+  if (random_tail_cols < block_size * (max_attempts - 1)) {
+    error("random_tails must have at least block * (max_attempts - 1) columns");
+  }
+
+  std::vector<int> subspaces;
+  if (retained_subspace_sequence(
+        n, rank, block_size, initial_max_subspace, max_attempts, &subspaces
+      ) != 0 || subspaces.empty()) {
+    error("failed to construct retained block Golub-Kahan subspace sequence");
+  }
+  const int final_max_subspace = subspaces.back();
+  BlockGolubKahanFitArrays arrays;
+  if (block_golub_kahan_fit_arrays_alloc(&arrays, n, m, final_max_subspace) != 0) {
+    error("failed to allocate native retained block Golub-Kahan workspace");
+  }
+
+  std::vector<double> current_start(static_cast<size_t>(n) *
+                                    static_cast<size_t>(rank + block_size), 0.0);
+  std::memcpy(
+    current_start.data(), initial_start,
+    sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(block_size)
+  );
+  int current_start_cols = block_size;
+
+  void* impl = nullptr;
+  EigencoreApplyFn apply = nullptr;
+  configure_operator(&impl, &apply);
+
+  std::vector<int> history_subspaces;
+  std::vector<int> history_active_cols;
+  std::vector<int> history_start_cols;
+  std::vector<int> history_iterations;
+  std::vector<int> history_matvecs;
+  std::vector<int> history_ortho_passes;
+  std::vector<int> history_cached_start_used;
+
+  int final_active_v = 0;
+  int final_active_u = 0;
+  int final_iterations = 0;
+  int final_matvecs = 0;
+  int final_ortho_passes = 0;
+  int final_cached_start_used = 0;
+  double total_stage_native_iteration_seconds = 0.0;
+  double total_stage_restart_seconds = 0.0;
+
+  for (size_t attempt = 0; attempt < subspaces.size(); ++attempt) {
+    const int max_subspace = subspaces[attempt];
+    int active_v = 0;
+    int active_u = 0;
+    int iterations = 0;
+    int matvecs = 0;
+    int ortho_passes = 0;
+    int cached_start_used = 0;
+
+    auto stage_timer = native_timer_now();
+    const int status = native_block_golub_kahan_basis_run(
+      impl, apply, m, n, max_subspace, current_start_cols,
+      current_start.data(), nullptr, 0,
+      arrays.V, arrays.AV, arrays.U,
+      &active_v, &active_u, &iterations, &matvecs, &ortho_passes,
+      &cached_start_used
+    );
+    total_stage_native_iteration_seconds += native_timer_elapsed(stage_timer);
+    if (status != 0) {
+      block_golub_kahan_fit_arrays_free(&arrays);
+      error("native retained block Golub-Kahan cycle failed with status=%d", status);
+    }
+
+    history_subspaces.push_back(max_subspace);
+    history_active_cols.push_back(active_v);
+    history_start_cols.push_back(current_start_cols);
+    history_iterations.push_back(iterations);
+    history_matvecs.push_back(matvecs);
+    history_ortho_passes.push_back(ortho_passes);
+    history_cached_start_used.push_back(cached_start_used);
+
+    final_active_v = active_v;
+    final_active_u = active_u;
+    final_iterations += iterations;
+    final_matvecs += matvecs;
+    final_ortho_passes += ortho_passes;
+    final_cached_start_used = final_cached_start_used || cached_start_used;
+
+    if (attempt + 1 >= subspaces.size()) {
+      break;
+    }
+
+    auto restart_timer = native_timer_now();
+    SEXP ritz_ = PROTECT(block_golub_kahan_ritz_pack(
+      arrays.V, n, arrays.AV, m, active_v, rank, target_kind
+    ));
+    SEXP v_ = VECTOR_ELT(ritz_, 2);
+    const int keep_cols = INTEGER(getAttrib(v_, R_DimSymbol))[1];
+    current_start.assign(current_start.size(), 0.0);
+    for (int col = 0; col < keep_cols; ++col) {
+      std::memcpy(
+        current_start.data() + static_cast<int64_t>(col) * n,
+        REAL(v_) + static_cast<int64_t>(col) * n,
+        sizeof(double) * static_cast<size_t>(n)
+      );
+    }
+    const double* tail = random_tails +
+      static_cast<int64_t>(attempt) * static_cast<int64_t>(n) *
+        static_cast<int64_t>(block_size);
+    for (int col = 0; col < block_size; ++col) {
+      std::memcpy(
+        current_start.data() + static_cast<int64_t>(keep_cols + col) * n,
+        tail + static_cast<int64_t>(col) * n,
+        sizeof(double) * static_cast<size_t>(n)
+      );
+    }
+    current_start_cols = keep_cols + block_size;
+    UNPROTECT(1);
+    total_stage_restart_seconds += native_timer_elapsed(restart_timer);
+  }
+
+  SEXP history_ = PROTECT(retained_attempt_history_pack(
+    history_subspaces, history_active_cols, history_start_cols,
+    history_iterations, history_matvecs, history_ortho_passes,
+    history_cached_start_used
+  ));
+  SEXP out_ = PROTECT(block_golub_kahan_retained_cycle_pack(
+    n, m, arrays.V, arrays.AV, final_active_v, final_active_u,
+    final_iterations, final_matvecs, final_ortho_passes,
+    final_cached_start_used, rank, target_kind,
+    total_stage_native_iteration_seconds, total_stage_restart_seconds,
+    history_
+  ));
+  block_golub_kahan_fit_arrays_free(&arrays);
+  UNPROTECT(2);
+  return out_;
 }
 
 extern "C" SEXP eigencore_block_golub_kahan_dense_fit(SEXP A_,
@@ -8201,6 +8502,40 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_fit_cached(SEXP A_,
   return out_;
 }
 
+extern "C" SEXP eigencore_block_golub_kahan_dense_retained_cycle(SEXP A_,
+                                                                 SEXP initial_max_subspace_,
+                                                                 SEXP initial_start_,
+                                                                 SEXP random_tails_,
+                                                                 SEXP max_attempts_,
+                                                                 SEXP rank_,
+                                                                 SEXP target_kind_) {
+  if (!isReal(A_) || !isReal(initial_start_) || !isReal(random_tails_)) {
+    error("A, initial_start, and random_tails must be double matrices");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimS = getAttrib(initial_start_, R_DimSymbol);
+  SEXP dimT = getAttrib(random_tails_, R_DimSymbol);
+  if (dimA == R_NilValue || dimS == R_NilValue || dimT == R_NilValue) {
+    error("A, initial_start, and random_tails must be matrices");
+  }
+  const int m = INTEGER(dimA)[0];
+  const int n = INTEGER(dimA)[1];
+  const int block_size = INTEGER(dimS)[1];
+  if (INTEGER(dimS)[0] != n || block_size < 1 || INTEGER(dimT)[0] != n) {
+    error("non-conformable dense retained block Golub-Kahan inputs");
+  }
+  DenseColumnMajorOperator impl_holder = {m, n, REAL(A_)};
+  auto configure = [&impl_holder](void** impl, EigencoreApplyFn* apply) {
+    *impl = &impl_holder;
+    *apply = eigencore_dense_apply;
+  };
+  return block_golub_kahan_retained_cycle_impl(
+    configure, m, n, asInteger(initial_max_subspace_), block_size,
+    REAL(initial_start_), REAL(random_tails_), INTEGER(dimT)[1],
+    asInteger(max_attempts_), asInteger(rank_), asInteger(target_kind_)
+  );
+}
+
 extern "C" SEXP eigencore_block_golub_kahan_csc_fit(SEXP i_, SEXP p_,
                                                     SEXP x_, SEXP dim_,
                                                     SEXP max_subspace_,
@@ -8323,6 +8658,41 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit_cached(SEXP i_, SEXP p_,
   block_golub_kahan_fit_arrays_free(&arrays);
   UNPROTECT(1);
   return out_;
+}
+
+extern "C" SEXP eigencore_block_golub_kahan_csc_retained_cycle(SEXP i_, SEXP p_,
+                                                               SEXP x_, SEXP dim_,
+                                                               SEXP initial_max_subspace_,
+                                                               SEXP initial_start_,
+                                                               SEXP random_tails_,
+                                                               SEXP max_attempts_,
+                                                               SEXP rank_,
+                                                               SEXP target_kind_) {
+  if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) ||
+      !isInteger(dim_) || !isReal(initial_start_) || !isReal(random_tails_)) {
+    error("invalid CSC retained block Golub-Kahan inputs");
+  }
+  SEXP dimS = getAttrib(initial_start_, R_DimSymbol);
+  SEXP dimT = getAttrib(random_tails_, R_DimSymbol);
+  if (dimS == R_NilValue || dimT == R_NilValue || LENGTH(dim_) != 2) {
+    error("initial_start and random_tails must be matrices and dim must have length 2");
+  }
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  const int block_size = INTEGER(dimS)[1];
+  if (INTEGER(dimS)[0] != n || block_size < 1 || INTEGER(dimT)[0] != n) {
+    error("non-conformable CSC retained block Golub-Kahan inputs");
+  }
+  CSCOperator impl_holder = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
+  auto configure = [&impl_holder](void** impl, EigencoreApplyFn* apply) {
+    *impl = &impl_holder;
+    *apply = eigencore_csc_apply;
+  };
+  return block_golub_kahan_retained_cycle_impl(
+    configure, m, n, asInteger(initial_max_subspace_), block_size,
+    REAL(initial_start_), REAL(random_tails_), INTEGER(dimT)[1],
+    asInteger(max_attempts_), asInteger(rank_), asInteger(target_kind_)
+  );
 }
 
 #include "projection/golub_kahan_ritz.hpp"
@@ -8996,6 +9366,8 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_block_golub_kahan_dense_fit_cached", (DL_FUNC) &eigencore_block_golub_kahan_dense_fit_cached, 6},
   {"eigencore_block_golub_kahan_csc_fit", (DL_FUNC) &eigencore_block_golub_kahan_csc_fit, 8},
   {"eigencore_block_golub_kahan_csc_fit_cached", (DL_FUNC) &eigencore_block_golub_kahan_csc_fit_cached, 9},
+  {"eigencore_block_golub_kahan_dense_retained_cycle", (DL_FUNC) &eigencore_block_golub_kahan_dense_retained_cycle, 7},
+  {"eigencore_block_golub_kahan_csc_retained_cycle", (DL_FUNC) &eigencore_block_golub_kahan_csc_retained_cycle, 10},
   {"eigencore_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_thick_restart_lanczos_dense, 7},
   {"eigencore_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_thick_restart_lanczos_csc, 10},
   {"eigencore_block_lanczos_dense", (DL_FUNC) &eigencore_block_lanczos_dense, 7},

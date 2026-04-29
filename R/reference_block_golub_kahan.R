@@ -569,7 +569,7 @@ native_block_golub_kahan_retained_restart_abi <- function(op, rank,
       initial_max_subspace < rank) {
     stop("max_subspace must be at least rank.", call. = FALSE)
   }
-  max_attempts <- as.integer(max_attempts %||% 4L)
+  max_attempts <- as.integer(max_attempts %||% 3L)
   if (length(max_attempts) != 1L || is.na(max_attempts) || max_attempts < 1L) {
     stop("max_attempts must be a positive integer.", call. = FALSE)
   }
@@ -595,7 +595,7 @@ native_block_golub_kahan_retained_restart_abi <- function(op, rank,
   structure(
     list(
       version = 1L,
-      implemented = FALSE,
+      implemented = TRUE,
       entry_points = c(
         dense = "eigencore_block_golub_kahan_dense_retained_cycle",
         csc = "eigencore_block_golub_kahan_csc_retained_cycle"
@@ -616,10 +616,10 @@ native_block_golub_kahan_retained_restart_abi <- function(op, rank,
       ),
       retained_state = c(
         "right Ritz vectors V_keep",
-        "cached operator images A V_keep",
         "native basis workspace V/AV/U",
         "orthogonalization scratch",
-        "attempt history"
+        "attempt history",
+        "cached A V_keep retention is deferred until the next ABI revision"
       ),
       output_schema = c(
         "d", "u", "v", "Avectors", "certificate diagnostics",
@@ -628,14 +628,182 @@ native_block_golub_kahan_retained_restart_abi <- function(op, rank,
       ),
       invariants = c(
         "no R-side restart block construction after entry",
-        "retained V_keep and A V_keep are transformed together after QR normalization",
+        "retained V_keep is reorthogonalized by the native basis runner on each attempt",
         "certification uses original operator coordinates",
         "attempt history fields match native_block_golub_kahan_cycle_svd()",
-        "default policy is Ritz-plus-random until a benchmark proves otherwise"
+        "default policy is Ritz-plus-random until a benchmark proves otherwise",
+        "cached A V retention must not be claimed until native QR normalization transforms V_keep and A V_keep together"
       )
     ),
     class = "eigencore_block_golub_kahan_retained_restart_abi"
   )
+}
+
+#' @keywords internal
+native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
+                                                        target = largest(),
+                                                        tol = 1e-8,
+                                                        max_subspace = NULL,
+                                                        block = NULL,
+                                                        start = NULL,
+                                                        max_attempts = NULL,
+                                                        vectors = c("both", "left", "right", "none")) {
+  vectors <- match.arg(vectors)
+  op <- as_operator(op)
+  abi <- native_block_golub_kahan_retained_restart_abi(
+    op,
+    rank = rank,
+    target = target,
+    block = block,
+    max_attempts = max_attempts,
+    max_subspace = max_subspace
+  )
+  n <- op$dim[[2L]]
+  block <- abi$block
+  rank <- abi$rank
+  start <- if (is.null(start)) {
+    matrix(stats::rnorm(n * block), nrow = n, ncol = block)
+  } else {
+    as.matrix(start)
+  }
+  if (nrow(start) != n || ncol(start) != block) {
+    stop("start must have dimensions ncol(op) x block for retained block Golub-Kahan.",
+         call. = FALSE)
+  }
+  restart_count <- max(0L, abi$max_attempts - 1L)
+  random_tails <- matrix(
+    stats::rnorm(n * block * restart_count),
+    nrow = n,
+    ncol = block * restart_count
+  )
+  target_kind <- as.integer(abi$target_kind)
+  source <- source_or_null(op)
+  storage <- op$metadata$storage %||% NULL
+  ritz <- if (identical(storage, "dgCMatrix")) {
+    A <- op$metadata$matrix
+    .Call(
+      "eigencore_block_golub_kahan_csc_retained_cycle",
+      methods::slot(A, "i"),
+      methods::slot(A, "p"),
+      methods::slot(A, "x"),
+      methods::slot(A, "Dim"),
+      as.integer(abi$max_subspace_sequence[[1L]]),
+      start,
+      random_tails,
+      as.integer(abi$max_attempts),
+      as.integer(rank),
+      target_kind,
+      PACKAGE = "eigencore"
+    )
+  } else if (is.matrix(source) && is.double(source)) {
+    .Call(
+      "eigencore_block_golub_kahan_dense_retained_cycle",
+      source,
+      as.integer(abi$max_subspace_sequence[[1L]]),
+      start,
+      random_tails,
+      as.integer(abi$max_attempts),
+      as.integer(rank),
+      target_kind,
+      PACKAGE = "eigencore"
+    )
+  } else {
+    stop("Native retained block Golub-Kahan cycle currently supports dense double matrices and dgCMatrix operators only.",
+         call. = FALSE)
+  }
+
+  cert <- certify_svd_operator_cached_av(
+    op, ritz$d, ritz$u, ritz$v, ritz$Avectors, tol = tol
+  )
+  attempt_history <- ritz$attempt_history
+  if (is.data.frame(attempt_history)) {
+    attempt_history$certificate_passed <- FALSE
+    attempt_history$max_backward_error <- Inf
+    attempt_history$max_residual <- Inf
+    if (nrow(attempt_history)) {
+      last <- nrow(attempt_history)
+      attempt_history$certificate_passed[[last]] <- isTRUE(cert$passed)
+      attempt_history$max_backward_error[[last]] <- cert$max_backward_error
+      attempt_history$max_residual[[last]] <- cert$max_residual
+    }
+  }
+  out <- list(
+    d = ritz$d,
+    u = ritz$u,
+    v = ritz$v,
+    values = ritz$d,
+    residuals = cert$residuals,
+    backward_error = cert$backward_error,
+    orthogonality = cert$orthogonality,
+    certificate = cert,
+    iterations = ritz$iterations,
+    matvecs = ritz$matvecs,
+    block = block,
+    stage_seconds = ritz$stage_seconds,
+    restart = list(
+      kind = "block_golub_kahan_native_retained_cycle",
+      implemented = TRUE,
+      native = TRUE,
+      thick_restart = FALSE,
+      retained_restart = TRUE,
+      retained_restart_native = TRUE,
+      retained_restart_abi_version = abi$version,
+      basis_returned = FALSE,
+      adaptive = TRUE,
+      adaptive_start = abi$policy,
+      attempts = abi$max_attempts,
+      attempt = abi$max_attempts,
+      active_cols = ritz$active_cols,
+      active_left_cols = ritz$active_left_cols,
+      initial_max_subspace = abi$max_subspace_sequence[[1L]],
+      max_subspace = tail(abi$max_subspace_sequence, 1L)[[1L]],
+      final_max_subspace = tail(abi$max_subspace_sequence, 1L)[[1L]],
+      attempted_subspaces = abi$max_subspace_sequence,
+      attempt_history = attempt_history,
+      total_iterations = ritz$iterations,
+      total_matvecs = ritz$matvecs,
+      total_ortho_passes = ritz$ortho_passes,
+      final_attempt_iterations = if (is.data.frame(attempt_history) && nrow(attempt_history)) {
+        tail(attempt_history$iterations, 1L)[[1L]]
+      } else {
+        NA_integer_
+      },
+      final_attempt_matvecs = if (is.data.frame(attempt_history) && nrow(attempt_history)) {
+        tail(attempt_history$matvecs, 1L)[[1L]]
+      } else {
+        NA_integer_
+      },
+      final_attempt_ortho_passes = if (is.data.frame(attempt_history) && nrow(attempt_history)) {
+        tail(attempt_history$ortho_passes, 1L)[[1L]]
+      } else {
+        NA_integer_
+      },
+      final_iterations = if (is.data.frame(attempt_history) && nrow(attempt_history)) {
+        tail(attempt_history$iterations, 1L)[[1L]]
+      } else {
+        NA_integer_
+      },
+      final_matvecs = if (is.data.frame(attempt_history) && nrow(attempt_history)) {
+        tail(attempt_history$matvecs, 1L)[[1L]]
+      } else {
+        NA_integer_
+      },
+      ortho_passes = ritz$ortho_passes,
+      matvecs = ritz$matvecs,
+      cached_start_used = isTRUE(ritz$cached_start_used),
+      stage_seconds = ritz$stage_seconds
+    )
+  )
+  out <- complete_zero_singular_triplets(op, out, rank, target, tol)
+  if (vectors == "left") {
+    out$v <- NULL
+  } else if (vectors == "right") {
+    out$u <- NULL
+  } else if (vectors == "none") {
+    out$u <- NULL
+    out$v <- NULL
+  }
+  out
 }
 
 block_golub_kahan_normalize_cached_start <- function(start, start_av) {
