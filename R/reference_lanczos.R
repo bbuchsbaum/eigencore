@@ -98,8 +98,7 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
 #' @keywords internal
 native_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
                                      maxit = NULL, max_restarts = NULL,
-                                     vectors = TRUE,
-                                     .use_block_kernel = TRUE) {
+                                     vectors = TRUE) {
   op <- as_operator(op)
   if (op$dim[1L] != op$dim[2L]) {
     stop("Native Hermitian Lanczos requires a square operator.", call. = FALSE)
@@ -125,111 +124,40 @@ native_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
       stop("max_restarts must be non-negative.", call. = FALSE)
     }
   }
-  if (isTRUE(.use_block_kernel)) {
-    out <- native_block_lanczos_hermitian(
-      op,
-      k = k,
-      target = target,
-      tol = tol,
-      maxit = m_max,
-      block = 1L,
-      max_restarts = max_restarts,
-      vectors = vectors,
-      full_subspace = FALSE
-    )
-    out$restart$kind <- "thick_restart"
-    if (is.data.frame(out$convergence_history)) {
-      out$convergence_history$iteration <- out$convergence_history$m_active
-      out$convergence_history$n_locked <- out$convergence_history$locked_after
-    }
-    if (isTRUE(vectors) && !is.null(out$vectors)) {
-      source <- source_or_null(op)
-      Av <- if (is.matrix(source) && is.double(source)) {
-        source %*% out$vectors
-      } else {
-        apply_operator(op, out$vectors)
-      }
-      residuals <- col_norms(Av - sweep(out$vectors, 2L, out$values, `*`))
-      cert <- certify_eigen_operator_residuals(op, out$values, out$vectors,
-                                               residuals, tol = tol)
-      out$residuals <- cert$residuals
-      out$backward_error <- cert$backward_error
-      out$orthogonality <- cert$orthogonality
-      out$certificate <- cert
-    }
-    out
-  } else {
 
-  start <- stats::rnorm(n)
-  storage <- op$metadata$storage %||% NULL
-  source <- source_or_null(op)
-  iter <- if (identical(storage, "dgCMatrix")) {
-    A <- op$metadata$matrix
-    .Call(
-      "eigencore_thick_restart_lanczos_csc",
-      methods::slot(A, "i"),
-      methods::slot(A, "p"),
-      methods::slot(A, "x"),
-      methods::slot(A, "Dim"),
-      as.integer(k),
-      as.integer(m_max),
-      as.integer(lanczos_target_kind(target)),
-      as.numeric(tol),
-      as.integer(max_restarts),
-      as.numeric(start),
-      PACKAGE = "eigencore"
-    )
-  } else if (is.matrix(source) && is.double(source)) {
-    .Call(
-      "eigencore_thick_restart_lanczos_dense",
-      source,
-      as.integer(k),
-      as.integer(m_max),
-      as.integer(lanczos_target_kind(target)),
-      as.numeric(tol),
-      as.integer(max_restarts),
-      as.numeric(start),
-      PACKAGE = "eigencore"
-    )
-  } else {
-    stop("Native Hermitian Lanczos currently supports dense double matrices and dgCMatrix operators only.", call. = FALSE)
-  }
-
-  values <- iter$values
-  vec_matrix <- iter$vectors
-  cert <- certify_eigen_operator_residuals(op, values, vec_matrix, iter$residuals, tol = tol)
-  if (!isTRUE(vectors)) {
-    vec_matrix <- NULL
-  }
-
-  list(
-    values = values,
-    vectors = vec_matrix,
-    residuals = cert$residuals,
-    backward_error = cert$backward_error,
-    orthogonality = cert$orthogonality,
-    certificate = cert,
-    iterations = iter$iterations,
-    matvecs = iter$matvecs,
-    convergence_history = data.frame(
-      restart = seq_len(iter$restarts + 1L) - 1L,
-      iteration = c(rep(NA_integer_, iter$restarts), iter$iterations),
-      n_locked = c(rep(NA_integer_, iter$restarts), iter$n_locked)
-    ),
-    locked = seq_len(iter$n_locked),
-    restart = list(
-      kind = "thick_restart",
-      implemented = TRUE,
-      locking = "in_native_loop",
-      locked = seq_len(iter$n_locked),
-      locked_count = iter$n_locked,
-      restarts_used = iter$restarts,
-      max_restarts = max_restarts,
-      max_subspace = m_max,
-      final_active_subspace = iter$m_active_final %||% NA_integer_
-    )
+  out <- native_block_lanczos_hermitian(
+    op,
+    k = k,
+    target = target,
+    tol = tol,
+    maxit = m_max,
+    block = 1L,
+    max_restarts = max_restarts,
+    vectors = vectors,
+    full_subspace = FALSE,
+    certificate_fallback = FALSE
   )
+  out$restart$kind <- "thick_restart"
+  if (is.data.frame(out$convergence_history)) {
+    out$convergence_history$iteration <- out$convergence_history$m_active
+    out$convergence_history$n_locked <- out$convergence_history$locked_after
   }
+  if (isTRUE(vectors) && !is.null(out$vectors)) {
+    source <- source_or_null(op)
+    Av <- if (is.matrix(source) && is.double(source)) {
+      source %*% out$vectors
+    } else {
+      apply_operator(op, out$vectors)
+    }
+    residuals <- col_norms(Av - sweep(out$vectors, 2L, out$values, `*`))
+    cert <- certify_eigen_operator_residuals(op, out$values, out$vectors,
+                                             residuals, tol = tol)
+    out$residuals <- cert$residuals
+    out$backward_error <- cert$backward_error
+    out$orthogonality <- cert$orthogonality
+    out$certificate <- cert
+  }
+  out
 }
 
 #' @keywords internal
@@ -237,7 +165,8 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
                                            maxit = NULL, block = 2L,
                                            max_restarts = 100L,
                                            vectors = TRUE,
-                                           full_subspace = TRUE) {
+                                           full_subspace = TRUE,
+                                           certificate_fallback = TRUE) {
   op <- as_operator(op)
   if (op$dim[1L] != op$dim[2L]) {
     stop("Native block Hermitian Lanczos requires a square operator.", call. = FALSE)
@@ -378,7 +307,8 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
   certificate_failed_orthogonality <- is.finite(cert$max_orthogonality_loss) &&
     is.finite(cert$orthogonality_tolerance) &&
     cert$max_orthogonality_loss > cert$orthogonality_tolerance
-  if (!isTRUE(cert$passed) && isTRUE(certificate_failed_orthogonality) &&
+  if (isTRUE(certificate_fallback) &&
+      !isTRUE(cert$passed) && isTRUE(certificate_failed_orthogonality) &&
       ((is.matrix(source) && is.double(source)) || identical(storage, "dgCMatrix"))) {
     fallback <- if (is.matrix(source) && is.double(source)) {
       native_block_full_subspace_hermitian(
@@ -392,15 +322,17 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
         vectors = vectors
       )
     } else {
-      native_lanczos_hermitian(
+      native_block_lanczos_hermitian(
         op,
         k = k,
         target = target,
         tol = tol,
         maxit = m_max,
+        block = 1L,
         max_restarts = max_restarts,
         vectors = vectors,
-        .use_block_kernel = FALSE
+        full_subspace = FALSE,
+        certificate_fallback = FALSE
       )
     }
     fallback$restarts <- restarts_used
