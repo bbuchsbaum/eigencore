@@ -198,6 +198,32 @@ test_that("native block thick-restart falls back rather than returning duplicate
   expect_lt(max(abs(crossprod(vectors(fit)) - diag(5L))), 1e-8)
 })
 
+test_that("native block thick-restart uses scalar fallback for sparse certificate failures", {
+  vals <- sort(spectrum_pattern("clustered", 200L), decreasing = TRUE)
+  A <- Matrix::sparseMatrix(
+    i = seq_along(vals),
+    j = seq_along(vals),
+    x = vals
+  )
+  truth <- vals[seq_len(5L)]
+
+  fit <- eig_partial(
+    A,
+    k = 5L,
+    target = largest(),
+    method = lanczos(block = 2L, max_subspace = 35L, max_restarts = 100L),
+    seed = 1L,
+    tol = 1e-8
+  )
+
+  expect_true(isTRUE(fit$restart$fallback_used))
+  expect_equal(fit$restart$kind, "block_scalar_lanczos_certificate_fallback")
+  expect_match(fit$warnings, "failed certification", fixed = TRUE)
+  expect_true(certificate(fit)$passed)
+  expect_equal(values(fit), truth, tolerance = 1e-6)
+  expect_lt(max(abs(crossprod(vectors(fit)) - diag(5L))), 1e-8)
+})
+
 test_that("native block thick-restart production path preserves target taxonomy", {
   A <- diag(c(-9, 7, -2, 0.5, 0.1, 3))
   method <- lanczos(block = 2L, max_subspace = 6L, max_restarts = 20L)

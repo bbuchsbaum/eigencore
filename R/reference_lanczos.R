@@ -338,17 +338,33 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
     history = restart_history
   )
 
-  if (!isTRUE(cert$passed) && is.matrix(source) && is.double(source)) {
-    fallback <- native_block_full_subspace_hermitian(
-      op,
-      k = k,
-      target = target,
-      tol = tol,
-      block = block,
-      max_subspace = n,
-      max_restarts = max_restarts,
-      vectors = vectors
-    )
+  certificate_failed_orthogonality <- is.finite(cert$max_orthogonality_loss) &&
+    is.finite(cert$orthogonality_tolerance) &&
+    cert$max_orthogonality_loss > cert$orthogonality_tolerance
+  if (!isTRUE(cert$passed) && isTRUE(certificate_failed_orthogonality) &&
+      ((is.matrix(source) && is.double(source)) || identical(storage, "dgCMatrix"))) {
+    fallback <- if (is.matrix(source) && is.double(source)) {
+      native_block_full_subspace_hermitian(
+        op,
+        k = k,
+        target = target,
+        tol = tol,
+        block = block,
+        max_subspace = n,
+        max_restarts = max_restarts,
+        vectors = vectors
+      )
+    } else {
+      native_lanczos_hermitian(
+        op,
+        k = k,
+        target = target,
+        tol = tol,
+        maxit = m_max,
+        max_restarts = max_restarts,
+        vectors = vectors
+      )
+    }
     fallback$restarts <- restarts_used
     fallback$ortho_passes <- ortho_passes
     fallback$locking_events <- locking_events
@@ -357,7 +373,11 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
     fallback$stage_seconds <- stage_seconds
     fallback$convergence_history <- restart_history
     fallback$locked <- seq_len(sum(fallback$certificate$converged))
-    fallback$restart$kind <- "block_dense_lapack_certificate_fallback"
+    fallback$restart$kind <- if (is.matrix(source) && is.double(source)) {
+      "block_dense_lapack_certificate_fallback"
+    } else {
+      "block_scalar_lanczos_certificate_fallback"
+    }
     fallback$restart$fallback_used <- TRUE
     fallback$restart$fallback_reason <- "native block Lanczos certificate failed"
     fallback$restart$failed_block_certificate <- cert
