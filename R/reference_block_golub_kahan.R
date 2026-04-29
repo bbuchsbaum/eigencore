@@ -753,6 +753,7 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
       thick_restart = FALSE,
       retained_restart = TRUE,
       retained_restart_native = TRUE,
+      retained_av_cache = FALSE,
       native_attempt_certification = TRUE,
       native_early_stop = is.data.frame(attempt_history) &&
         any(attempt_history$certificate_passed) &&

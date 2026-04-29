@@ -601,6 +601,11 @@ Primary attack surfaces, in order:
    calls and lowers R-visible allocation versus the R adaptive cycle, but the
    total row remains speed-gate negative. Locking, cached `A V_keep` retention,
    and a full production thick-restart policy remain open.
+   A direct cached-`A V_keep` handoff into the current basis runner was tested
+   and rejected: it marked cached starts as used but failed the wide sparse
+   certificate. The retained row now explicitly reports `retained_av_cache =
+   FALSE` until the native restart path can rotate/normalize retained vectors
+   and their operator images together.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
    preconditioning beyond the typed shifted-diagonal and certified
    shifted-tridiagonal sparse-smallest case, keep the benchmark

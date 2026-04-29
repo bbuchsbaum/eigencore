@@ -182,6 +182,11 @@ they are machine-dependent.
   lower (`~0.23MB` versus `~0.36MB` in the sampled row); this is a staging
   candidate, not H closure, because locking, cached `A V_keep` retention, and
   production thick-restart policy are still open.
+- A direct cached-`A V_keep` handoff inside the retained block-GK cycle was
+  tested and rejected: it set cached-start diagnostics but failed the wide
+  sparse certificate. The retained benchmark row therefore reports
+  `retained_av_cache = FALSE` and treats cached `A V_keep` retention as blocked
+  on a proper native restart rotation/normalization step.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,
