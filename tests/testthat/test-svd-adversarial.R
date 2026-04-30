@@ -223,8 +223,10 @@ test_that("native Golub-Kahan supports one-sided small-side reorthogonalization"
 
   expect_identical(fit$method, "native prototype Golub-Kahan")
   expect_identical(fit$restart$reorthogonalization_mode, "one_sided_small_side")
-  expect_true(fit$restart$reorthogonalize_u)
-  expect_false(fit$restart$reorthogonalize_v)
+  expect_identical(fit$restart$internal_orientation, "transposed_wide_operator")
+  expect_true(fit$restart$internal_transposed)
+  expect_false(fit$restart$reorthogonalize_u)
+  expect_true(fit$restart$reorthogonalize_v)
   expect_equal(fit$d, c(9, 6), tolerance = 1e-10)
   expect_certificate_clean(fit)
 
@@ -238,6 +240,8 @@ test_that("native Golub-Kahan supports one-sided small-side reorthogonalization"
     seed = 520
   )
   expect_identical(tall_fit$restart$reorthogonalization_mode, "one_sided_small_side")
+  expect_identical(tall_fit$restart$internal_orientation, "as_given")
+  expect_false(tall_fit$restart$internal_transposed)
   expect_false(tall_fit$restart$reorthogonalize_u)
   expect_true(tall_fit$restart$reorthogonalize_v)
   expect_equal(tall_fit$d, c(9, 6), tolerance = 1e-10)

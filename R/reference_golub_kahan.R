@@ -141,6 +141,20 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     stop("maxit/max_subspace must be at least rank.", call. = FALSE)
   }
 
+  external_op <- op
+  internal_transposed <- FALSE
+  internal_orientation <- "as_given"
+  if (!isTRUE(reorthogonalize) && m < n) {
+    transposed_source <- native_golub_kahan_transpose_source(op)
+    if (!is.null(transposed_source)) {
+      op <- as_operator(transposed_source)
+      m <- op$dim[1L]
+      n <- op$dim[2L]
+      internal_transposed <- TRUE
+      internal_orientation <- "transposed_wide_operator"
+    }
+  }
+
   start <- stats::rnorm(n)
   storage <- op$metadata$storage %||% NULL
   source <- source_or_null(op)
@@ -357,6 +371,10 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     max(0L, iter$iterations - first_certified_prefix)
   }
 
+  if (isTRUE(internal_transposed)) {
+    final <- native_golub_kahan_swap_transposed_result(external_op, final, tol)
+  }
+
   if (vectors == "left") {
     final$v <- NULL
   } else if (vectors == "right") {
@@ -408,6 +426,8 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     reorthogonalization_mode = reorthogonalization_mode,
     reorthogonalize_u = reorthogonalize_u,
     reorthogonalize_v = reorthogonalize_v,
+    internal_orientation = internal_orientation,
+    internal_transposed = internal_transposed,
     zero_singular_completion = isTRUE(final$zero_singular_completion),
     zero_singular_threshold = final$zero_singular_threshold %||% NA_real_,
     prefix_diagnostics = prefix_diagnostics,
@@ -418,6 +438,36 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     stage_seconds = final$stage_seconds,
     history = final$convergence_history
   )
+  final
+}
+
+#' @keywords internal
+native_golub_kahan_transpose_source <- function(op) {
+  storage <- op$metadata$storage %||% NULL
+  source <- source_or_null(op)
+  if (identical(storage, "dgCMatrix")) {
+    return(get("t", envir = asNamespace("Matrix"))(op$metadata$matrix))
+  }
+  if (is.matrix(source) && is.double(source)) {
+    return(t(source))
+  }
+  NULL
+}
+
+#' @keywords internal
+native_golub_kahan_swap_transposed_result <- function(original_op, final, tol) {
+  if (is.null(final$u) || is.null(final$v)) {
+    return(final)
+  }
+  u <- final$v
+  v <- final$u
+  cert <- certify_svd_operator(original_op, final$d, u, v, tol = tol)
+  final$u <- u
+  final$v <- v
+  final$residuals <- cert$residuals
+  final$backward_error <- cert$backward_error
+  final$orthogonality <- cert$orthogonality
+  final$certificate <- cert
   final
 }
 
