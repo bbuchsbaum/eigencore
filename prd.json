@@ -482,8 +482,9 @@
         "orthogonality certification for U and V"
       ],
       "current_implementation_status": {
-        "status": "in_progress",
-        "implemented_path": "native Golub-Kahan staging path for dense double matrices and dgCMatrix operators; native CSC left-Gram and right-Gram certified special cases cover tiny wide/tall sparse largest-SVD rows with exact two-sided certification; unexported block-Golub-Kahan thick-restart oracle, native block Ritz extraction kernel, and dense/CSC native block basis-cycle scaffolding exist for H",
+        "status": "partial_promoted",
+        "implemented_path": "native Golub-Kahan staging path for dense double matrices and dgCMatrix operators; native CSC left-Gram and right-Gram certified special cases cover tiny wide/tall sparse largest-SVD rows with exact two-sided certification; the tiny wide sparse Gram Track A gate is green under the lowered 1.1x certified-RSpectra speed target after fused native vector formation/diagnostics and deterministic fast-path dispatch; unexported block-Golub-Kahan thick-restart oracle, native block Ritz extraction kernel, and dense/CSC native block basis-cycle scaffolding exist for broader H",
+        "tiny_sparse_gram_gate_status": "promoted for the 90-by-600 rank-5 wide sparse fixture: repeated installed-package runs show about 1.106x to 1.122x speed versus RSpectra plus eigencore certification, about 2.7x memory ratio, and max backward error around 1.1e-16",
         "native_certificate_paths": [
           "dense SVD certificate diagnostics",
           "built-in dense, dgCMatrix, and diagonal SVD operator certificate diagnostics"
@@ -491,7 +492,7 @@
         "not_yet_satisfied": [
           "thick restart / continuation without adaptive full reruns",
           "block-native Golub-Kahan performance path",
-          "RSpectra 1.1x speed gate"
+          "general sparse and matrix-free SVD speed gates outside the tiny Gram Track A surface"
         ],
         "planner_policy": "Use an honest native prototype label for the current path; keep matrix-free SVD on the reference path until the native callback/operator ABI is broadened."
       }

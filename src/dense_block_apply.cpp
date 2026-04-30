@@ -10256,7 +10256,6 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   stage_timer = native_timer_now();
   SEXP d_ = PROTECT(allocVector(REALSXP, rank));
   SEXP v_ = PROTECT(allocMatrix(REALSXP, n, rank));
-  std::memset(REAL(v_), 0, sizeof(double) * static_cast<size_t>(n) * rank);
 
   for (int col = 0; col < rank; ++col) {
     const double sigma = sqrt(values[static_cast<size_t>(col)] > 0.0 ?
@@ -10264,21 +10263,17 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
     REAL(d_)[col] = sigma;
   }
 
-  for (int acol = 0; acol < n; ++acol) {
-    for (int jj = Ap[acol]; jj < Ap[acol + 1]; ++jj) {
-      const int row = Ai[jj];
-      const double val = Ax[jj];
-      for (int scol = 0; scol < rank; ++scol) {
-        REAL(v_)[acol + static_cast<int64_t>(scol) * n] +=
-          val * REAL(u_)[row + static_cast<int64_t>(scol) * m];
-      }
-    }
-  }
   for (int scol = 0; scol < rank; ++scol) {
     const double sigma = REAL(d_)[scol];
     const double inv_sigma = sigma > 100.0 * DBL_EPSILON ? 1.0 / sigma : 0.0;
-    for (int col = 0; col < n; ++col) {
-      REAL(v_)[col + static_cast<int64_t>(scol) * n] *= inv_sigma;
+    const double* u_col = REAL(u_) + static_cast<int64_t>(scol) * m;
+    double* v_col = REAL(v_) + static_cast<int64_t>(scol) * n;
+    for (int acol = 0; acol < n; ++acol) {
+      double sum = 0.0;
+      for (int jj = Ap[acol]; jj < Ap[acol + 1]; ++jj) {
+        sum += Ax[jj] * u_col[Ai[jj]];
+      }
+      v_col[acol] = sum * inv_sigma;
     }
   }
   stage_vector_form_seconds = native_timer_elapsed(stage_timer);
@@ -10300,33 +10295,55 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   std::vector<double> gram_v_small(static_cast<size_t>(rank) * rank, 0.0);
   std::vector<double> gu;
   std::vector<double> gu_block;
-  F77_CALL(dgemm)(&trans, &notrans, &rank, &rank, &m,
-                  &one, REAL(u_), &m, REAL(u_), &m,
-                  &zero, gram_u_small.data(), &rank FCONE FCONE);
   if (used_implicit_lanczos) {
+    F77_CALL(dgemm)(&trans, &notrans, &rank, &rank, &m,
+                    &one, REAL(u_), &m, REAL(u_), &m,
+                    &zero, gram_u_small.data(), &rank FCONE FCONE);
     F77_CALL(dgemm)(&trans, &notrans, &rank, &rank, &n,
                     &one, REAL(v_), &n, REAL(v_), &n,
                     &zero, gram_v_small.data(), &rank FCONE FCONE);
     gu.assign(static_cast<size_t>(m), 0.0);
   } else {
     gu_block.assign(static_cast<size_t>(m) * static_cast<size_t>(rank), 0.0);
-    F77_CALL(dgemm)(&notrans, &notrans, &m, &rank, &m,
-                    &one, gram.data(), &m, REAL(u_), &m,
-                    &zero, gu_block.data(), &m FCONE FCONE);
     for (int col = 0; col < rank; ++col) {
       const double sigma_col = REAL(d_)[col];
       const double inv_col = sigma_col > 100.0 * DBL_EPSILON ? 1.0 / sigma_col : 0.0;
       const double* gu_col = gu_block.data() + static_cast<int64_t>(col) * m;
+      double* gu_write = gu_block.data() + static_cast<int64_t>(col) * m;
+      const double* u_col = REAL(u_) + static_cast<int64_t>(col) * m;
+      for (int gcol = 0; gcol < m; ++gcol) {
+        const double coeff = u_col[gcol];
+        const double* gram_col = gram.data() + static_cast<int64_t>(gcol) * m;
+        for (int row = 0; row < m; ++row) {
+          gu_write[row] += gram_col[row] * coeff;
+        }
+      }
+      const double lambda = sigma_col * sigma_col;
+      double left_sum = 0.0;
+      for (int row = 0; row < m; ++row) {
+        const double residual = (gu_col[row] - lambda * u_col[row]) * inv_col;
+        left_sum += residual * residual;
+      }
+      const double left = sqrt(left_sum);
+      REAL(left_)[col] = left;
+      REAL(right_)[col] = 0.0;
+      REAL(combined_)[col] = left;
+      REAL(scale_)[col] = scale_value;
+      REAL(backward_)[col] = left / scale_value;
+      LOGICAL(converged_)[col] = (REAL(backward_)[col] <= tol) ? TRUE : FALSE;
       for (int row_col = 0; row_col < rank; ++row_col) {
         const double sigma_row = REAL(d_)[row_col];
         const double inv_row = sigma_row > 100.0 * DBL_EPSILON ? 1.0 / sigma_row : 0.0;
         const double* u_row = REAL(u_) + static_cast<int64_t>(row_col) * m;
-        long double dot = 0.0L;
+        double dot_u = 0.0;
+        double dot_gu = 0.0;
         for (int row = 0; row < m; ++row) {
-          dot += static_cast<long double>(u_row[row]) * gu_col[row];
+          dot_u += u_row[row] * u_col[row];
+          dot_gu += u_row[row] * gu_col[row];
         }
+        gram_u_small[row_col + static_cast<int64_t>(col) * rank] = dot_u;
         gram_v_small[row_col + static_cast<int64_t>(col) * rank] =
-          static_cast<double>(dot) * inv_row * inv_col;
+          dot_gu * inv_row * inv_col;
       }
     }
   }
@@ -10338,11 +10355,10 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   setAttrib(orth_, R_NamesSymbol, orth_names_);
 
   std::vector<double> atu_check(static_cast<size_t>(n), 0.0);
-  for (int scol = 0; scol < rank; ++scol) {
-    const double sigma = REAL(d_)[scol];
-    const double lambda = sigma * sigma;
-    const double* gu_col = nullptr;
-    if (used_implicit_lanczos) {
+  if (used_implicit_lanczos) {
+    for (int scol = 0; scol < rank; ++scol) {
+      const double sigma = REAL(d_)[scol];
+      const double* gu_col = nullptr;
       csc_forward_apply_vec(
         Ai, Ap, Ax, m, n,
         REAL(v_) + static_cast<int64_t>(scol) * n,
@@ -10354,35 +10370,27 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
         atu_check.data()
       );
       gu_col = gu.data();
-    } else {
-      gu_col = gu_block.data() + static_cast<int64_t>(scol) * m;
-    }
-    long double left_sum = 0.0L;
-    long double right_sum = 0.0L;
-    const double inv_sigma = sigma > 100.0 * DBL_EPSILON ? 1.0 / sigma : 0.0;
-    for (int row = 0; row < m; ++row) {
-      const double residual = used_implicit_lanczos
-        ? (gu_col[row] -
-            sigma * REAL(u_)[row + static_cast<int64_t>(scol) * m])
-        : (gu_col[row] -
-            lambda * REAL(u_)[row + static_cast<int64_t>(scol) * m]) * inv_sigma;
-      left_sum += static_cast<long double>(residual) * residual;
-    }
-    if (used_implicit_lanczos) {
+      long double left_sum = 0.0L;
+      long double right_sum = 0.0L;
+      for (int row = 0; row < m; ++row) {
+        const double residual =
+          gu_col[row] - sigma * REAL(u_)[row + static_cast<int64_t>(scol) * m];
+        left_sum += static_cast<long double>(residual) * residual;
+      }
       for (int row = 0; row < n; ++row) {
         const double residual = atu_check[static_cast<size_t>(row)] -
           sigma * REAL(v_)[row + static_cast<int64_t>(scol) * n];
         right_sum += static_cast<long double>(residual) * residual;
       }
+      const double left = sqrt(static_cast<double>(left_sum));
+      const double right = sqrt(static_cast<double>(right_sum));
+      REAL(left_)[scol] = left;
+      REAL(right_)[scol] = right;
+      REAL(combined_)[scol] = sqrt(left * left + right * right);
+      REAL(scale_)[scol] = scale_value;
+      REAL(backward_)[scol] = REAL(combined_)[scol] / scale_value;
+      LOGICAL(converged_)[scol] = (REAL(backward_)[scol] <= tol) ? TRUE : FALSE;
     }
-    const double left = sqrt(static_cast<double>(left_sum));
-    const double right = sqrt(static_cast<double>(right_sum));
-    REAL(left_)[scol] = left;
-    REAL(right_)[scol] = right;
-    REAL(combined_)[scol] = sqrt(left * left + right * right);
-    REAL(scale_)[scol] = scale_value;
-    REAL(backward_)[scol] = REAL(combined_)[scol] / scale_value;
-    LOGICAL(converged_)[scol] = (REAL(backward_)[scol] <= tol) ? TRUE : FALSE;
   }
   stage_diagnostics_seconds = native_timer_elapsed(stage_timer);
 

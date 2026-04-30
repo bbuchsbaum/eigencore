@@ -535,7 +535,7 @@ Working status against the sequenced milestones:
 | F | largely done for current paths | Native ortho and certificate kernels exist, but not every future solver path is fully native-certificate-backed. |
 | G0 | done | Native scalar Hermitian staging path exists and certifies on dense/CSC cases. |
 | G1 | done | Promoted native block Hermitian Lanczos runs by default in benchmark-proven regimes; strict Hermitian sparse and dense regression gates pass against certified RSpectra/PRIMME references. |
-| H | staged, not complete | Native Golub-Kahan exists as a staging path; block-GK restart comparators now include cached Ritz-vector `A V` paths, compact native fit extraction, restart-efficiency diagnostics, and a first native retained-restart candidate that constructs Ritz-plus-random restarts inside C. Production thick-restart SVD and SVD performance gates remain open. |
+| H | partially promoted | Tiny sparse Gram Track A is green under the lowered `1.1x` certified-RSpectra speed target and passes the memory gate on the 90-by-600 rank-5 fixture; native Golub-Kahan exists as a staging path; block-GK restart comparators now include cached Ritz-vector `A V` paths, compact native fit extraction, restart-efficiency diagnostics, and a first native retained-restart candidate that constructs Ritz-plus-random restarts inside C. Production thick-restart SVD / IRLBA / BPRO for general sparse and matrix-free cases remains open. |
 | I | prototype | Randomized SVD has reference implementation, normalizers, and certified refinement; native approximate engine remains open. |
 | J | partial | Native generalized SPD LOBPCG slices exist for built-in `B`, explicitly SPD matrix-free `B`, dense constraints, and typed shifted-diagonal / shifted-tridiagonal preconditioners; strict benchmark rows now gate bare, shifted-diagonal, shifted-tridiagonal sparse-smallest, constrained, and adversarial B native-contract diagnostics; the adversarial B bank covers largest/smallest ill-conditioned diagonal, sparse CSC, and explicitly SPD matrix-free B without dense fallback; broader generalized preconditioning and promotion remain open. |
 | K | not complete | B-orthogonal block Lanczos is still a later generalized-SPD refinement path. |
@@ -707,6 +707,21 @@ Primary attack surfaces, in order:
    uses Spectra's symmetric Krylov solver on the implicit normal operator with
    a small `ncv`, whereas eigencore's promoted tiny path still pays the selected
    dense `dsyevr` cost for exact Gram diagonalization.
+   The current H-shaped wide sparse Gram gate is now green under the lowered
+   `1.1x` SVD speed target after two implementation changes: `V = A' U Sigma^-1`
+   is formed through a column-contiguous native CSC pass without a separate
+   memset/scale phase, and the materialized-Gram diagnostic/certificate path
+   fuses `G U`, residual, and orthogonality calculations instead of making
+   separate tiny BLAS calls. `svd_partial()` also tries the deterministic native
+   Gram fast path before touching the RNG seed, avoiding irrelevant seed setup
+   on this path. Installed repeated gate evidence on the 90-by-600 rank-5
+   fixture shows eigencore at roughly `0.319ms` to `0.324ms` versus certified
+   RSpectra at roughly `0.354ms` to `0.362ms`, with speed ratios from about
+   `1.106x` to `1.122x`, memory ratio about `2.7x`, and max backward error
+   about `1.1e-16`. This promotes the tiny sparse Gram Track A surface. It does
+   not close the broader PRD H requirement for production native
+   thick-restarted Golub-Kahan/IRLBA/BPRO on general sparse and matrix-free SVD
+   problems.
    For non-Gram sparse problems, `auto()` no
    longer promotes the retained block-GK candidate by default; retained restart
    is opt-in behind `eigencore.promote_retained_golub_kahan` until its
