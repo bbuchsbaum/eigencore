@@ -665,11 +665,12 @@ Primary attack surfaces, in order:
    fixture certifies directly through `implicit_normal_lanczos` at about `45`
    normal-operator calls and max backward error around `3.5e-10`, instead of
    falling back to `dsyevr`; the old generic block Hermitian wrapper has been
-   removed from this diagnostic path. This improves the opt-in implicit row
-   substantially (installed quick probe roughly `0.59ms` rather than the old
-   multi-millisecond generic block path), but it is still slower than the
-   default explicit Gram path (roughly `0.43ms`) and
-   RSpectra-plus-eigencore-certification (roughly `0.35ms`). A no-reorthogonalize
+   removed from this diagnostic path. The scalar diagnostic now uses one
+   reorthogonalization pass per step while keeping exact final certification;
+   this improves the opt-in implicit row substantially (installed quick probe
+   roughly `0.52ms` rather than the old multi-millisecond generic block path),
+   but it is still slower than the default explicit Gram path (roughly
+   `0.44ms`) and RSpectra-plus-eigencore-certification (roughly `0.36ms`). A no-reorthogonalize
    implicit probe failed the exact certificate and fell back to `dsyevr`, so
    unmonitored reorth skipping is rejected here too. The useful lesson remains
    algorithmic: the H closure path needs a true low-allocation restarted normal

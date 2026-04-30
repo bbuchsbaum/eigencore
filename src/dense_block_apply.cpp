@@ -9663,7 +9663,7 @@ static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
       }
     }
 
-    trl_orthogonalise(nullptr, 0, Q.data(), step + 1, z.data(), tmp_m.data(), m);
+    trl_orthogonalise(nullptr, 0, Q.data(), step + 1, z.data(), tmp_m.data(), m, 1);
     const double b = trl_norm2(z.data(), m);
     active = step + 1;
     if (step + 1 >= max_steps || b <= 100.0 * DBL_EPSILON * (norm_A * norm_A + 1.0)) {
