@@ -9988,12 +9988,21 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   SET_STRING_ELT(orth_names_, 1, mkChar("V"));
   setAttrib(orth_, R_NamesSymbol, orth_names_);
 
-  std::vector<double> gu(static_cast<size_t>(m), 0.0);
+  std::vector<double> gu;
+  std::vector<double> gu_block;
+  if (used_implicit_lanczos) {
+    gu.assign(static_cast<size_t>(m), 0.0);
+  } else {
+    gu_block.assign(static_cast<size_t>(m) * static_cast<size_t>(rank), 0.0);
+    F77_CALL(dgemm)(&notrans, &notrans, &m, &rank, &m,
+                    &one, gram.data(), &m, REAL(u_), &m,
+                    &zero, gu_block.data(), &m FCONE FCONE);
+  }
   std::vector<double> atu_check(static_cast<size_t>(n), 0.0);
   for (int scol = 0; scol < rank; ++scol) {
     const double sigma = REAL(d_)[scol];
     const double lambda = sigma * sigma;
-    std::fill(gu.begin(), gu.end(), 0.0);
+    const double* gu_col = nullptr;
     if (used_implicit_lanczos) {
       csc_forward_apply_vec(
         Ai, Ap, Ax, m, n,
@@ -10005,26 +10014,18 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
         REAL(u_) + static_cast<int64_t>(scol) * m,
         atu_check.data()
       );
+      gu_col = gu.data();
     } else {
-      for (int col = 0; col < m; ++col) {
-        const double u_col = REAL(u_)[col + static_cast<int64_t>(scol) * m];
-        if (u_col == 0.0) {
-          continue;
-        }
-        for (int row = 0; row < m; ++row) {
-          gu[static_cast<size_t>(row)] +=
-            gram[row + static_cast<int64_t>(col) * m] * u_col;
-        }
-      }
+      gu_col = gu_block.data() + static_cast<int64_t>(scol) * m;
     }
     long double left_sum = 0.0L;
     long double right_sum = 0.0L;
     const double inv_sigma = sigma > 100.0 * DBL_EPSILON ? 1.0 / sigma : 0.0;
     for (int row = 0; row < m; ++row) {
       const double residual = used_implicit_lanczos
-        ? (gu[static_cast<size_t>(row)] -
+        ? (gu_col[row] -
             sigma * REAL(u_)[row + static_cast<int64_t>(scol) * m])
-        : (gu[static_cast<size_t>(row)] -
+        : (gu_col[row] -
             lambda * REAL(u_)[row + static_cast<int64_t>(scol) * m]) * inv_sigma;
       left_sum += static_cast<long double>(residual) * residual;
     }
