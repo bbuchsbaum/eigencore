@@ -10120,7 +10120,50 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
       int info = 0;
       std::memcpy(work_matrix.data(), gram.data(),
                   sizeof(double) * static_cast<size_t>(m) * static_cast<size_t>(m));
-      if (m <= 128 && rank >= 16) {
+      SEXP dsyevx_option_ = Rf_GetOption1(Rf_install("eigencore.csc_left_gram_dsyevx_attempt"));
+      const int attempt_dsyevx = asLogical(dsyevx_option_) == TRUE;
+      if (attempt_dsyevx && m <= 128 && rank <= 16) {
+        lapack_eigensolver = "lapack_dsyevx";
+        char jobz = 'V';
+        char range = 'I';
+        double vl = 0.0;
+        double vu = 0.0;
+        const double abstol = 0.0;
+        int il = m - rank + 1;
+        int iu = m;
+        int m_found = 0;
+        int lwork = 8 * m;
+        if (lwork < 1) {
+          lwork = 1;
+        }
+        std::vector<double> work(static_cast<size_t>(lwork));
+        std::vector<int> iwork(static_cast<size_t>(5 * m));
+        std::vector<int> ifail(static_cast<size_t>(m));
+        F77_CALL(dsyevx)(&jobz, &range, &uplo, &m, work_matrix.data(), &m,
+                         &vl, &vu, &il, &iu, &abstol,
+                         &m_found, values_work.data(), REAL(u_), &m,
+                         work.data(), &lwork, iwork.data(), ifail.data(),
+                         &info FCONE FCONE FCONE);
+        if (info != 0 || m_found != rank) {
+          UNPROTECT(1);
+          error("LAPACK dsyevx failed with info=%d, found=%d", info, m_found);
+        }
+        for (int left = 0, right = rank - 1; left < right; ++left, --right) {
+          const double tmp_value = values_work[left];
+          values_work[left] = values_work[right];
+          values_work[right] = tmp_value;
+          for (int row = 0; row < m; ++row) {
+            const int64_t lpos = row + static_cast<int64_t>(left) * m;
+            const int64_t rpos = row + static_cast<int64_t>(right) * m;
+            const double tmp_vec = REAL(u_)[lpos];
+            REAL(u_)[lpos] = REAL(u_)[rpos];
+            REAL(u_)[rpos] = tmp_vec;
+          }
+        }
+        for (int col = 0; col < rank; ++col) {
+          values[static_cast<size_t>(col)] = values_work[static_cast<size_t>(col)];
+        }
+      } else if (m <= 128 && rank >= 16) {
         lapack_eigensolver = "lapack_dsyevd";
         char jobz = 'V';
         int lwork = -1;

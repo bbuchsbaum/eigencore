@@ -194,6 +194,21 @@ test_that("wide sparse Gram SVD uses native CSC left-Gram kernel", {
   expect_certificate_clean(fit)
 })
 
+test_that("wide sparse Gram SVD exposes guarded DSYEVX backend", {
+  old_options <- options(eigencore.csc_left_gram_dsyevx_attempt = TRUE)
+  on.exit(options(old_options), add = TRUE)
+  set.seed(519)
+  M <- Matrix::t(Matrix::rsparsematrix(100, 30, density = 0.05))
+  fit <- svd_partial(M, rank = 4, target = largest(), tol = 1e-8)
+  oracle <- svd(as.matrix(M), nu = 4, nv = 4)
+
+  expect_identical(fit$restart$kind, "gram_svd_special_case")
+  expect_identical(fit$restart$gram_side, "left")
+  expect_identical(fit$restart$native_gram_eigensolver, "lapack_dsyevx")
+  expect_equal(fit$d, oracle$d[1:4], tolerance = 1e-8)
+  expect_certificate_clean(fit)
+})
+
 test_that("wide sparse Gram SVD dispatches larger tiny ranks to DSYEVD", {
   set.seed(518)
   M <- Matrix::t(Matrix::rsparsematrix(90, 32, density = 0.08))

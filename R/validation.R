@@ -191,6 +191,7 @@ available_svd_methods <- function() {
     "eigencore_irlba_lbd_one_sided",
     "eigencore_golub_kahan_projected",
     "eigencore_implicit_normal_lanczos",
+    "eigencore_gram_dsyevx",
     "eigencore_block_golub_kahan_cycle",
     "eigencore_block_golub_kahan_cycle_cached",
     "eigencore_block_golub_kahan_cycle_cached_random",
@@ -449,6 +450,11 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
     },
     eigencore_implicit_normal_lanczos = {
       old_options <- options(eigencore.csc_left_normal_lanczos_attempt = TRUE)
+      on.exit(options(old_options), add = TRUE)
+      svd_partial(A, rank = rank, tol = tol, seed = seed)
+    },
+    eigencore_gram_dsyevx = {
+      old_options <- options(eigencore.csc_left_gram_dsyevx_attempt = TRUE)
       on.exit(options(old_options), add = TRUE)
       svd_partial(A, rank = rank, tol = tol, seed = seed)
     },
