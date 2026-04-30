@@ -265,6 +265,28 @@ test_that("wide sparse Gram SVD exposes opt-in certified subspace eigensolve", {
   expect_certificate_clean(fit)
 })
 
+test_that("wide sparse Gram SVD exposes opt-in explicit Gram Krylov eigensolve", {
+  old_options <- options(
+    eigencore.csc_left_gram_krylov_attempt = TRUE,
+    eigencore.csc_left_gram_subspace_attempt = FALSE,
+    eigencore.csc_left_normal_lanczos_attempt = FALSE
+  )
+  on.exit(options(old_options), add = TRUE)
+  M <- cbind(
+    Matrix::Diagonal(x = c(10, 8, 6, 1, 0.5)),
+    Matrix::Matrix(0, 5, 20, sparse = TRUE)
+  )
+
+  fit <- svd_partial(M, rank = 2, target = largest(), tol = 1e-8)
+
+  expect_identical(fit$restart$kind, "gram_svd_special_case")
+  expect_identical(fit$restart$native_gram_eigensolver, "explicit_gram_krylov")
+  expect_lte(fit$restart$native_gram_subspace_max_backward_error, 1e-8)
+  expect_lte(fit$restart$native_gram_krylov_iterations, 5L)
+  expect_equal(fit$d, c(10, 8), tolerance = 1e-10)
+  expect_certificate_clean(fit)
+})
+
 test_that("wide sparse Gram SVD exposes opt-in implicit normal Lanczos", {
   old_options <- options(
     eigencore.csc_left_normal_lanczos_attempt = TRUE,

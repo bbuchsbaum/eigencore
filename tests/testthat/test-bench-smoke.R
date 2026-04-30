@@ -676,7 +676,12 @@ test_that("tiny Gram eigensolver benchmark compares native backends", {
 
   expect_equal(
     sort(unique(rows$backend)),
-    sort(c("lapack_dsyevr_selected", "lapack_dsyev_full", "lapack_dsyevd_full"))
+    sort(c(
+      "lapack_dsyevr_selected",
+      "lapack_dsyevx_selected",
+      "lapack_dsyev_full",
+      "lapack_dsyevd_full"
+    ))
   )
   expect_true(all(c(
     "dimension", "rank", "backend", "median", "mem_alloc",

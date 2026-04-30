@@ -9433,6 +9433,107 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_selected(SEXP A_, SEXP k_, SEXP 
   return out_;
 }
 
+extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevx_selected(SEXP A_, SEXP k_, SEXP target_kind_) {
+  if (!isReal(A_)) {
+    error("A must be a double matrix");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  if (dimA == R_NilValue) {
+    error("A must be a matrix");
+  }
+  const int n = INTEGER(dimA)[0];
+  const int ncolA = INTEGER(dimA)[1];
+  if (n != ncolA) {
+    error("A must be square");
+  }
+  const int target_kind = static_cast<int>(asInteger(target_kind_));
+  int k = static_cast<int>(asInteger(k_));
+  if (k < 1) {
+    error("k must be >= 1");
+  }
+  if (k > n) {
+    k = n;
+  }
+  if (target_kind != 1 && target_kind != 2) {
+    error("selected dense symmetric eigen supports only largest/smallest algebraic targets");
+  }
+
+  SEXP values_ = PROTECT(allocVector(REALSXP, k));
+  SEXP vectors_ = PROTECT(allocMatrix(REALSXP, n, k));
+  if (n > 0) {
+    double* work_matrix = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(n) * static_cast<size_t>(n), sizeof(double))
+    );
+    double* values_work = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(n), sizeof(double))
+    );
+    int* iwork = reinterpret_cast<int*>(
+      R_alloc(static_cast<size_t>(5 * n), sizeof(int))
+    );
+    int* ifail = reinterpret_cast<int*>(
+      R_alloc(static_cast<size_t>(n), sizeof(int))
+    );
+    std::memcpy(work_matrix, REAL(A_),
+                sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(n));
+    char jobz = 'V';
+    char range = 'I';
+    char uplo = 'U';
+    double vl = 0.0;
+    double vu = 0.0;
+    const double abstol = 0.0;
+    int il = 1;
+    int iu = k;
+    if (target_kind == 1) {
+      il = n - k + 1;
+      iu = n;
+    }
+    int m_found = 0;
+    int info = 0;
+    int lwork = 8 * n;
+    if (lwork < 1) {
+      lwork = 1;
+    }
+    double* work = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(lwork), sizeof(double))
+    );
+    F77_CALL(dsyevx)(&jobz, &range, &uplo, &n, work_matrix, &n,
+                     &vl, &vu, &il, &iu, &abstol,
+                     &m_found, values_work, REAL(vectors_), &n,
+                     work, &lwork, iwork, ifail, &info FCONE FCONE FCONE);
+    if (info != 0 || m_found != k) {
+      error("LAPACK dsyevx failed with info=%d, found=%d", info, m_found);
+    }
+    for (int col = 0; col < k; ++col) {
+      REAL(values_)[col] = values_work[col];
+    }
+    if (target_kind == 1) {
+      for (int left = 0, right = k - 1; left < right; ++left, --right) {
+        const double tmp_value = REAL(values_)[left];
+        REAL(values_)[left] = REAL(values_)[right];
+        REAL(values_)[right] = tmp_value;
+        for (int row = 0; row < n; ++row) {
+          const int64_t lpos = row + static_cast<int64_t>(left) * n;
+          const int64_t rpos = row + static_cast<int64_t>(right) * n;
+          const double tmp_vec = REAL(vectors_)[lpos];
+          REAL(vectors_)[lpos] = REAL(vectors_)[rpos];
+          REAL(vectors_)[rpos] = tmp_vec;
+        }
+      }
+    }
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 2));
+  SET_VECTOR_ELT(out_, 0, values_);
+  SET_VECTOR_ELT(out_, 1, vectors_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(names_, 0, mkChar("values"));
+  SET_STRING_ELT(names_, 1, mkChar("vectors"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(4);
+  return out_;
+}
+
 static int orthonormalize_columns_inplace(double* Q, int n, int cols,
                                           double* tmp, double tol) {
   int rank = 0;
@@ -9647,6 +9748,155 @@ static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
   return max_backward <= tol ? 1 : 0;
 }
 
+static int gram_krylov_left_normal_attempt(const double* gram,
+                                           int m,
+                                           int rank,
+                                           double tol,
+                                           double norm_A,
+                                           double* values,
+                                           double* U,
+                                           int* iterations_out,
+                                           double* max_backward_error_out) {
+  if (m < 2 || rank < 1 || rank > m) {
+    return 0;
+  }
+  int max_steps = std::max(45, 6 * rank + 15);
+  if (max_steps > m) {
+    max_steps = m;
+  }
+  if (max_steps < rank) {
+    return 0;
+  }
+
+  std::vector<double> Q(static_cast<size_t>(m) * static_cast<size_t>(max_steps), 0.0);
+  std::vector<double> z(static_cast<size_t>(m), 0.0);
+  std::vector<double> tmp(static_cast<size_t>(m), 0.0);
+  std::vector<double> alpha(static_cast<size_t>(max_steps), 0.0);
+  std::vector<double> beta(static_cast<size_t>(max_steps), 0.0);
+
+  for (int row = 0; row < m; ++row) {
+    const uint32_t key = static_cast<uint32_t>((row + 1) * 1103515245u) ^
+      static_cast<uint32_t>(rank * 2654435761u);
+    Q[row] = (key & 1u) ? 1.0 : -1.0;
+  }
+  double q_norm = trl_norm2(Q.data(), m);
+  if (q_norm <= 100.0 * DBL_EPSILON) {
+    return 0;
+  }
+  for (int row = 0; row < m; ++row) {
+  Q[row] /= q_norm;
+  }
+
+  const char trans_N = 'N';
+  const int inc_one = 1;
+  const double one = 1.0;
+  const double zero = 0.0;
+  int active = 0;
+  for (int step = 0; step < max_steps; ++step) {
+    const double* q = Q.data() + static_cast<int64_t>(step) * m;
+    F77_CALL(dgemv)(&trans_N, &m, &m, &one, gram, &m, q, &inc_one,
+                    &zero, z.data(), &inc_one FCONE);
+    long double dot = 0.0L;
+    for (int row = 0; row < m; ++row) {
+      dot += static_cast<long double>(q[row]) * z[static_cast<size_t>(row)];
+    }
+    alpha[static_cast<size_t>(step)] = static_cast<double>(dot);
+    if (step > 0) {
+      const double* q_prev = Q.data() + static_cast<int64_t>(step - 1) * m;
+      const double b_prev = beta[static_cast<size_t>(step - 1)];
+      for (int row = 0; row < m; ++row) {
+        z[static_cast<size_t>(row)] -=
+          alpha[static_cast<size_t>(step)] * q[row] + b_prev * q_prev[row];
+      }
+    } else {
+      for (int row = 0; row < m; ++row) {
+        z[static_cast<size_t>(row)] -= alpha[static_cast<size_t>(step)] * q[row];
+      }
+    }
+
+    trl_orthogonalise(nullptr, 0, Q.data(), step + 1, z.data(), tmp.data(), m);
+    const double b = trl_norm2(z.data(), m);
+    active = step + 1;
+    if (step + 1 >= max_steps || b <= 100.0 * DBL_EPSILON * (norm_A * norm_A + 1.0)) {
+      break;
+    }
+    beta[static_cast<size_t>(step)] = b;
+    double* q_next = Q.data() + static_cast<int64_t>(step + 1) * m;
+    const double inv_b = 1.0 / b;
+    for (int row = 0; row < m; ++row) {
+      q_next[row] = z[static_cast<size_t>(row)] * inv_b;
+    }
+  }
+  if (active < rank) {
+    return 0;
+  }
+
+  std::vector<double> T(static_cast<size_t>(active) * static_cast<size_t>(active), 0.0);
+  std::vector<double> theta(static_cast<size_t>(active), 0.0);
+  for (int col = 0; col < active; ++col) {
+    T[col + static_cast<int64_t>(col) * active] = alpha[static_cast<size_t>(col)];
+    if (col + 1 < active) {
+      const double b = beta[static_cast<size_t>(col)];
+      T[col + static_cast<int64_t>(col + 1) * active] = b;
+      T[(col + 1) + static_cast<int64_t>(col) * active] = b;
+    }
+  }
+  int lwork = trl_dsyev_query(active);
+  if (lwork < 3 * active) {
+    lwork = 3 * active;
+  }
+  std::vector<double> work(static_cast<size_t>(lwork));
+  char jobz = 'V';
+  char uplo = 'U';
+  int info = 0;
+  F77_CALL(dsyev)(&jobz, &uplo, &active, T.data(), &active,
+                  theta.data(), work.data(), &lwork, &info FCONE FCONE);
+  if (info != 0) {
+    return 0;
+  }
+
+  std::vector<double> Gu(static_cast<size_t>(m), 0.0);
+  const double scale_value = norm_A > DBL_EPSILON ? norm_A : DBL_EPSILON;
+  double max_backward = 0.0;
+  for (int out_col = 0; out_col < rank; ++out_col) {
+    const int src_col = active - 1 - out_col;
+    const double lambda = theta[static_cast<size_t>(src_col)] > 0.0 ?
+      theta[static_cast<size_t>(src_col)] : 0.0;
+    const double sigma = sqrt(lambda);
+    if (sigma <= 100.0 * DBL_EPSILON) {
+      return 0;
+    }
+    values[out_col] = lambda;
+    double* u_col = U + static_cast<int64_t>(out_col) * m;
+    std::fill(u_col, u_col + m, 0.0);
+    for (int basis_col = 0; basis_col < active; ++basis_col) {
+      const double coeff = T[basis_col + static_cast<int64_t>(src_col) * active];
+      const double* q_col = Q.data() + static_cast<int64_t>(basis_col) * m;
+      for (int row = 0; row < m; ++row) {
+        u_col[row] += coeff * q_col[row];
+      }
+    }
+    F77_CALL(dgemv)(&trans_N, &m, &m, &one, gram, &m, u_col, &inc_one,
+                    &zero, Gu.data(), &inc_one FCONE);
+    long double residual2 = 0.0L;
+    for (int row = 0; row < m; ++row) {
+      const double residual = (Gu[static_cast<size_t>(row)] - lambda * u_col[row]) / sigma;
+      residual2 += static_cast<long double>(residual) * residual;
+    }
+    const double backward = sqrt(static_cast<double>(residual2)) / scale_value;
+    if (backward > max_backward) {
+      max_backward = backward;
+    }
+  }
+  if (iterations_out != nullptr) {
+    *iterations_out = active;
+  }
+  if (max_backward_error_out != nullptr) {
+    *max_backward_error_out = max_backward;
+  }
+  return max_backward <= tol ? 1 : 0;
+}
+
 static int gram_top_subspace_attempt(const double* gram,
                                      int m,
                                      int rank,
@@ -9810,6 +10060,8 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   int implicit_lanczos_iterations = 0;
   double implicit_lanczos_max_backward_error = R_PosInf;
   int used_subspace_eigensolve = 0;
+  int used_gram_krylov = 0;
+  int gram_krylov_iterations = 0;
   double subspace_max_backward_error = R_PosInf;
   const char* lapack_eigensolver = "lapack_dsyevr";
 
@@ -9845,15 +10097,23 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
     stage_gram_seconds = native_timer_elapsed(stage_timer);
 
     stage_timer = native_timer_now();
+    SEXP krylov_option_ = Rf_GetOption1(Rf_install("eigencore.csc_left_gram_krylov_attempt"));
+    const int attempt_gram_krylov = asLogical(krylov_option_) == TRUE;
     SEXP subspace_option_ = Rf_GetOption1(Rf_install("eigencore.csc_left_gram_subspace_attempt"));
     const int attempt_subspace_eigensolve = asLogical(subspace_option_) == TRUE;
-    if (attempt_subspace_eigensolve && m <= 128 && rank <= 16) {
+    if (attempt_gram_krylov && m <= 90 && rank <= 8) {
+      used_gram_krylov = gram_krylov_left_normal_attempt(
+        gram.data(), m, rank, tol, norm_A, values.data(), REAL(u_),
+        &gram_krylov_iterations, &subspace_max_backward_error
+      );
+    }
+    if (!used_gram_krylov && attempt_subspace_eigensolve && m <= 128 && rank <= 16) {
       used_subspace_eigensolve = gram_top_subspace_attempt(
         gram.data(), m, rank, tol, norm_A, values.data(), REAL(u_),
         &subspace_max_backward_error
       );
     }
-    if (m > 0 && !used_subspace_eigensolve) {
+    if (m > 0 && !used_gram_krylov && !used_subspace_eigensolve) {
       std::vector<double> work_matrix(static_cast<size_t>(m) * static_cast<size_t>(m));
       std::vector<double> values_work(static_cast<size_t>(m), 0.0);
       char uplo = 'U';
@@ -10093,13 +10353,15 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
 
   SEXP eigensolver_ = PROTECT(mkString(
     used_implicit_lanczos ? "implicit_normal_lanczos" :
-      (used_subspace_eigensolve ? "subspace_iteration" : lapack_eigensolver)
+      (used_gram_krylov ? "explicit_gram_krylov" :
+        (used_subspace_eigensolve ? "subspace_iteration" : lapack_eigensolver))
   ));
   SEXP subspace_be_ = PROTECT(ScalarReal(subspace_max_backward_error));
   SEXP implicit_be_ = PROTECT(ScalarReal(implicit_lanczos_max_backward_error));
   SEXP implicit_iter_ = PROTECT(ScalarInteger(implicit_lanczos_iterations));
+  SEXP gram_krylov_iter_ = PROTECT(ScalarInteger(gram_krylov_iterations));
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 9));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 10));
   SET_VECTOR_ELT(out_, 0, d_);
   SET_VECTOR_ELT(out_, 1, u_);
   SET_VECTOR_ELT(out_, 2, v_);
@@ -10109,7 +10371,8 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   SET_VECTOR_ELT(out_, 6, subspace_be_);
   SET_VECTOR_ELT(out_, 7, implicit_be_);
   SET_VECTOR_ELT(out_, 8, implicit_iter_);
-  SEXP names_ = PROTECT(allocVector(STRSXP, 9));
+  SET_VECTOR_ELT(out_, 9, gram_krylov_iter_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 10));
   SET_STRING_ELT(names_, 0, mkChar("d"));
   SET_STRING_ELT(names_, 1, mkChar("u"));
   SET_STRING_ELT(names_, 2, mkChar("v"));
@@ -10119,8 +10382,9 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   SET_STRING_ELT(names_, 6, mkChar("subspace_max_backward_error"));
   SET_STRING_ELT(names_, 7, mkChar("implicit_lanczos_max_backward_error"));
   SET_STRING_ELT(names_, 8, mkChar("implicit_lanczos_iterations"));
+  SET_STRING_ELT(names_, 9, mkChar("gram_krylov_iterations"));
   setAttrib(out_, R_NamesSymbol, names_);
-  UNPROTECT(21);
+  UNPROTECT(22);
   return out_;
 }
 
@@ -10386,6 +10650,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_dense_symmetric_eigen", (DL_FUNC) &eigencore_dense_symmetric_eigen, 1},
   {"eigencore_dense_symmetric_eigen_dsyevd", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyevd, 1},
   {"eigencore_dense_symmetric_eigen_selected", (DL_FUNC) &eigencore_dense_symmetric_eigen_selected, 3},
+  {"eigencore_dense_symmetric_eigen_dsyevx_selected", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyevx_selected, 3},
   {"eigencore_csc_left_gram_svd", (DL_FUNC) &eigencore_csc_left_gram_svd, 6},
   {"eigencore_dense_generalized_spd_eigen", (DL_FUNC) &eigencore_dense_generalized_spd_eigen, 2},
   {"eigencore_dense_svd", (DL_FUNC) &eigencore_dense_svd, 1},

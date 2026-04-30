@@ -1388,11 +1388,20 @@ tiny_gram_fixture <- function(n, width = max(4L * n, n + 16L),
 tiny_gram_backend_fit <- function(gram, k, backend) {
   backend <- match.arg(backend, c(
     "lapack_dsyevr_selected",
+    "lapack_dsyevx_selected",
     "lapack_dsyev_full",
     "lapack_dsyevd_full"
   ))
   if (identical(backend, "lapack_dsyevr_selected")) {
     eigencore:::native_dense_symmetric_eigen_selected(gram, k, largest())
+  } else if (identical(backend, "lapack_dsyevx_selected")) {
+    .Call(
+      "eigencore_dense_symmetric_eigen_dsyevx_selected",
+      gram,
+      as.integer(k),
+      as.integer(1L),
+      PACKAGE = "eigencore"
+    )
   } else {
     fit <- if (identical(backend, "lapack_dsyevd_full")) {
       eigencore:::native_dense_symmetric_eigen_dsyevd(gram)
@@ -1412,6 +1421,7 @@ benchmark_tiny_gram_eigensolvers <- function(dimensions = c(32L, 64L, 90L, 128L)
                                              ranks = c(5L, 8L, 16L),
                                              backends = c(
                                                "lapack_dsyevr_selected",
+                                               "lapack_dsyevx_selected",
                                                "lapack_dsyev_full",
                                                "lapack_dsyevd_full"
                                              ),

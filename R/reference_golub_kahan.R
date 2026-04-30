@@ -629,6 +629,8 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
           native$implicit_lanczos_max_backward_error %||% NA_real_,
         native_implicit_normal_lanczos_iterations =
           native$implicit_lanczos_iterations %||% 0L,
+        native_gram_krylov_iterations =
+          native$gram_krylov_iterations %||% 0L,
         normal_operator_implicit =
           identical(native$eigensolver %||% "", "implicit_normal_lanczos"),
         materialized_gram =
