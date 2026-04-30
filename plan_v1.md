@@ -675,6 +675,9 @@ Primary attack surfaces, in order:
    `dsyevr`/`dsyevx` routes, so Track A should focus on a low-allocation
    restarted normal solver and fused sparse reconstruction/certification rather
    than a full tiny symmetric eigensolve backend.
+   The existing explicit-Gram Krylov diagnostic is also rejected as an H
+   closure route: it certifies on the same fixture, but needs about `45`
+   Lanczos steps and benchmarks slower than the selected dense eigensolve.
    For non-Gram sparse problems, `auto()` no
    longer promotes the retained block-GK candidate by default; retained restart
    is opt-in behind `eigencore.promote_retained_golub_kahan` until its
