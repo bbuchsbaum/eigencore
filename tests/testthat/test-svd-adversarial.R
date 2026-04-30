@@ -486,6 +486,14 @@ test_that("SVD planner records inspectable method controls", {
   expect_null(adaptive_gk_plan$controls$max_subspace)
   expect_gte(adaptive_gk_plan$controls$initial_max_subspace, 4L)
 
+  one_sided_wide_plan <- plan_solver(
+    svd_problem(Matrix::rsparsematrix(90, 600, density = 0.01)),
+    rank = 5,
+    method = golub_kahan(reorthogonalize = FALSE)
+  )
+  expect_false(one_sided_wide_plan$controls$reorthogonalize)
+  expect_identical(one_sided_wide_plan$controls$initial_max_subspace, 45L)
+
   randomized_plan <- plan_solver(
     svd_problem(M),
     rank = 4,

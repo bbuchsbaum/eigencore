@@ -132,13 +132,8 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   n <- op$dim[2L]
   limit <- min(m, n)
   fixed_maxit <- !is.null(maxit)
-  if (is.null(maxit)) {
-    maxit <- default_golub_kahan_initial_subspace(c(m, n), rank)
-  } else {
+  if (!is.null(maxit)) {
     maxit <- min(limit, as.integer(maxit))
-  }
-  if (maxit < rank) {
-    stop("maxit/max_subspace must be at least rank.", call. = FALSE)
   }
 
   external_op <- op
@@ -153,6 +148,19 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
       internal_transposed <- TRUE
       internal_orientation <- "transposed_wide_operator"
     }
+  }
+  limit <- min(m, n)
+  if (is.null(maxit)) {
+    maxit <- default_golub_kahan_initial_subspace(
+      c(m, n),
+      rank,
+      reorthogonalize = reorthogonalize
+    )
+  } else {
+    maxit <- min(limit, as.integer(maxit))
+  }
+  if (maxit < rank) {
+    stop("maxit/max_subspace must be at least rank.", call. = FALSE)
   }
 
   start <- stats::rnorm(n)
@@ -403,6 +411,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     restart_policy = "grow subspace until certificate convergence or limit",
     retries = retries,
     attempts = retries + 1L,
+    initial_max_subspace = maxit,
     final_max_subspace = active_maxit,
     fixed_max_subspace = fixed_maxit,
     converged = all(final$certificate$converged),

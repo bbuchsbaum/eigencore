@@ -435,7 +435,12 @@ svd_plan_controls <- function(problem, rank, method, chosen) {
   if (grepl("Golub-Kahan", chosen, fixed = TRUE)) {
     is_gk <- inherits(method, "eigencore_method") && identical(method$kind, "golub_kahan")
     requested_max_subspace <- if (is_gk) method$max_subspace else NULL
-    default_initial_subspace <- default_golub_kahan_initial_subspace(dims, rank)
+    method_reorthogonalize <- if (is_gk) isTRUE(method$reorthogonalize) else TRUE
+    default_initial_subspace <- default_golub_kahan_initial_subspace(
+      dims,
+      rank,
+      reorthogonalize = method_reorthogonalize
+    )
     initial_max_subspace <- if (is.null(requested_max_subspace)) {
       default_initial_subspace
     } else {
@@ -444,7 +449,7 @@ svd_plan_controls <- function(problem, rank, method, chosen) {
     controls <- list(
       adaptive_subspace = is.null(requested_max_subspace),
       initial_max_subspace = initial_max_subspace,
-      reorthogonalize = if (is_gk) isTRUE(method$reorthogonalize) else TRUE,
+      reorthogonalize = method_reorthogonalize,
       requires_adjoint = TRUE,
       default_normal_equations = FALSE
     )
@@ -471,12 +476,14 @@ svd_plan_controls <- function(problem, rank, method, chosen) {
 }
 
 #' @keywords internal
-default_golub_kahan_initial_subspace <- function(dims, rank) {
+default_golub_kahan_initial_subspace <- function(dims, rank, reorthogonalize = TRUE) {
   dims <- as.integer(dims)
   rank <- as.integer(rank)
   limit <- min(dims)
   base <- max(rank + 1L, 4L * rank + 20L)
-  if (dims[[2L]] > dims[[1L]]) {
+  if (!isTRUE(reorthogonalize)) {
+    base <- max(base, 6L * rank + 15L)
+  } else if (dims[[2L]] > dims[[1L]]) {
     base <- max(base, 8L * rank + 20L)
   }
   min(limit, as.integer(base))
