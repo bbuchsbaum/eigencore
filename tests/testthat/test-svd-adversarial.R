@@ -291,6 +291,45 @@ test_that("one-sided IRLBA LBD benchmark policy falls back to certified adaptive
   expect_certificate_clean(fit)
 })
 
+test_that("one-sided IRLBA LBD restart ABI fixes the native implementation contract", {
+  set.seed(703)
+  wide <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))
+  abi <- eigencore:::native_irlba_lbd_restart_abi(
+    wide,
+    rank = 5L,
+    work = 12L,
+    retained = 7L,
+    max_restarts = 4L
+  )
+
+  expect_s3_class(abi, "eigencore_irlba_lbd_restart_abi")
+  expect_equal(abi$version, 1L)
+  expect_false(abi$implemented)
+  expect_equal(abi$native_storage, "dgCMatrix")
+  expect_true(abi$internal_transposed)
+  expect_identical(abi$internal_orientation, "transposed_wide_operator")
+  expect_equal(abi$original_dim, c(90L, 600L))
+  expect_equal(abi$active_dim, c(600L, 90L))
+  expect_equal(abi$small_side_dimension, 90L)
+  expect_equal(abi$work, 12L)
+  expect_equal(abi$retained, 7L)
+  expect_equal(abi$input_schema$initial_start, 90L)
+  expect_equal(abi$input_schema$retained_right_subspace, c(90L, 7L))
+  expect_equal(abi$input_schema$retained_left_subspace, c(600L, 7L))
+  expect_true("attempt_history" %in% abi$output_schema)
+  expect_true(any(grepl("run internally on A\\^T", abi$invariants)))
+  expect_true(any(grepl("rotated together", abi$invariants, fixed = TRUE)))
+  expect_true(any(grepl("not thrown away", abi$invariants, fixed = TRUE)))
+  expect_equal(unname(abi$entry_points[["csc"]]), "eigencore_irlba_lbd_csc_retained")
+
+  tall <- Matrix::rsparsematrix(600L, 90L, density = 0.03)
+  tall_abi <- eigencore:::native_irlba_lbd_restart_abi(tall, rank = 5L)
+  expect_false(tall_abi$internal_transposed)
+  expect_identical(tall_abi$internal_orientation, "as_given")
+  expect_equal(tall_abi$active_dim, c(600L, 90L))
+  expect_equal(tall_abi$input_schema$initial_start, 90L)
+})
+
 test_that("wide sparse Gram SVD exposes opt-in certified subspace eigensolve", {
   old_options <- options(eigencore.csc_left_gram_subspace_attempt = TRUE)
   on.exit(options(old_options), add = TRUE)

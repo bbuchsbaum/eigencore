@@ -118,6 +118,127 @@ reference_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
 }
 
 #' @keywords internal
+native_irlba_lbd_restart_abi <- function(op, rank, target = largest(),
+                                         work = NULL,
+                                         max_restarts = NULL,
+                                         retained = NULL,
+                                         reorth_policy = c(
+                                           "one_sided_small_side",
+                                           "full_two_sided",
+                                           "bpro_two_sided"
+                                         )) {
+  reorth_policy <- match.arg(reorth_policy)
+  op <- as_operator(op)
+  if (is.null(op$apply_adjoint)) {
+    stop("Retained one-sided IRLBA/LBD restart ABI requires an adjoint operator.",
+         call. = FALSE)
+  }
+  if (!native_gram_svd_target_supported(target)) {
+    stop("Retained one-sided IRLBA/LBD restart ABI currently supports only largest singular values.",
+         call. = FALSE)
+  }
+
+  storage <- op$metadata$storage %||% NULL
+  source <- source_or_null(op)
+  native_storage <- if (identical(storage, "dgCMatrix")) {
+    "dgCMatrix"
+  } else if (is.matrix(source) && is.double(source)) {
+    "double_matrix"
+  } else {
+    NA_character_
+  }
+  if (is.na(native_storage)) {
+    stop("Retained one-sided IRLBA/LBD restart ABI currently supports dense double matrices and dgCMatrix operators only.",
+         call. = FALSE)
+  }
+
+  dims <- as.integer(op$dim)
+  limit <- min(dims)
+  rank <- min(as.integer(rank), limit)
+  if (length(rank) != 1L || is.na(rank) || rank < 1L) {
+    stop("rank must be a positive integer.", call. = FALSE)
+  }
+  work <- as.integer(work %||% max(rank + 7L, 2L * rank + 1L))
+  work <- min(limit, work)
+  if (length(work) != 1L || is.na(work) || work < rank) {
+    stop("work must be at least rank.", call. = FALSE)
+  }
+  retained <- as.integer(retained %||% min(work - 1L, rank + 2L))
+  retained <- min(retained, work - 1L)
+  if (length(retained) != 1L || is.na(retained) || retained < rank) {
+    stop("retained must be at least rank and smaller than work.", call. = FALSE)
+  }
+  max_restarts <- as.integer(max_restarts %||% 5L)
+  if (length(max_restarts) != 1L || is.na(max_restarts) || max_restarts < 0L) {
+    stop("max_restarts must be a non-negative integer.", call. = FALSE)
+  }
+
+  transposed <- dims[[1L]] < dims[[2L]]
+  active_dim <- if (transposed) rev(dims) else dims
+  small_side <- min(active_dim)
+  large_side <- max(active_dim)
+  active_domain <- active_dim[[2L]]
+  active_codomain <- active_dim[[1L]]
+  restart_budget <- max(0L, max_restarts)
+
+  structure(
+    list(
+      version = 1L,
+      implemented = FALSE,
+      entry_points = c(
+        dense = "eigencore_irlba_lbd_dense_retained",
+        csc = "eigencore_irlba_lbd_csc_retained"
+      ),
+      native_storage = native_storage,
+      original_dim = dims,
+      active_dim = active_dim,
+      internal_transposed = transposed,
+      internal_orientation = if (transposed) "transposed_wide_operator" else "as_given",
+      rank = rank,
+      target_kind = native_svd_target_kind(target),
+      work = work,
+      retained = retained,
+      max_restarts = restart_budget,
+      reorth_policy = reorth_policy,
+      small_side_dimension = small_side,
+      large_side_dimension = large_side,
+      input_schema = list(
+        initial_start = active_domain,
+        retained_right_subspace = c(active_domain, retained),
+        retained_left_subspace = c(active_codomain, retained),
+        bidiagonal_alpha = work,
+        bidiagonal_beta = work,
+        restart_random_tail = c(active_domain, max(0L, work - retained)),
+        operator = native_storage
+      ),
+      retained_state = c(
+        "right Ritz subspace in the active operator orientation",
+        "left Ritz subspace in the active operator orientation",
+        "projected bidiagonal recurrence alpha/beta",
+        "small SVD Ritz extraction state",
+        "one-sided small-side orthogonalization state",
+        "exact two-sided certificate in original coordinates"
+      ),
+      output_schema = c(
+        "d", "u", "v", "certificate diagnostics", "iterations",
+        "matvecs", "restart_count", "attempt_history", "stage_seconds",
+        "orientation metadata"
+      ),
+      invariants = c(
+        "wide operators run internally on A^T so the reorthogonalized side is the smaller dimension",
+        "retained Ritz left and right subspaces are rotated together after each small SVD",
+        "restart never discards the coupled bidiagonal recurrence without recording a fallback",
+        "one-sided reorthogonalization is a speed policy only and is never a certificate",
+        "if one-sided orthogonality checks fail, the implementation must switch to full or monitored reorthogonalization",
+        "returned triplets are sorted and certified in the original operator coordinates",
+        "failed small-work attempts are retained as restart state, not thrown away and rerun from scratch"
+      )
+    ),
+    class = "eigencore_irlba_lbd_restart_abi"
+  )
+}
+
+#' @keywords internal
 native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
                                    maxit = NULL,
                                    vectors = c("both", "left", "right", "none"),

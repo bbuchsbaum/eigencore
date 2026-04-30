@@ -674,6 +674,14 @@ Primary attack surfaces, in order:
    Future Track B work should therefore implement real retained IRLBA restart
    reuse or monitored BPRO-style reorthogonalization rather than larger normal
    equations or unguarded reorth skipping.
+   The retained one-sided IRLBA/LBD restart ABI is now codified as
+   `native_irlba_lbd_restart_abi()`: it fixes wide-operator orientation on
+   `A^T`, retained left/right Ritz subspace shapes, bidiagonal alpha/beta
+   state, restart random-tail layout, exact original-coordinate certification,
+   and the invariant that failed small-work attempts must be retained as
+   restart state instead of discarded and rerun from scratch. The ABI is marked
+   `implemented = FALSE`; the next native patch should make the C++ entry
+   points satisfy that contract.
    The next H work therefore must attack the amount of retained-restart
    projected work directly rather than assuming partial locking will appear on
    the release benchmark surface.
