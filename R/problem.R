@@ -490,7 +490,7 @@ default_golub_kahan_initial_subspace <- function(dims, rank, reorthogonalize = T
   limit <- min(dims)
   base <- max(rank + 1L, 4L * rank + 20L)
   if (!isTRUE(reorthogonalize)) {
-    base <- max(base, 6L * rank + 15L)
+    base <- max(base, 9L * rank)
   } else if (dims[[2L]] > dims[[1L]]) {
     base <- max(base, 8L * rank + 20L)
   }

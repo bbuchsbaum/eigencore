@@ -537,6 +537,15 @@ test_that("SVD planner records inspectable method controls", {
   expect_false(one_sided_wide_plan$controls$reorthogonalize)
   expect_identical(one_sided_wide_plan$controls$initial_max_subspace, 45L)
 
+  one_sided_rank10_plan <- plan_solver(
+    svd_problem(Matrix::rsparsematrix(3000, 800, density = 0.002)),
+    rank = 10,
+    method = auto()
+  )
+  expect_identical(one_sided_rank10_plan$method, "native prototype Golub-Kahan")
+  expect_false(one_sided_rank10_plan$controls$reorthogonalize)
+  expect_identical(one_sided_rank10_plan$controls$initial_max_subspace, 90L)
+
   randomized_plan <- plan_solver(
     svd_problem(M),
     rank = 4,

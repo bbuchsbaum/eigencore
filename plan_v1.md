@@ -659,9 +659,12 @@ Primary attack surfaces, in order:
    certification and speed gates are green. The default sparse non-Gram route is
    now certified one-sided native Golub-Kahan, which converts a measured
    3000-by-800 sparse rank-10 probe from an uncertified retained row at roughly
-   `0.16s` to a certified one-sided row at roughly `0.04s`. This is a Track B
-   correctness and dispatch win, not an H closure, because RSpectra is still
-   much faster on that probe.
+   `0.16s` to a certified one-sided row. The one-sided default subspace budget
+   has also been retuned from `max(4k + 20, 6k + 15)` to `max(4k + 20, 9k)`,
+   which keeps the H rank-5 budget at 45 but avoids an unnecessary failed
+   rank-10 retry; the same 3000-by-800 probe now certifies in one attempt at
+   roughly `0.018s`. This is a Track B correctness and dispatch win, not an H
+   closure, because RSpectra is still much faster on that probe.
    The next H work therefore must attack the amount of retained-restart
    projected work directly rather than assuming partial locking will appear on
    the release benchmark surface.
