@@ -733,6 +733,12 @@ Primary attack surfaces, in order:
    certified adaptive fallback still uses `90` matvecs. That makes the row
    useful for measuring retained-restart work, but not a promotion candidate
    until the native retained attempt certifies directly.
+   Retained fallback orientation is now covered explicitly: when a wide
+   operator is run internally on `A^T`, the one-sided fallback also transposes
+   and must warm-start from the active right vector, while the full two-sided
+   fallback stays in original orientation and must warm-start from the original
+   right vector. This is regression-tested because a wrong warm-start dimension
+   turns a certificate-gated retained failure into an opaque fallback error.
    `native_irlba_lbd_retained_state_from_scout()` now packages a
    failed small-work scout into that ABI: for wide matrices it maps original
    `u` into the active right subspace of `A^T`, original `v` into the active
