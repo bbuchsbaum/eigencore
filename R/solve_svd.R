@@ -73,16 +73,121 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
     return(NULL)
   }
 
-  op <- as_operator(A)
-  plan <- native_gram_svd_fast_plan(op, rank, target)
-  solve_svd_gram(
-    list(A = op, target = target),
-    rank = rank,
-    tol = tol,
-    vectors = vectors,
-    certify = certify,
-    plan = plan
+  target_kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
+  if (identical(vectors, "both") && isTRUE(certify) && identical(target_kind, "largest")) {
+    fast_native <- .Call(
+      "eigencore_csc_left_gram_svd_fast_result",
+      methods::slot(A, "i"),
+      methods::slot(A, "p"),
+      methods::slot(A, "x"),
+      methods::slot(A, "Dim"),
+      as.integer(rank),
+      as.numeric(tol),
+      PACKAGE = "eigencore"
+    )
+    if (!is.null(fast_native)) {
+      return(fast_native)
+    }
+  }
+
+  native <- .Call(
+    "eigencore_csc_left_gram_svd",
+    methods::slot(A, "i"),
+    methods::slot(A, "p"),
+    methods::slot(A, "x"),
+    methods::slot(A, "Dim"),
+    as.integer(rank),
+    as.numeric(tol),
+    PACKAGE = "eigencore"
   )
+  zero_tol <- gram_svd_zero_tolerance(native$d, tol)
+  if (any(native$d <= zero_tol)) {
+    op <- as_operator(A)
+    plan <- native_gram_svd_fast_plan(op, rank, target)
+    return(solve_svd_gram(
+      list(A = op, target = target),
+      rank = rank,
+      tol = tol,
+      vectors = vectors,
+      certify = certify,
+      plan = plan
+    ))
+  }
+
+  plan <- native_gram_svd_fast_plan_from_dims(dim(A), rank, target)
+  cert <- if (isTRUE(certify) && identical(vectors, "both")) {
+    new_certificate(
+      tol = tol,
+      residuals = list(
+        left = native$diagnostics$left,
+        right = native$diagnostics$right,
+        combined = native$diagnostics$combined
+      ),
+      backward_error = native$diagnostics$backward_error,
+      orthogonality = native$diagnostics$orthogonality,
+      converged = native$diagnostics$converged,
+      scale = native$diagnostics$scale,
+      norm_bound_type = "frobenius_exact"
+    )
+  } else {
+    empty_certificate(tol, note = "both left and right vectors are required for full SVD certification")
+  }
+  u <- if (vectors %in% c("both", "left")) native$u else NULL
+  v <- if (vectors %in% c("both", "right")) native$v else NULL
+  restart <- list(
+    kind = "gram_svd_special_case",
+    implemented = TRUE,
+    native = TRUE,
+    gram_side = "left",
+    gram_dimension = min(dim(A)),
+    native_gram_kernel = "csc_left_gram",
+    native_gram_eigensolver = native$eigensolver %||% "lapack_dsyevr",
+    native_gram_subspace_max_backward_error =
+      native$subspace_max_backward_error %||% NA_real_,
+    native_implicit_normal_lanczos_max_backward_error =
+      native$implicit_lanczos_max_backward_error %||% NA_real_,
+    native_implicit_normal_lanczos_iterations =
+      native$implicit_lanczos_iterations %||% 0L,
+    native_gram_krylov_iterations =
+      native$gram_krylov_iterations %||% 0L,
+    normal_operator_implicit =
+      identical(native$eigensolver %||% "", "implicit_normal_lanczos"),
+    materialized_gram =
+      !identical(native$eigensolver %||% "", "implicit_normal_lanczos"),
+    stage_seconds = native$stage_seconds,
+    zero_singular_completion = FALSE,
+    zero_singular_threshold = zero_tol,
+    certificate_reuses_gram_sides = TRUE,
+    certified_in_original_coordinates = TRUE,
+    fallback_attempted = FALSE,
+    fallback_used = FALSE,
+    fallback_method = NA_character_,
+    fallback_error = NA_character_,
+    gram_certificate_passed = isTRUE(cert$passed),
+    gram_max_backward_error = cert$max_backward_error
+  )
+  out <- list(
+    d = native$d,
+    u = u,
+    v = v,
+    values = native$d,
+    residuals = cert$residuals,
+    backward_error = cert$backward_error,
+    orthogonality = cert$orthogonality,
+    nconv = sum(cert$converged),
+    requested = rank,
+    iterations = 1L,
+    matvecs = 1L,
+    stage_seconds = native$stage_seconds,
+    method = plan$method,
+    target = target_label(target),
+    plan = plan,
+    certificate = cert,
+    restart = restart,
+    warnings = "using native certified Gram SVD special case; residuals certified in original coordinates"
+  )
+  class(out) <- "eigencore_svd_result"
+  out
 }
 
 #' @keywords internal
@@ -98,6 +203,42 @@ native_gram_svd_fast_plan <- function(op, rank, target) {
     problem,
     k = as.integer(rank),
     method = chosen,
+    reasons = c(
+      paste0("target: ", target_label(target)),
+      "rectangular SVD problem",
+      "adjoint is available",
+      "small rectangular sparse problem: materializes the smaller Gram matrix as an explicit certified special case",
+      "built-in sparse CSC operator has native block apply",
+      "direct svd_partial() fast path avoids S3 dispatch overhead"
+    ),
+    fallback = "native Golub-Kahan if Gram special case is disabled or uncertified",
+    controls = controls
+  )
+}
+
+#' @keywords internal
+native_gram_svd_fast_plan_from_dims <- function(dims, rank, target) {
+  dims <- as.integer(dims)
+  full <- max(dims)
+  reduced <- min(dims)
+  problem <- list(type = "svd", target = target)
+  controls <- list(
+    gram_side = if (dims[2L] <= dims[1L]) "right" else "left",
+    gram_dimension = reduced,
+    gram_max_dimension = as.integer(getOption("eigencore.gram_svd_max_dimension", 512L)),
+    rank_fraction_limit = 0.5,
+    certified_in_original_coordinates = TRUE,
+    materializes = "smaller Gram matrix only",
+    fallback_policy = "certification-gated",
+    runtime_fallback = "native Golub-Kahan if original-coordinate certificate is weaker",
+    fallback_requires_vectors = "both",
+    svd_partial_fastpath = TRUE,
+    full_dimension = as.integer(full)
+  )
+  new_plan(
+    problem,
+    k = as.integer(rank),
+    method = "native certified Gram SVD special case",
     reasons = c(
       paste0("target: ", target_label(target)),
       "rectangular SVD problem",

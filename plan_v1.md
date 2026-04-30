@@ -684,6 +684,18 @@ Primary attack surfaces, in order:
    The existing explicit-Gram Krylov diagnostic is also rejected as an H
    closure route: it certifies on the same fixture, but needs about `45`
    Lanczos steps and benchmarks slower than the selected dense eigensolve.
+   A tighter native-result fast path now lets the H-shaped wide CSC auto row
+   return a fully classed SVD result directly from C++ for the nonzero certified
+   Gram case, including certificate, plan, restart, and stage metadata. If the
+   native Gram result contains near-zero requested singular values, it returns
+   to the generic R path so rank-deficient completion remains certificate
+   guarded. Installed quick evidence on the 90-by-600 rank-5 fixture moved the
+   default `eigencore` row to roughly `0.355ms` and `29kB`, compared with
+   RSpectra plus eigencore certification at roughly `0.357ms` and `79kB`. This
+   is the first H-shaped row where eigencore edges the certified reference while
+   allocating materially less memory, but it still does not satisfy the PRD
+   `1.5x` SVD release gate; H promotion therefore remains blocked on a genuine
+   restarted normal/LBD engine rather than wrapper overhead.
    For non-Gram sparse problems, `auto()` no
    longer promotes the retained block-GK candidate by default; retained restart
    is opt-in behind `eigencore.promote_retained_golub_kahan` until its

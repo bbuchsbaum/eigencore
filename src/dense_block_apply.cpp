@@ -9663,7 +9663,9 @@ static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
       }
     }
 
-    trl_orthogonalise(nullptr, 0, Q.data(), step + 1, z.data(), tmp_m.data(), m, 1);
+    if ((step % 4) == 0 || step + rank >= max_steps) {
+      trl_orthogonalise(nullptr, 0, Q.data(), step + 1, z.data(), tmp_m.data(), m, 1);
+    }
     const double b = trl_norm2(z.data(), m);
     active = step + 1;
     if (step + 1 >= max_steps || b <= 100.0 * DBL_EPSILON * (norm_A * norm_A + 1.0)) {
@@ -10451,6 +10453,258 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   return out_;
 }
 
+extern "C" SEXP eigencore_csc_left_gram_svd_fast_result(SEXP i_, SEXP p_, SEXP x_,
+                                                        SEXP dim_, SEXP rank_,
+                                                        SEXP tol_) {
+  SEXP native_ = PROTECT(eigencore_csc_left_gram_svd(i_, p_, x_, dim_, rank_, tol_));
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  const int rank = LENGTH(VECTOR_ELT(native_, 0));
+  const double tol = asReal(tol_);
+  SEXP gram_max_option_ = Rf_GetOption1(Rf_install("eigencore.gram_svd_max_dimension"));
+  int gram_max_dimension = asInteger(gram_max_option_);
+  if (gram_max_dimension == NA_INTEGER) {
+    gram_max_dimension = 512;
+  }
+
+  SEXP d_ = VECTOR_ELT(native_, 0);
+  SEXP u_ = VECTOR_ELT(native_, 1);
+  SEXP v_ = VECTOR_ELT(native_, 2);
+  SEXP diagnostics_ = VECTOR_ELT(native_, 3);
+  SEXP stage_ = VECTOR_ELT(native_, 4);
+  SEXP eigensolver_ = VECTOR_ELT(native_, 5);
+  SEXP subspace_be_ = VECTOR_ELT(native_, 6);
+  SEXP implicit_be_ = VECTOR_ELT(native_, 7);
+  SEXP implicit_iter_ = VECTOR_ELT(native_, 8);
+  SEXP gram_krylov_iter_ = VECTOR_ELT(native_, 9);
+
+  double max_d = 1.0;
+  for (int i = 0; i < rank; ++i) {
+    const double di = REAL(d_)[i];
+    if (R_finite(di) && di > max_d) max_d = di;
+  }
+  const double zero_tol = std::max(
+    std::max(100.0 * DBL_EPSILON * max_d, sqrt(DBL_EPSILON) * max_d),
+    tol * max_d * 1e-3
+  );
+  for (int i = 0; i < rank; ++i) {
+    if (REAL(d_)[i] <= zero_tol) {
+      UNPROTECT(1);
+      return R_NilValue;
+    }
+  }
+
+  SEXP left_ = VECTOR_ELT(diagnostics_, 0);
+  SEXP right_ = VECTOR_ELT(diagnostics_, 1);
+  SEXP combined_ = VECTOR_ELT(diagnostics_, 2);
+  SEXP backward_ = VECTOR_ELT(diagnostics_, 3);
+  SEXP orth_ = VECTOR_ELT(diagnostics_, 4);
+  SEXP converged_ = VECTOR_ELT(diagnostics_, 5);
+  SEXP scale_ = VECTOR_ELT(diagnostics_, 6);
+
+  double max_backward = 0.0;
+  double max_residual = 0.0;
+  for (int i = 0; i < rank; ++i) {
+    if (REAL(backward_)[i] > max_backward) max_backward = REAL(backward_)[i];
+    if (REAL(combined_)[i] > max_residual) max_residual = REAL(combined_)[i];
+  }
+  double max_orth = NA_REAL;
+  if (LENGTH(orth_) > 0) {
+    max_orth = REAL(orth_)[0];
+    for (int i = 1; i < LENGTH(orth_); ++i) {
+      if (REAL(orth_)[i] > max_orth) max_orth = REAL(orth_)[i];
+    }
+  }
+  const double orth_tol = std::max(tol, sqrt(DBL_EPSILON));
+  int all_converged = TRUE;
+  int failed_count = 0;
+  for (int i = 0; i < rank; ++i) {
+    if (LOGICAL(converged_)[i] != TRUE) {
+      all_converged = FALSE;
+      ++failed_count;
+    }
+  }
+  const int orth_passed = (ISNA(max_orth) || max_orth <= orth_tol) ? TRUE : FALSE;
+
+  SEXP residuals_ = PROTECT(allocVector(VECSXP, 3));
+  SET_VECTOR_ELT(residuals_, 0, left_);
+  SET_VECTOR_ELT(residuals_, 1, right_);
+  SET_VECTOR_ELT(residuals_, 2, combined_);
+  SEXP residual_names_ = PROTECT(allocVector(STRSXP, 3));
+  SET_STRING_ELT(residual_names_, 0, mkChar("left"));
+  SET_STRING_ELT(residual_names_, 1, mkChar("right"));
+  SET_STRING_ELT(residual_names_, 2, mkChar("combined"));
+  setAttrib(residuals_, R_NamesSymbol, residual_names_);
+
+  SEXP failed_ = PROTECT(allocVector(INTSXP, failed_count));
+  for (int i = 0, out = 0; i < rank; ++i) {
+    if (LOGICAL(converged_)[i] != TRUE) {
+      INTEGER(failed_)[out++] = i + 1;
+    }
+  }
+
+  SEXP cert_ = PROTECT(allocVector(VECSXP, 18));
+  SET_VECTOR_ELT(cert_, 0, ScalarLogical(all_converged && orth_passed));
+  SET_VECTOR_ELT(cert_, 1, ScalarReal(tol));
+  SET_VECTOR_ELT(cert_, 2, ScalarReal(orth_tol));
+  SET_VECTOR_ELT(cert_, 3, ScalarLogical(TRUE));
+  SET_VECTOR_ELT(cert_, 4, mkString("residual_backward_error"));
+  SET_VECTOR_ELT(cert_, 5, mkString("frobenius_exact"));
+  SET_VECTOR_ELT(cert_, 6, ScalarLogical(FALSE));
+  SET_VECTOR_ELT(cert_, 7, ScalarReal(max_backward));
+  SET_VECTOR_ELT(cert_, 8, ScalarReal(max_residual));
+  SET_VECTOR_ELT(cert_, 9, ScalarReal(max_orth));
+  SET_VECTOR_ELT(cert_, 10, ScalarLogical(orth_passed));
+  SET_VECTOR_ELT(cert_, 11, failed_);
+  SET_VECTOR_ELT(cert_, 12, scale_);
+  SET_VECTOR_ELT(cert_, 13, allocVector(STRSXP, 0));
+  SET_VECTOR_ELT(cert_, 14, residuals_);
+  SET_VECTOR_ELT(cert_, 15, backward_);
+  SET_VECTOR_ELT(cert_, 16, orth_);
+  SET_VECTOR_ELT(cert_, 17, converged_);
+  SEXP cert_names_ = PROTECT(allocVector(STRSXP, 18));
+  const char* cert_names[] = {
+    "passed", "tolerance", "orthogonality_tolerance",
+    "orthogonality_required", "certificate_type", "norm_bound_type",
+    "scale_is_estimate", "max_backward_error", "max_residual",
+    "max_orthogonality_loss", "orthogonality_passed", "failed_indices",
+    "scale", "notes", "residuals", "backward_error", "orthogonality",
+    "converged"
+  };
+  for (int i = 0; i < 18; ++i) SET_STRING_ELT(cert_names_, i, mkChar(cert_names[i]));
+  setAttrib(cert_, R_NamesSymbol, cert_names_);
+  SEXP cert_class_ = PROTECT(allocVector(STRSXP, 1));
+  SET_STRING_ELT(cert_class_, 0, mkChar("eigencore_certificate"));
+  setAttrib(cert_, R_ClassSymbol, cert_class_);
+
+  SEXP controls_ = PROTECT(allocVector(VECSXP, 11));
+  SET_VECTOR_ELT(controls_, 0, mkString(n <= m ? "right" : "left"));
+  SET_VECTOR_ELT(controls_, 1, ScalarInteger(m < n ? m : n));
+  SET_VECTOR_ELT(controls_, 2, ScalarInteger(gram_max_dimension));
+  SET_VECTOR_ELT(controls_, 3, ScalarReal(0.5));
+  SET_VECTOR_ELT(controls_, 4, ScalarLogical(TRUE));
+  SET_VECTOR_ELT(controls_, 5, mkString("smaller Gram matrix only"));
+  SET_VECTOR_ELT(controls_, 6, mkString("certification-gated"));
+  SET_VECTOR_ELT(controls_, 7, mkString("native Golub-Kahan if original-coordinate certificate is weaker"));
+  SET_VECTOR_ELT(controls_, 8, mkString("both"));
+  SET_VECTOR_ELT(controls_, 9, ScalarLogical(TRUE));
+  SET_VECTOR_ELT(controls_, 10, ScalarInteger(m > n ? m : n));
+  SEXP control_names_ = PROTECT(allocVector(STRSXP, 11));
+  const char* control_names[] = {
+    "gram_side", "gram_dimension", "gram_max_dimension",
+    "rank_fraction_limit", "certified_in_original_coordinates",
+    "materializes", "fallback_policy", "runtime_fallback",
+    "fallback_requires_vectors", "svd_partial_fastpath", "full_dimension"
+  };
+  for (int i = 0; i < 11; ++i) SET_STRING_ELT(control_names_, i, mkChar(control_names[i]));
+  setAttrib(controls_, R_NamesSymbol, control_names_);
+
+  SEXP reasons_ = PROTECT(allocVector(STRSXP, 6));
+  SET_STRING_ELT(reasons_, 0, mkChar("target: largest"));
+  SET_STRING_ELT(reasons_, 1, mkChar("rectangular SVD problem"));
+  SET_STRING_ELT(reasons_, 2, mkChar("adjoint is available"));
+  SET_STRING_ELT(reasons_, 3, mkChar("small rectangular sparse problem: materializes the smaller Gram matrix as an explicit certified special case"));
+  SET_STRING_ELT(reasons_, 4, mkChar("built-in sparse CSC operator has native block apply"));
+  SET_STRING_ELT(reasons_, 5, mkChar("direct svd_partial() fast path avoids S3 dispatch overhead"));
+
+  SEXP plan_ = PROTECT(allocVector(VECSXP, 7));
+  SET_VECTOR_ELT(plan_, 0, mkString("svd"));
+  SET_VECTOR_ELT(plan_, 1, ScalarInteger(rank));
+  SET_VECTOR_ELT(plan_, 2, mkString("native certified Gram SVD special case"));
+  SET_VECTOR_ELT(plan_, 3, mkString("largest"));
+  SET_VECTOR_ELT(plan_, 4, reasons_);
+  SET_VECTOR_ELT(plan_, 5, mkString("native Golub-Kahan if Gram special case is disabled or uncertified"));
+  SET_VECTOR_ELT(plan_, 6, controls_);
+  SEXP plan_names_ = PROTECT(allocVector(STRSXP, 7));
+  const char* plan_names[] = {
+    "problem_type", "requested", "method", "target", "reasons",
+    "fallback", "controls"
+  };
+  for (int i = 0; i < 7; ++i) SET_STRING_ELT(plan_names_, i, mkChar(plan_names[i]));
+  setAttrib(plan_, R_NamesSymbol, plan_names_);
+  SEXP plan_class_ = PROTECT(allocVector(STRSXP, 1));
+  SET_STRING_ELT(plan_class_, 0, mkChar("eigencore_plan"));
+  setAttrib(plan_, R_ClassSymbol, plan_class_);
+
+  SEXP restart_ = PROTECT(allocVector(VECSXP, 24));
+  SET_VECTOR_ELT(restart_, 0, mkString("gram_svd_special_case"));
+  SET_VECTOR_ELT(restart_, 1, ScalarLogical(TRUE));
+  SET_VECTOR_ELT(restart_, 2, ScalarLogical(TRUE));
+  SET_VECTOR_ELT(restart_, 3, mkString("left"));
+  SET_VECTOR_ELT(restart_, 4, ScalarInteger(m));
+  SET_VECTOR_ELT(restart_, 5, mkString("csc_left_gram"));
+  SET_VECTOR_ELT(restart_, 6, eigensolver_);
+  SET_VECTOR_ELT(restart_, 7, subspace_be_);
+  SET_VECTOR_ELT(restart_, 8, implicit_be_);
+  SET_VECTOR_ELT(restart_, 9, implicit_iter_);
+  SET_VECTOR_ELT(restart_, 10, gram_krylov_iter_);
+  SET_VECTOR_ELT(restart_, 11, ScalarLogical(strcmp(CHAR(STRING_ELT(eigensolver_, 0)), "implicit_normal_lanczos") == 0));
+  SET_VECTOR_ELT(restart_, 12, ScalarLogical(strcmp(CHAR(STRING_ELT(eigensolver_, 0)), "implicit_normal_lanczos") != 0));
+  SET_VECTOR_ELT(restart_, 13, stage_);
+  SET_VECTOR_ELT(restart_, 14, ScalarLogical(FALSE));
+  SET_VECTOR_ELT(restart_, 15, ScalarReal(zero_tol));
+  SET_VECTOR_ELT(restart_, 16, ScalarLogical(TRUE));
+  SET_VECTOR_ELT(restart_, 17, ScalarLogical(TRUE));
+  SET_VECTOR_ELT(restart_, 18, ScalarLogical(FALSE));
+  SET_VECTOR_ELT(restart_, 19, ScalarLogical(FALSE));
+  SET_VECTOR_ELT(restart_, 20, ScalarString(NA_STRING));
+  SET_VECTOR_ELT(restart_, 21, ScalarString(NA_STRING));
+  SET_VECTOR_ELT(restart_, 22, ScalarLogical(all_converged && orth_passed));
+  SET_VECTOR_ELT(restart_, 23, ScalarReal(max_backward));
+  SEXP restart_names_ = PROTECT(allocVector(STRSXP, 24));
+  const char* restart_names[] = {
+    "kind", "implemented", "native", "gram_side", "gram_dimension",
+    "native_gram_kernel", "native_gram_eigensolver",
+    "native_gram_subspace_max_backward_error",
+    "native_implicit_normal_lanczos_max_backward_error",
+    "native_implicit_normal_lanczos_iterations",
+    "native_gram_krylov_iterations", "normal_operator_implicit",
+    "materialized_gram", "stage_seconds", "zero_singular_completion",
+    "zero_singular_threshold", "certificate_reuses_gram_sides",
+    "certified_in_original_coordinates", "fallback_attempted",
+    "fallback_used", "fallback_method", "fallback_error",
+    "gram_certificate_passed", "gram_max_backward_error"
+  };
+  for (int i = 0; i < 24; ++i) SET_STRING_ELT(restart_names_, i, mkChar(restart_names[i]));
+  setAttrib(restart_, R_NamesSymbol, restart_names_);
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 19));
+  SET_VECTOR_ELT(out_, 0, d_);
+  SET_VECTOR_ELT(out_, 1, u_);
+  SET_VECTOR_ELT(out_, 2, v_);
+  SET_VECTOR_ELT(out_, 3, d_);
+  SET_VECTOR_ELT(out_, 4, residuals_);
+  SET_VECTOR_ELT(out_, 5, backward_);
+  SET_VECTOR_ELT(out_, 6, orth_);
+  SET_VECTOR_ELT(out_, 7, ScalarInteger(rank));
+  SET_VECTOR_ELT(out_, 8, ScalarInteger(rank));
+  SET_VECTOR_ELT(out_, 9, ScalarInteger(1));
+  SET_VECTOR_ELT(out_, 10, ScalarInteger(1));
+  SET_VECTOR_ELT(out_, 11, stage_);
+  SET_VECTOR_ELT(out_, 12, mkString("native certified Gram SVD special case"));
+  SET_VECTOR_ELT(out_, 13, mkString("largest"));
+  SET_VECTOR_ELT(out_, 14, plan_);
+  SET_VECTOR_ELT(out_, 15, cert_);
+  SET_VECTOR_ELT(out_, 16, restart_);
+  SET_VECTOR_ELT(out_, 17, mkString("using native certified Gram SVD special case; residuals certified in original coordinates"));
+  SET_VECTOR_ELT(out_, 18, ScalarLogical(TRUE));
+  SEXP out_names_ = PROTECT(allocVector(STRSXP, 19));
+  const char* out_names[] = {
+    "d", "u", "v", "values", "residuals", "backward_error",
+    "orthogonality", "nconv", "requested", "iterations", "matvecs",
+    "stage_seconds", "method", "target", "plan", "certificate",
+    "restart", "warnings", "fastpath_native_result"
+  };
+  for (int i = 0; i < 19; ++i) SET_STRING_ELT(out_names_, i, mkChar(out_names[i]));
+  setAttrib(out_, R_NamesSymbol, out_names_);
+  SEXP out_class_ = PROTECT(allocVector(STRSXP, 1));
+  SET_STRING_ELT(out_class_, 0, mkChar("eigencore_svd_result"));
+  setAttrib(out_, R_ClassSymbol, out_class_);
+
+  UNPROTECT(18);
+  return out_;
+}
+
 extern "C" SEXP eigencore_dense_generalized_spd_eigen(SEXP A_, SEXP B_) {
   if (!isReal(A_) || !isReal(B_)) {
     error("A and B must be double matrices");
@@ -11116,6 +11370,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_dense_symmetric_eigen_selected", (DL_FUNC) &eigencore_dense_symmetric_eigen_selected, 3},
   {"eigencore_dense_symmetric_eigen_dsyevx_selected", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyevx_selected, 3},
   {"eigencore_csc_left_gram_svd", (DL_FUNC) &eigencore_csc_left_gram_svd, 6},
+  {"eigencore_csc_left_gram_svd_fast_result", (DL_FUNC) &eigencore_csc_left_gram_svd_fast_result, 6},
   {"eigencore_dense_generalized_spd_eigen", (DL_FUNC) &eigencore_dense_generalized_spd_eigen, 2},
   {"eigencore_dense_svd", (DL_FUNC) &eigencore_dense_svd, 1},
   {"eigencore_tridiagonal_solve", (DL_FUNC) &eigencore_tridiagonal_solve, 4},

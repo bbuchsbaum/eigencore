@@ -181,6 +181,7 @@ test_that("wide sparse Gram SVD uses native CSC left-Gram kernel", {
   expect_identical(fit$restart$kind, "gram_svd_special_case")
   expect_identical(fit$restart$gram_side, "left")
   expect_identical(fit$restart$native_gram_kernel, "csc_left_gram")
+  expect_true(fit$fastpath_native_result)
   expect_true(fit$plan$controls$svd_partial_fastpath)
   expect_identical(fit$restart$native_gram_eigensolver, "lapack_dsyevr")
   expect_true(is.infinite(fit$restart$native_gram_subspace_max_backward_error))
