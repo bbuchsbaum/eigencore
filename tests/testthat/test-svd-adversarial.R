@@ -308,7 +308,7 @@ test_that("one-sided IRLBA LBD restart ABI fixes the native implementation contr
 
   expect_s3_class(abi, "eigencore_irlba_lbd_restart_abi")
   expect_equal(abi$version, 1L)
-  expect_false(abi$implemented)
+  expect_true(abi$implemented)
   expect_equal(abi$native_storage, "dgCMatrix")
   expect_true(abi$internal_transposed)
   expect_identical(abi$internal_orientation, "transposed_wide_operator")
@@ -334,30 +334,27 @@ test_that("one-sided IRLBA LBD restart ABI fixes the native implementation contr
   expect_equal(tall_abi$input_schema$initial_start, 90L)
 })
 
-test_that("retained IRLBA LBD prototype fails with its native ABI", {
+test_that("retained IRLBA LBD native core certifies or falls back honestly", {
   set.seed(704)
   wide <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))
-  err <- tryCatch(
-    eigencore:::native_irlba_lbd_retained_svd(
-      wide,
-      rank = 5L,
-      work = 12L,
-      retained = 7L,
-      tol = 1e-8,
-      vectors = "both"
-    ),
-    eigencore_unimplemented_native_irlba_lbd = function(e) e
+  fit <- eigencore:::native_irlba_lbd_retained_svd(
+    wide,
+    rank = 5L,
+    work = 12L,
+    retained = 7L,
+    max_restarts = 1L,
+    tol = 1e-8,
+    vectors = "both"
   )
 
-  expect_s3_class(err, "eigencore_unimplemented_native_irlba_lbd")
-  expect_s3_class(err$abi, "eigencore_irlba_lbd_restart_abi")
-  expect_false(err$abi$implemented)
-  expect_true(err$abi$internal_transposed)
-  expect_equal(err$abi$work, 12L)
-  expect_equal(err$abi$retained, 7L)
-  expect_equal(err$abi$tolerance, 1e-8)
-  expect_identical(err$abi$vectors, "both")
-  expect_equal(unname(err$abi$entry_points[["csc"]]), "eigencore_irlba_lbd_csc_retained")
+  expect_true(fit$certificate$passed)
+  expect_equal(length(fit$d), 5L)
+  expect_true(fit$restart$retained_restart)
+  expect_true(fit$restart$native_attempt_certification)
+  expect_equal(fit$restart$retained_restart_abi_version, 1L)
+  expect_identical(fit$restart$internal_orientation, "transposed_wide_operator")
+  expect_true(fit$restart$internal_transposed)
+  expect_certificate_clean(fit)
 })
 
 test_that("retained IRLBA LBD scout state matches the native ABI orientation", {
@@ -400,22 +397,22 @@ test_that("retained IRLBA LBD scout state matches the native ABI orientation", {
   expect_equal(abs(diag(crossprod(state$retained_left_subspace[, 1:5], scout$v))), rep(1, 5), tolerance = 1e-8)
 
   active_wide <- Matrix::t(wide)
-  expect_error(
-    .Call(
-      "eigencore_irlba_lbd_csc_retained",
-      active_wide@i, active_wide@p, active_wide@x, as.integer(active_wide@Dim),
-      state$initial_start,
-      state$retained_right_subspace,
-      state$retained_left_subspace,
-      state$alpha,
-      state$beta,
-      state$restart_random_tail,
-      abi$work, abi$retained, abi$max_restarts, abi$rank,
-      abi$target_kind, 1e-8, 1L,
-      PACKAGE = "eigencore"
-    ),
-    "reserved but not implemented"
+  out <- .Call(
+    "eigencore_irlba_lbd_csc_retained",
+    active_wide@i, active_wide@p, active_wide@x, as.integer(active_wide@Dim),
+    state$initial_start,
+    state$retained_right_subspace,
+    state$retained_left_subspace,
+    state$alpha,
+    state$beta,
+    state$restart_random_tail,
+    abi$work, abi$retained, 1L, abi$rank,
+    abi$target_kind, 1e-8, 1L,
+    PACKAGE = "eigencore"
   )
+  expect_equal(length(out$d), 5L)
+  expect_true(is.data.frame(out$attempt_history))
+  expect_equal(out$restart_count, 1L)
 })
 
 test_that("retained IRLBA LBD native ABI entry points are registered", {
@@ -430,33 +427,32 @@ test_that("retained IRLBA LBD native ABI entry points are registered", {
 
   expect_equal(dense_info$numParameters, 14L)
   expect_equal(csc_info$numParameters, 17L)
-  dense <- matrix(0, 6L, 4L)
+  dense <- diag(c(6, 4, 2, 1), nrow = 6L, ncol = 4L)
   csc <- Matrix::Matrix(dense, sparse = TRUE)
-  start <- numeric(4L)
-  right <- matrix(0, 4L, 2L)
-  left <- matrix(0, 6L, 2L)
-  alpha <- numeric(3L)
-  beta <- numeric(3L)
-  tails <- matrix(0, 4L, 1L)
-  expect_error(
-    .Call(
-      "eigencore_irlba_lbd_dense_retained",
-      dense, start, right, left, alpha, beta, tails,
-      3L, 2L, 1L, 2L, 1L, 1e-8, 1L,
-      PACKAGE = "eigencore"
-    ),
-    "reserved but not implemented"
+  start <- c(1, 1, 0, 0) / sqrt(2)
+  right <- qr.Q(qr(cbind(start, c(1, -1, 0, 0) / sqrt(2))))
+  left <- qr.Q(qr(dense %*% right))
+  alpha <- numeric(4L)
+  beta <- numeric(4L)
+  tails <- matrix(c(0, 0, 1, 0, 0, 0, 0, 1), 4L, 2L)
+  dense_out <- .Call(
+    "eigencore_irlba_lbd_dense_retained",
+    dense, start, right, left, alpha, beta, tails,
+    4L, 2L, 1L, 2L, 1L, 1e-8, 1L,
+    PACKAGE = "eigencore"
   )
-  expect_error(
-    .Call(
-      "eigencore_irlba_lbd_csc_retained",
-      csc@i, csc@p, csc@x, as.integer(csc@Dim),
-      start, right, left, alpha, beta, tails,
-      3L, 2L, 1L, 2L, 1L, 1e-8, 1L,
-      PACKAGE = "eigencore"
-    ),
-    "reserved but not implemented"
+  csc_out <- .Call(
+    "eigencore_irlba_lbd_csc_retained",
+    csc@i, csc@p, csc@x, as.integer(csc@Dim),
+    start, right, left, alpha, beta, tails,
+    4L, 2L, 1L, 2L, 1L, 1e-8, 1L,
+    PACKAGE = "eigencore"
   )
+  expect_equal(dense_out$d, c(6, 4), tolerance = 1e-10)
+  expect_equal(csc_out$d, c(6, 4), tolerance = 1e-10)
+  expect_true(is.data.frame(dense_out$attempt_history))
+  expect_equal(nrow(dense_out$attempt_history), 2L)
+  expect_equal(dense_out$restart_count, 1L)
 })
 
 test_that("wide sparse Gram SVD exposes opt-in certified subspace eigensolve", {

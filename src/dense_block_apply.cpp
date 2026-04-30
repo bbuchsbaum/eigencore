@@ -10706,6 +10706,258 @@ static void validate_irlba_lbd_retained_contract(int m, int n,
   validate_real_matrix_dim(random_tails_, n, work - retained, "random_tails");
 }
 
+static void irlba_lbd_retained_seed(int n,
+                                    int retained,
+                                    const double* initial_start,
+                                    const double* retained_right,
+                                    const double* random_tails,
+                                    int random_tail_cols,
+                                    int attempt,
+                                    double* start) {
+  std::memset(start, 0, sizeof(double) * static_cast<size_t>(n));
+  const int retained_col = (attempt < retained) ? attempt : 0;
+  const double* base = retained_right +
+    static_cast<int64_t>(retained_col) * static_cast<int64_t>(n);
+  long double norm2 = 0.0L;
+  for (int row = 0; row < n; ++row) {
+    start[row] = base[row];
+    norm2 += static_cast<long double>(start[row]) * start[row];
+  }
+  if (norm2 <= 100.0L * DBL_EPSILON) {
+    norm2 = 0.0L;
+    for (int row = 0; row < n; ++row) {
+      start[row] = initial_start[row];
+      norm2 += static_cast<long double>(start[row]) * start[row];
+    }
+  }
+  if (attempt > 0 && random_tail_cols > 0) {
+    const int tail_col = (attempt - 1) % random_tail_cols;
+    const double* tail = random_tails +
+      static_cast<int64_t>(tail_col) * static_cast<int64_t>(n);
+    for (int row = 0; row < n; ++row) {
+      start[row] += 1.0e-3 * tail[row];
+    }
+  }
+  norm2 = 0.0L;
+  for (int row = 0; row < n; ++row) {
+    norm2 += static_cast<long double>(start[row]) * start[row];
+  }
+  if (norm2 <= 100.0L * DBL_EPSILON) {
+    start[0] = 1.0;
+    norm2 = 1.0L;
+  }
+  const double norm = sqrt(static_cast<double>(norm2));
+  for (int row = 0; row < n; ++row) {
+    start[row] /= norm;
+  }
+}
+
+static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
+                                           const std::vector<int>& iterations,
+                                           const std::vector<int>& matvecs,
+                                           const std::vector<int>& warm_started) {
+  const int rows = static_cast<int>(attempts.size());
+  SEXP attempt_ = PROTECT(allocVector(INTSXP, rows));
+  SEXP max_subspace_ = PROTECT(allocVector(INTSXP, rows));
+  SEXP iterations_ = PROTECT(allocVector(INTSXP, rows));
+  SEXP matvecs_ = PROTECT(allocVector(INTSXP, rows));
+  SEXP warm_started_ = PROTECT(allocVector(LGLSXP, rows));
+  for (int row = 0; row < rows; ++row) {
+    INTEGER(attempt_)[row] = row + 1;
+    INTEGER(max_subspace_)[row] = attempts[static_cast<size_t>(row)];
+    INTEGER(iterations_)[row] = iterations[static_cast<size_t>(row)];
+    INTEGER(matvecs_)[row] = matvecs[static_cast<size_t>(row)];
+    LOGICAL(warm_started_)[row] = warm_started[static_cast<size_t>(row)] ? TRUE : FALSE;
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 5));
+  SET_VECTOR_ELT(out_, 0, attempt_);
+  SET_VECTOR_ELT(out_, 1, max_subspace_);
+  SET_VECTOR_ELT(out_, 2, iterations_);
+  SET_VECTOR_ELT(out_, 3, matvecs_);
+  SET_VECTOR_ELT(out_, 4, warm_started_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 5));
+  SET_STRING_ELT(names_, 0, mkChar("attempt"));
+  SET_STRING_ELT(names_, 1, mkChar("max_subspace"));
+  SET_STRING_ELT(names_, 2, mkChar("iterations"));
+  SET_STRING_ELT(names_, 3, mkChar("matvecs"));
+  SET_STRING_ELT(names_, 4, mkChar("warm_started"));
+  setAttrib(out_, R_NamesSymbol, names_);
+  SEXP row_names_ = PROTECT(allocVector(INTSXP, 2));
+  INTEGER(row_names_)[0] = NA_INTEGER;
+  INTEGER(row_names_)[1] = -rows;
+  setAttrib(out_, R_RowNamesSymbol, row_names_);
+  SEXP class_ = PROTECT(allocVector(STRSXP, 1));
+  SET_STRING_ELT(class_, 0, mkChar("data.frame"));
+  setAttrib(out_, R_ClassSymbol, class_);
+  UNPROTECT(9);
+  return out_;
+}
+
+template <typename ConfigureOperator>
+static SEXP irlba_lbd_retained_impl(ConfigureOperator configure_operator,
+                                    int m,
+                                    int n,
+                                    const double* initial_start,
+                                    const double* retained_right,
+                                    const double* retained_left,
+                                    const double* alpha,
+                                    const double* beta,
+                                    const double* random_tails,
+                                    int work,
+                                    int retained,
+                                    int max_restarts,
+                                    int rank,
+                                    int target_kind,
+                                    double tol,
+                                    int reorth_policy) {
+  (void) retained_left;
+  (void) alpha;
+  (void) beta;
+  const int attempts = (max_restarts < 0) ? 1 : max_restarts + 1;
+  const int random_tail_cols = work - retained;
+  const int reorthogonalize_u =
+    (reorth_policy != 1) || (m <= n);
+  const int reorthogonalize_v =
+    (reorth_policy != 1) || (n <= m);
+  const int use_blas_reorthogonalization = 0;
+  const int enable_projected_stop = 0;
+  const double native_workspace_bytes =
+    static_cast<double>(sizeof(double)) *
+    static_cast<double>(
+      (static_cast<int64_t>(m) + static_cast<int64_t>(n) + 2) *
+      static_cast<int64_t>(work) +
+      static_cast<int64_t>(2 * m + 2 * n)
+    );
+
+  std::vector<double> start(static_cast<size_t>(n), 0.0);
+  std::vector<double> U_work(static_cast<size_t>(m) * static_cast<size_t>(work), 0.0);
+  std::vector<double> V_work(static_cast<size_t>(n) * static_cast<size_t>(work), 0.0);
+  std::vector<double> alpha_work(static_cast<size_t>(work), 0.0);
+  std::vector<double> beta_work(static_cast<size_t>(work), 0.0);
+  std::vector<int> attempted_subspaces;
+  std::vector<int> attempt_iterations;
+  std::vector<int> attempt_matvecs;
+  std::vector<int> attempt_warm_started;
+  attempted_subspaces.reserve(static_cast<size_t>(attempts));
+  attempt_iterations.reserve(static_cast<size_t>(attempts));
+  attempt_matvecs.reserve(static_cast<size_t>(attempts));
+  attempt_warm_started.reserve(static_cast<size_t>(attempts));
+
+  SEXP final_ritz_ = R_NilValue;
+  int final_iterations = 0;
+  int total_iterations = 0;
+  int total_matvecs = 0;
+  int total_reorthogonalization_passes = 0;
+  double total_apply_seconds = 0.0;
+  double total_recurrence_seconds = 0.0;
+  double total_reorthogonalization_seconds = 0.0;
+  double total_projected_seconds = 0.0;
+
+  for (int attempt = 0; attempt < attempts; ++attempt) {
+    irlba_lbd_retained_seed(
+      n, retained, initial_start, retained_right, random_tails,
+      random_tail_cols, attempt, start.data()
+    );
+    std::fill(U_work.begin(), U_work.end(), 0.0);
+    std::fill(V_work.begin(), V_work.end(), 0.0);
+    std::fill(alpha_work.begin(), alpha_work.end(), 0.0);
+    std::fill(beta_work.begin(), beta_work.end(), 0.0);
+
+    void* impl = nullptr;
+    EigencoreApplyFn apply = nullptr;
+    configure_operator(&impl, &apply);
+    int iterations = 0;
+    int matvecs = 0;
+    int projected_stop = 0;
+    int projected_nconv = 0;
+    double projected_max_residual = R_PosInf;
+    int projected_checks = 0;
+    double projected_seconds = 0.0;
+    double stage_apply_seconds = 0.0;
+    double stage_recurrence_seconds = 0.0;
+    double stage_reorthogonalization_seconds = 0.0;
+    int reorthogonalization_passes = 0;
+    const int status = native_golub_kahan_run(
+      impl, apply, m, n, work, rank, target_kind, tol,
+      enable_projected_stop, use_blas_reorthogonalization,
+      start.data(), U_work.data(), V_work.data(), alpha_work.data(),
+      beta_work.data(), &iterations, &matvecs, &projected_stop,
+      &projected_nconv, &projected_max_residual, &projected_checks,
+      &projected_seconds, &stage_apply_seconds, &stage_recurrence_seconds,
+      &stage_reorthogonalization_seconds, &reorthogonalization_passes,
+      reorthogonalize_u, reorthogonalize_v
+    );
+    if (status != 0) {
+      error("native retained one-sided IRLBA/LBD failed with status=%d", status);
+    }
+    attempted_subspaces.push_back(work);
+    attempt_iterations.push_back(iterations);
+    attempt_matvecs.push_back(matvecs);
+    attempt_warm_started.push_back(attempt > 0 ? 1 : 0);
+    final_iterations = iterations;
+    total_iterations += iterations;
+    total_matvecs += matvecs;
+    total_reorthogonalization_passes += reorthogonalization_passes;
+    total_apply_seconds += stage_apply_seconds;
+    total_recurrence_seconds += stage_recurrence_seconds;
+    total_reorthogonalization_seconds += stage_reorthogonalization_seconds;
+    total_projected_seconds += projected_seconds;
+
+    if (attempt + 1 == attempts) {
+      final_ritz_ = PROTECT(eigencore_golub_kahan_ritz_from_ptr(
+        U_work.data(), V_work.data(), m, n, iterations, alpha_work.data(),
+        beta_work.data(), rank, target_kind
+      ));
+    }
+  }
+
+  SEXP history_ = PROTECT(irlba_lbd_attempt_history_pack(
+    attempted_subspaces, attempt_iterations, attempt_matvecs, attempt_warm_started
+  ));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 18));
+  SET_VECTOR_ELT(out_, 0, VECTOR_ELT(final_ritz_, 0));
+  SET_VECTOR_ELT(out_, 1, VECTOR_ELT(final_ritz_, 1));
+  SET_VECTOR_ELT(out_, 2, VECTOR_ELT(final_ritz_, 2));
+  SET_VECTOR_ELT(out_, 3, ScalarInteger(final_iterations));
+  SET_VECTOR_ELT(out_, 4, ScalarInteger(total_iterations));
+  SET_VECTOR_ELT(out_, 5, ScalarInteger(total_matvecs));
+  SET_VECTOR_ELT(out_, 6, ScalarInteger(attempts - 1));
+  SET_VECTOR_ELT(out_, 7, history_);
+  SET_VECTOR_ELT(out_, 8, ScalarReal(native_workspace_bytes));
+  SET_VECTOR_ELT(out_, 9, ScalarReal(total_apply_seconds));
+  SET_VECTOR_ELT(out_, 10, ScalarReal(total_recurrence_seconds));
+  SET_VECTOR_ELT(out_, 11, ScalarReal(total_reorthogonalization_seconds));
+  SET_VECTOR_ELT(out_, 12, ScalarReal(total_projected_seconds));
+  SET_VECTOR_ELT(out_, 13, ScalarInteger(total_reorthogonalization_passes));
+  SET_VECTOR_ELT(out_, 14, ScalarInteger(reorthogonalize_u));
+  SET_VECTOR_ELT(out_, 15, ScalarInteger(reorthogonalize_v));
+  SET_VECTOR_ELT(out_, 16, ScalarInteger(work));
+  SET_VECTOR_ELT(out_, 17, ScalarInteger(retained));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 18));
+  SET_STRING_ELT(names_, 0, mkChar("d"));
+  SET_STRING_ELT(names_, 1, mkChar("u"));
+  SET_STRING_ELT(names_, 2, mkChar("v"));
+  SET_STRING_ELT(names_, 3, mkChar("final_iterations"));
+  SET_STRING_ELT(names_, 4, mkChar("iterations"));
+  SET_STRING_ELT(names_, 5, mkChar("matvecs"));
+  SET_STRING_ELT(names_, 6, mkChar("restart_count"));
+  SET_STRING_ELT(names_, 7, mkChar("attempt_history"));
+  SET_STRING_ELT(names_, 8, mkChar("native_workspace_bytes"));
+  SET_STRING_ELT(names_, 9, mkChar("stage_apply_seconds"));
+  SET_STRING_ELT(names_, 10, mkChar("stage_recurrence_seconds"));
+  SET_STRING_ELT(names_, 11, mkChar("stage_reorthogonalization_seconds"));
+  SET_STRING_ELT(names_, 12, mkChar("stage_projected_solve_seconds"));
+  SET_STRING_ELT(names_, 13, mkChar("reorthogonalization_passes"));
+  SET_STRING_ELT(names_, 14, mkChar("reorthogonalize_u"));
+  SET_STRING_ELT(names_, 15, mkChar("reorthogonalize_v"));
+  SET_STRING_ELT(names_, 16, mkChar("work"));
+  SET_STRING_ELT(names_, 17, mkChar("retained"));
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(4);
+  return out_;
+}
+
 extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP A_, SEXP initial_start_,
                                                    SEXP retained_right_,
                                                    SEXP retained_left_,
@@ -10729,8 +10981,21 @@ extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP A_, SEXP initial_start_,
     retained_left_, alpha_, beta_, random_tails_, work_, retained_,
     max_restarts_, rank_, target_kind_, tol_, reorth_policy_
   );
-  error("native retained one-sided IRLBA/LBD dense entry point is reserved but not implemented");
-  return R_NilValue;
+  DenseColumnMajorOperator impl_holder = {
+    INTEGER(dimA)[0], INTEGER(dimA)[1], REAL(A_)
+  };
+  auto configure = [&impl_holder](void** impl, EigencoreApplyFn* apply) {
+    *impl = &impl_holder;
+    *apply = eigencore_dense_apply;
+  };
+  return irlba_lbd_retained_impl(
+    configure, INTEGER(dimA)[0], INTEGER(dimA)[1],
+    REAL(initial_start_), REAL(retained_right_), REAL(retained_left_),
+    REAL(alpha_), REAL(beta_), REAL(random_tails_),
+    asInteger(work_), asInteger(retained_), asInteger(max_restarts_),
+    asInteger(rank_), asInteger(target_kind_), asReal(tol_),
+    asInteger(reorth_policy_)
+  );
 }
 
 extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP i_, SEXP p_, SEXP x_,
@@ -10755,8 +11020,21 @@ extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP i_, SEXP p_, SEXP x_,
     retained_left_, alpha_, beta_, random_tails_, work_, retained_,
     max_restarts_, rank_, target_kind_, tol_, reorth_policy_
   );
-  error("native retained one-sided IRLBA/LBD CSC entry point is reserved but not implemented");
-  return R_NilValue;
+  CSCOperator impl_holder = {
+    INTEGER(dim_)[0], INTEGER(dim_)[1], INTEGER(i_), INTEGER(p_), REAL(x_)
+  };
+  auto configure = [&impl_holder](void** impl, EigencoreApplyFn* apply) {
+    *impl = &impl_holder;
+    *apply = eigencore_csc_apply;
+  };
+  return irlba_lbd_retained_impl(
+    configure, INTEGER(dim_)[0], INTEGER(dim_)[1],
+    REAL(initial_start_), REAL(retained_right_), REAL(retained_left_),
+    REAL(alpha_), REAL(beta_), REAL(random_tails_),
+    asInteger(work_), asInteger(retained_), asInteger(max_restarts_),
+    asInteger(rank_), asInteger(target_kind_), asReal(tol_),
+    asInteger(reorth_policy_)
+  );
 }
 
 static const R_CallMethodDef CallEntries[] = {

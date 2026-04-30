@@ -184,7 +184,7 @@ native_irlba_lbd_restart_abi <- function(op, rank, target = largest(),
   structure(
     list(
       version = 1L,
-      implemented = FALSE,
+      implemented = TRUE,
       entry_points = c(
         dense = "eigencore_irlba_lbd_dense_retained",
         csc = "eigencore_irlba_lbd_csc_retained"
@@ -391,18 +391,310 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
   abi$tolerance <- as.numeric(tol)
   abi$vectors <- vectors
 
-  stop(structure(
-    list(
-      message = "native retained one-sided IRLBA/LBD is not implemented yet",
-      call = NULL,
-      abi = abi
+  original_op <- as_operator(op)
+  active_source <- if (isTRUE(abi$internal_transposed)) {
+    native_golub_kahan_transpose_source(original_op)
+  } else {
+    source_or_null(original_op)
+  }
+  if (is.null(active_source)) {
+    stop("Native retained one-sided IRLBA/LBD requires a native dense or dgCMatrix source.",
+         call. = FALSE)
+  }
+  active_op <- as_operator(active_source)
+  active_dim <- as.integer(active_op$dim)
+  active_domain <- active_dim[[2L]]
+  active_codomain <- active_dim[[1L]]
+
+  initial_start <- stats::rnorm(active_domain)
+  initial_start <- initial_start / sqrt(sum(initial_start^2))
+  small <- native_golub_kahan_svd(
+    active_op,
+    rank = rank,
+    target = target,
+    tol = tol,
+    maxit = abi$work,
+    vectors = "both",
+    reorthogonalize = identical(reorth_policy, "full_two_sided"),
+    internal_start = initial_start
+  )
+  retained_right <- native_irlba_lbd_pad_basis(
+    small$v,
+    n_rows = active_domain,
+    cols = abi$retained,
+    tol = tol
+  )
+  retained_left <- native_irlba_lbd_pad_basis(
+    small$u,
+    n_rows = active_codomain,
+    cols = abi$retained,
+    tol = tol
+  )
+  alpha <- numeric(abi$work)
+  beta <- numeric(abi$work)
+  random_tails <- matrix(
+    stats::rnorm(active_domain * max(0L, abi$work - abi$retained)),
+    nrow = active_domain,
+    ncol = max(0L, abi$work - abi$retained)
+  )
+  reorth_code <- match(
+    reorth_policy,
+    c("one_sided_small_side", "full_two_sided", "bpro_two_sided")
+  )
+
+  native <- tryCatch(
+    native_irlba_lbd_retained_call(
+      active_source = active_source,
+      initial_start = initial_start,
+      retained_right = retained_right,
+      retained_left = retained_left,
+      alpha = alpha,
+      beta = beta,
+      random_tails = random_tails,
+      work = abi$work,
+      retained = abi$retained,
+      max_restarts = abi$max_restarts,
+      rank = abi$rank,
+      target_kind = abi$target_kind,
+      tol = tol,
+      reorth_policy = reorth_code
     ),
-    class = c(
-      "eigencore_unimplemented_native_irlba_lbd",
-      "error",
-      "condition"
+    error = function(e) {
+      structure(list(error = conditionMessage(e)), class = "eigencore_irlba_lbd_native_error")
+    }
+  )
+
+  fallback_reason <- NA_character_
+  fallback <- NULL
+  if (inherits(native, "eigencore_irlba_lbd_native_error")) {
+    fallback_reason <- native$error
+  } else {
+    cert <- certify_svd_operator(active_op, native$d, native$u, native$v, tol = tol)
+    final <- list(
+      d = native$d,
+      u = native$u,
+      v = native$v,
+      values = native$d,
+      residuals = cert$residuals,
+      backward_error = cert$backward_error,
+      orthogonality = cert$orthogonality,
+      certificate = cert
     )
-  ))
+    final <- complete_zero_singular_triplets(active_op, final, rank, target, tol)
+    if (isTRUE(abi$internal_transposed)) {
+      final <- native_golub_kahan_swap_transposed_result(original_op, final, tol)
+    }
+    final$iterations <- native$iterations + small$iterations
+    final$matvecs <- native$matvecs + small$matvecs
+    final$restarts <- native$restart_count
+    final$stage_seconds <- c(
+      scout = sum(small$stage_seconds %||% NA_real_, na.rm = TRUE),
+      native_iteration = sum(
+        native$stage_apply_seconds,
+        native$stage_recurrence_seconds,
+        native$stage_reorthogonalization_seconds,
+        native$stage_projected_solve_seconds,
+        na.rm = TRUE
+      ),
+      apply = native$stage_apply_seconds,
+      recurrence = native$stage_recurrence_seconds,
+      reorthogonalization = native$stage_reorthogonalization_seconds,
+      projected_solve = native$stage_projected_solve_seconds,
+      ritz = 0,
+      retry_overhead = 0
+    )
+    final$restart <- native_irlba_lbd_restart_diagnostics(
+      abi = abi,
+      native = native,
+      small = small,
+      final = final,
+      fallback_attempted = FALSE,
+      fallback_used = FALSE,
+      fallback_reason = NA_character_
+    )
+    if (isTRUE(final$certificate$passed)) {
+      return(native_irlba_lbd_select_vectors(final, vectors))
+    }
+    fallback_reason <- paste0(
+      "retained native IRLBA/LBD certificate failed: max backward error ",
+      signif(final$certificate$max_backward_error, 4)
+    )
+  }
+
+  warm_start <- if (!inherits(native, "eigencore_irlba_lbd_native_error") &&
+      !is.null(native$v) && ncol(native$v) > 0L) {
+    native$v[, 1L]
+  } else {
+    retained_right[, 1L]
+  }
+  fallback <- native_golub_kahan_svd(
+    original_op,
+    rank = rank,
+    target = target,
+    tol = tol,
+    vectors = "both",
+    reorthogonalize = identical(reorth_policy, "full_two_sided"),
+    internal_start = warm_start
+  )
+  fallback$restart$irlba_lbd_policy <-
+    "retained one-sided LBD native core with certified adaptive fallback"
+  fallback$restart$irlba_lbd_retained_native_attempted <- TRUE
+  fallback$restart$irlba_lbd_retained_native_fallback_reason <- fallback_reason
+  fallback$restart$fallback_attempted <- TRUE
+  fallback$restart$fallback_used <- TRUE
+  fallback$restart$fallback_method <- "adaptive one-sided Golub-Kahan"
+  fallback$restart$retained_restart <- TRUE
+  fallback$restart$retained_restart_native <- !inherits(native, "eigencore_irlba_lbd_native_error")
+  fallback$restart$retained_restart_abi_version <- abi$version
+  fallback$restart$native_attempt_certification <- !inherits(native, "eigencore_irlba_lbd_native_error")
+  fallback$restart$work <- abi$work
+  fallback$restart$retained <- abi$retained
+  fallback$restart$internal_orientation <- abi$internal_orientation
+  fallback$restart$internal_transposed <- abi$internal_transposed
+  fallback$restart$irlba_lbd_scout_matvecs <- small$matvecs
+  fallback$restart$irlba_lbd_scout_accounted_seconds <-
+    sum(small$stage_seconds %||% NA_real_, na.rm = TRUE)
+  if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+    fallback$restart$irlba_lbd_retained_attempt_history <- native$attempt_history
+    fallback$restart$irlba_lbd_retained_matvecs <- native$matvecs
+  }
+  native_irlba_lbd_select_vectors(fallback, vectors)
+}
+
+#' @keywords internal
+native_irlba_lbd_pad_basis <- function(x, n_rows, cols,
+                                       tol = sqrt(.Machine$double.eps)) {
+  x <- if (is.null(x)) matrix(0, n_rows, 0L) else as.matrix(x)
+  if (nrow(x) != n_rows) {
+    stop("retained IRLBA/LBD basis has non-conformable row count.", call. = FALSE)
+  }
+  if (ncol(x) > cols) {
+    x <- x[, seq_len(cols), drop = FALSE]
+  }
+  if (ncol(x) < cols) {
+    x <- cbind(
+      x,
+      orthonormal_completion(
+        x,
+        n_rows = n_rows,
+        needed = cols - ncol(x),
+        tol = tol
+      )
+    )
+  }
+  x
+}
+
+#' @keywords internal
+native_irlba_lbd_retained_call <- function(active_source, initial_start,
+                                           retained_right, retained_left,
+                                           alpha, beta, random_tails,
+                                           work, retained, max_restarts,
+                                           rank, target_kind, tol,
+                                           reorth_policy) {
+  if (inherits(active_source, "dgCMatrix")) {
+    return(.Call(
+      "eigencore_irlba_lbd_csc_retained",
+      methods::slot(active_source, "i"),
+      methods::slot(active_source, "p"),
+      methods::slot(active_source, "x"),
+      methods::slot(active_source, "Dim"),
+      as.numeric(initial_start),
+      retained_right,
+      retained_left,
+      as.numeric(alpha),
+      as.numeric(beta),
+      random_tails,
+      as.integer(work),
+      as.integer(retained),
+      as.integer(max_restarts),
+      as.integer(rank),
+      as.integer(target_kind),
+      as.numeric(tol),
+      as.integer(reorth_policy),
+      PACKAGE = "eigencore"
+    ))
+  }
+  if (is.matrix(active_source) && is.double(active_source)) {
+    return(.Call(
+      "eigencore_irlba_lbd_dense_retained",
+      active_source,
+      as.numeric(initial_start),
+      retained_right,
+      retained_left,
+      as.numeric(alpha),
+      as.numeric(beta),
+      random_tails,
+      as.integer(work),
+      as.integer(retained),
+      as.integer(max_restarts),
+      as.integer(rank),
+      as.integer(target_kind),
+      as.numeric(tol),
+      as.integer(reorth_policy),
+      PACKAGE = "eigencore"
+    ))
+  }
+  stop("native retained IRLBA/LBD supports only dense double and dgCMatrix sources.",
+       call. = FALSE)
+}
+
+#' @keywords internal
+native_irlba_lbd_restart_diagnostics <- function(abi, native, small, final,
+                                                 fallback_attempted,
+                                                 fallback_used,
+                                                 fallback_reason) {
+  list(
+    kind = "irlba_lbd_native_retained_core",
+    implemented = TRUE,
+    irlba_lbd_policy = "retained one-sided LBD native core",
+    retained_restart = TRUE,
+    retained_restart_native = TRUE,
+    retained_restart_abi_version = abi$version,
+    work = abi$work,
+    retained = abi$retained,
+    max_restarts = abi$max_restarts,
+    restart_count = native$restart_count,
+    attempts = nrow(native$attempt_history),
+    attempted_subspaces = native$attempt_history$max_subspace,
+    attempt_history = native$attempt_history,
+    certified_attempt = if (isTRUE(final$certificate$passed)) nrow(native$attempt_history) else NA_integer_,
+    native_attempt_certification = TRUE,
+    native_workspace_bytes = native$native_workspace_bytes,
+    reorthogonalization_mode = abi$reorth_policy,
+    reorthogonalize_u = as.logical(native$reorthogonalize_u),
+    reorthogonalize_v = as.logical(native$reorthogonalize_v),
+    reorthogonalization_passes = native$reorthogonalization_passes,
+    internal_orientation = abi$internal_orientation,
+    internal_transposed = abi$internal_transposed,
+    scout_matvecs = small$matvecs,
+    scout_iterations = small$iterations,
+    scout_certificate_passed = isTRUE(small$certificate$passed),
+    fallback_attempted = fallback_attempted,
+    fallback_used = fallback_used,
+    fallback_method = if (fallback_used) "adaptive one-sided Golub-Kahan" else NA_character_,
+    fallback_reason = fallback_reason,
+    converged = isTRUE(final$certificate$passed),
+    nconv = sum(final$certificate$converged),
+    max_backward_error = final$certificate$max_backward_error,
+    stage_seconds = final$stage_seconds,
+    zero_singular_completion = isTRUE(final$zero_singular_completion),
+    zero_singular_threshold = final$zero_singular_threshold %||% NA_real_,
+    certified_in_original_coordinates = TRUE
+  )
+}
+
+#' @keywords internal
+native_irlba_lbd_select_vectors <- function(final, vectors) {
+  if (vectors == "left") {
+    final$v <- NULL
+  } else if (vectors == "right") {
+    final$u <- NULL
+  } else if (vectors == "none") {
+    final$u <- NULL
+    final$v <- NULL
+  }
+  final
 }
 
 #' @keywords internal

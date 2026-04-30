@@ -711,22 +711,23 @@ Primary attack surfaces, in order:
    `A^T`, retained left/right Ritz subspace shapes, bidiagonal alpha/beta
    state, restart random-tail layout, exact original-coordinate certification,
    and the invariant that failed small-work attempts must be retained as
-   restart state instead of discarded and rerun from scratch. The ABI is marked
-   `implemented = FALSE`; `native_irlba_lbd_retained_svd()` now fails with a
-   typed `eigencore_unimplemented_native_irlba_lbd` condition carrying that ABI,
-   so internal callers can target the retained engine without accidentally
-   falling back to a rerun-from-scratch prototype. The named C++ entry points
-   are also registered as reserved unimplemented `.Call` symbols with fixed
-   arities (`dense = 14`, `csc = 17`) and shape validation for retained state,
-   alpha/beta recurrence vectors, restart tails, target, tolerance, and reorth
-   policy. `native_irlba_lbd_retained_state_from_scout()` now packages a
+   restart state instead of discarded and rerun from scratch. The ABI is now
+   marked `implemented = TRUE`; the dense and CSC `.Call` entry points run a
+   first native retained core over the active orientation, return attempt
+   history, native stage counters, restart counts, and Ritz triplets, and the R
+   wrapper certifies in original coordinates before accepting the result. If
+   the retained native attempt fails its exact certificate, the wrapper falls
+   back honestly to adaptive one-sided Golub-Kahan while recording the retained
+   native failure reason and work. `native_irlba_lbd_retained_state_from_scout()` now packages a
    failed small-work scout into that ABI: for wide matrices it maps original
    `u` into the active right subspace of `A^T`, original `v` into the active
    left subspace, pads retained subspaces deterministically to full rank, and
    marks the recurrence as unavailable (`restart_state_kind =
-   "ritz_subspace_only"`). The next native patch can replace the stubs without
-   renegotiating the R/native boundary, but it still must build or update the
-   coupled bidiagonal recurrence inside the restart loop.
+   "ritz_subspace_only"`). The remaining native gap is algorithmic rather than
+   contractual: the current retained core still seeds repeated fixed-work
+   Golub-Kahan attempts from retained vectors, so it can fall back; it still
+   must build or update the coupled bidiagonal recurrence inside a true
+   augmented restart loop.
    The next H work therefore must attack the amount of retained-restart
    projected work directly rather than assuming partial locking will appear on
    the release benchmark surface.
