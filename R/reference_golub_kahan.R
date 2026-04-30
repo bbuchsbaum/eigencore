@@ -239,6 +239,46 @@ native_irlba_lbd_restart_abi <- function(op, rank, target = largest(),
 }
 
 #' @keywords internal
+native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
+                                          tol = 1e-8,
+                                          work = NULL,
+                                          max_restarts = NULL,
+                                          retained = NULL,
+                                          vectors = c("both", "left", "right", "none"),
+                                          reorth_policy = c(
+                                            "one_sided_small_side",
+                                            "full_two_sided",
+                                            "bpro_two_sided"
+                                          )) {
+  vectors <- match.arg(vectors)
+  reorth_policy <- match.arg(reorth_policy)
+  abi <- native_irlba_lbd_restart_abi(
+    op,
+    rank = rank,
+    target = target,
+    work = work,
+    max_restarts = max_restarts,
+    retained = retained,
+    reorth_policy = reorth_policy
+  )
+  abi$tolerance <- as.numeric(tol)
+  abi$vectors <- vectors
+
+  stop(structure(
+    list(
+      message = "native retained one-sided IRLBA/LBD is not implemented yet",
+      call = NULL,
+      abi = abi
+    ),
+    class = c(
+      "eigencore_unimplemented_native_irlba_lbd",
+      "error",
+      "condition"
+    )
+  ))
+}
+
+#' @keywords internal
 native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
                                    maxit = NULL,
                                    vectors = c("both", "left", "right", "none"),

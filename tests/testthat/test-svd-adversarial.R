@@ -330,6 +330,32 @@ test_that("one-sided IRLBA LBD restart ABI fixes the native implementation contr
   expect_equal(tall_abi$input_schema$initial_start, 90L)
 })
 
+test_that("retained IRLBA LBD prototype fails with its native ABI", {
+  set.seed(704)
+  wide <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))
+  err <- tryCatch(
+    eigencore:::native_irlba_lbd_retained_svd(
+      wide,
+      rank = 5L,
+      work = 12L,
+      retained = 7L,
+      tol = 1e-8,
+      vectors = "both"
+    ),
+    eigencore_unimplemented_native_irlba_lbd = function(e) e
+  )
+
+  expect_s3_class(err, "eigencore_unimplemented_native_irlba_lbd")
+  expect_s3_class(err$abi, "eigencore_irlba_lbd_restart_abi")
+  expect_false(err$abi$implemented)
+  expect_true(err$abi$internal_transposed)
+  expect_equal(err$abi$work, 12L)
+  expect_equal(err$abi$retained, 7L)
+  expect_equal(err$abi$tolerance, 1e-8)
+  expect_identical(err$abi$vectors, "both")
+  expect_equal(unname(err$abi$entry_points[["csc"]]), "eigencore_irlba_lbd_csc_retained")
+})
+
 test_that("wide sparse Gram SVD exposes opt-in certified subspace eigensolve", {
   old_options <- options(eigencore.csc_left_gram_subspace_attempt = TRUE)
   on.exit(options(old_options), add = TRUE)

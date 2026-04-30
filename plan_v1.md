@@ -680,8 +680,11 @@ Primary attack surfaces, in order:
    state, restart random-tail layout, exact original-coordinate certification,
    and the invariant that failed small-work attempts must be retained as
    restart state instead of discarded and rerun from scratch. The ABI is marked
-   `implemented = FALSE`; the next native patch should make the C++ entry
-   points satisfy that contract.
+   `implemented = FALSE`; `native_irlba_lbd_retained_svd()` now fails with a
+   typed `eigencore_unimplemented_native_irlba_lbd` condition carrying that ABI,
+   so internal callers can target the retained engine without accidentally
+   falling back to a rerun-from-scratch prototype. The next native patch should
+   make the C++ entry points satisfy that contract.
    The next H work therefore must attack the amount of retained-restart
    projected work directly rather than assuming partial locking will appear on
    the release benchmark surface.
