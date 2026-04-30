@@ -511,7 +511,17 @@
         "time-to-certified-answer must beat vendor/rsvd in regimes where the planner selects randomized SVD"
       ],
       "reference_baseline": "vendor/rsvd is the minimum public-package baseline for randomized SVD: eigencore must match or improve rsvd::rsvd() accuracy and exceed rsvd performance once certification/refinement cost is included.",
-      "benchmark_surface": "inst/benchmarks/bench-randomized-rsvd.R reports oracle singular-value error, left/right subspace error, true SVD certificate fields, and rsvd speed ratios."
+      "benchmark_surface": "inst/benchmarks/bench-randomized-rsvd.R reports oracle singular-value error, left/right subspace error, true SVD certificate fields, rsvd speed ratios, and whether the rsvd baseline itself passes eigencore certification.",
+      "current_implementation_status": {
+        "status": "prototype",
+        "implemented_path": "reference randomized range finder with deterministic seed, QR/LU/none normalization controls, projected-certificate reuse, certified q=0 early stop, deterministic native Gram refinement when needed, and a wide-core left-Gram eigensolve for small projected cores.",
+        "validated_regime": "installed large exact-low-rank dense benchmark passes the randomized 2x speed gate versus certified rsvd at about 3.08x with accuracy and certificate gates green",
+        "not_yet_satisfied": [
+          "native sketch/projection kernels",
+          "broader slow-decay adaptive planner regimes",
+          "global randomized speed gate across all benchmark cases"
+        ]
+      }
     },
     "lobpcg": {
       "required_v1_method": "LOBPCG for symmetric/Hermitian standard and generalized SPD problems",

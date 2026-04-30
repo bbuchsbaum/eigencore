@@ -1150,6 +1150,7 @@ benchmark_randomized_rsvd_case <- function(A, rank, methods = c("eigencore_rando
       stage_vector_form_seconds = result_stage_seconds(fit, "vector_form"),
       stage_internal_certificate_seconds = result_stage_seconds(fit, "certificate"),
       stage_refinement_seconds = result_stage_seconds(fit, "refinement"),
+      randomized_core_solver = result_restart_character(fit, "core_solver"),
       singular_value_relative_error = accuracy$singular_value_relative_error,
       left_subspace_error = accuracy$left_subspace_error,
       right_subspace_error = accuracy$right_subspace_error,
@@ -1178,7 +1179,9 @@ evaluate_randomized_rsvd_gate <- function(rows, subject = "eigencore_randomized"
       subject = subject,
       baseline = baseline,
       subject_certified = isTRUE(eig$certificate_passed) && eig$nconv >= requested,
+      baseline_certified = FALSE,
       subject_nconv = eig$nconv,
+      baseline_nconv = NA_integer_,
       requested = requested,
       speed_ratio_vs_rsvd = NA_real_,
       singular_value_error_ratio_vs_rsvd = NA_real_,
@@ -1198,6 +1201,7 @@ evaluate_randomized_rsvd_gate <- function(rows, subject = "eigencore_randomized"
   right_ratio <- eig$right_subspace_error / max(ref$right_subspace_error, accuracy_floor)
   speed_ratio <- ref$median / eig$median
   subject_certified <- isTRUE(eig$certificate_passed) && eig$nconv >= requested
+  baseline_certified <- isTRUE(ref$certificate_passed) && ref$nconv >= requested
   accuracy_gate <- isTRUE(sv_ratio <= accuracy_multiplier) &&
     (is.na(left_ratio) || isTRUE(left_ratio <= accuracy_multiplier)) &&
     (is.na(right_ratio) || isTRUE(right_ratio <= accuracy_multiplier))
@@ -1206,7 +1210,9 @@ evaluate_randomized_rsvd_gate <- function(rows, subject = "eigencore_randomized"
     subject = subject,
     baseline = baseline,
     subject_certified = subject_certified,
+    baseline_certified = baseline_certified,
     subject_nconv = eig$nconv,
+    baseline_nconv = ref$nconv,
     requested = requested,
     speed_ratio_vs_rsvd = speed_ratio,
     singular_value_error_ratio_vs_rsvd = sv_ratio,
@@ -1215,7 +1221,11 @@ evaluate_randomized_rsvd_gate <- function(rows, subject = "eigencore_randomized"
     speed_gate = speed_gate,
     accuracy_gate = accuracy_gate,
     passed = subject_certified && speed_gate && accuracy_gate,
-    note = "",
+    note = if (!baseline_certified) {
+      "rsvd baseline did not satisfy eigencore certificate"
+    } else {
+      ""
+    },
     stringsAsFactors = FALSE
   )
 }

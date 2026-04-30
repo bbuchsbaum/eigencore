@@ -258,14 +258,24 @@ test_that("randomized-rsvd gate enforces accuracy and speed versus rsvd", {
   expect_equal(gate$subject, "eigencore_randomized")
   expect_equal(gate$baseline, "rsvd")
   expect_true(gate$subject_certified)
+  expect_true(gate$baseline_certified)
+  expect_equal(gate$baseline_nconv, 4L)
   expect_true(gate$accuracy_gate)
   expect_true(gate$speed_gate)
   expect_true(gate$passed)
+  expect_equal(gate$note, "")
 
   rows$singular_value_relative_error[[1L]] <- 1e-4
   failed <- evaluate_randomized_rsvd_gate(rows, requested = 4L)
   expect_false(failed$accuracy_gate)
   expect_false(failed$passed)
+
+  rows$singular_value_relative_error[[1L]] <- 1e-8
+  rows$certificate_passed[[2L]] <- FALSE
+  uncertified_ref <- evaluate_randomized_rsvd_gate(rows, requested = 4L)
+  expect_false(uncertified_ref$baseline_certified)
+  expect_equal(uncertified_ref$baseline_nconv, 4L)
+  expect_match(uncertified_ref$note, "rsvd baseline did not satisfy")
 })
 
 test_that("SVD surface H candidate preset selects retained native SVD subject", {

@@ -138,6 +138,17 @@ Deliver the native engine in order. Each step ships with adversarial tests
    residual/backward-error certificate already passes. On the installed
    large exact-low-rank dense parity row this reaches roughly `3.08x` versus
    certified `rsvd`, closing the `2x` gate for that randomized-planner regime.
+   A follow-up core-solver optimization now solves wide randomized cores via
+   the small left Gram `B B'` when `B = Q' A` has at least a 2:1 wide shape,
+   reconstructing right singular vectors as `B' u / sigma` and preserving the
+   existing exact residual certificate. On the installed large exact-low-rank
+   dense row this keeps the gate green at roughly `3.08x` versus certified
+   `rsvd` while trimming allocation from about `23.0MB` to `22.3MB`; quick
+   exact-low-rank and sparse rows also improve modestly but remain below the
+   global `2x` speed threshold because fixed R/benchmark overhead dominates at
+   those sizes. The benchmark gate now records whether the `rsvd` baseline
+   itself passed eigencore certification, so slow-decay rows where `rsvd` is
+   faster but uncertified are not confused with certified-reference losses.
    The broader randomized release gate remains open for slow-decay and other
    non-exact cases and is expected to require native sketch/projection kernels
    and/or stronger adaptive randomized planning.

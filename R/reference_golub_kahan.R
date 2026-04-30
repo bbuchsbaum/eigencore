@@ -1650,8 +1650,8 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
       t(B_t)
     }
     t0 <- tick()
-    small <- svd(core, nu = min(nrow(core), rank), nv = min(ncol(core), rank))
-    idx <- order_indices(small$d, target)
+    small <- randomized_svd_core_decomposition(core, rank = rank, target = target)
+    idx <- seq_along(small$d)
     idx <- idx[seq_len(min(rank, length(idx)))]
     d <- small$d[idx]
     add_stage("small_svd", t0)
@@ -1672,7 +1672,7 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
       tol = tol
     )
     add_stage("certificate", t0)
-    list(d = d, u = u, v = v, cert = cert)
+    list(d = d, u = u, v = v, cert = cert, core_solver = small$solver)
   }
 
   t0 <- tick()
@@ -1782,6 +1782,7 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
       n_iter = n_iter,
       normalizer = normalizer,
       apply_kind = apply_pair$kind,
+      core_solver = candidate$core_solver %||% NA_character_,
       certificate_reuses_projection = TRUE,
       adaptive_stop = adaptive_stop,
       adaptive_stop_used = early_stop_used,
@@ -1812,6 +1813,43 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
         NA_character_
       }
     )
+  )
+}
+
+#' @keywords internal
+randomized_svd_core_decomposition <- function(core, rank, target = largest()) {
+  rank <- min(as.integer(rank), min(dim(core)))
+  if (rank < 1L) {
+    return(list(d = numeric(), u = matrix(0, nrow(core), 0L), v = matrix(0, ncol(core), 0L),
+                solver = "empty"))
+  }
+  if (nrow(core) <= 128L && ncol(core) >= 2L * nrow(core)) {
+    gram <- tcrossprod(core)
+    eig <- eigen(gram, symmetric = TRUE)
+    idx <- order_indices(eig$values, target)
+    idx <- idx[seq_len(min(rank, length(idx)))]
+    values <- pmax(eig$values[idx], 0)
+    d <- sqrt(values)
+    u <- eig$vectors[, idx, drop = FALSE]
+    v <- crossprod(core, u)
+    for (col in seq_along(d)) {
+      if (d[[col]] > 100 * .Machine$double.eps) {
+        v[, col] <- v[, col] / d[[col]]
+      } else {
+        v[, col] <- 0
+      }
+    }
+    return(list(d = d, u = u, v = v, solver = "left_gram_eigen"))
+  }
+
+  small <- svd(core, nu = min(nrow(core), rank), nv = min(ncol(core), rank))
+  idx <- order_indices(small$d, target)
+  idx <- idx[seq_len(min(rank, length(idx)))]
+  list(
+    d = small$d[idx],
+    u = small$u[, idx, drop = FALSE],
+    v = small$v[, idx, drop = FALSE],
+    solver = "dense_svd"
   )
 }
 

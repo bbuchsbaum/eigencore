@@ -703,6 +703,19 @@ test_that("randomized SVD projected certificate matches direct recomputation", {
   expect_equal(fit$certificate$passed, direct$passed)
 })
 
+test_that("randomized SVD wide-core eigensolve matches dense SVD values", {
+  set.seed(1906)
+  core <- matrix(rnorm(14 * 80), nrow = 14, ncol = 80)
+  fast <- eigencore:::randomized_svd_core_decomposition(core, rank = 6)
+  dense <- svd(core, nu = 6, nv = 6)
+
+  expect_identical(fast$solver, "left_gram_eigen")
+  expect_equal(fast$d, dense$d[seq_len(6)], tolerance = 1e-10)
+  expect_equal(crossprod(fast$u), diag(6), tolerance = 1e-10)
+  expect_equal(crossprod(fast$v), diag(6), tolerance = 1e-10)
+  expect_equal(core %*% fast$v, sweep(fast$u, 2L, fast$d, `*`), tolerance = 1e-10)
+})
+
 test_that("SVD planner records inspectable method controls", {
   set.seed(513)
   M <- Matrix::rsparsematrix(120, 30, density = 0.05)
