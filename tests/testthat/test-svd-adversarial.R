@@ -459,6 +459,26 @@ test_that("wide sparse Gram SVD exposes opt-in implicit normal Lanczos", {
   expect_certificate_clean(fit)
 })
 
+test_that("wide sparse implicit normal Lanczos uses bounded restarted work", {
+  old_options <- options(
+    eigencore.csc_left_normal_lanczos_attempt = TRUE,
+    eigencore.csc_left_gram_subspace_attempt = FALSE
+  )
+  on.exit(options(old_options), add = TRUE)
+  set.seed(1906)
+  M <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))
+
+  fit <- svd_partial(M, rank = 5L, target = largest(), tol = 1e-8, seed = 1906)
+
+  expect_identical(fit$restart$kind, "gram_svd_special_case")
+  expect_identical(fit$restart$native_gram_eigensolver, "implicit_normal_lanczos")
+  expect_true(fit$restart$normal_operator_implicit)
+  expect_false(fit$restart$materialized_gram)
+  expect_lte(fit$restart$native_implicit_normal_lanczos_iterations, 90L)
+  expect_lte(fit$restart$native_implicit_normal_lanczos_max_backward_error, 1e-8)
+  expect_certificate_clean(fit)
+})
+
 test_that("sparse Gram SVD falls back when certification is weaker than Golub-Kahan", {
   set.seed(2)
   U <- Matrix::rsparsematrix(120, 2, density = 0.2)

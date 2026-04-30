@@ -653,7 +653,25 @@ Primary attack surfaces, in order:
    overhead while keeping the same plan/result schema. This trims the H-style
    load-all quick row from roughly `0.70ms` to `0.67ms`, but the remaining
    bottleneck is still the selected `dsyevr` solve on the tiny Gram matrix, so
-   the H speed gate remains open. For non-Gram sparse problems, `auto()` no
+   the H speed gate remains open. Inspecting `vendor/RSpectra` clarified why
+   the reference is faster on the H fixture: rectangular `svds()` uses an
+   implicit thin normal operator with Spectra's restarted symmetric Lanczos
+   (`ncv = max(2k + 1, 20)`), reconstructs the opposite singular vectors, and
+   does not perform eigencore's exact certificate internally. Our previous
+   implicit-normal diagnostic forced the full thin dimension for `m <= 128`.
+   That has been replaced, behind the existing opt-in
+   `eigencore.csc_left_normal_lanczos_attempt`, with the native thick-restart
+   Hermitian kernel applied to the implicit `A A^T` operator. The H-shaped
+   fixture now certifies directly through `implicit_normal_lanczos` at roughly
+   `44` normal-operator calls and max backward error around `4e-9`, instead of
+   falling back to `dsyevr`. It is still diagnostic only: under `load_all`,
+   bench probes show roughly `1.9ms` and `6.4MB` for the opt-in implicit path
+   versus roughly `0.67ms`/`47KB` for the Gram path and `0.40ms` for
+   RSpectra-plus-eigencore-certification. The useful lesson is algorithmic:
+   the H closure path is a specialized low-allocation restarted normal Lanczos
+   implementation, not the generic block Hermitian workspace as currently
+   wired.
+   For non-Gram sparse problems, `auto()` no
    longer promotes the retained block-GK candidate by default; retained restart
    is opt-in behind `eigencore.promote_retained_golub_kahan` until its
    certification and speed gates are green. The default sparse non-Gram route is
