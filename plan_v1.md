@@ -670,7 +670,11 @@ Primary attack surfaces, in order:
    RSpectra-plus-eigencore-certification. The useful lesson is algorithmic:
    the H closure path is a specialized low-allocation restarted normal Lanczos
    implementation, not the generic block Hermitian workspace as currently
-   wired.
+   wired. A tiny full-`dsyev` Gram eigensolver probe was also rejected: it
+   certified, but the 90-by-90 H-shaped fixture was slower than the selected
+   `dsyevr`/`dsyevx` routes, so Track A should focus on a low-allocation
+   restarted normal solver and fused sparse reconstruction/certification rather
+   than a full tiny symmetric eigensolve backend.
    For non-Gram sparse problems, `auto()` no
    longer promotes the retained block-GK candidate by default; retained restart
    is opt-in behind `eigencore.promote_retained_golub_kahan` until its
