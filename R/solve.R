@@ -272,6 +272,11 @@ native_dense_symmetric_eigen <- function(A) {
 }
 
 #' @keywords internal
+native_dense_symmetric_eigen_dsyevd <- function(A) {
+  .Call("eigencore_dense_symmetric_eigen_dsyevd", as.matrix(A), PACKAGE = "eigencore")
+}
+
+#' @keywords internal
 native_dense_symmetric_eigen_selected <- function(A, k, target) {
   .Call(
     "eigencore_dense_symmetric_eigen_selected",

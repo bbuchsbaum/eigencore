@@ -1373,6 +1373,100 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
   out
 }
 
+tiny_gram_fixture <- function(n, width = max(4L * n, n + 16L),
+                              density = 0.03, seed = 1L) {
+  set.seed(seed)
+  A <- Matrix::rsparsematrix(n, width, density = density)
+  gram <- as.matrix(Matrix::tcrossprod(A))
+  0.5 * (gram + t(gram))
+}
+
+tiny_gram_backend_fit <- function(gram, k, backend) {
+  backend <- match.arg(backend, c(
+    "lapack_dsyevr_selected",
+    "lapack_dsyev_full",
+    "lapack_dsyevd_full"
+  ))
+  if (identical(backend, "lapack_dsyevr_selected")) {
+    eigencore:::native_dense_symmetric_eigen_selected(gram, k, largest())
+  } else {
+    fit <- if (identical(backend, "lapack_dsyevd_full")) {
+      eigencore:::native_dense_symmetric_eigen_dsyevd(gram)
+    } else {
+      eigencore:::native_dense_symmetric_eigen(gram)
+    }
+    idx <- order(fit$values, decreasing = TRUE)
+    idx <- idx[seq_len(min(k, length(idx)))]
+    list(
+      values = fit$values[idx],
+      vectors = fit$vectors[, idx, drop = FALSE]
+    )
+  }
+}
+
+benchmark_tiny_gram_eigensolvers <- function(dimensions = c(32L, 64L, 90L, 128L),
+                                             ranks = c(5L, 8L, 16L),
+                                             backends = c(
+                                               "lapack_dsyevr_selected",
+                                               "lapack_dsyev_full",
+                                               "lapack_dsyevd_full"
+                                             ),
+                                             iterations = 20L,
+                                             seed = 810L) {
+  if (!requireNamespace("bench", quietly = TRUE)) {
+    stop("bench is required for tiny Gram eigensolver benchmarks.", call. = FALSE)
+  }
+  rows <- list()
+  out_idx <- 1L
+  for (n in as.integer(dimensions)) {
+    gram <- tiny_gram_fixture(n, seed = seed + n)
+    oracle_rank <- min(max(as.integer(ranks)), n)
+    oracle <- eigencore:::native_dense_symmetric_eigen_selected(
+      gram,
+      oracle_rank,
+      largest()
+    )
+    for (k in as.integer(ranks)) {
+      k <- min(k, n)
+      oracle_values <- oracle$values[seq_len(k)]
+      for (backend in backends) {
+        fit <- tiny_gram_backend_fit(gram, k, backend)
+        mark <- bench::mark(
+          tiny_gram_backend_fit(gram, k, backend),
+          iterations = iterations,
+          check = FALSE,
+          time_unit = "s",
+          memory = TRUE,
+          filter_gc = FALSE
+        )
+        rows[[out_idx]] <- data.frame(
+          dimension = n,
+          rank = k,
+          backend = backend,
+          median = stats::median(as.numeric(mark$time[[1L]])),
+          min = min(as.numeric(mark$time[[1L]])),
+          mem_alloc = as.numeric(mark$mem_alloc[[1L]]),
+          max_value_error = max(abs(fit$values - oracle_values)),
+          values_sorted = all(diff(fit$values) <=
+                                sqrt(.Machine$double.eps) *
+                                  max(1, abs(fit$values), na.rm = TRUE)),
+          stringsAsFactors = FALSE
+        )
+        out_idx <- out_idx + 1L
+      }
+    }
+  }
+  out <- do.call(rbind, rows)
+  out$winner <- as.logical(ave(
+    out$median,
+    out$dimension,
+    out$rank,
+    FUN = function(x) as.integer(x == min(x, na.rm = TRUE))
+  ))
+  row.names(out) <- NULL
+  out
+}
+
 save_benchmark_result <- function(result, name) {
   dir.create("inst/benchmarks/results", recursive = TRUE, showWarnings = FALSE)
   path <- file.path(

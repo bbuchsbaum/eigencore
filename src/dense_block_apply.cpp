@@ -9203,6 +9203,67 @@ extern "C" SEXP eigencore_dense_symmetric_eigen(SEXP A_) {
   return out_;
 }
 
+extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevd(SEXP A_) {
+  if (!isReal(A_)) {
+    error("A must be a double matrix");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  if (dimA == R_NilValue) {
+    error("A must be a matrix");
+  }
+  const int n = INTEGER(dimA)[0];
+  const int ncolA = INTEGER(dimA)[1];
+  if (n != ncolA) {
+    error("A must be square");
+  }
+
+  SEXP values_ = PROTECT(allocVector(REALSXP, n));
+  SEXP vectors_ = PROTECT(duplicate(A_));
+  if (n > 0) {
+    char jobz = 'V';
+    char uplo = 'U';
+    int info = 0;
+    int lwork = -1;
+    int liwork = -1;
+    double work_query = 0.0;
+    int iwork_query = 0;
+    F77_CALL(dsyevd)(&jobz, &uplo, &n, REAL(vectors_), &n, REAL(values_),
+                     &work_query, &lwork, &iwork_query, &liwork,
+                     &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK dsyevd workspace query failed with info=%d", info);
+    }
+    lwork = static_cast<int>(work_query);
+    liwork = iwork_query;
+    if (lwork < 1 + 6 * n + 2 * n * n) {
+      lwork = 1 + 6 * n + 2 * n * n;
+    }
+    if (liwork < 3 + 5 * n) {
+      liwork = 3 + 5 * n;
+    }
+    SEXP work_ = PROTECT(allocVector(REALSXP, lwork));
+    SEXP iwork_ = PROTECT(allocVector(INTSXP, liwork));
+    F77_CALL(dsyevd)(&jobz, &uplo, &n, REAL(vectors_), &n, REAL(values_),
+                     REAL(work_), &lwork, INTEGER(iwork_), &liwork,
+                     &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK dsyevd failed with info=%d", info);
+    }
+    UNPROTECT(2);
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 2));
+  SET_VECTOR_ELT(out_, 0, values_);
+  SET_VECTOR_ELT(out_, 1, vectors_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(names_, 0, mkChar("values"));
+  SET_STRING_ELT(names_, 1, mkChar("vectors"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(4);
+  return out_;
+}
+
 extern "C" SEXP eigencore_dense_is_symmetric(SEXP A_, SEXP tol_) {
   if (!isReal(A_)) {
     return ScalarLogical(FALSE);
@@ -10270,6 +10331,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_golub_kahan_ritz", (DL_FUNC) &eigencore_golub_kahan_ritz, 7},
   {"eigencore_dense_is_symmetric", (DL_FUNC) &eigencore_dense_is_symmetric, 2},
   {"eigencore_dense_symmetric_eigen", (DL_FUNC) &eigencore_dense_symmetric_eigen, 1},
+  {"eigencore_dense_symmetric_eigen_dsyevd", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyevd, 1},
   {"eigencore_dense_symmetric_eigen_selected", (DL_FUNC) &eigencore_dense_symmetric_eigen_selected, 3},
   {"eigencore_csc_left_gram_svd", (DL_FUNC) &eigencore_csc_left_gram_svd, 6},
   {"eigencore_dense_generalized_spd_eigen", (DL_FUNC) &eigencore_dense_generalized_spd_eigen, 2},

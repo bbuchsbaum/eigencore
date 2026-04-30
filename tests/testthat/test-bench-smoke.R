@@ -653,6 +653,36 @@ test_that("SVD benchmark rows audit raw and eigencore-certified reference timing
   expect_true(all(is.finite(rows$max_right_residual)))
 })
 
+test_that("tiny Gram eigensolver benchmark compares native backends", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_if_not_installed("bench")
+
+  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
+  if (!nzchar(helper_path)) {
+    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
+  }
+  source(helper_path)
+
+  rows <- benchmark_tiny_gram_eigensolvers(
+    dimensions = 16L,
+    ranks = c(3L, 5L),
+    iterations = 1L,
+    seed = 992L
+  )
+
+  expect_equal(
+    sort(unique(rows$backend)),
+    sort(c("lapack_dsyevr_selected", "lapack_dsyev_full", "lapack_dsyevd_full"))
+  )
+  expect_true(all(c(
+    "dimension", "rank", "backend", "median", "mem_alloc",
+    "max_value_error", "values_sorted", "winner"
+  ) %in% names(rows)))
+  expect_true(all(rows$values_sorted))
+  expect_lte(max(rows$max_value_error), 1e-8)
+  expect_true(all(tapply(rows$winner, list(rows$dimension, rows$rank), sum) >= 1L))
+})
+
 test_that("SVD memory diagnostics expose subject/reference allocation gaps", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
 

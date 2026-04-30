@@ -351,6 +351,18 @@ test_that("base SVD benchmark adapter keeps singular values conformable", {
   expect_true(cert$passed)
 })
 
+test_that("native dense symmetric eigensolver backends agree", {
+  set.seed(991)
+  X <- matrix(rnorm(12 * 12), 12)
+  A <- crossprod(X)
+  qr_fit <- eigencore:::native_dense_symmetric_eigen(A)
+  dc_fit <- eigencore:::native_dense_symmetric_eigen_dsyevd(A)
+
+  expect_equal(qr_fit$values, dc_fit$values, tolerance = 1e-10)
+  expect_equal(abs(crossprod(qr_fit$vectors)), diag(12), tolerance = 1e-10)
+  expect_equal(abs(crossprod(dc_fit$vectors)), diag(12), tolerance = 1e-10)
+})
+
 test_that("matrix-free Golub-Kahan values match base SVD oracle through explicit twin", {
   A <- rbind(diag(c(6, 4, 2)), matrix(0, 2, 3))
   op <- linear_operator(
