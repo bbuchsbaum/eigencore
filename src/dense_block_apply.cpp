@@ -9797,6 +9797,7 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   double implicit_lanczos_max_backward_error = R_PosInf;
   int used_subspace_eigensolve = 0;
   double subspace_max_backward_error = R_PosInf;
+  const char* lapack_eigensolver = "lapack_dsyevr";
 
   SEXP implicit_option_ = Rf_GetOption1(Rf_install("eigencore.csc_left_normal_lanczos_attempt"));
   const int attempt_implicit_lanczos = asLogical(implicit_option_) == TRUE;
@@ -9818,18 +9819,13 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
       for (int aa = start; aa < end; ++aa) {
         const int row_a = Ai[aa];
         const double x_a = Ax[aa];
-        for (int bb = aa; bb < end; ++bb) {
+        gram[row_a + static_cast<int64_t>(row_a) * m] += x_a * x_a;
+        for (int bb = aa + 1; bb < end; ++bb) {
           const int row_b = Ai[bb];
-          const int upper_row = row_a < row_b ? row_a : row_b;
-          const int upper_col = row_a < row_b ? row_b : row_a;
-          gram[upper_row + static_cast<int64_t>(upper_col) * m] += x_a * Ax[bb];
+          const double update = x_a * Ax[bb];
+          gram[row_a + static_cast<int64_t>(row_b) * m] += update;
+          gram[row_b + static_cast<int64_t>(row_a) * m] += update;
         }
-      }
-    }
-    for (int col = 0; col < m; ++col) {
-      for (int row = 0; row < col; ++row) {
-        gram[col + static_cast<int64_t>(row) * m] =
-          gram[row + static_cast<int64_t>(col) * m];
       }
     }
     stage_gram_seconds = native_timer_elapsed(stage_timer);
@@ -9846,46 +9842,88 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
     if (m > 0 && !used_subspace_eigensolve) {
       std::vector<double> work_matrix(static_cast<size_t>(m) * static_cast<size_t>(m));
       std::vector<double> values_work(static_cast<size_t>(m), 0.0);
-      std::vector<int> isuppz(static_cast<size_t>(2 * rank), 0);
-      char jobz = 'V';
-      char range = 'I';
       char uplo = 'U';
-      double vl = 0.0;
-      double vu = 0.0;
-      const double abstol = 0.0;
-      int il = m - rank + 1;
-      int iu = m;
-      int m_found = 0;
       int info = 0;
-      int lwork = 26 * m;
-      int liwork = 10 * m;
-      std::vector<double> work(static_cast<size_t>(lwork));
-      std::vector<int> iwork(static_cast<size_t>(liwork));
       std::memcpy(work_matrix.data(), gram.data(),
                   sizeof(double) * static_cast<size_t>(m) * static_cast<size_t>(m));
-      F77_CALL(dsyevr)(&jobz, &range, &uplo, &m, work_matrix.data(), &m,
-                       &vl, &vu, &il, &iu, &abstol,
-                       &m_found, values_work.data(), REAL(u_), &m,
-                       isuppz.data(), work.data(), &lwork,
-                       iwork.data(), &liwork, &info FCONE FCONE FCONE);
-      if (info != 0 || m_found != rank) {
-        UNPROTECT(1);
-        error("LAPACK dsyevr failed with info=%d, found=%d", info, m_found);
-      }
-      for (int left = 0, right = rank - 1; left < right; ++left, --right) {
-        const double tmp_value = values_work[left];
-        values_work[left] = values_work[right];
-        values_work[right] = tmp_value;
-        for (int row = 0; row < m; ++row) {
-          const int64_t lpos = row + static_cast<int64_t>(left) * m;
-          const int64_t rpos = row + static_cast<int64_t>(right) * m;
-          const double tmp_vec = REAL(u_)[lpos];
-          REAL(u_)[lpos] = REAL(u_)[rpos];
-          REAL(u_)[rpos] = tmp_vec;
+      if (m <= 128 && rank >= 16) {
+        lapack_eigensolver = "lapack_dsyevd";
+        char jobz = 'V';
+        int lwork = -1;
+        int liwork = -1;
+        double work_query = 0.0;
+        int iwork_query = 0;
+        F77_CALL(dsyevd)(&jobz, &uplo, &m, work_matrix.data(), &m,
+                         values_work.data(), &work_query, &lwork,
+                         &iwork_query, &liwork, &info FCONE FCONE);
+        if (info != 0) {
+          UNPROTECT(1);
+          error("LAPACK dsyevd workspace query failed with info=%d", info);
         }
-      }
-      for (int col = 0; col < rank; ++col) {
-        values[static_cast<size_t>(col)] = values_work[static_cast<size_t>(col)];
+        lwork = static_cast<int>(work_query);
+        liwork = iwork_query;
+        if (lwork < 1 + 6 * m + 2 * m * m) {
+          lwork = 1 + 6 * m + 2 * m * m;
+        }
+        if (liwork < 3 + 5 * m) {
+          liwork = 3 + 5 * m;
+        }
+        std::vector<double> work(static_cast<size_t>(lwork));
+        std::vector<int> iwork(static_cast<size_t>(liwork));
+        F77_CALL(dsyevd)(&jobz, &uplo, &m, work_matrix.data(), &m,
+                         values_work.data(), work.data(), &lwork,
+                         iwork.data(), &liwork, &info FCONE FCONE);
+        if (info != 0) {
+          UNPROTECT(1);
+          error("LAPACK dsyevd failed with info=%d", info);
+        }
+        for (int col = 0; col < rank; ++col) {
+          const int source_col = m - 1 - col;
+          values[static_cast<size_t>(col)] = values_work[static_cast<size_t>(source_col)];
+          std::memcpy(
+            REAL(u_) + static_cast<int64_t>(col) * m,
+            work_matrix.data() + static_cast<int64_t>(source_col) * m,
+            sizeof(double) * static_cast<size_t>(m)
+          );
+        }
+      } else {
+        std::vector<int> isuppz(static_cast<size_t>(2 * rank), 0);
+        char jobz = 'V';
+        char range = 'I';
+        double vl = 0.0;
+        double vu = 0.0;
+        const double abstol = 0.0;
+        int il = m - rank + 1;
+        int iu = m;
+        int m_found = 0;
+        int lwork = 26 * m;
+        int liwork = 10 * m;
+        std::vector<double> work(static_cast<size_t>(lwork));
+        std::vector<int> iwork(static_cast<size_t>(liwork));
+        F77_CALL(dsyevr)(&jobz, &range, &uplo, &m, work_matrix.data(), &m,
+                         &vl, &vu, &il, &iu, &abstol,
+                         &m_found, values_work.data(), REAL(u_), &m,
+                         isuppz.data(), work.data(), &lwork,
+                         iwork.data(), &liwork, &info FCONE FCONE FCONE);
+        if (info != 0 || m_found != rank) {
+          UNPROTECT(1);
+          error("LAPACK dsyevr failed with info=%d, found=%d", info, m_found);
+        }
+        for (int left = 0, right = rank - 1; left < right; ++left, --right) {
+          const double tmp_value = values_work[left];
+          values_work[left] = values_work[right];
+          values_work[right] = tmp_value;
+          for (int row = 0; row < m; ++row) {
+            const int64_t lpos = row + static_cast<int64_t>(left) * m;
+            const int64_t rpos = row + static_cast<int64_t>(right) * m;
+            const double tmp_vec = REAL(u_)[lpos];
+            REAL(u_)[lpos] = REAL(u_)[rpos];
+            REAL(u_)[rpos] = tmp_vec;
+          }
+        }
+        for (int col = 0; col < rank; ++col) {
+          values[static_cast<size_t>(col)] = values_work[static_cast<size_t>(col)];
+        }
       }
       subspace_max_backward_error = R_PosInf;
     }
@@ -10040,7 +10078,7 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
 
   SEXP eigensolver_ = PROTECT(mkString(
     used_implicit_lanczos ? "implicit_normal_lanczos" :
-      (used_subspace_eigensolve ? "subspace_iteration" : "lapack_dsyevr")
+      (used_subspace_eigensolve ? "subspace_iteration" : lapack_eigensolver)
   ));
   SEXP subspace_be_ = PROTECT(ScalarReal(subspace_max_backward_error));
   SEXP implicit_be_ = PROTECT(ScalarReal(implicit_lanczos_max_backward_error));
