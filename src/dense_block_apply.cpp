@@ -9594,56 +9594,6 @@ static void csc_left_normal_apply_vec(const int* Ai, const int* Ap,
   csc_forward_apply_vec(Ai, Ap, Ax, m, n, tmp_n, y);
 }
 
-struct CSCLeftNormalOperator {
-  int m;
-  int n;
-  const int* Ai;
-  const int* Ap;
-  const double* Ax;
-  std::vector<double> tmp_n;
-  std::vector<double> tmp_m;
-};
-
-static int csc_left_normal_apply_block(void* impl,
-                                       EigencoreTranspose op,
-                                       int64_t block_cols,
-                                       const double* X,
-                                       int64_t ldx,
-                                       double alpha,
-                                       double beta,
-                                       double* Y,
-                                       int64_t ldy,
-                                       EigencoreWorkspace* workspace) {
-  (void) workspace;
-  if (op != EIGENCORE_TRANSPOSE_NONE) {
-    return -1;
-  }
-  CSCLeftNormalOperator* normal = static_cast<CSCLeftNormalOperator*>(impl);
-  if (ldx < normal->m || ldy < normal->m || block_cols < 1) {
-    return -1;
-  }
-  const size_t need_n = static_cast<size_t>(normal->n) * static_cast<size_t>(block_cols);
-  const size_t need_m = static_cast<size_t>(normal->m) * static_cast<size_t>(block_cols);
-  if (normal->tmp_n.size() < need_n || normal->tmp_m.size() < need_m) {
-    return -2;
-  }
-  scale_or_zero_output(Y, normal->m, block_cols, beta);
-  for (int64_t col = 0; col < block_cols; ++col) {
-    const double* x_col = X + col * ldx;
-    double* tmp_n_col = normal->tmp_n.data() + col * normal->n;
-    double* tmp_m_col = normal->tmp_m.data() + col * normal->m;
-    csc_left_normal_apply_vec(
-      normal->Ai, normal->Ap, normal->Ax, normal->m, normal->n,
-      x_col, tmp_m_col, tmp_n_col
-    );
-    double* y_col = Y + col * ldy;
-    for (int row = 0; row < normal->m; ++row) {
-      y_col[row] += alpha * tmp_m_col[row];
-    }
-  }
-  return 0;
-}
-
 static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
                                                    const int* Ap,
                                                    const double* Ax,
@@ -9659,10 +9609,7 @@ static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
   if (m < 2 || rank < 1 || rank > m) {
     return 0;
   }
-  int max_steps = 2 * rank + 1;
-  if (max_steps < 20) {
-    max_steps = 20;
-  }
+  int max_steps = std::max(45, 6 * rank + 15);
   if (max_steps > m) {
     max_steps = m;
   }
@@ -9676,55 +9623,115 @@ static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
       static_cast<uint32_t>(rank * 2654435761u);
     start[row] = (key & 1u) ? 1.0 : -1.0;
   }
-  CSCLeftNormalOperator normal = {
-    m, n, Ai, Ap, Ax,
-    std::vector<double>(static_cast<size_t>(n) * static_cast<size_t>(max_steps), 0.0),
-    std::vector<double>(static_cast<size_t>(m) * static_cast<size_t>(max_steps), 0.0)
-  };
-  std::vector<double> lambda(static_cast<size_t>(rank), 0.0);
-  std::vector<double> residuals(static_cast<size_t>(rank), R_PosInf);
-  std::vector<int> converged(static_cast<size_t>(rank), 0);
-  int n_locked = 0;
-  int iterations = 0;
-  int matvecs = 0;
-  int restarts = 0;
-  int m_active_final = 0;
-  int locking_events = 0;
-  int ortho_passes = 0;
-  int64_t operator_allocations = 0;
-  int64_t operator_bytes = 0;
-  NativeBlockStageSeconds stage;
-  const int rc = native_block_thick_restart_lanczos_run(
-    &normal, csc_left_normal_apply_block, m, rank, max_steps, 1,
-    1, tol * 0.1, 1000, norm_A * norm_A, 0, start.data(), U, lambda.data(),
-    residuals.data(), converged.data(), &n_locked, &iterations, &matvecs,
-    &restarts, &m_active_final, &locking_events, &ortho_passes,
-    &operator_allocations, &operator_bytes, &stage, nullptr
-  );
-  if (rc != 0) {
+
+  std::vector<double> Q(static_cast<size_t>(m) * static_cast<size_t>(max_steps), 0.0);
+  std::vector<double> z(static_cast<size_t>(m), 0.0);
+  std::vector<double> tmp_m(static_cast<size_t>(m), 0.0);
+  std::vector<double> tmp_n(static_cast<size_t>(n), 0.0);
+  std::vector<double> alpha(static_cast<size_t>(max_steps), 0.0);
+  std::vector<double> beta(static_cast<size_t>(max_steps), 0.0);
+  std::memcpy(Q.data(), start.data(), sizeof(double) * static_cast<size_t>(m));
+  double q_norm = trl_norm2(Q.data(), m);
+  if (q_norm <= 100.0 * DBL_EPSILON) {
+    return 0;
+  }
+  for (int row = 0; row < m; ++row) {
+    Q[row] /= q_norm;
+  }
+
+  int active = 0;
+  for (int step = 0; step < max_steps; ++step) {
+    const double* q = Q.data() + static_cast<int64_t>(step) * m;
+    csc_left_normal_apply_vec(Ai, Ap, Ax, m, n, q, z.data(), tmp_n.data());
+
+    long double dot = 0.0L;
+    for (int row = 0; row < m; ++row) {
+      dot += static_cast<long double>(q[row]) * z[static_cast<size_t>(row)];
+    }
+    alpha[static_cast<size_t>(step)] = static_cast<double>(dot);
+
+    if (step > 0) {
+      const double* q_prev = Q.data() + static_cast<int64_t>(step - 1) * m;
+      const double b_prev = beta[static_cast<size_t>(step - 1)];
+      for (int row = 0; row < m; ++row) {
+        z[static_cast<size_t>(row)] -=
+          alpha[static_cast<size_t>(step)] * q[row] + b_prev * q_prev[row];
+      }
+    } else {
+      for (int row = 0; row < m; ++row) {
+        z[static_cast<size_t>(row)] -= alpha[static_cast<size_t>(step)] * q[row];
+      }
+    }
+
+    trl_orthogonalise(nullptr, 0, Q.data(), step + 1, z.data(), tmp_m.data(), m);
+    const double b = trl_norm2(z.data(), m);
+    active = step + 1;
+    if (step + 1 >= max_steps || b <= 100.0 * DBL_EPSILON * (norm_A * norm_A + 1.0)) {
+      break;
+    }
+    beta[static_cast<size_t>(step)] = b;
+    double* q_next = Q.data() + static_cast<int64_t>(step + 1) * m;
+    const double inv_b = 1.0 / b;
+    for (int row = 0; row < m; ++row) {
+      q_next[row] = z[static_cast<size_t>(row)] * inv_b;
+    }
+  }
+  if (active < rank) {
+    return 0;
+  }
+
+  std::vector<double> T(static_cast<size_t>(active) * static_cast<size_t>(active), 0.0);
+  std::vector<double> theta(static_cast<size_t>(active), 0.0);
+  for (int col = 0; col < active; ++col) {
+    T[col + static_cast<int64_t>(col) * active] = alpha[static_cast<size_t>(col)];
+    if (col + 1 < active) {
+      const double b = beta[static_cast<size_t>(col)];
+      T[col + static_cast<int64_t>(col + 1) * active] = b;
+      T[(col + 1) + static_cast<int64_t>(col) * active] = b;
+    }
+  }
+  int lwork = trl_dsyev_query(active);
+  if (lwork < 3 * active) {
+    lwork = 3 * active;
+  }
+  std::vector<double> work(static_cast<size_t>(lwork));
+  char jobz = 'V';
+  char uplo = 'U';
+  int info = 0;
+  F77_CALL(dsyev)(&jobz, &uplo, &active, T.data(), &active,
+                  theta.data(), work.data(), &lwork, &info FCONE FCONE);
+  if (info != 0) {
     return 0;
   }
 
   std::vector<double> Gu_exact(static_cast<size_t>(m), 0.0);
-  std::vector<double> tmp_n_exact(static_cast<size_t>(n), 0.0);
   const double scale_value_native = norm_A > DBL_EPSILON ? norm_A : DBL_EPSILON;
   double native_max_backward = 0.0;
   for (int out_col = 0; out_col < rank; ++out_col) {
-    const double lambda_i = lambda[static_cast<size_t>(out_col)] > 0.0 ?
-      lambda[static_cast<size_t>(out_col)] : 0.0;
+    const int src_col = active - 1 - out_col;
+    const double lambda_i = theta[static_cast<size_t>(src_col)] > 0.0 ?
+      theta[static_cast<size_t>(src_col)] : 0.0;
     const double sigma = sqrt(lambda_i);
     if (sigma <= 100.0 * DBL_EPSILON) {
       return 0;
     }
+    double* u_col = U + static_cast<int64_t>(out_col) * m;
+    std::fill(u_col, u_col + m, 0.0);
+    for (int basis_col = 0; basis_col < active; ++basis_col) {
+      const double coeff = T[basis_col + static_cast<int64_t>(src_col) * active];
+      const double* q_col = Q.data() + static_cast<int64_t>(basis_col) * m;
+      for (int row = 0; row < m; ++row) {
+        u_col[row] += coeff * q_col[row];
+      }
+    }
     csc_left_normal_apply_vec(
-      Ai, Ap, Ax, m, n, U + static_cast<int64_t>(out_col) * m,
-      Gu_exact.data(), tmp_n_exact.data()
+      Ai, Ap, Ax, m, n, u_col, Gu_exact.data(), tmp_n.data()
     );
     long double residual2 = 0.0L;
     for (int row = 0; row < m; ++row) {
       const double diff =
         (Gu_exact[static_cast<size_t>(row)] -
-         lambda_i * U[row + static_cast<int64_t>(out_col) * m]) / sigma;
+         lambda_i * u_col[row]) / sigma;
       residual2 += static_cast<long double>(diff) * diff;
     }
     const double backward = sqrt(static_cast<double>(residual2)) / scale_value_native;
@@ -9734,7 +9741,7 @@ static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
     values[out_col] = lambda_i;
   }
   if (iterations_out != nullptr) {
-    *iterations_out = matvecs;
+    *iterations_out = active;
   }
   if (max_backward_error_out != nullptr) {
     *max_backward_error_out = native_max_backward;

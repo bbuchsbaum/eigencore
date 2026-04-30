@@ -660,17 +660,22 @@ Primary attack surfaces, in order:
    does not perform eigencore's exact certificate internally. Our previous
    implicit-normal diagnostic forced the full thin dimension for `m <= 128`.
    That has been replaced, behind the existing opt-in
-   `eigencore.csc_left_normal_lanczos_attempt`, with the native thick-restart
-   Hermitian kernel applied to the implicit `A A^T` operator. The H-shaped
-   fixture now certifies directly through `implicit_normal_lanczos` at roughly
-   `44` normal-operator calls and max backward error around `4e-9`, instead of
-   falling back to `dsyevr`. It is still diagnostic only: under `load_all`,
-   bench probes show roughly `1.9ms` and `6.4MB` for the opt-in implicit path
-   versus roughly `0.67ms`/`47KB` for the Gram path and `0.40ms` for
-   RSpectra-plus-eigencore-certification. The useful lesson is algorithmic:
-   the H closure path is a specialized low-allocation restarted normal Lanczos
-   implementation, not the generic block Hermitian workspace as currently
-   wired. A tiny full-`dsyev` Gram eigensolver probe was also rejected: it
+   `eigencore.csc_left_normal_lanczos_attempt`, with a narrow scalar Lanczos
+   diagnostic applied directly to the implicit `A A^T` operator. The H-shaped
+   fixture certifies directly through `implicit_normal_lanczos` at about `45`
+   normal-operator calls and max backward error around `3.5e-10`, instead of
+   falling back to `dsyevr`; the old generic block Hermitian wrapper has been
+   removed from this diagnostic path. This improves the opt-in implicit row
+   substantially (installed quick probe roughly `0.59ms` rather than the old
+   multi-millisecond generic block path), but it is still slower than the
+   default explicit Gram path (roughly `0.43ms`) and
+   RSpectra-plus-eigencore-certification (roughly `0.35ms`). A no-reorthogonalize
+   implicit probe failed the exact certificate and fell back to `dsyevr`, so
+   unmonitored reorth skipping is rejected here too. The useful lesson remains
+   algorithmic: the H closure path needs a true low-allocation restarted normal
+   Lanczos/IRLBA implementation with monitored orthogonality and early
+   certification, not a generic block workspace and not a one-pass unrestarted
+   approximation. A tiny full-`dsyev` Gram eigensolver probe was also rejected: it
    certified, but the 90-by-90 H-shaped fixture was slower than the selected
    `dsyevr`/`dsyevx` routes, so Track A should focus on a low-allocation
    restarted normal solver and fused sparse reconstruction/certification rather
