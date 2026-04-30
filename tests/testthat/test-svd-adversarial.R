@@ -368,15 +368,31 @@ test_that("retained IRLBA LBD native ABI entry points are registered", {
 
   expect_equal(dense_info$numParameters, 14L)
   expect_equal(csc_info$numParameters, 17L)
-  call_native <- function(name, n) {
-    do.call(".Call", c(list(name), rep(list(NULL), n), list(PACKAGE = "eigencore")))
-  }
+  dense <- matrix(0, 6L, 4L)
+  csc <- Matrix::Matrix(dense, sparse = TRUE)
+  start <- numeric(4L)
+  right <- matrix(0, 4L, 2L)
+  left <- matrix(0, 6L, 2L)
+  alpha <- numeric(3L)
+  beta <- numeric(3L)
+  tails <- matrix(0, 4L, 1L)
   expect_error(
-    call_native("eigencore_irlba_lbd_dense_retained", 14L),
+    .Call(
+      "eigencore_irlba_lbd_dense_retained",
+      dense, start, right, left, alpha, beta, tails,
+      3L, 2L, 1L, 2L, 1L, 1e-8, 1L,
+      PACKAGE = "eigencore"
+    ),
     "reserved but not implemented"
   )
   expect_error(
-    call_native("eigencore_irlba_lbd_csc_retained", 17L),
+    .Call(
+      "eigencore_irlba_lbd_csc_retained",
+      csc@i, csc@p, csc@x, as.integer(csc@Dim),
+      start, right, left, alpha, beta, tails,
+      3L, 2L, 1L, 2L, 1L, 1e-8, 1L,
+      PACKAGE = "eigencore"
+    ),
     "reserved but not implemented"
   )
 })

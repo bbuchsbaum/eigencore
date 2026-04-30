@@ -685,8 +685,10 @@ Primary attack surfaces, in order:
    so internal callers can target the retained engine without accidentally
    falling back to a rerun-from-scratch prototype. The named C++ entry points
    are also registered as reserved unimplemented `.Call` symbols with fixed
-   arities (`dense = 14`, `csc = 17`), so the next native patch can replace the
-   stubs without renegotiating the R/native boundary.
+   arities (`dense = 14`, `csc = 17`) and shape validation for retained state,
+   alpha/beta recurrence vectors, restart tails, target, tolerance, and reorth
+   policy. The next native patch can replace the stubs without renegotiating
+   the R/native boundary.
    The next H work therefore must attack the amount of retained-restart
    projected work directly rather than assuming partial locking will appear on
    the release benchmark surface.

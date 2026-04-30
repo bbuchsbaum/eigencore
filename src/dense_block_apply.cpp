@@ -10641,6 +10641,74 @@ extern "C" SEXP eigencore_tridiagonal_solve(SEXP lower_, SEXP diag_,
   return out_;
 }
 
+static void validate_real_vector_length(SEXP x, int n, const char* name) {
+  if (!isReal(x) || LENGTH(x) != n) {
+    error("%s must be a double vector of length %d", name, n);
+  }
+}
+
+static void validate_real_matrix_dim(SEXP x, int nrow, int ncol, const char* name) {
+  if (!isReal(x)) {
+    error("%s must be a double matrix", name);
+  }
+  SEXP dim = getAttrib(x, R_DimSymbol);
+  if (dim == R_NilValue || LENGTH(dim) != 2 ||
+      INTEGER(dim)[0] != nrow || INTEGER(dim)[1] != ncol) {
+    error("%s must have dimensions %d x %d", name, nrow, ncol);
+  }
+}
+
+static void validate_irlba_lbd_retained_contract(int m, int n,
+                                                 SEXP initial_start_,
+                                                 SEXP retained_right_,
+                                                 SEXP retained_left_,
+                                                 SEXP alpha_, SEXP beta_,
+                                                 SEXP random_tails_,
+                                                 SEXP work_, SEXP retained_,
+                                                 SEXP max_restarts_,
+                                                 SEXP rank_,
+                                                 SEXP target_kind_,
+                                                 SEXP tol_,
+                                                 SEXP reorth_policy_) {
+  const int work = asInteger(work_);
+  const int retained = asInteger(retained_);
+  const int max_restarts = asInteger(max_restarts_);
+  const int rank = asInteger(rank_);
+  const int target_kind = asInteger(target_kind_);
+  const double tol = asReal(tol_);
+  const int reorth_policy = asInteger(reorth_policy_);
+  if (m < 1 || n < 1) {
+    error("active operator dimensions must be positive");
+  }
+  if (rank < 1 || rank > retained) {
+    error("rank must be between 1 and retained");
+  }
+  if (retained < 1 || retained >= work) {
+    error("retained must be positive and smaller than work");
+  }
+  if (work > ((m < n) ? m : n)) {
+    error("work must not exceed min(active dimensions)");
+  }
+  if (max_restarts < 0) {
+    error("max_restarts must be non-negative");
+  }
+  if (target_kind != 1) {
+    error("retained IRLBA/LBD currently supports only largest singular values");
+  }
+  if (!R_FINITE(tol) || tol <= 0.0) {
+    error("tol must be a positive finite scalar");
+  }
+  if (reorth_policy < 1 || reorth_policy > 3) {
+    error("reorth_policy must identify a known retained IRLBA/LBD policy");
+  }
+  validate_real_vector_length(initial_start_, n, "initial_start");
+  validate_real_matrix_dim(retained_right_, n, retained, "retained_right");
+  validate_real_matrix_dim(retained_left_, m, retained, "retained_left");
+  validate_real_vector_length(alpha_, work, "alpha");
+  validate_real_vector_length(beta_, work, "beta");
+  validate_real_matrix_dim(random_tails_, n, work - retained, "random_tails");
+}
+
 extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP A_, SEXP initial_start_,
                                                    SEXP retained_right_,
                                                    SEXP retained_left_,
@@ -10652,6 +10720,18 @@ extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP A_, SEXP initial_start_,
                                                    SEXP target_kind_,
                                                    SEXP tol_,
                                                    SEXP reorth_policy_) {
+  if (!isReal(A_)) {
+    error("A must be a double matrix");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  if (dimA == R_NilValue || LENGTH(dimA) != 2) {
+    error("A must be a double matrix");
+  }
+  validate_irlba_lbd_retained_contract(
+    INTEGER(dimA)[0], INTEGER(dimA)[1], initial_start_, retained_right_,
+    retained_left_, alpha_, beta_, random_tails_, work_, retained_,
+    max_restarts_, rank_, target_kind_, tol_, reorth_policy_
+  );
   error("native retained one-sided IRLBA/LBD dense entry point is reserved but not implemented");
   return R_NilValue;
 }
@@ -10669,6 +10749,15 @@ extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP i_, SEXP p_, SEXP x_,
                                                  SEXP target_kind_,
                                                  SEXP tol_,
                                                  SEXP reorth_policy_) {
+  if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
+      LENGTH(dim_) != 2) {
+    error("invalid CSC retained IRLBA/LBD inputs");
+  }
+  validate_irlba_lbd_retained_contract(
+    INTEGER(dim_)[0], INTEGER(dim_)[1], initial_start_, retained_right_,
+    retained_left_, alpha_, beta_, random_tails_, work_, retained_,
+    max_restarts_, rank_, target_kind_, tol_, reorth_policy_
+  );
   error("native retained one-sided IRLBA/LBD CSC entry point is reserved but not implemented");
   return R_NilValue;
 }
