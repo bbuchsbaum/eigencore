@@ -360,6 +360,64 @@ test_that("retained IRLBA LBD prototype fails with its native ABI", {
   expect_equal(unname(err$abi$entry_points[["csc"]]), "eigencore_irlba_lbd_csc_retained")
 })
 
+test_that("retained IRLBA LBD scout state matches the native ABI orientation", {
+  set.seed(705)
+  wide <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))
+  scout <- svd_partial(
+    wide,
+    rank = 5L,
+    method = golub_kahan(max_subspace = 12L, reorthogonalize = FALSE),
+    tol = 1e-8,
+    seed = 705L
+  )
+  abi <- eigencore:::native_irlba_lbd_restart_abi(
+    wide,
+    rank = 5L,
+    work = 12L,
+    retained = 7L,
+    max_restarts = 4L
+  )
+  state <- eigencore:::native_irlba_lbd_retained_state_from_scout(
+    wide,
+    scout,
+    abi = abi
+  )
+
+  expect_s3_class(state, "eigencore_irlba_lbd_retained_state")
+  expect_true(state$internal_transposed)
+  expect_identical(state$internal_orientation, "transposed_wide_operator")
+  expect_length(state$initial_start, 90L)
+  expect_equal(dim(state$retained_right_subspace), c(90L, 7L))
+  expect_equal(dim(state$retained_left_subspace), c(600L, 7L))
+  expect_equal(dim(state$restart_random_tail), c(90L, 5L))
+  expect_equal(length(state$alpha), 12L)
+  expect_equal(length(state$beta), 12L)
+  expect_equal(state$retained_from_scout, 5L)
+  expect_equal(state$retained_padding, 2L)
+  expect_false(state$recurrence_available)
+  expect_identical(state$restart_state_kind, "ritz_subspace_only")
+  expect_equal(abs(diag(crossprod(state$retained_right_subspace[, 1:5], scout$u))), rep(1, 5), tolerance = 1e-8)
+  expect_equal(abs(diag(crossprod(state$retained_left_subspace[, 1:5], scout$v))), rep(1, 5), tolerance = 1e-8)
+
+  active_wide <- Matrix::t(wide)
+  expect_error(
+    .Call(
+      "eigencore_irlba_lbd_csc_retained",
+      active_wide@i, active_wide@p, active_wide@x, as.integer(active_wide@Dim),
+      state$initial_start,
+      state$retained_right_subspace,
+      state$retained_left_subspace,
+      state$alpha,
+      state$beta,
+      state$restart_random_tail,
+      abi$work, abi$retained, abi$max_restarts, abi$rank,
+      abi$target_kind, 1e-8, 1L,
+      PACKAGE = "eigencore"
+    ),
+    "reserved but not implemented"
+  )
+})
+
 test_that("retained IRLBA LBD native ABI entry points are registered", {
   dense_info <- getNativeSymbolInfo(
     "eigencore_irlba_lbd_dense_retained",

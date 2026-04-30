@@ -719,8 +719,14 @@ Primary attack surfaces, in order:
    are also registered as reserved unimplemented `.Call` symbols with fixed
    arities (`dense = 14`, `csc = 17`) and shape validation for retained state,
    alpha/beta recurrence vectors, restart tails, target, tolerance, and reorth
-   policy. The next native patch can replace the stubs without renegotiating
-   the R/native boundary.
+   policy. `native_irlba_lbd_retained_state_from_scout()` now packages a
+   failed small-work scout into that ABI: for wide matrices it maps original
+   `u` into the active right subspace of `A^T`, original `v` into the active
+   left subspace, pads retained subspaces deterministically to full rank, and
+   marks the recurrence as unavailable (`restart_state_kind =
+   "ritz_subspace_only"`). The next native patch can replace the stubs without
+   renegotiating the R/native boundary, but it still must build or update the
+   coupled bidiagonal recurrence inside the restart loop.
    The next H work therefore must attack the amount of retained-restart
    projected work directly rather than assuming partial locking will appear on
    the release benchmark surface.

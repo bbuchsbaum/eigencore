@@ -239,6 +239,133 @@ native_irlba_lbd_restart_abi <- function(op, rank, target = largest(),
 }
 
 #' @keywords internal
+native_irlba_lbd_deterministic_matrix <- function(n, cols, offset = 0L) {
+  if (cols < 1L) {
+    return(matrix(numeric(0), nrow = n, ncol = 0L))
+  }
+  idx <- seq_len(n * cols)
+  matrix(
+    sin((idx + offset) * 0.754877666) +
+      cos((idx + 3L * offset + 11L) * 0.569840291),
+    nrow = n,
+    ncol = cols
+  )
+}
+
+#' @keywords internal
+native_irlba_lbd_pad_subspace <- function(X, n, cols, offset = 0L) {
+  X <- as.matrix(X)
+  if (!identical(nrow(X), as.integer(n))) {
+    stop("retained scout subspace has the wrong active dimension.", call. = FALSE)
+  }
+  tol <- sqrt(.Machine$double.eps)
+  Q <- matrix(numeric(0), nrow = n, ncol = 0L)
+  append_candidate <- function(candidate) {
+    z <- as.numeric(candidate)
+    if (ncol(Q)) {
+      z <- z - Q %*% as.numeric(crossprod(Q, z))
+    }
+    z_norm <- sqrt(sum(z^2))
+    if (!is.finite(z_norm) || z_norm <= tol) {
+      return(FALSE)
+    }
+    Q <<- cbind(Q, z / z_norm)
+    TRUE
+  }
+  keep <- min(ncol(X), cols)
+  if (keep > 0L) {
+    for (col in seq_len(keep)) {
+      append_candidate(X[, col])
+    }
+  }
+  candidate <- 1L
+  max_candidates <- max(10L * cols, n + 4L * cols)
+  while (ncol(Q) < cols && candidate <= max_candidates) {
+    if (candidate <= 4L * cols) {
+      append_candidate(native_irlba_lbd_deterministic_matrix(
+        n, 1L, offset = offset + candidate
+      )[, 1L])
+    } else {
+      unit <- numeric(n)
+      unit[((candidate - 4L * cols - 1L) %% n) + 1L] <- 1
+      append_candidate(unit)
+    }
+    candidate <- candidate + 1L
+  }
+  if (ncol(Q) < cols) {
+    stop("retained scout subspace could not be padded to full rank.", call. = FALSE)
+  }
+  Q[, seq_len(cols), drop = FALSE]
+}
+
+#' @keywords internal
+native_irlba_lbd_retained_state_from_scout <- function(op, scout, abi = NULL,
+                                                       target = largest(),
+                                                       rank = NULL,
+                                                       work = NULL,
+                                                       retained = NULL,
+                                                       max_restarts = NULL) {
+  op <- as_operator(op)
+  rank <- as.integer(rank %||% length(scout$d %||% scout$values))
+  if (length(rank) != 1L || is.na(rank) || rank < 1L) {
+    stop("rank must be supplied or inferable from the scout result.", call. = FALSE)
+  }
+  abi <- abi %||% native_irlba_lbd_restart_abi(
+    op,
+    rank = rank,
+    target = target,
+    work = work,
+    retained = retained,
+    max_restarts = max_restarts
+  )
+  if (is.null(scout$u) || is.null(scout$v)) {
+    stop("retained IRLBA/LBD scout state requires both left and right scout vectors.",
+         call. = FALSE)
+  }
+
+  active_right <- if (isTRUE(abi$internal_transposed)) scout$u else scout$v
+  active_left <- if (isTRUE(abi$internal_transposed)) scout$v else scout$u
+  retained_right <- native_irlba_lbd_pad_subspace(
+    active_right,
+    abi$input_schema$retained_right_subspace[[1L]],
+    abi$retained,
+    offset = 17L
+  )
+  retained_left <- native_irlba_lbd_pad_subspace(
+    active_left,
+    abi$input_schema$retained_left_subspace[[1L]],
+    abi$retained,
+    offset = 29L
+  )
+  tail_cols <- abi$input_schema$restart_random_tail[[2L]]
+  restart_random_tail <- native_irlba_lbd_pad_subspace(
+    matrix(numeric(0), abi$input_schema$restart_random_tail[[1L]], 0L),
+    abi$input_schema$restart_random_tail[[1L]],
+    tail_cols,
+    offset = 41L
+  )
+  retained_from_scout <- min(ncol(active_right), ncol(active_left), abi$retained)
+  structure(
+    list(
+      abi = abi,
+      initial_start = retained_right[, 1L],
+      retained_right_subspace = retained_right,
+      retained_left_subspace = retained_left,
+      alpha = numeric(abi$work),
+      beta = numeric(abi$work),
+      restart_random_tail = restart_random_tail,
+      retained_from_scout = retained_from_scout,
+      retained_padding = abi$retained - retained_from_scout,
+      recurrence_available = FALSE,
+      restart_state_kind = "ritz_subspace_only",
+      internal_transposed = abi$internal_transposed,
+      internal_orientation = abi$internal_orientation
+    ),
+    class = "eigencore_irlba_lbd_retained_state"
+  )
+}
+
+#' @keywords internal
 native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
                                           tol = 1e-8,
                                           work = NULL,
