@@ -665,6 +665,15 @@ Primary attack surfaces, in order:
    rank-10 retry; the same 3000-by-800 probe now certifies in one attempt at
    roughly `0.018s`. This is a Track B correctness and dispatch win, not an H
    closure, because RSpectra is still much faster on that probe.
+   Three tempting shortcuts are explicitly rejected for this surface:
+   increasing the sparse Gram cutoff to 1024 certifies but slows the same probe
+   to roughly `0.029s` and allocates about `13MB`; projected-stop diagnostics
+   check the one-sided run but do not stop early (`projected_nconv = 9` for a
+   rank-10 request); and naive skipped reorthogonalization breaks the exact
+   certificate on the 3000-by-800 probe even though it passes the tiny H case.
+   Future Track B work should therefore implement real retained IRLBA restart
+   reuse or monitored BPRO-style reorthogonalization rather than larger normal
+   equations or unguarded reorth skipping.
    The next H work therefore must attack the amount of retained-restart
    projected work directly rather than assuming partial locking will appear on
    the release benchmark surface.
