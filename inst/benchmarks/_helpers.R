@@ -380,6 +380,46 @@ certify_svd_result <- function(A, fit, tol = 1e-8) {
   eigencore:::certify_svd_operator(as_operator(A), d, u, v, tol = tol)
 }
 
+svd_certificate_source <- function(fit) {
+  if (is.null(fit$certificate)) {
+    "eigencore_recomputed"
+  } else {
+    "method_certificate"
+  }
+}
+
+certificate_residual_max <- function(cert, side) {
+  residuals <- cert$residuals %||% list()
+  value <- residuals[[side]]
+  if (is.null(value) || !length(value)) {
+    return(NA_real_)
+  }
+  max(value, na.rm = TRUE)
+}
+
+certificate_orthogonality_component <- function(cert, side) {
+  orth <- cert$orthogonality %||% numeric()
+  if (!length(orth)) {
+    return(NA_real_)
+  }
+  if (!is.null(names(orth)) && side %in% names(orth)) {
+    return(as.numeric(orth[[side]]))
+  }
+  idx <- match(side, c("U", "V"))
+  if (!is.na(idx) && length(orth) >= idx) {
+    return(as.numeric(orth[[idx]]))
+  }
+  NA_real_
+}
+
+svd_result_sorted_descending <- function(fit) {
+  d <- eigencore:::method_values(fit, kind = "svd")
+  if (is.null(d) || length(d) < 2L) {
+    return(TRUE)
+  }
+  all(diff(as.numeric(d)) <= sqrt(.Machine$double.eps) * max(1, abs(d), na.rm = TRUE))
+}
+
 svd_subspace_error <- function(observed, oracle) {
   if (is.null(observed) || is.null(oracle) || !ncol(observed) || !ncol(oracle)) {
     return(NA_real_)
@@ -1179,11 +1219,24 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
     timed <- time_certified_svd_method(method, A, rank, tol, seed, iterations)
     fit <- timed$fit
     cert <- timed$cert
+    cert_source <- svd_certificate_source(fit)
     data.frame(
       method = method,
       median = timed$total$median,
       min = timed$total$min,
       mem_alloc = timed$total$mem_alloc,
+      raw_solver_median = timed$solver$median,
+      raw_solver_min = timed$solver$min,
+      raw_solver_mem_alloc = timed$solver$mem_alloc,
+      eigencore_certificate_median = timed$certificate$median,
+      eigencore_certificate_min = timed$certificate$min,
+      eigencore_certificate_mem_alloc = timed$certificate$mem_alloc,
+      eigencore_certified_total_median = timed$total$median,
+      eigencore_certified_total_min = timed$total$min,
+      eigencore_certified_total_mem_alloc = timed$total$mem_alloc,
+      certificate_source = cert_source,
+      certificate_recomputed_by_eigencore =
+        identical(cert_source, "eigencore_recomputed"),
       solver_median = timed$solver$median,
       solver_min = timed$solver$min,
       solver_mem_alloc = timed$solver$mem_alloc,
@@ -1193,9 +1246,15 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
       total_median = timed$total$median,
       total_min = timed$total$min,
       total_mem_alloc = timed$total$mem_alloc,
+      max_left_residual = certificate_residual_max(cert, "left"),
+      max_right_residual = certificate_residual_max(cert, "right"),
+      max_cyclic_residual = certificate_residual_max(cert, "combined"),
       max_residual = cert$max_residual,
       max_backward_error = cert$max_backward_error,
       orthogonality_loss = cert$max_orthogonality_loss,
+      orthogonality_U = certificate_orthogonality_component(cert, "U"),
+      orthogonality_V = certificate_orthogonality_component(cert, "V"),
+      singular_values_sorted = svd_result_sorted_descending(fit),
       certificate_passed = cert$passed,
       certificate_type = cert$certificate_type,
       norm_bound_type = cert$norm_bound_type,

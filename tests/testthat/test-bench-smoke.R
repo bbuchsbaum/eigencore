@@ -608,6 +608,51 @@ test_that("SVD reference gate can evaluate an explicit H candidate subject", {
   expect_equal(gate$memory_ratio_vs_best_reference, 0.5)
 })
 
+test_that("SVD benchmark rows audit raw and eigencore-certified reference timing", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+
+  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
+  if (!nzchar(helper_path)) {
+    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
+  }
+  source(helper_path)
+
+  A <- diag(c(5, 4, 3, 2, 1))
+  rows <- benchmark_svd_case(
+    A,
+    rank = 2L,
+    methods = c("eigencore", "base"),
+    iterations = 1L,
+    tol = 1e-8,
+    seed = 991L
+  )
+
+  expect_true(all(c(
+    "raw_solver_median",
+    "eigencore_certificate_median",
+    "eigencore_certified_total_median",
+    "certificate_recomputed_by_eigencore",
+    "max_left_residual",
+    "max_right_residual",
+    "max_cyclic_residual",
+    "orthogonality_U",
+    "orthogonality_V",
+    "singular_values_sorted"
+  ) %in% names(rows)))
+  expect_equal(
+    rows$certificate_recomputed_by_eigencore[rows$method == "base"],
+    TRUE
+  )
+  expect_equal(
+    rows$certificate_recomputed_by_eigencore[rows$method == "eigencore"],
+    FALSE
+  )
+  expect_true(all(rows$singular_values_sorted))
+  expect_true(all(rows$certificate_passed))
+  expect_true(all(is.finite(rows$max_left_residual)))
+  expect_true(all(is.finite(rows$max_right_residual)))
+})
+
 test_that("SVD memory diagnostics expose subject/reference allocation gaps", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
 
