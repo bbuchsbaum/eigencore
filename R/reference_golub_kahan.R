@@ -521,11 +521,27 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
     )
   }
 
-  warm_start <- if (!inherits(native, "eigencore_irlba_lbd_native_error") &&
-      !is.null(native$v) && ncol(native$v) > 0L) {
-    native$v[, 1L]
+  fallback_reorthogonalize <- identical(reorth_policy, "full_two_sided")
+  fallback_expects_original_domain <- isTRUE(fallback_reorthogonalize)
+  warm_start <- if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+    if (isTRUE(abi$internal_transposed) && isTRUE(fallback_expects_original_domain) &&
+        !is.null(native$u) && ncol(native$u) > 0L) {
+      native$u[, 1L]
+    } else if ((!isTRUE(abi$internal_transposed) || !isTRUE(fallback_expects_original_domain)) &&
+        !is.null(native$v) && ncol(native$v) > 0L) {
+      native$v[, 1L]
+    } else {
+      NULL
+    }
   } else {
-    retained_right[, 1L]
+    NULL
+  }
+  if (is.null(warm_start)) {
+    warm_start <- if (isTRUE(abi$internal_transposed) && isTRUE(fallback_expects_original_domain)) {
+      retained_left[, 1L]
+    } else {
+      retained_right[, 1L]
+    }
   }
   fallback <- native_golub_kahan_svd(
     original_op,
@@ -533,7 +549,7 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
     target = target,
     tol = tol,
     vectors = "both",
-    reorthogonalize = identical(reorth_policy, "full_two_sided"),
+    reorthogonalize = fallback_reorthogonalize,
     internal_start = warm_start
   )
   fallback$restart$irlba_lbd_policy <-

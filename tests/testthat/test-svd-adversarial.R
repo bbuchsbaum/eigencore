@@ -357,6 +357,27 @@ test_that("retained IRLBA LBD native core certifies or falls back honestly", {
   expect_certificate_clean(fit)
 })
 
+test_that("retained IRLBA fallback warm start matches transposed orientation", {
+  set.seed(706)
+  wide <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))
+  fit <- eigencore:::native_irlba_lbd_retained_svd(
+    wide,
+    rank = 5L,
+    work = 12L,
+    retained = 7L,
+    max_restarts = 1L,
+    tol = 1e-8,
+    vectors = "both",
+    reorth_policy = "full_two_sided"
+  )
+
+  expect_true(fit$certificate$passed)
+  expect_true(fit$restart$internal_transposed)
+  expect_true(fit$restart$retained_restart)
+  expect_true(fit$restart$fallback_attempted)
+  expect_certificate_clean(fit)
+})
+
 test_that("retained IRLBA LBD scout state matches the native ABI orientation", {
   set.seed(705)
   wide <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))
