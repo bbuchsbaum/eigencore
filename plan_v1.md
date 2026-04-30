@@ -718,7 +718,17 @@ Primary attack surfaces, in order:
    wrapper certifies in original coordinates before accepting the result. If
    the retained native attempt fails its exact certificate, the wrapper falls
    back honestly to adaptive one-sided Golub-Kahan while recording the retained
-   native failure reason and work. `native_irlba_lbd_retained_state_from_scout()` now packages a
+   native failure reason and work. The benchmark surface now includes
+   `eigencore_irlba_lbd_retained_native` plus retained-native diagnostics
+   (`irlba_lbd_retained_native_attempted`,
+   `irlba_lbd_retained_matvecs`,
+   `irlba_lbd_retained_native_fallback_reason`, and scout matvecs). On the
+   current H-shaped rank-5 sparse probe it certifies only after fallback:
+   retained native uses about `48` matvecs after a `24`-matvec scout, then the
+   certified adaptive fallback still uses `90` matvecs. That makes the row
+   useful for measuring retained-restart work, but not a promotion candidate
+   until the native retained attempt certifies directly.
+   `native_irlba_lbd_retained_state_from_scout()` now packages a
    failed small-work scout into that ABI: for wide matrices it maps original
    `u` into the active right subspace of `A^T`, original `v` into the active
    left subspace, pads retained subspaces deterministically to full rank, and

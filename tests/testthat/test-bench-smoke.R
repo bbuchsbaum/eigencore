@@ -68,6 +68,10 @@ test_that("benchmark harness produces certificate-inclusive rows", {
     "irlba_lbd_scout_matvec_overhead_fraction",
     "irlba_lbd_small_work_accounted_seconds",
     "irlba_lbd_fallback_accounted_seconds",
+    "irlba_lbd_retained_native_attempted",
+    "irlba_lbd_retained_matvecs",
+    "irlba_lbd_retained_native_fallback_reason",
+    "irlba_lbd_scout_matvecs",
     "final_attempt_matvecs", "final_attempt_ortho_passes", "total_ortho_passes",
     "fallback_attempted", "fallback_used", "fallback_method",
     "gram_max_backward_error", "fallback_max_backward_error"
@@ -278,6 +282,7 @@ test_that("SVD surface H candidate preset selects retained native SVD subject", 
   expect_equal(methods[[1L]], "eigencore_golub_kahan")
   expect_true("eigencore_golub_kahan_one_sided" %in% methods)
   expect_true("eigencore_irlba_lbd_one_sided" %in% methods)
+  expect_true("eigencore_irlba_lbd_retained_native" %in% methods)
   expect_true("eigencore_golub_kahan_projected" %in% methods)
   expect_true("eigencore_implicit_normal_lanczos" %in% methods)
   expect_true("eigencore_gram_dsyevx" %in% methods)
@@ -295,6 +300,7 @@ test_that("SVD surface H candidate preset selects retained native SVD subject", 
   expect_true("eigencore_gram_dsyevx" %in% svd_internal_methods())
   expect_true("eigencore_golub_kahan_one_sided" %in% svd_internal_methods())
   expect_true("eigencore_irlba_lbd_one_sided" %in% svd_internal_methods())
+  expect_true("eigencore_irlba_lbd_retained_native" %in% svd_internal_methods())
 
   default_methods <- svd_surface_default_methods(benchmark_args(character()))
   expect_false("eigencore_block_golub_kahan_retained" %in% default_methods)

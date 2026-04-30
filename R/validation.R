@@ -189,6 +189,7 @@ available_svd_methods <- function() {
     "eigencore_golub_kahan",
     "eigencore_golub_kahan_one_sided",
     "eigencore_irlba_lbd_one_sided",
+    "eigencore_irlba_lbd_retained_native",
     "eigencore_golub_kahan_projected",
     "eigencore_implicit_normal_lanczos",
     "eigencore_gram_dsyevx",
@@ -449,6 +450,19 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
       tol = tol,
       seed = seed
     ),
+    eigencore_irlba_lbd_retained_native = {
+      set.seed(seed %||% 1L)
+      native_irlba_lbd_retained_svd(
+        A,
+        rank = rank,
+        target = largest(),
+        work = max(rank + 7L, 2L * rank + 1L),
+        retained = min(max(rank, rank + 2L), max(rank + 6L, 2L * rank)),
+        max_restarts = 1L,
+        tol = tol,
+        vectors = "both"
+      )
+    },
     eigencore_golub_kahan_projected = {
       old_options <- options(eigencore.golub_kahan_projected_stop = TRUE)
       on.exit(options(old_options), add = TRUE)

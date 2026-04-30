@@ -77,6 +77,7 @@ svd_surface_default_methods <- function(args) {
       "eigencore_golub_kahan",
       "eigencore_golub_kahan_one_sided",
       "eigencore_irlba_lbd_one_sided",
+      "eigencore_irlba_lbd_retained_native",
       "eigencore_golub_kahan_projected",
       "eigencore_implicit_normal_lanczos",
       "eigencore_gram_dsyevx",
@@ -123,6 +124,7 @@ svd_internal_methods <- function() {
     "eigencore_golub_kahan",
     "eigencore_golub_kahan_one_sided",
     "eigencore_irlba_lbd_one_sided",
+    "eigencore_irlba_lbd_retained_native",
     "eigencore_golub_kahan_projected",
     "eigencore_implicit_normal_lanczos",
     "eigencore_gram_dsyevx",
@@ -1335,6 +1337,14 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
         result_restart_numeric(fit, "irlba_lbd_small_work_accounted_seconds"),
       irlba_lbd_fallback_accounted_seconds =
         result_restart_numeric(fit, "irlba_lbd_fallback_accounted_seconds"),
+      irlba_lbd_retained_native_attempted =
+        result_restart_logical(fit, "irlba_lbd_retained_native_attempted"),
+      irlba_lbd_retained_matvecs =
+        result_restart_integer(fit, "irlba_lbd_retained_matvecs"),
+      irlba_lbd_retained_native_fallback_reason =
+        result_restart_character(fit, "irlba_lbd_retained_native_fallback_reason"),
+      irlba_lbd_scout_matvecs =
+        result_restart_integer(fit, "irlba_lbd_scout_matvecs"),
       certified_attempt = result_certified_attempt(fit),
       final_attempt_matvecs = result_restart_integer(fit, "final_attempt_matvecs"),
       final_attempt_ortho_passes = result_restart_integer(fit, "final_attempt_ortho_passes"),
