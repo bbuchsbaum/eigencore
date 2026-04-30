@@ -662,8 +662,8 @@ Primary attack surfaces, in order:
    That has been replaced, behind the existing opt-in
    `eigencore.csc_left_normal_lanczos_attempt`, with a narrow scalar Lanczos
    diagnostic applied directly to the implicit `A A^T` operator. The H-shaped
-   fixture certifies directly through `implicit_normal_lanczos` at about `45`
-   normal-operator calls and max backward error around `3.5e-10`, instead of
+   fixture certifies directly through `implicit_normal_lanczos` at about `43`
+   normal-operator calls and max backward error around `4.3e-9`, instead of
    falling back to `dsyevr`; the old generic block Hermitian wrapper has been
    removed from this diagnostic path. The scalar diagnostic now uses one
    reorthogonalization pass per step while keeping exact final certification;

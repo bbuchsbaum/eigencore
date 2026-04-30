@@ -9609,7 +9609,7 @@ static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
   if (m < 2 || rank < 1 || rank > m) {
     return 0;
   }
-  int max_steps = std::max(45, 6 * rank + 15);
+  int max_steps = std::max(43, 6 * rank + 13);
   if (max_steps > m) {
     max_steps = m;
   }
