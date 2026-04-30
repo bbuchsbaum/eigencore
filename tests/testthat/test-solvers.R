@@ -830,6 +830,22 @@ test_that("native Golub-Kahan iteration matches dense diagonal singular values",
   expect_true(out$certificate$passed)
 })
 
+test_that("native Golub-Kahan records internal warm starts", {
+  A <- rbind(diag(c(7, 4, 2, 1)), matrix(0, 2, 4))
+  op <- as_operator(A)
+  out <- eigencore:::native_golub_kahan_svd(
+    op,
+    rank = 2,
+    maxit = 4,
+    target = largest(),
+    internal_start = c(1, 2, 3, 4)
+  )
+
+  expect_true(out$restart$warm_started)
+  expect_true(out$certificate$passed)
+  expect_equal(out$d, c(7, 4), tolerance = 1e-10)
+})
+
 test_that("native Golub-Kahan exposes adaptive subspace metadata", {
   old_options <- options(
     eigencore.golub_kahan_prefix_diagnostics = TRUE,

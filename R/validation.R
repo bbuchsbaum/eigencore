@@ -305,6 +305,25 @@ run_eigen_method <- function(method, A, k, target, tol) {
 }
 
 #' @keywords internal
+irlba_lbd_one_sided_warm_start <- function(A, small) {
+  dims <- as_operator(A)$dim
+  if (length(dims) != 2L || is.null(small$u) || is.null(small$v)) {
+    return(NULL)
+  }
+  start <- if (dims[[1L]] < dims[[2L]]) {
+    small$u[, 1L]
+  } else {
+    small$v[, 1L]
+  }
+  start <- as.numeric(start)
+  start_norm <- sqrt(sum(start^2))
+  if (!is.finite(start_norm) || start_norm <= 100 * .Machine$double.eps) {
+    return(NULL)
+  }
+  start / start_norm
+}
+
+#' @keywords internal
 run_irlba_lbd_one_sided_method <- function(A, rank, tol, seed = NULL) {
   initial_work <- max(rank + 7L, 2L * rank + 1L)
   small <- svd_partial(
@@ -328,18 +347,33 @@ run_irlba_lbd_one_sided_method <- function(A, rank, tol, seed = NULL) {
     return(small)
   }
 
-  fallback <- svd_partial(
-    A,
-    rank = rank,
-    method = golub_kahan(reorthogonalize = FALSE),
-    tol = tol,
-    seed = seed
+  warm_start <- irlba_lbd_one_sided_warm_start(A, small)
+  fallback <- tryCatch(
+    native_golub_kahan_svd(
+      A,
+      rank = rank,
+      target = largest(),
+      tol = tol,
+      vectors = "both",
+      reorthogonalize = FALSE,
+      internal_start = warm_start
+    ),
+    error = function(e) {
+      svd_partial(
+        A,
+        rank = rank,
+        method = golub_kahan(reorthogonalize = FALSE),
+        tol = tol,
+        seed = seed
+      )
+    }
   )
   small_row <- data.frame(
     attempt = 1L,
     max_subspace = initial_work,
     iterations = small$iterations,
     matvecs = small$matvecs,
+    warm_started = FALSE,
     certificate_passed = isTRUE(small$certificate$passed),
     max_backward_error = small$certificate$max_backward_error,
     max_residual = small$certificate$max_residual,
@@ -351,6 +385,7 @@ run_irlba_lbd_one_sided_method <- function(A, rank, tol, seed = NULL) {
       fallback$restart$max_subspace %||% fallback$iterations,
     iterations = fallback$iterations,
     matvecs = fallback$matvecs,
+    warm_started = !is.null(warm_start),
     certificate_passed = isTRUE(fallback$certificate$passed),
     max_backward_error = fallback$certificate$max_backward_error,
     max_residual = fallback$certificate$max_residual,
@@ -365,6 +400,7 @@ run_irlba_lbd_one_sided_method <- function(A, rank, tol, seed = NULL) {
   fallback$restart$irlba_lbd_fallback_attempted <- TRUE
   fallback$restart$irlba_lbd_fallback_used <- TRUE
   fallback$restart$irlba_lbd_fallback_method <- "adaptive one-sided Golub-Kahan"
+  fallback$restart$irlba_lbd_fallback_warm_started <- !is.null(warm_start)
   fallback$restart$fallback_attempted <- TRUE
   fallback$restart$fallback_used <- TRUE
   fallback$restart$fallback_method <- "adaptive one-sided Golub-Kahan"

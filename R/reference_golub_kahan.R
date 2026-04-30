@@ -121,7 +121,8 @@ reference_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
 native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
                                    maxit = NULL,
                                    vectors = c("both", "left", "right", "none"),
-                                   reorthogonalize = TRUE) {
+                                   reorthogonalize = TRUE,
+                                   internal_start = NULL) {
   vectors <- match.arg(vectors)
   op <- as_operator(op)
   if (is.null(op$apply_adjoint)) {
@@ -163,7 +164,19 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     stop("maxit/max_subspace must be at least rank.", call. = FALSE)
   }
 
-  start <- stats::rnorm(n)
+  start <- if (is.null(internal_start)) {
+    stats::rnorm(n)
+  } else {
+    internal_start <- as.numeric(internal_start)
+    if (length(internal_start) != n || any(!is.finite(internal_start))) {
+      stop("internal_start must be a finite numeric vector matching the active operator domain.", call. = FALSE)
+    }
+    start_norm <- sqrt(sum(internal_start^2))
+    if (!is.finite(start_norm) || start_norm <= 100 * .Machine$double.eps) {
+      stop("internal_start must have nonzero norm.", call. = FALSE)
+    }
+    internal_start / start_norm
+  }
   storage <- op$metadata$storage %||% NULL
   source <- source_or_null(op)
   projected_stop_requested <- isTRUE(getOption("eigencore.golub_kahan_projected_stop", FALSE))
@@ -435,6 +448,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     reorthogonalization_mode = reorthogonalization_mode,
     reorthogonalize_u = reorthogonalize_u,
     reorthogonalize_v = reorthogonalize_v,
+    warm_started = !is.null(internal_start),
     internal_orientation = internal_orientation,
     internal_transposed = internal_transposed,
     zero_singular_completion = isTRUE(final$zero_singular_completion),
