@@ -356,6 +356,31 @@ test_that("retained IRLBA LBD prototype fails with its native ABI", {
   expect_equal(unname(err$abi$entry_points[["csc"]]), "eigencore_irlba_lbd_csc_retained")
 })
 
+test_that("retained IRLBA LBD native ABI entry points are registered", {
+  dense_info <- getNativeSymbolInfo(
+    "eigencore_irlba_lbd_dense_retained",
+    PACKAGE = "eigencore"
+  )
+  csc_info <- getNativeSymbolInfo(
+    "eigencore_irlba_lbd_csc_retained",
+    PACKAGE = "eigencore"
+  )
+
+  expect_equal(dense_info$numParameters, 14L)
+  expect_equal(csc_info$numParameters, 17L)
+  call_native <- function(name, n) {
+    do.call(".Call", c(list(name), rep(list(NULL), n), list(PACKAGE = "eigencore")))
+  }
+  expect_error(
+    call_native("eigencore_irlba_lbd_dense_retained", 14L),
+    "reserved but not implemented"
+  )
+  expect_error(
+    call_native("eigencore_irlba_lbd_csc_retained", 17L),
+    "reserved but not implemented"
+  )
+})
+
 test_that("wide sparse Gram SVD exposes opt-in certified subspace eigensolve", {
   old_options <- options(eigencore.csc_left_gram_subspace_attempt = TRUE)
   on.exit(options(old_options), add = TRUE)

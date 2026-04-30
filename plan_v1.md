@@ -683,8 +683,10 @@ Primary attack surfaces, in order:
    `implemented = FALSE`; `native_irlba_lbd_retained_svd()` now fails with a
    typed `eigencore_unimplemented_native_irlba_lbd` condition carrying that ABI,
    so internal callers can target the retained engine without accidentally
-   falling back to a rerun-from-scratch prototype. The next native patch should
-   make the C++ entry points satisfy that contract.
+   falling back to a rerun-from-scratch prototype. The named C++ entry points
+   are also registered as reserved unimplemented `.Call` symbols with fixed
+   arities (`dense = 14`, `csc = 17`), so the next native patch can replace the
+   stubs without renegotiating the R/native boundary.
    The next H work therefore must attack the amount of retained-restart
    projected work directly rather than assuming partial locking will appear on
    the release benchmark surface.

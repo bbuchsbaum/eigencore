@@ -10641,6 +10641,38 @@ extern "C" SEXP eigencore_tridiagonal_solve(SEXP lower_, SEXP diag_,
   return out_;
 }
 
+extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP A_, SEXP initial_start_,
+                                                   SEXP retained_right_,
+                                                   SEXP retained_left_,
+                                                   SEXP alpha_, SEXP beta_,
+                                                   SEXP random_tails_,
+                                                   SEXP work_, SEXP retained_,
+                                                   SEXP max_restarts_,
+                                                   SEXP rank_,
+                                                   SEXP target_kind_,
+                                                   SEXP tol_,
+                                                   SEXP reorth_policy_) {
+  error("native retained one-sided IRLBA/LBD dense entry point is reserved but not implemented");
+  return R_NilValue;
+}
+
+extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP i_, SEXP p_, SEXP x_,
+                                                 SEXP dim_,
+                                                 SEXP initial_start_,
+                                                 SEXP retained_right_,
+                                                 SEXP retained_left_,
+                                                 SEXP alpha_, SEXP beta_,
+                                                 SEXP random_tails_,
+                                                 SEXP work_, SEXP retained_,
+                                                 SEXP max_restarts_,
+                                                 SEXP rank_,
+                                                 SEXP target_kind_,
+                                                 SEXP tol_,
+                                                 SEXP reorth_policy_) {
+  error("native retained one-sided IRLBA/LBD CSC entry point is reserved but not implemented");
+  return R_NilValue;
+}
+
 static const R_CallMethodDef CallEntries[] = {
   {"eigencore_dense_block_apply", (DL_FUNC) &eigencore_dense_block_apply, 6},
   {"eigencore_csc_block_apply", (DL_FUNC) &eigencore_csc_block_apply, 9},
@@ -10662,6 +10694,8 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_golub_kahan_csc", (DL_FUNC) &eigencore_golub_kahan_csc, 10},
   {"eigencore_golub_kahan_dense_fit", (DL_FUNC) &eigencore_golub_kahan_dense_fit, 9},
   {"eigencore_golub_kahan_csc_fit", (DL_FUNC) &eigencore_golub_kahan_csc_fit, 12},
+  {"eigencore_irlba_lbd_dense_retained", (DL_FUNC) &eigencore_irlba_lbd_dense_retained, 14},
+  {"eigencore_irlba_lbd_csc_retained", (DL_FUNC) &eigencore_irlba_lbd_csc_retained, 17},
   {"eigencore_block_golub_kahan_dense_basis", (DL_FUNC) &eigencore_block_golub_kahan_dense_basis, 3},
   {"eigencore_block_golub_kahan_dense_basis_cached", (DL_FUNC) &eigencore_block_golub_kahan_dense_basis_cached, 4},
   {"eigencore_block_golub_kahan_csc_basis", (DL_FUNC) &eigencore_block_golub_kahan_csc_basis, 6},
