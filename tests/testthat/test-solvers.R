@@ -789,9 +789,11 @@ test_that("auto uses native CSC-backed Golub-Kahan for sparse rectangular SVD", 
   fit <- svd_partial(A, rank = 2, seed = 202)
 
   expect_null(eigencore:::source_or_null(op))
-  expect_equal(fit$plan$method, "native retained Golub-Kahan SVD (thick restart)")
-  expect_equal(fit$method, "native retained Golub-Kahan SVD (thick restart)")
-  expect_match(fit$warnings, "native retained Golub-Kahan")
+  expect_equal(fit$plan$method, "native prototype Golub-Kahan")
+  expect_equal(fit$method, "native prototype Golub-Kahan")
+  expect_false(fit$plan$controls$reorthogonalize)
+  expect_match(fit$warnings, "native prototype Golub-Kahan")
+  expect_equal(fit$restart$reorthogonalization_mode, "one_sided_small_side")
   expect_equal(values(fit), c(9, 6), tolerance = 1e-10)
   expect_true(certificate(fit)$passed)
 })
@@ -849,7 +851,8 @@ test_that("native Golub-Kahan records internal warm starts", {
 test_that("native Golub-Kahan exposes adaptive subspace metadata", {
   old_options <- options(
     eigencore.golub_kahan_prefix_diagnostics = TRUE,
-    eigencore.golub_kahan_projected_stop = TRUE
+    eigencore.golub_kahan_projected_stop = TRUE,
+    eigencore.promote_retained_golub_kahan = TRUE
   )
   on.exit(options(old_options), add = TRUE)
   A <- Matrix::sparseMatrix(

@@ -648,6 +648,20 @@ Primary attack surfaces, in order:
    wide-sparse retained probe all five requested triplets become
    leading-converged only on the final certified attempt, so the deflated row
    locks zero columns, certifies, and does not improve the speed or memory gate.
+   The public `svd_partial()` path now has a conservative direct fast path for
+   the certified wide-`dgCMatrix` Gram special case, avoiding some S3 dispatch
+   overhead while keeping the same plan/result schema. This trims the H-style
+   load-all quick row from roughly `0.70ms` to `0.67ms`, but the remaining
+   bottleneck is still the selected `dsyevr` solve on the tiny Gram matrix, so
+   the H speed gate remains open. For non-Gram sparse problems, `auto()` no
+   longer promotes the retained block-GK candidate by default; retained restart
+   is opt-in behind `eigencore.promote_retained_golub_kahan` until its
+   certification and speed gates are green. The default sparse non-Gram route is
+   now certified one-sided native Golub-Kahan, which converts a measured
+   3000-by-800 sparse rank-10 probe from an uncertified retained row at roughly
+   `0.16s` to a certified one-sided row at roughly `0.04s`. This is a Track B
+   correctness and dispatch win, not an H closure, because RSpectra is still
+   much faster on that probe.
    The next H work therefore must attack the amount of retained-restart
    projected work directly rather than assuming partial locking will appear on
    the release benchmark surface.

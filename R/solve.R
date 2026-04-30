@@ -453,6 +453,9 @@ should_use_native_retained_golub_kahan <- function(problem, method, rank = NULL)
   if (is.null(problem$A$apply_adjoint)) {
     return(FALSE)
   }
+  if (!isTRUE(getOption("eigencore.promote_retained_golub_kahan", FALSE))) {
+    return(FALSE)
+  }
   if (!inherits(method, "eigencore_method") || !identical(method$kind, "auto")) {
     return(FALSE)
   }

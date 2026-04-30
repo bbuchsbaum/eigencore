@@ -434,8 +434,16 @@ svd_plan_controls <- function(problem, rank, method, chosen) {
 
   if (grepl("Golub-Kahan", chosen, fixed = TRUE)) {
     is_gk <- inherits(method, "eigencore_method") && identical(method$kind, "golub_kahan")
+    is_auto <- inherits(method, "eigencore_method") && identical(method$kind, "auto")
+    is_native_csc <- identical(problem$A$metadata$storage %||% NULL, "dgCMatrix")
     requested_max_subspace <- if (is_gk) method$max_subspace else NULL
-    method_reorthogonalize <- if (is_gk) isTRUE(method$reorthogonalize) else TRUE
+    method_reorthogonalize <- if (is_gk) {
+      isTRUE(method$reorthogonalize)
+    } else if (is_auto && is_native_csc && identical(chosen, "native prototype Golub-Kahan")) {
+      FALSE
+    } else {
+      TRUE
+    }
     default_initial_subspace <- default_golub_kahan_initial_subspace(
       dims,
       rank,
