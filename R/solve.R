@@ -23,6 +23,18 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
   if (!is.null(seed)) {
     set.seed(seed)
   }
+  fast <- try_svd_partial_native_gram_fastpath(
+    A = A,
+    rank = rank,
+    target = target,
+    method = method,
+    tol = tol,
+    vectors = vectors,
+    certify = certify
+  )
+  if (!is.null(fast)) {
+    return(fast)
+  }
   P <- svd_problem(A, target = target)
   solve(P, rank = rank, method = method, tol = tol, vectors = vectors,
         certify = certify, allow_dense_fallback = allow_dense_fallback)

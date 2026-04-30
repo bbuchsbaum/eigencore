@@ -44,6 +44,74 @@ solve_svd_randomized <- function(a, rank, method, tol, vectors, certify, plan) {
 }
 
 #' @keywords internal
+try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
+                                                 vectors, certify) {
+  if (!inherits(method, "eigencore_method") || !identical(method$kind, "auto")) {
+    return(NULL)
+  }
+  if (!native_gram_svd_target_supported(target)) {
+    return(NULL)
+  }
+  if (!inherits(A, "dgCMatrix")) {
+    return(NULL)
+  }
+  dims <- dim(A)
+  if (length(dims) != 2L || any(!is.finite(dims)) || dims[1L] >= dims[2L]) {
+    return(NULL)
+  }
+  rank <- as.integer(rank)
+  if (length(rank) != 1L || is.na(rank) || rank < 1L) {
+    return(NULL)
+  }
+  reduced <- min(dims)
+  full <- max(dims)
+  if (rank > reduced / 2) {
+    return(NULL)
+  }
+  gram_max <- as.integer(getOption("eigencore.gram_svd_max_dimension", 512L))
+  if (reduced > gram_max || full < 2L * reduced) {
+    return(NULL)
+  }
+
+  op <- as_operator(A)
+  plan <- native_gram_svd_fast_plan(op, rank, target)
+  solve_svd_gram(
+    list(A = op, target = target),
+    rank = rank,
+    tol = tol,
+    vectors = vectors,
+    certify = certify,
+    plan = plan
+  )
+}
+
+#' @keywords internal
+native_gram_svd_fast_plan <- function(op, rank, target) {
+  dims <- op$dim
+  full <- max(dims)
+  problem <- list(type = "svd", A = op, target = target)
+  chosen <- "native certified Gram SVD special case"
+  controls <- svd_plan_controls(problem, rank = rank, method = auto(), chosen = chosen)
+  controls$svd_partial_fastpath <- TRUE
+  controls$full_dimension <- as.integer(full)
+  new_plan(
+    problem,
+    k = as.integer(rank),
+    method = chosen,
+    reasons = c(
+      paste0("target: ", target_label(target)),
+      "rectangular SVD problem",
+      "adjoint is available",
+      "small rectangular sparse problem: materializes the smaller Gram matrix as an explicit certified special case",
+      "built-in sparse CSC operator has native block apply",
+      "direct svd_partial() fast path avoids S3 dispatch overhead"
+    ),
+    fallback = "native Golub-Kahan if Gram special case is disabled or uncertified",
+    controls = controls
+  )
+}
+
+#' @keywords internal
 solve_svd_gram <- function(a, rank, tol, vectors, certify, plan) {
   iter <- native_gram_svd(
     a$A,
