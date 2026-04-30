@@ -690,10 +690,11 @@ Primary attack surfaces, in order:
    native Gram result contains near-zero requested singular values, it returns
    to the generic R path so rank-deficient completion remains certificate
    guarded. Installed quick evidence on the 90-by-600 rank-5 fixture moved the
-   default `eigencore` row to roughly `0.355ms` and `29kB`, compared with
-   RSpectra plus eigencore certification at roughly `0.357ms` and `79kB`. This
-   is the first H-shaped row where eigencore edges the certified reference while
-   allocating materially less memory, but it still does not satisfy the PRD
+   default `eigencore` row into the same roughly `0.35ms` band as
+   RSpectra plus eigencore certification while allocating about `29kB` versus
+   the reference's roughly `79kB`. This is the first H-shaped row where
+   eigencore reaches certified-reference parity range while allocating
+   materially less memory, but it still does not satisfy the PRD
    `1.5x` SVD release gate; H promotion therefore remains blocked on a genuine
    restarted normal/LBD engine rather than wrapper overhead.
    For non-Gram sparse problems, `auto()` no
