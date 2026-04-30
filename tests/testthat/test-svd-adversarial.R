@@ -248,6 +248,30 @@ test_that("native Golub-Kahan supports one-sided small-side reorthogonalization"
   expect_certificate_clean(tall_fit)
 })
 
+test_that("one-sided IRLBA LBD benchmark policy falls back to certified adaptive work", {
+  set.seed(702)
+  M <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))
+  fit <- eigencore:::run_svd_method(
+    "eigencore_irlba_lbd_one_sided",
+    M,
+    rank = 5L,
+    tol = 1e-8,
+    seed = 702L
+  )
+
+  expect_true(fit$restart$irlba_lbd_small_work_attempted)
+  expect_true(fit$restart$irlba_lbd_fallback_attempted)
+  expect_true(fit$restart$irlba_lbd_fallback_used)
+  expect_true(fit$restart$fallback_attempted)
+  expect_true(fit$restart$fallback_used)
+  expect_false(fit$restart$irlba_lbd_small_work_certificate_passed)
+  expect_equal(fit$restart$attempted_subspaces, c(12L, 45L))
+  expect_true(is.data.frame(fit$restart$attempt_history))
+  expect_false(fit$restart$attempt_history$certificate_passed[[1L]])
+  expect_true(fit$restart$attempt_history$certificate_passed[[2L]])
+  expect_certificate_clean(fit)
+})
+
 test_that("wide sparse Gram SVD exposes opt-in certified subspace eigensolve", {
   old_options <- options(eigencore.csc_left_gram_subspace_attempt = TRUE)
   on.exit(options(old_options), add = TRUE)

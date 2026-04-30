@@ -305,6 +305,77 @@ run_eigen_method <- function(method, A, k, target, tol) {
 }
 
 #' @keywords internal
+run_irlba_lbd_one_sided_method <- function(A, rank, tol, seed = NULL) {
+  initial_work <- max(rank + 7L, 2L * rank + 1L)
+  small <- svd_partial(
+    A,
+    rank = rank,
+    method = golub_kahan(
+      max_subspace = initial_work,
+      reorthogonalize = FALSE
+    ),
+    tol = tol,
+    seed = seed
+  )
+  small$restart$irlba_lbd_policy <- "small work one-sided LBD with certified adaptive fallback"
+  small$restart$irlba_lbd_small_work_attempted <- TRUE
+  small$restart$irlba_lbd_small_work_max_subspace <- initial_work
+  small$restart$irlba_lbd_fallback_attempted <- FALSE
+  small$restart$irlba_lbd_fallback_used <- FALSE
+  small$restart$fallback_attempted <- FALSE
+  small$restart$fallback_used <- FALSE
+  if (isTRUE(small$certificate$passed)) {
+    return(small)
+  }
+
+  fallback <- svd_partial(
+    A,
+    rank = rank,
+    method = golub_kahan(reorthogonalize = FALSE),
+    tol = tol,
+    seed = seed
+  )
+  small_row <- data.frame(
+    attempt = 1L,
+    max_subspace = initial_work,
+    iterations = small$iterations,
+    matvecs = small$matvecs,
+    certificate_passed = isTRUE(small$certificate$passed),
+    max_backward_error = small$certificate$max_backward_error,
+    max_residual = small$certificate$max_residual,
+    stringsAsFactors = FALSE
+  )
+  fallback_row <- data.frame(
+    attempt = 2L,
+    max_subspace = fallback$restart$final_max_subspace %||%
+      fallback$restart$max_subspace %||% fallback$iterations,
+    iterations = fallback$iterations,
+    matvecs = fallback$matvecs,
+    certificate_passed = isTRUE(fallback$certificate$passed),
+    max_backward_error = fallback$certificate$max_backward_error,
+    max_residual = fallback$certificate$max_residual,
+    stringsAsFactors = FALSE
+  )
+  fallback$restart$irlba_lbd_policy <- "small work one-sided LBD with certified adaptive fallback"
+  fallback$restart$irlba_lbd_small_work_attempted <- TRUE
+  fallback$restart$irlba_lbd_small_work_max_subspace <- initial_work
+  fallback$restart$irlba_lbd_small_work_certificate_passed <- FALSE
+  fallback$restart$irlba_lbd_small_work_max_backward_error <-
+    small$certificate$max_backward_error
+  fallback$restart$irlba_lbd_fallback_attempted <- TRUE
+  fallback$restart$irlba_lbd_fallback_used <- TRUE
+  fallback$restart$irlba_lbd_fallback_method <- "adaptive one-sided Golub-Kahan"
+  fallback$restart$fallback_attempted <- TRUE
+  fallback$restart$fallback_used <- TRUE
+  fallback$restart$fallback_method <- "adaptive one-sided Golub-Kahan"
+  fallback$restart$irlba_lbd_attempt_history <- rbind(small_row, fallback_row)
+  fallback$restart$attempt_history <- fallback$restart$irlba_lbd_attempt_history
+  fallback$restart$attempted_subspaces <- fallback$restart$attempt_history$max_subspace
+  fallback$restart$certified_attempt <- if (isTRUE(fallback$certificate$passed)) 2L else NA_integer_
+  fallback
+}
+
+#' @keywords internal
 run_svd_method <- function(method, A, rank, tol, seed = NULL) {
   switch(
     method,
@@ -323,13 +394,9 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
       tol = tol,
       seed = seed
     ),
-    eigencore_irlba_lbd_one_sided = svd_partial(
+    eigencore_irlba_lbd_one_sided = run_irlba_lbd_one_sided_method(
       A,
       rank = rank,
-      method = golub_kahan(
-        max_subspace = max(rank + 7L, 2L * rank + 1L),
-        reorthogonalize = FALSE
-      ),
       tol = tol,
       seed = seed
     ),
