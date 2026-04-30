@@ -395,7 +395,7 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
   active_source <- if (isTRUE(abi$internal_transposed)) {
     native_golub_kahan_transpose_source(original_op)
   } else {
-    source_or_null(original_op)
+    source_or_null(original_op) %||% original_op$metadata$matrix %||% NULL
   }
   if (is.null(active_source)) {
     stop("Native retained one-sided IRLBA/LBD requires a native dense or dgCMatrix source.",
@@ -418,6 +418,46 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
     reorthogonalize = identical(reorth_policy, "full_two_sided"),
     internal_start = initial_start
   )
+  if (isTRUE(small$certificate$passed)) {
+    final <- small
+    if (isTRUE(abi$internal_transposed)) {
+      final <- native_golub_kahan_swap_transposed_result(original_op, final, tol)
+    }
+    final$restart$irlba_lbd_policy <-
+      "retained one-sided LBD scout certified before native restart"
+    final$restart$irlba_lbd_retained_native_attempted <- FALSE
+    final$restart$irlba_lbd_retained_native_fallback_reason <- NA_character_
+    final$restart$retained_restart <- FALSE
+    final$restart$retained_restart_native <- FALSE
+    final$restart$retained_restart_abi_version <- abi$version
+    final$restart$native_attempt_certification <- FALSE
+    final$restart$work <- abi$work
+    final$restart$retained <- abi$retained
+    final$restart$internal_orientation <- abi$internal_orientation
+    final$restart$internal_transposed <- abi$internal_transposed
+    final$restart$irlba_lbd_scout_matvecs <- small$matvecs
+    final$restart$irlba_lbd_scout_accounted_seconds <-
+      sum(small$stage_seconds %||% NA_real_, na.rm = TRUE)
+    final$restart$irlba_lbd_scout_certificate_passed <- TRUE
+    final$restart$attempted_subspaces <- abi$work
+    final$restart$certified_attempt <- 1L
+    final$restart$fallback_attempted <- FALSE
+    final$restart$fallback_used <- FALSE
+    final$restart$fallback_method <- NA_character_
+    final$restart$attempt_history <- data.frame(
+      attempt = 1L,
+      max_subspace = abi$work,
+      iterations = small$iterations,
+      matvecs = small$matvecs,
+      accounted_seconds = final$restart$irlba_lbd_scout_accounted_seconds,
+      warm_started = FALSE,
+      certificate_passed = isTRUE(final$certificate$passed),
+      max_backward_error = final$certificate$max_backward_error,
+      max_residual = final$certificate$max_residual,
+      stringsAsFactors = FALSE
+    )
+    return(native_irlba_lbd_select_vectors(final, vectors))
+  }
   retained_right <- native_irlba_lbd_pad_basis(
     small$v,
     n_rows = active_domain,

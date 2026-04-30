@@ -368,6 +368,36 @@ test_that("retained IRLBA LBD native core certifies or falls back honestly", {
   expect_certificate_clean(fit)
 })
 
+test_that("retained IRLBA LBD native wrapper supports tall CSC and scout early return", {
+  tall <- rbind(
+    Matrix::Diagonal(x = c(9, 6, 3, 1, 0.5, 0.2)),
+    Matrix::Matrix(0, 20, 6, sparse = TRUE)
+  )
+  tall <- methods::as(tall, "dgCMatrix")
+  fit <- eigencore:::native_irlba_lbd_retained_svd(
+    tall,
+    rank = 2L,
+    work = 6L,
+    retained = 3L,
+    max_restarts = 1L,
+    tol = 1e-8,
+    vectors = "both"
+  )
+
+  expect_true(fit$certificate$passed)
+  expect_equal(fit$d, c(9, 6), tolerance = 1e-10)
+  expect_identical(fit$restart$internal_orientation, "as_given")
+  expect_false(fit$restart$internal_transposed)
+  expect_false(fit$restart$irlba_lbd_retained_native_attempted)
+  expect_false(fit$restart$retained_restart)
+  expect_false(fit$restart$fallback_attempted)
+  expect_equal(fit$restart$certified_attempt, 1L)
+  expect_equal(fit$restart$attempted_subspaces, 6L)
+  expect_true(is.data.frame(fit$restart$attempt_history))
+  expect_true(fit$restart$attempt_history$certificate_passed[[1L]])
+  expect_certificate_clean(fit)
+})
+
 test_that("retained IRLBA fallback warm start matches transposed orientation", {
   set.seed(706)
   wide <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))

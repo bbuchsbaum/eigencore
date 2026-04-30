@@ -783,6 +783,15 @@ Primary attack surfaces, in order:
    certified adaptive fallback still uses `90` matvecs. That makes the row
    useful for measuring retained-restart work, but not a promotion candidate
    until the native retained attempt certifies directly.
+   A narrow wrapper fix now keeps this retained path honest on tall CSC inputs
+   as well as wide CSC inputs: the non-transposed orientation pulls the native
+   `dgCMatrix` from operator metadata instead of looking only for a dense
+   source. Easy tall sparse cases whose small-work scout already passes the
+   exact SVD certificate now return immediately with
+   `irlba_lbd_retained_native_attempted = FALSE`, `certified_attempt = 1`, and
+   a one-row attempt history, instead of paying the retained native/fallback
+   overhead. The benchmark surface records
+   `irlba_lbd_scout_certificate_passed` so scout-certified exits are visible.
    Retained fallback orientation is now covered explicitly: when a wide
    operator is run internally on `A^T`, the one-sided fallback also transposes
    and must warm-start from the active right vector, while the full two-sided
