@@ -592,6 +592,24 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
     reorthogonalize = fallback_reorthogonalize,
     internal_start = warm_start
   )
+  scout_matvecs <- small$matvecs %||% 0L
+  scout_iterations <- small$iterations %||% 0L
+  retained_matvecs <- if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+    native$matvecs %||% 0L
+  } else {
+    0L
+  }
+  retained_iterations <- if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+    native$iterations %||% 0L
+  } else {
+    0L
+  }
+  fallback_matvecs <- fallback$matvecs %||% 0L
+  fallback_iterations <- fallback$iterations %||% 0L
+  total_matvecs <- scout_matvecs + retained_matvecs + fallback_matvecs
+  total_iterations <- scout_iterations + retained_iterations + fallback_iterations
+  fallback$matvecs <- total_matvecs
+  fallback$iterations <- total_iterations
   fallback$restart$irlba_lbd_policy <-
     "retained one-sided LBD native core with certified adaptive fallback"
   fallback$restart$irlba_lbd_retained_native_attempted <- TRUE
@@ -607,12 +625,18 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
   fallback$restart$retained <- abi$retained
   fallback$restart$internal_orientation <- abi$internal_orientation
   fallback$restart$internal_transposed <- abi$internal_transposed
-  fallback$restart$irlba_lbd_scout_matvecs <- small$matvecs
+  fallback$restart$irlba_lbd_scout_matvecs <- scout_matvecs
   fallback$restart$irlba_lbd_scout_accounted_seconds <-
     sum(small$stage_seconds %||% NA_real_, na.rm = TRUE)
+  fallback$restart$irlba_lbd_scout_certificate_passed <- FALSE
+  fallback$restart$irlba_lbd_fallback_matvecs <- fallback_matvecs
+  fallback$restart$irlba_lbd_fallback_iterations <- fallback_iterations
+  fallback$restart$irlba_lbd_total_matvecs <- total_matvecs
+  fallback$restart$irlba_lbd_total_iterations <- total_iterations
   if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
     fallback$restart$irlba_lbd_retained_attempt_history <- native$attempt_history
-    fallback$restart$irlba_lbd_retained_matvecs <- native$matvecs
+    fallback$restart$irlba_lbd_retained_matvecs <- retained_matvecs
+    fallback$restart$irlba_lbd_retained_iterations <- retained_iterations
   }
   native_irlba_lbd_select_vectors(fallback, vectors)
 }

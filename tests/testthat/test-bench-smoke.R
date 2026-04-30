@@ -70,6 +70,7 @@ test_that("benchmark harness produces certificate-inclusive rows", {
     "irlba_lbd_fallback_accounted_seconds",
     "irlba_lbd_retained_native_attempted",
     "irlba_lbd_retained_matvecs",
+    "irlba_lbd_total_matvecs",
     "irlba_lbd_retained_native_fallback_reason",
     "irlba_lbd_scout_matvecs", "irlba_lbd_scout_certificate_passed",
     "final_attempt_matvecs", "final_attempt_ortho_passes", "total_ortho_passes",

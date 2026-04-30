@@ -365,6 +365,16 @@ test_that("retained IRLBA LBD native core certifies or falls back honestly", {
   expect_equal(fit$restart$retained_restart_abi_version, 1L)
   expect_identical(fit$restart$internal_orientation, "transposed_wide_operator")
   expect_true(fit$restart$internal_transposed)
+  if (isTRUE(fit$restart$fallback_used)) {
+    expect_equal(
+      fit$matvecs,
+      fit$restart$irlba_lbd_scout_matvecs +
+        fit$restart$irlba_lbd_retained_matvecs +
+        fit$restart$irlba_lbd_fallback_matvecs
+    )
+    expect_equal(fit$restart$irlba_lbd_total_matvecs, fit$matvecs)
+    expect_false(fit$restart$irlba_lbd_scout_certificate_passed)
+  }
   expect_certificate_clean(fit)
 })
 

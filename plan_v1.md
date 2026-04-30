@@ -792,6 +792,12 @@ Primary attack surfaces, in order:
    a one-row attempt history, instead of paying the retained native/fallback
    overhead. The benchmark surface records
    `irlba_lbd_scout_certificate_passed` so scout-certified exits are visible.
+   Fallback accounting is now total-work honest: when retained native work
+   fails and the wrapper falls back to adaptive one-sided Golub-Kahan,
+   `fit$matvecs` includes scout + retained-native + fallback operator calls,
+   while `irlba_lbd_fallback_matvecs`, `irlba_lbd_retained_matvecs`, and
+   `irlba_lbd_total_matvecs` expose the breakdown. This prevents the diagnostic
+   retained row from under-reporting time-to-certified-answer work.
    Retained fallback orientation is now covered explicitly: when a wide
    operator is run internally on `A^T`, the one-sided fallback also transposes
    and must warm-start from the active right vector, while the full two-sided

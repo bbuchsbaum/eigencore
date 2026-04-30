@@ -1351,6 +1351,8 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
         result_restart_logical(fit, "irlba_lbd_retained_native_attempted"),
       irlba_lbd_retained_matvecs =
         result_restart_integer(fit, "irlba_lbd_retained_matvecs"),
+      irlba_lbd_total_matvecs =
+        result_restart_integer(fit, "irlba_lbd_total_matvecs"),
       irlba_lbd_retained_native_fallback_reason =
         result_restart_character(fit, "irlba_lbd_retained_native_fallback_reason"),
       irlba_lbd_scout_matvecs =
