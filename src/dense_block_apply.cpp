@@ -10292,12 +10292,38 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   const double zero = 0.0;
   std::vector<double> gram_u_small(static_cast<size_t>(rank) * rank, 0.0);
   std::vector<double> gram_v_small(static_cast<size_t>(rank) * rank, 0.0);
+  std::vector<double> gu;
+  std::vector<double> gu_block;
   F77_CALL(dgemm)(&trans, &notrans, &rank, &rank, &m,
                   &one, REAL(u_), &m, REAL(u_), &m,
                   &zero, gram_u_small.data(), &rank FCONE FCONE);
-  F77_CALL(dgemm)(&trans, &notrans, &rank, &rank, &n,
-                  &one, REAL(v_), &n, REAL(v_), &n,
-                  &zero, gram_v_small.data(), &rank FCONE FCONE);
+  if (used_implicit_lanczos) {
+    F77_CALL(dgemm)(&trans, &notrans, &rank, &rank, &n,
+                    &one, REAL(v_), &n, REAL(v_), &n,
+                    &zero, gram_v_small.data(), &rank FCONE FCONE);
+    gu.assign(static_cast<size_t>(m), 0.0);
+  } else {
+    gu_block.assign(static_cast<size_t>(m) * static_cast<size_t>(rank), 0.0);
+    F77_CALL(dgemm)(&notrans, &notrans, &m, &rank, &m,
+                    &one, gram.data(), &m, REAL(u_), &m,
+                    &zero, gu_block.data(), &m FCONE FCONE);
+    for (int col = 0; col < rank; ++col) {
+      const double sigma_col = REAL(d_)[col];
+      const double inv_col = sigma_col > 100.0 * DBL_EPSILON ? 1.0 / sigma_col : 0.0;
+      const double* gu_col = gu_block.data() + static_cast<int64_t>(col) * m;
+      for (int row_col = 0; row_col < rank; ++row_col) {
+        const double sigma_row = REAL(d_)[row_col];
+        const double inv_row = sigma_row > 100.0 * DBL_EPSILON ? 1.0 / sigma_row : 0.0;
+        const double* u_row = REAL(u_) + static_cast<int64_t>(row_col) * m;
+        long double dot = 0.0L;
+        for (int row = 0; row < m; ++row) {
+          dot += static_cast<long double>(u_row[row]) * gu_col[row];
+        }
+        gram_v_small[row_col + static_cast<int64_t>(col) * rank] =
+          static_cast<double>(dot) * inv_row * inv_col;
+      }
+    }
+  }
   REAL(orth_)[0] = max_orthogonality_loss(gram_u_small.data(), rank);
   REAL(orth_)[1] = max_orthogonality_loss(gram_v_small.data(), rank);
   SEXP orth_names_ = PROTECT(allocVector(STRSXP, 2));
@@ -10305,16 +10331,6 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   SET_STRING_ELT(orth_names_, 1, mkChar("V"));
   setAttrib(orth_, R_NamesSymbol, orth_names_);
 
-  std::vector<double> gu;
-  std::vector<double> gu_block;
-  if (used_implicit_lanczos) {
-    gu.assign(static_cast<size_t>(m), 0.0);
-  } else {
-    gu_block.assign(static_cast<size_t>(m) * static_cast<size_t>(rank), 0.0);
-    F77_CALL(dgemm)(&notrans, &notrans, &m, &rank, &m,
-                    &one, gram.data(), &m, REAL(u_), &m,
-                    &zero, gu_block.data(), &m FCONE FCONE);
-  }
   std::vector<double> atu_check(static_cast<size_t>(n), 0.0);
   for (int scol = 0; scol < rank; ++scol) {
     const double sigma = REAL(d_)[scol];
