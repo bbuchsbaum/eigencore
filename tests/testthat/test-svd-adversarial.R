@@ -207,6 +207,43 @@ test_that("wide sparse Gram SVD dispatches larger tiny ranks to DSYEVD", {
   expect_certificate_clean(fit)
 })
 
+test_that("native Golub-Kahan supports one-sided small-side reorthogonalization", {
+  M <- cbind(
+    Matrix::Diagonal(x = c(9, 6, 3, 1, 0.5, 0.25, 0.1, 0.05, 0.02, 0.01)),
+    Matrix::Matrix(0, 10, 60, sparse = TRUE)
+  )
+  fit <- svd_partial(
+    M,
+    rank = 2,
+    target = largest(),
+    method = golub_kahan(max_subspace = 8, reorthogonalize = FALSE),
+    tol = 1e-8,
+    seed = 519
+  )
+
+  expect_identical(fit$method, "native prototype Golub-Kahan")
+  expect_identical(fit$restart$reorthogonalization_mode, "one_sided_small_side")
+  expect_true(fit$restart$reorthogonalize_u)
+  expect_false(fit$restart$reorthogonalize_v)
+  expect_equal(fit$d, c(9, 6), tolerance = 1e-10)
+  expect_certificate_clean(fit)
+
+  tall <- Matrix::t(M)
+  tall_fit <- svd_partial(
+    tall,
+    rank = 2,
+    target = largest(),
+    method = golub_kahan(max_subspace = 8, reorthogonalize = FALSE),
+    tol = 1e-8,
+    seed = 520
+  )
+  expect_identical(tall_fit$restart$reorthogonalization_mode, "one_sided_small_side")
+  expect_false(tall_fit$restart$reorthogonalize_u)
+  expect_true(tall_fit$restart$reorthogonalize_v)
+  expect_equal(tall_fit$d, c(9, 6), tolerance = 1e-10)
+  expect_certificate_clean(tall_fit)
+})
+
 test_that("wide sparse Gram SVD exposes opt-in certified subspace eigensolve", {
   old_options <- options(eigencore.csc_left_gram_subspace_attempt = TRUE)
   on.exit(options(old_options), add = TRUE)

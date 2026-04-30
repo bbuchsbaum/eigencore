@@ -160,7 +160,10 @@ lanczos <- function(max_subspace = NULL, max_restarts = NULL, block = 1L,
 #' Golub-Kahan bidiagonalization method descriptor.
 #'
 #' @param max_subspace Optional maximum Krylov subspace size.
-#' @param reorthogonalize Whether to apply full reorthogonalization.
+#' @param reorthogonalize Whether to apply full two-sided
+#'   reorthogonalization. `FALSE` selects the native one-sided small-side
+#'   policy where supported, with final acceptance still controlled by the
+#'   exact two-sided certificate.
 #' @return An `eigencore_method` descriptor selecting Golub-Kahan
 #'   bidiagonalization.
 #' @export

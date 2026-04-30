@@ -1171,7 +1171,9 @@ static int native_golub_kahan_run(void* impl,
                                   double* stage_apply_seconds,
                                   double* stage_recurrence_seconds,
                                   double* stage_reorthogonalization_seconds,
-                                  int* reorthogonalization_passes) {
+                                  int* reorthogonalization_passes,
+                                  int reorthogonalize_u,
+                                  int reorthogonalize_v) {
   double* v = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
   double* z = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
   double* u = static_cast<double*>(std::calloc(static_cast<size_t>(m), sizeof(double)));
@@ -1257,7 +1259,7 @@ static int native_golub_kahan_run(void* impl,
     *stage_recurrence_seconds += native_timer_elapsed(stage_timer);
 
     stage_timer = native_timer_now();
-    if (j > 0) {
+    if (reorthogonalize_u && j > 0) {
       double norm_before2 = 0.0;
       for (int row = 0; row < m; ++row) {
         norm_before2 += u[row] * u[row];
@@ -1342,7 +1344,7 @@ static int native_golub_kahan_run(void* impl,
     *stage_recurrence_seconds += native_timer_elapsed(stage_timer);
 
     stage_timer = native_timer_now();
-    {
+    if (reorthogonalize_v) {
       const int active_v = j + 1;
       double norm_before2 = 0.0;
       for (int row = 0; row < n; ++row) {
@@ -2251,7 +2253,8 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
                                             &stage_apply_seconds,
                                             &stage_recurrence_seconds,
                                             &stage_reorthogonalization_seconds,
-                                            &reorthogonalization_passes);
+                                            &reorthogonalization_passes,
+                                            1, 1);
   if (status != 0) {
     error("native dense Golub-Kahan failed with status=%d", status);
   }
@@ -2376,7 +2379,8 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                             &stage_apply_seconds,
                                             &stage_recurrence_seconds,
                                             &stage_reorthogonalization_seconds,
-                                            &reorthogonalization_passes);
+                                            &reorthogonalization_passes,
+                                            1, 1);
   if (status != 0) {
     error("native CSC Golub-Kahan failed with status=%d", status);
   }
@@ -8929,7 +8933,8 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_retained_cycle(SEXP i_, SEXP p_,
 
 extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start_,
                                                 SEXP rank_, SEXP target_kind_,
-                                                SEXP tol_, SEXP projected_stop_) {
+                                                SEXP tol_, SEXP projected_stop_,
+                                                SEXP reorth_u_, SEXP reorth_v_) {
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
   }
@@ -8948,6 +8953,8 @@ extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start
   const int target_kind = static_cast<int>(asInteger(target_kind_));
   const double tol = asReal(tol_);
   const int enable_projected_stop = asLogical(projected_stop_) == TRUE;
+  const int reorthogonalize_u = asLogical(reorth_u_) == TRUE;
+  const int reorthogonalize_v = asLogical(reorth_v_) == TRUE;
   if (maxit < 1 || maxit > limit) {
     error("maxit must be between 1 and min(dim(A))");
   }
@@ -8994,7 +9001,9 @@ extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start
                                             &stage_apply_seconds,
                                             &stage_recurrence_seconds,
                                             &stage_reorthogonalization_seconds,
-                                            &reorthogonalization_passes);
+                                            &reorthogonalization_passes,
+                                            reorthogonalize_u,
+                                            reorthogonalize_v);
   if (status != 0) {
     error("native dense Golub-Kahan failed with status=%d", status);
   }
@@ -9045,7 +9054,8 @@ extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start
 extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                               SEXP maxit_, SEXP start_,
                                               SEXP rank_, SEXP target_kind_,
-                                              SEXP tol_, SEXP projected_stop_) {
+                                              SEXP tol_, SEXP projected_stop_,
+                                              SEXP reorth_u_, SEXP reorth_v_) {
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(start_)) {
     error("invalid CSC Golub-Kahan inputs");
@@ -9061,6 +9071,8 @@ extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP di
   const int target_kind = static_cast<int>(asInteger(target_kind_));
   const double tol = asReal(tol_);
   const int enable_projected_stop = asLogical(projected_stop_) == TRUE;
+  const int reorthogonalize_u = asLogical(reorth_u_) == TRUE;
+  const int reorthogonalize_v = asLogical(reorth_v_) == TRUE;
   if (maxit < 1 || maxit > limit) {
     error("maxit must be between 1 and min(dim(A))");
   }
@@ -9106,7 +9118,9 @@ extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP di
                                             &stage_apply_seconds,
                                             &stage_recurrence_seconds,
                                             &stage_reorthogonalization_seconds,
-                                            &reorthogonalization_passes);
+                                            &reorthogonalization_passes,
+                                            reorthogonalize_u,
+                                            reorthogonalize_v);
   if (status != 0) {
     error("native CSC Golub-Kahan failed with status=%d", status);
   }
@@ -10323,8 +10337,8 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_lanczos_csc", (DL_FUNC) &eigencore_lanczos_csc, 9},
   {"eigencore_golub_kahan_dense", (DL_FUNC) &eigencore_golub_kahan_dense, 7},
   {"eigencore_golub_kahan_csc", (DL_FUNC) &eigencore_golub_kahan_csc, 10},
-  {"eigencore_golub_kahan_dense_fit", (DL_FUNC) &eigencore_golub_kahan_dense_fit, 7},
-  {"eigencore_golub_kahan_csc_fit", (DL_FUNC) &eigencore_golub_kahan_csc_fit, 10},
+  {"eigencore_golub_kahan_dense_fit", (DL_FUNC) &eigencore_golub_kahan_dense_fit, 9},
+  {"eigencore_golub_kahan_csc_fit", (DL_FUNC) &eigencore_golub_kahan_csc_fit, 12},
   {"eigencore_block_golub_kahan_dense_basis", (DL_FUNC) &eigencore_block_golub_kahan_dense_basis, 3},
   {"eigencore_block_golub_kahan_dense_basis_cached", (DL_FUNC) &eigencore_block_golub_kahan_dense_basis_cached, 4},
   {"eigencore_block_golub_kahan_csc_basis", (DL_FUNC) &eigencore_block_golub_kahan_csc_basis, 6},

@@ -179,7 +179,8 @@ solve_svd_golub_kahan <- function(a, rank, method, tol, vectors, certify, plan) 
       target = a$target,
       tol = tol,
       maxit = method_maxit,
-      vectors = vectors
+      vectors = vectors,
+      reorthogonalize = method_reorth
     )
   } else {
     reference_golub_kahan_svd(

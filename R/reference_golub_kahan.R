@@ -120,7 +120,8 @@ reference_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
 #' @keywords internal
 native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
                                    maxit = NULL,
-                                   vectors = c("both", "left", "right", "none")) {
+                                   vectors = c("both", "left", "right", "none"),
+                                   reorthogonalize = TRUE) {
   vectors <- match.arg(vectors)
   op <- as_operator(op)
   if (is.null(op$apply_adjoint)) {
@@ -152,43 +153,77 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     !fixed_maxit &&
     is.null(projected_stop_disable_reason)
   prefix_diagnostics <- isTRUE(getOption("eigencore.golub_kahan_prefix_diagnostics", FALSE))
+  reorthogonalization_mode <- if (isTRUE(reorthogonalize)) {
+    "full_two_sided"
+  } else {
+    "one_sided_small_side"
+  }
+  reorthogonalize_u <- isTRUE(reorthogonalize) || m <= n
+  reorthogonalize_v <- isTRUE(reorthogonalize) || n <= m
   run_native <- function(active_maxit) {
     if (identical(storage, "dgCMatrix")) {
       A <- op$metadata$matrix
-      .Call(
-        if (isTRUE(prefix_diagnostics)) {
-          "eigencore_golub_kahan_csc"
-        } else {
-          "eigencore_golub_kahan_csc_fit"
-        },
-        methods::slot(A, "i"),
-        methods::slot(A, "p"),
-        methods::slot(A, "x"),
-        methods::slot(A, "Dim"),
-        as.integer(active_maxit),
-        as.numeric(start),
-        as.integer(rank),
-        as.integer(native_svd_target_kind(target)),
-        as.numeric(tol),
-        as.logical(projected_stop_enabled),
-        PACKAGE = "eigencore"
-      )
+      if (isTRUE(prefix_diagnostics)) {
+        .Call(
+          "eigencore_golub_kahan_csc",
+          methods::slot(A, "i"),
+          methods::slot(A, "p"),
+          methods::slot(A, "x"),
+          methods::slot(A, "Dim"),
+          as.integer(active_maxit),
+          as.numeric(start),
+          as.integer(rank),
+          as.integer(native_svd_target_kind(target)),
+          as.numeric(tol),
+          as.logical(projected_stop_enabled),
+          PACKAGE = "eigencore"
+        )
+      } else {
+        .Call(
+          "eigencore_golub_kahan_csc_fit",
+          methods::slot(A, "i"),
+          methods::slot(A, "p"),
+          methods::slot(A, "x"),
+          methods::slot(A, "Dim"),
+          as.integer(active_maxit),
+          as.numeric(start),
+          as.integer(rank),
+          as.integer(native_svd_target_kind(target)),
+          as.numeric(tol),
+          as.logical(projected_stop_enabled),
+          as.logical(reorthogonalize_u),
+          as.logical(reorthogonalize_v),
+          PACKAGE = "eigencore"
+        )
+      }
     } else if (is.matrix(source) && is.double(source)) {
-      .Call(
-        if (isTRUE(prefix_diagnostics)) {
-          "eigencore_golub_kahan_dense"
-        } else {
-          "eigencore_golub_kahan_dense_fit"
-        },
-        source,
-        as.integer(active_maxit),
-        as.numeric(start),
-        as.integer(rank),
-        as.integer(native_svd_target_kind(target)),
-        as.numeric(tol),
-        as.logical(projected_stop_enabled),
-        PACKAGE = "eigencore"
-      )
+      if (isTRUE(prefix_diagnostics)) {
+        .Call(
+          "eigencore_golub_kahan_dense",
+          source,
+          as.integer(active_maxit),
+          as.numeric(start),
+          as.integer(rank),
+          as.integer(native_svd_target_kind(target)),
+          as.numeric(tol),
+          as.logical(projected_stop_enabled),
+          PACKAGE = "eigencore"
+        )
+      } else {
+        .Call(
+          "eigencore_golub_kahan_dense_fit",
+          source,
+          as.integer(active_maxit),
+          as.numeric(start),
+          as.integer(rank),
+          as.integer(native_svd_target_kind(target)),
+          as.numeric(tol),
+          as.logical(projected_stop_enabled),
+          as.logical(reorthogonalize_u),
+          as.logical(reorthogonalize_v),
+          PACKAGE = "eigencore"
+        )
+      }
     } else {
       stop("Native Golub-Kahan currently supports dense double matrices and dgCMatrix operators only.", call. = FALSE)
     }
@@ -370,6 +405,9 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     native_workspace_bytes = iter$native_workspace_bytes %||% NA_real_,
     basis_returned = isTRUE(iter$basis_returned %||% (!is.null(iter$U) && !is.null(iter$V))),
     reorthogonalization_passes = total_reorthogonalization_passes,
+    reorthogonalization_mode = reorthogonalization_mode,
+    reorthogonalize_u = reorthogonalize_u,
+    reorthogonalize_v = reorthogonalize_v,
     zero_singular_completion = isTRUE(final$zero_singular_completion),
     zero_singular_threshold = final$zero_singular_threshold %||% NA_real_,
     prefix_diagnostics = prefix_diagnostics,
