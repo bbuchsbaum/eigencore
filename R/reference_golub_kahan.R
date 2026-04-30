@@ -1281,6 +1281,79 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
           call. = FALSE
         )
       }
+      native <- .Call(
+        "eigencore_csc_right_gram_svd",
+        methods::slot(A, "i"),
+        methods::slot(A, "p"),
+        methods::slot(A, "x"),
+        methods::slot(A, "Dim"),
+        as.integer(rank),
+        as.numeric(tol),
+        PACKAGE = "eigencore"
+      )
+      zero_tol <- gram_svd_zero_tolerance(native$d, tol)
+      if (!any(native$d <= zero_tol)) {
+        cert <- new_certificate(
+          tol = tol,
+          residuals = list(
+            left = native$diagnostics$left,
+            right = native$diagnostics$right,
+            combined = native$diagnostics$combined
+          ),
+          backward_error = native$diagnostics$backward_error,
+          orthogonality = native$diagnostics$orthogonality,
+          converged = native$diagnostics$converged,
+          scale = native$diagnostics$scale,
+          norm_bound_type = "frobenius_exact"
+        )
+        u <- native$u
+        v <- native$v
+        if (vectors == "left") {
+          v <- NULL
+        } else if (vectors == "right") {
+          u <- NULL
+        } else if (vectors == "none") {
+          u <- NULL
+          v <- NULL
+        }
+        return(list(
+          d = native$d,
+          u = u,
+          v = v,
+          values = native$d,
+          residuals = cert$residuals,
+          backward_error = cert$backward_error,
+          orthogonality = cert$orthogonality,
+          certificate = cert,
+          iterations = 1L,
+          matvecs = 1L,
+          stage_seconds = native$stage_seconds,
+          restart = list(
+            kind = "gram_svd_special_case",
+            implemented = TRUE,
+            native = TRUE,
+            gram_side = "right",
+            gram_dimension = n,
+            native_gram_kernel = "csc_right_gram",
+            native_gram_eigensolver = native$eigensolver %||% "lapack_dsyevr",
+            native_gram_subspace_max_backward_error =
+              native$subspace_max_backward_error %||% NA_real_,
+            native_implicit_normal_lanczos_max_backward_error =
+              native$implicit_lanczos_max_backward_error %||% NA_real_,
+            native_implicit_normal_lanczos_iterations =
+              native$implicit_lanczos_iterations %||% 0L,
+            native_gram_krylov_iterations =
+              native$gram_krylov_iterations %||% 0L,
+            normal_operator_implicit = FALSE,
+            materialized_gram = TRUE,
+            stage_seconds = native$stage_seconds,
+            zero_singular_completion = FALSE,
+            zero_singular_threshold = zero_tol,
+            certificate_reuses_gram_sides = TRUE,
+            certified_in_original_coordinates = TRUE
+          )
+        ))
+      }
     }
     gram <- as.matrix(crossprod(A))
     small <- gram_svd_eigen_slice(gram, rank, target)

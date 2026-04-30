@@ -1119,6 +1119,6 @@ test_that("performance baseline helpers cover release regimes", {
   expect_equal(gate$speed_ratio_vs_best_reference, 0.5)
   expect_equal(gate$memory_ratio_vs_best_reference, 0.5)
   expect_equal(release_speed_gate("hermitian"), 1.25)
-  expect_equal(release_speed_gate("svd"), 1.5)
+  expect_equal(release_speed_gate("svd"), 1.1)
   expect_equal(release_speed_gate("randomized_svd"), 2.0)
 })

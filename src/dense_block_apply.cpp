@@ -10453,6 +10453,284 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   return out_;
 }
 
+extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
+                                             SEXP dim_, SEXP rank_, SEXP tol_) {
+  if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
+    error("invalid CSC inputs");
+  }
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  int rank = asInteger(rank_);
+  if (m < 1 || n < 1 || rank < 1) {
+    error("invalid CSC Gram SVD dimensions");
+  }
+  if (rank > n) {
+    rank = n;
+  }
+  const double tol = asReal(tol_);
+  const int* Ai = INTEGER(i_);
+  const int* Ap = INTEGER(p_);
+  const double* Ax = REAL(x_);
+
+  auto stage_timer = native_timer_now();
+  double stage_gram_seconds = 0.0;
+  double stage_eigensolve_seconds = 0.0;
+  double stage_vector_form_seconds = 0.0;
+  double stage_diagnostics_seconds = 0.0;
+
+  double frob2 = 0.0;
+  for (int idx = 0; idx < Ap[n]; ++idx) {
+    frob2 += Ax[idx] * Ax[idx];
+  }
+  const double norm_A = sqrt(frob2 > 0.0 ? frob2 : 0.0);
+  const double scale_value = norm_A > DBL_EPSILON ? norm_A : DBL_EPSILON;
+
+  stage_timer = native_timer_now();
+  std::vector<double> gram(static_cast<size_t>(n) * static_cast<size_t>(n), 0.0);
+  std::vector<int> row_counts(static_cast<size_t>(m), 0);
+  for (int idx = 0; idx < Ap[n]; ++idx) {
+    const int row = Ai[idx];
+    if (row >= 0 && row < m) {
+      ++row_counts[static_cast<size_t>(row)];
+    }
+  }
+  std::vector<int> row_ptr(static_cast<size_t>(m + 1), 0);
+  for (int row = 0; row < m; ++row) {
+    row_ptr[static_cast<size_t>(row + 1)] =
+      row_ptr[static_cast<size_t>(row)] + row_counts[static_cast<size_t>(row)];
+  }
+  std::vector<int> row_next = row_ptr;
+  const int nnz = Ap[n];
+  std::vector<int> row_cols(static_cast<size_t>(nnz), 0);
+  std::vector<double> row_vals(static_cast<size_t>(nnz), 0.0);
+  for (int col = 0; col < n; ++col) {
+    for (int jj = Ap[col]; jj < Ap[col + 1]; ++jj) {
+      const int row = Ai[jj];
+      const int pos = row_next[static_cast<size_t>(row)]++;
+      row_cols[static_cast<size_t>(pos)] = col;
+      row_vals[static_cast<size_t>(pos)] = Ax[jj];
+    }
+  }
+  for (int row = 0; row < m; ++row) {
+    const int start = row_ptr[static_cast<size_t>(row)];
+    const int end = row_ptr[static_cast<size_t>(row + 1)];
+    for (int aa = start; aa < end; ++aa) {
+      const int col_a = row_cols[static_cast<size_t>(aa)];
+      const double x_a = row_vals[static_cast<size_t>(aa)];
+      gram[col_a + static_cast<int64_t>(col_a) * n] += x_a * x_a;
+      for (int bb = aa + 1; bb < end; ++bb) {
+        const int col_b = row_cols[static_cast<size_t>(bb)];
+        const double update = x_a * row_vals[static_cast<size_t>(bb)];
+        gram[col_a + static_cast<int64_t>(col_b) * n] += update;
+        gram[col_b + static_cast<int64_t>(col_a) * n] += update;
+      }
+    }
+  }
+  stage_gram_seconds = native_timer_elapsed(stage_timer);
+
+  stage_timer = native_timer_now();
+  std::vector<double> work_matrix(static_cast<size_t>(n) * static_cast<size_t>(n));
+  std::vector<double> values_work(static_cast<size_t>(n), 0.0);
+  std::memcpy(work_matrix.data(), gram.data(),
+              sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(n));
+  SEXP v_ = PROTECT(allocMatrix(REALSXP, n, rank));
+  const char* lapack_eigensolver = "lapack_dsyevr";
+  char jobz = 'V';
+  char range = 'I';
+  char uplo = 'U';
+  double vl = 0.0;
+  double vu = 0.0;
+  const double abstol = 0.0;
+  int il = n - rank + 1;
+  int iu = n;
+  int m_found = 0;
+  int info = 0;
+  int lwork = 26 * n;
+  int liwork = 10 * n;
+  std::vector<int> isuppz(static_cast<size_t>(2 * rank), 0);
+  std::vector<double> work(static_cast<size_t>(lwork));
+  std::vector<int> iwork(static_cast<size_t>(liwork));
+  F77_CALL(dsyevr)(&jobz, &range, &uplo, &n, work_matrix.data(), &n,
+                   &vl, &vu, &il, &iu, &abstol,
+                   &m_found, values_work.data(), REAL(v_), &n,
+                   isuppz.data(), work.data(), &lwork,
+                   iwork.data(), &liwork, &info FCONE FCONE FCONE);
+  if (info != 0 || m_found != rank) {
+    UNPROTECT(1);
+    error("LAPACK dsyevr failed with info=%d, found=%d", info, m_found);
+  }
+  for (int left = 0, right = rank - 1; left < right; ++left, --right) {
+    const double tmp_value = values_work[left];
+    values_work[left] = values_work[right];
+    values_work[right] = tmp_value;
+    for (int row = 0; row < n; ++row) {
+      const int64_t lpos = row + static_cast<int64_t>(left) * n;
+      const int64_t rpos = row + static_cast<int64_t>(right) * n;
+      const double tmp_vec = REAL(v_)[lpos];
+      REAL(v_)[lpos] = REAL(v_)[rpos];
+      REAL(v_)[rpos] = tmp_vec;
+    }
+  }
+  stage_eigensolve_seconds = native_timer_elapsed(stage_timer);
+
+  stage_timer = native_timer_now();
+  SEXP d_ = PROTECT(allocVector(REALSXP, rank));
+  SEXP u_ = PROTECT(allocMatrix(REALSXP, m, rank));
+  std::memset(REAL(u_), 0, sizeof(double) * static_cast<size_t>(m) * rank);
+  for (int col = 0; col < rank; ++col) {
+    const double sigma = sqrt(values_work[static_cast<size_t>(col)] > 0.0 ?
+                              values_work[static_cast<size_t>(col)] : 0.0);
+    REAL(d_)[col] = sigma;
+  }
+  for (int acol = 0; acol < n; ++acol) {
+    for (int jj = Ap[acol]; jj < Ap[acol + 1]; ++jj) {
+      const int row = Ai[jj];
+      const double val = Ax[jj];
+      for (int scol = 0; scol < rank; ++scol) {
+        REAL(u_)[row + static_cast<int64_t>(scol) * m] +=
+          val * REAL(v_)[acol + static_cast<int64_t>(scol) * n];
+      }
+    }
+  }
+  for (int scol = 0; scol < rank; ++scol) {
+    const double sigma = REAL(d_)[scol];
+    const double inv_sigma = sigma > 100.0 * DBL_EPSILON ? 1.0 / sigma : 0.0;
+    for (int row = 0; row < m; ++row) {
+      REAL(u_)[row + static_cast<int64_t>(scol) * m] *= inv_sigma;
+    }
+  }
+  stage_vector_form_seconds = native_timer_elapsed(stage_timer);
+
+  stage_timer = native_timer_now();
+  SEXP left_ = PROTECT(allocVector(REALSXP, rank));
+  SEXP right_ = PROTECT(allocVector(REALSXP, rank));
+  SEXP combined_ = PROTECT(allocVector(REALSXP, rank));
+  SEXP backward_ = PROTECT(allocVector(REALSXP, rank));
+  SEXP converged_ = PROTECT(allocVector(LGLSXP, rank));
+  SEXP scale_ = PROTECT(allocVector(REALSXP, rank));
+  SEXP orth_ = PROTECT(allocVector(REALSXP, 2));
+
+  const char trans = 'T';
+  const char notrans = 'N';
+  const double one = 1.0;
+  const double zero = 0.0;
+  std::vector<double> gram_v_small(static_cast<size_t>(rank) * rank, 0.0);
+  std::vector<double> gram_u_small(static_cast<size_t>(rank) * rank, 0.0);
+  std::vector<double> gv_block(static_cast<size_t>(n) * static_cast<size_t>(rank), 0.0);
+  F77_CALL(dgemm)(&trans, &notrans, &rank, &rank, &n,
+                  &one, REAL(v_), &n, REAL(v_), &n,
+                  &zero, gram_v_small.data(), &rank FCONE FCONE);
+  F77_CALL(dgemm)(&notrans, &notrans, &n, &rank, &n,
+                  &one, gram.data(), &n, REAL(v_), &n,
+                  &zero, gv_block.data(), &n FCONE FCONE);
+  for (int col = 0; col < rank; ++col) {
+    const double sigma_col = REAL(d_)[col];
+    const double inv_col = sigma_col > 100.0 * DBL_EPSILON ? 1.0 / sigma_col : 0.0;
+    const double* gv_col = gv_block.data() + static_cast<int64_t>(col) * n;
+    for (int row_col = 0; row_col < rank; ++row_col) {
+      const double sigma_row = REAL(d_)[row_col];
+      const double inv_row = sigma_row > 100.0 * DBL_EPSILON ? 1.0 / sigma_row : 0.0;
+      const double* v_row = REAL(v_) + static_cast<int64_t>(row_col) * n;
+      long double dot = 0.0L;
+      for (int row = 0; row < n; ++row) {
+        dot += static_cast<long double>(v_row[row]) * gv_col[row];
+      }
+      gram_u_small[row_col + static_cast<int64_t>(col) * rank] =
+        static_cast<double>(dot) * inv_row * inv_col;
+    }
+  }
+  REAL(orth_)[0] = max_orthogonality_loss(gram_u_small.data(), rank);
+  REAL(orth_)[1] = max_orthogonality_loss(gram_v_small.data(), rank);
+  SEXP orth_names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(orth_names_, 0, mkChar("U"));
+  SET_STRING_ELT(orth_names_, 1, mkChar("V"));
+  setAttrib(orth_, R_NamesSymbol, orth_names_);
+
+  for (int scol = 0; scol < rank; ++scol) {
+    const double sigma = REAL(d_)[scol];
+    const double lambda = sigma * sigma;
+    long double right_sum = 0.0L;
+    const double inv_sigma = sigma > 100.0 * DBL_EPSILON ? 1.0 / sigma : 0.0;
+    const double* gv_col = gv_block.data() + static_cast<int64_t>(scol) * n;
+    const double* v_col = REAL(v_) + static_cast<int64_t>(scol) * n;
+    for (int row = 0; row < n; ++row) {
+      const double residual = (gv_col[row] - lambda * v_col[row]) * inv_sigma;
+      right_sum += static_cast<long double>(residual) * residual;
+    }
+    const double left = 0.0;
+    const double right = sqrt(static_cast<double>(right_sum));
+    REAL(left_)[scol] = left;
+    REAL(right_)[scol] = right;
+    REAL(combined_)[scol] = right;
+    REAL(scale_)[scol] = scale_value;
+    REAL(backward_)[scol] = REAL(combined_)[scol] / scale_value;
+    LOGICAL(converged_)[scol] = (REAL(backward_)[scol] <= tol) ? TRUE : FALSE;
+  }
+  stage_diagnostics_seconds = native_timer_elapsed(stage_timer);
+
+  SEXP diagnostics_ = PROTECT(allocVector(VECSXP, 7));
+  SET_VECTOR_ELT(diagnostics_, 0, left_);
+  SET_VECTOR_ELT(diagnostics_, 1, right_);
+  SET_VECTOR_ELT(diagnostics_, 2, combined_);
+  SET_VECTOR_ELT(diagnostics_, 3, backward_);
+  SET_VECTOR_ELT(diagnostics_, 4, orth_);
+  SET_VECTOR_ELT(diagnostics_, 5, converged_);
+  SET_VECTOR_ELT(diagnostics_, 6, scale_);
+  SEXP diag_names_ = PROTECT(allocVector(STRSXP, 7));
+  SET_STRING_ELT(diag_names_, 0, mkChar("left"));
+  SET_STRING_ELT(diag_names_, 1, mkChar("right"));
+  SET_STRING_ELT(diag_names_, 2, mkChar("combined"));
+  SET_STRING_ELT(diag_names_, 3, mkChar("backward_error"));
+  SET_STRING_ELT(diag_names_, 4, mkChar("orthogonality"));
+  SET_STRING_ELT(diag_names_, 5, mkChar("converged"));
+  SET_STRING_ELT(diag_names_, 6, mkChar("scale"));
+  setAttrib(diagnostics_, R_NamesSymbol, diag_names_);
+
+  SEXP stage_ = PROTECT(allocVector(REALSXP, 4));
+  REAL(stage_)[0] = stage_gram_seconds;
+  REAL(stage_)[1] = stage_eigensolve_seconds;
+  REAL(stage_)[2] = stage_vector_form_seconds;
+  REAL(stage_)[3] = stage_diagnostics_seconds;
+  SEXP stage_names_ = PROTECT(allocVector(STRSXP, 4));
+  SET_STRING_ELT(stage_names_, 0, mkChar("gram"));
+  SET_STRING_ELT(stage_names_, 1, mkChar("eigensolve"));
+  SET_STRING_ELT(stage_names_, 2, mkChar("vector_form"));
+  SET_STRING_ELT(stage_names_, 3, mkChar("diagnostics"));
+  setAttrib(stage_, R_NamesSymbol, stage_names_);
+
+  SEXP eigensolver_ = PROTECT(mkString(lapack_eigensolver));
+  SEXP subspace_be_ = PROTECT(ScalarReal(R_PosInf));
+  SEXP implicit_be_ = PROTECT(ScalarReal(R_PosInf));
+  SEXP implicit_iter_ = PROTECT(ScalarInteger(0));
+  SEXP gram_krylov_iter_ = PROTECT(ScalarInteger(0));
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 10));
+  SET_VECTOR_ELT(out_, 0, d_);
+  SET_VECTOR_ELT(out_, 1, u_);
+  SET_VECTOR_ELT(out_, 2, v_);
+  SET_VECTOR_ELT(out_, 3, diagnostics_);
+  SET_VECTOR_ELT(out_, 4, stage_);
+  SET_VECTOR_ELT(out_, 5, eigensolver_);
+  SET_VECTOR_ELT(out_, 6, subspace_be_);
+  SET_VECTOR_ELT(out_, 7, implicit_be_);
+  SET_VECTOR_ELT(out_, 8, implicit_iter_);
+  SET_VECTOR_ELT(out_, 9, gram_krylov_iter_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 10));
+  SET_STRING_ELT(names_, 0, mkChar("d"));
+  SET_STRING_ELT(names_, 1, mkChar("u"));
+  SET_STRING_ELT(names_, 2, mkChar("v"));
+  SET_STRING_ELT(names_, 3, mkChar("diagnostics"));
+  SET_STRING_ELT(names_, 4, mkChar("stage_seconds"));
+  SET_STRING_ELT(names_, 5, mkChar("eigensolver"));
+  SET_STRING_ELT(names_, 6, mkChar("subspace_max_backward_error"));
+  SET_STRING_ELT(names_, 7, mkChar("implicit_lanczos_max_backward_error"));
+  SET_STRING_ELT(names_, 8, mkChar("implicit_lanczos_iterations"));
+  SET_STRING_ELT(names_, 9, mkChar("gram_krylov_iterations"));
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(22);
+  return out_;
+}
+
 extern "C" SEXP eigencore_csc_left_gram_svd_fast_result(SEXP i_, SEXP p_, SEXP x_,
                                                         SEXP dim_, SEXP rank_,
                                                         SEXP tol_) {
@@ -11370,6 +11648,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_dense_symmetric_eigen_selected", (DL_FUNC) &eigencore_dense_symmetric_eigen_selected, 3},
   {"eigencore_dense_symmetric_eigen_dsyevx_selected", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyevx_selected, 3},
   {"eigencore_csc_left_gram_svd", (DL_FUNC) &eigencore_csc_left_gram_svd, 6},
+  {"eigencore_csc_right_gram_svd", (DL_FUNC) &eigencore_csc_right_gram_svd, 6},
   {"eigencore_csc_left_gram_svd_fast_result", (DL_FUNC) &eigencore_csc_left_gram_svd_fast_result, 6},
   {"eigencore_dense_generalized_spd_eigen", (DL_FUNC) &eigencore_dense_generalized_spd_eigen, 2},
   {"eigencore_dense_svd", (DL_FUNC) &eigencore_dense_svd, 1},

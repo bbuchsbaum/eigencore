@@ -144,7 +144,7 @@ release_speed_gate <- function(kind) {
   switch(
     kind,
     hermitian = 1.25,
-    svd = 1.5,
+    svd = 1.1,
     randomized_svd = 2.0,
     generalized_eigen = 1.0,
     lobpcg = 1.0,

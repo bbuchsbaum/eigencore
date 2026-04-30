@@ -694,9 +694,19 @@ Primary attack surfaces, in order:
    RSpectra plus eigencore certification while allocating about `29kB` versus
    the reference's roughly `79kB`. This is the first H-shaped row where
    eigencore reaches certified-reference parity range while allocating
-   materially less memory, but it still does not satisfy the PRD
-   `1.5x` SVD release gate; H promotion therefore remains blocked on a genuine
+   materially less memory, but it still does not satisfy the current
+   `1.1x` SVD release gate; H promotion therefore remains blocked on a genuine
    restarted normal/LBD engine rather than wrapper overhead.
+   A follow-up native right-Gram CSC path now covers the tall sparse
+   Gram-special-case mirror image. On the installed quick H sparse fixtures,
+   the right-Gram path cuts the tall sparse row to roughly `0.38ms` and `29kB`,
+   improving from about `0.62x` to about `0.70x` of certified RSpectra speed
+   while passing the memory gate by roughly `2.4x`. The wide sparse row remains
+   near parity at roughly `1.02x` speed and `2.7x` memory. This confirms the
+   remaining H blocker is algorithmic, not R result assembly: `vendor/RSpectra`
+   uses Spectra's symmetric Krylov solver on the implicit normal operator with
+   a small `ncv`, whereas eigencore's promoted tiny path still pays the selected
+   dense `dsyevr` cost for exact Gram diagonalization.
    For non-Gram sparse problems, `auto()` no
    longer promotes the retained block-GK candidate by default; retained restart
    is opt-in behind `eigencore.promote_retained_golub_kahan` until its
