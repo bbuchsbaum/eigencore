@@ -273,6 +273,7 @@ test_that("SVD surface H candidate preset selects retained native SVD subject", 
   methods <- svd_surface_default_methods(args)
   expect_equal(methods[[1L]], "eigencore_golub_kahan")
   expect_true("eigencore_golub_kahan_one_sided" %in% methods)
+  expect_true("eigencore_irlba_lbd_one_sided" %in% methods)
   expect_true("eigencore_golub_kahan_projected" %in% methods)
   expect_true("eigencore_implicit_normal_lanczos" %in% methods)
   expect_true("eigencore_block_golub_kahan_cycle" %in% methods)
@@ -287,6 +288,7 @@ test_that("SVD surface H candidate preset selects retained native SVD subject", 
   expect_true("eigencore_block_golub_kahan_retained_cached" %in% svd_internal_methods())
   expect_true("eigencore_implicit_normal_lanczos" %in% svd_internal_methods())
   expect_true("eigencore_golub_kahan_one_sided" %in% svd_internal_methods())
+  expect_true("eigencore_irlba_lbd_one_sided" %in% svd_internal_methods())
 
   default_methods <- svd_surface_default_methods(benchmark_args(character()))
   expect_false("eigencore_block_golub_kahan_retained" %in% default_methods)

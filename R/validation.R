@@ -188,6 +188,7 @@ available_svd_methods <- function() {
     "eigencore",
     "eigencore_golub_kahan",
     "eigencore_golub_kahan_one_sided",
+    "eigencore_irlba_lbd_one_sided",
     "eigencore_golub_kahan_projected",
     "eigencore_implicit_normal_lanczos",
     "eigencore_block_golub_kahan_cycle",
@@ -319,6 +320,16 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
       A,
       rank = rank,
       method = golub_kahan(reorthogonalize = FALSE),
+      tol = tol,
+      seed = seed
+    ),
+    eigencore_irlba_lbd_one_sided = svd_partial(
+      A,
+      rank = rank,
+      method = golub_kahan(
+        max_subspace = max(rank + 7L, 2L * rank + 1L),
+        reorthogonalize = FALSE
+      ),
       tol = tol,
       seed = seed
     ),

@@ -76,6 +76,7 @@ svd_surface_default_methods <- function(args) {
     methods <- c(
       "eigencore_golub_kahan",
       "eigencore_golub_kahan_one_sided",
+      "eigencore_irlba_lbd_one_sided",
       "eigencore_golub_kahan_projected",
       "eigencore_implicit_normal_lanczos",
       "eigencore_block_golub_kahan_cycle",
@@ -120,6 +121,7 @@ svd_internal_methods <- function() {
     "eigencore",
     "eigencore_golub_kahan",
     "eigencore_golub_kahan_one_sided",
+    "eigencore_irlba_lbd_one_sided",
     "eigencore_golub_kahan_projected",
     "eigencore_implicit_normal_lanczos",
     "eigencore_block_golub_kahan_cycle",
