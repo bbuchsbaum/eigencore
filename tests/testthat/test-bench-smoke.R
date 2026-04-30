@@ -64,6 +64,10 @@ test_that("benchmark harness produces certificate-inclusive rows", {
     "stage_retry_overhead_seconds",
     "attempted_subspaces", "max_attempted_subspace", "max_start_cols",
     "warm_started_attempts", "cached_start_attempts", "certified_attempt",
+    "irlba_lbd_small_work_matvecs", "irlba_lbd_fallback_matvecs",
+    "irlba_lbd_scout_matvec_overhead_fraction",
+    "irlba_lbd_small_work_accounted_seconds",
+    "irlba_lbd_fallback_accounted_seconds",
     "final_attempt_matvecs", "final_attempt_ortho_passes", "total_ortho_passes",
     "fallback_attempted", "fallback_used", "fallback_method",
     "gram_max_backward_error", "fallback_max_backward_error"

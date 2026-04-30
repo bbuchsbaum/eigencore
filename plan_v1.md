@@ -699,6 +699,13 @@ Primary attack surfaces, in order:
    Future Track B work should therefore implement real retained IRLBA restart
    reuse or monitored BPRO-style reorthogonalization rather than larger normal
    equations or unguarded reorth skipping.
+   The one-sided IRLBA benchmark row now records the failed scout and certified
+   fallback costs separately (`irlba_lbd_small_work_matvecs`,
+   `irlba_lbd_fallback_matvecs`,
+   `irlba_lbd_scout_matvec_overhead_fraction`, and accounted seconds for each
+   phase). This is deliberately diagnostic: until retained restart reuses the
+   scout subspace instead of throwing it away, the row should be judged by how
+   much overhead the scout adds to the certified fallback.
    The retained one-sided IRLBA/LBD restart ABI is now codified as
    `native_irlba_lbd_restart_abi()`: it fixes wide-operator orientation on
    `A^T`, retained left/right Ritz subspace shapes, bidiagonal alpha/beta

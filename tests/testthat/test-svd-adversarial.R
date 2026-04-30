@@ -288,6 +288,10 @@ test_that("one-sided IRLBA LBD benchmark policy falls back to certified adaptive
   expect_equal(fit$restart$attempt_history$warm_started, c(FALSE, TRUE))
   expect_false(fit$restart$attempt_history$certificate_passed[[1L]])
   expect_true(fit$restart$attempt_history$certificate_passed[[2L]])
+  expect_equal(fit$restart$irlba_lbd_small_work_matvecs, fit$restart$attempt_history$matvecs[[1L]])
+  expect_equal(fit$restart$irlba_lbd_fallback_matvecs, fit$restart$attempt_history$matvecs[[2L]])
+  expect_gt(fit$restart$irlba_lbd_scout_matvec_overhead_fraction, 0)
+  expect_lt(fit$restart$irlba_lbd_scout_matvec_overhead_fraction, 1)
   expect_certificate_clean(fit)
 })
 

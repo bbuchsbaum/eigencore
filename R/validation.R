@@ -374,6 +374,7 @@ run_irlba_lbd_one_sided_method <- function(A, rank, tol, seed = NULL) {
     max_subspace = initial_work,
     iterations = small$iterations,
     matvecs = small$matvecs,
+    accounted_seconds = sum(small$stage_seconds %||% NA_real_, na.rm = TRUE),
     warm_started = FALSE,
     certificate_passed = isTRUE(small$certificate$passed),
     max_backward_error = small$certificate$max_backward_error,
@@ -386,6 +387,7 @@ run_irlba_lbd_one_sided_method <- function(A, rank, tol, seed = NULL) {
       fallback$restart$max_subspace %||% fallback$iterations,
     iterations = fallback$iterations,
     matvecs = fallback$matvecs,
+    accounted_seconds = sum(fallback$stage_seconds %||% NA_real_, na.rm = TRUE),
     warm_started = !is.null(warm_start),
     certificate_passed = isTRUE(fallback$certificate$passed),
     max_backward_error = fallback$certificate$max_backward_error,
@@ -398,10 +400,20 @@ run_irlba_lbd_one_sided_method <- function(A, rank, tol, seed = NULL) {
   fallback$restart$irlba_lbd_small_work_certificate_passed <- FALSE
   fallback$restart$irlba_lbd_small_work_max_backward_error <-
     small$certificate$max_backward_error
+  fallback$restart$irlba_lbd_small_work_matvecs <- small$matvecs
+  fallback$restart$irlba_lbd_small_work_iterations <- small$iterations
+  fallback$restart$irlba_lbd_small_work_accounted_seconds <-
+    small_row$accounted_seconds[[1L]]
   fallback$restart$irlba_lbd_fallback_attempted <- TRUE
   fallback$restart$irlba_lbd_fallback_used <- TRUE
   fallback$restart$irlba_lbd_fallback_method <- "adaptive one-sided Golub-Kahan"
   fallback$restart$irlba_lbd_fallback_warm_started <- !is.null(warm_start)
+  fallback$restart$irlba_lbd_fallback_matvecs <- fallback$matvecs
+  fallback$restart$irlba_lbd_fallback_iterations <- fallback$iterations
+  fallback$restart$irlba_lbd_fallback_accounted_seconds <-
+    fallback_row$accounted_seconds[[1L]]
+  fallback$restart$irlba_lbd_scout_matvec_overhead_fraction <-
+    small$matvecs / max(1L, small$matvecs + fallback$matvecs)
   fallback$restart$fallback_attempted <- TRUE
   fallback$restart$fallback_used <- TRUE
   fallback$restart$fallback_method <- "adaptive one-sided Golub-Kahan"
