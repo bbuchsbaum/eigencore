@@ -620,7 +620,7 @@ Working status against the sequenced milestones:
 | G1 | green for structured tridiagonal default | The promoted default for symmetric tridiagonal sparse/diagonal Hermitian sources now uses the native selected tridiagonal LAPACK solver and tridiagonal residual certificate. Installed strict `path_laplacian:1000` evidence from 2026-06-05 certifies `20/20` and passes speed, memory, and PRIMME parity. Native block Hermitian Lanczos remains explicit/diagnostic rather than promoted. |
 | H | green for promoted tall/wide sparse gate | The executable `--h-candidate` gate targets the promoted `eigencore` SVD path again, with retained BPRO and block-GK rows kept as diagnostics. The tall-sparse production row avoids materializing the right Gram by using the bounded native `implicit_normal_lanczos` right-normal path and exact original-coordinate certificate diagnostics; the wide-sparse row remains on the certified native left-Gram special case. A warning-free installed 2026-06-05 3-iteration quick probe on `tall_sparse:600x90` and `wide_sparse:90x600` certified all five requested triplets and passed speed/memory (`1.194x` / `2.392x` tall, `1.223x` / `2.392x` wide versus the best certified references). Retained BPRO remains benchmark-visible but red, and broader sparse/matrix-free SVD remains a documented limitation rather than this H gate's promoted surface. |
 | I | scoped V1 gate green | Randomized SVD remains public reference-control code, but dense/CSC native fused sketch and projection kernels are active. The strict non-quick `exact_low_rank_dense:2000x500` release row passes against certified `rsvd` at about `3.1x`; quick and uncertified-baseline rows remain diagnostics. |
-| J | partial | Dense generalized `auto()` is demoted to the native dense LAPACK fallback until iterative gates pass. Native generalized SPD LOBPCG slices still exist for explicit/sparse/structured paths, explicitly SPD matrix-free `B`, constraints, and typed shifted-diagonal / shifted-tridiagonal preconditioners. Fresh focused non-quick evidence shows the sparse-smallest shifted-tridiagonal row certifies and passes speed/memory; current installed sparse-largest shifted-tridiagonal evidence uses a non-densifying largest-target shift, certifies, and passes memory but remains performance-red on speed, so sparse-largest and broader generalized production gates remain open. |
+| J | green for promoted sparse shifted-tridiagonal gate | Dense generalized `auto()` remains demoted to the native dense LAPACK fallback rather than an iterative LOBPCG promotion. The promoted native generalized SPD LOBPCG surface is the sparse shifted-tridiagonal path for largest and smallest targets, with explicit constraints, matrix-free `B`, and adversarial B cases retained as contract diagnostics. Installed 2026-06-05 non-quick strict evidence at `n = 1000`, `k = 10` certifies `10/10` for both sparse-smallest and sparse-largest without sparse densification, with native B-orthogonal kernels and shifted-tridiagonal preconditioner provenance. The saved full gate reports about `1.56x` / `1.67x` speed and `8.8x` / `25.0x` memory versus dense base for smallest/largest, and all native, generalized-Lanczos-reference, and adversarial-B contract rows pass. |
 | K | partial reference | Explicit generalized-SPD `lanczos()` requests now route to an honest reference B-orthogonal Lanczos refinement when `B` has a dense, diagonal, or CSC SPD solve. It passes focused adversarial B agreement with LOBPCG certificates, preserves B-orthogonality, and has a focused installed benchmark contract row, but native/block production promotion remains open. |
 | L | partial native | Dense standard, dense generalized-SPD, diagonal standard, sparse symmetric-tridiagonal standard, and sparse/diagonal tridiagonal generalized shift-invert now have native factorized Lanczos hot loops and original-problem certification; general sparse standard, general sparse/diagonal-metric generalized SPD, and user-supplied solve shift-invert remain on honest reference paths with focused installed benchmark contracts for sparse-LU or external-cache provenance and certificate honesty. |
 | M | done for path-Laplacian release surface | Native shifted-tridiagonal standard Hermitian LOBPCG passes the non-quick strict preconditioned gate on path Laplacians `n = 200, 1000, 2000`, `k = 5`; broader non-Laplacian preconditioned Hermitian policy remains future scope. |
@@ -1081,15 +1081,12 @@ Primary attack surfaces, in order:
    The next H work therefore must attack the amount of retained-restart
    projected work directly rather than assuming partial locking will appear on
    the release benchmark surface.
-2. **J generalized SPD LOBPCG promotion.** Broaden generalized
-   preconditioning beyond the typed shifted-diagonal, the certified
-   shifted-tridiagonal sparse-smallest case, and the now-certified but
-   performance-red-on-speed sparse-largest shifted-tridiagonal row with its
-   non-densifying largest-target shift policy, keep dense
-   generalized `auto()` on the dense LAPACK fallback until iterative gates are
-   green, keep the
-   benchmark B-orthogonality/native-path diagnostics green, keep the
-   adversarial B benchmark contract green, and promote the native path only
+2. **J generalized SPD LOBPCG follow-through.** Keep the promoted sparse
+   shifted-tridiagonal largest/smallest gate green at the installed `n = 1000`,
+   `k = 10` scale, keep dense generalized `auto()` on the dense LAPACK fallback
+   outside that sparse iterative surface, preserve the benchmark
+   B-orthogonality/native-path diagnostics, keep the adversarial B benchmark
+   contract green, and broaden generalized preconditioning only
    after sparse no-densification gates and the remaining production checks
    pass.
 3. **K generalized SPD Lanczos refinement.** The explicit reference scalar

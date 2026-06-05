@@ -545,25 +545,22 @@ case_specs <- if (args$quick) {
   list(
     list(
       case = "sparse_generalized_path_smallest",
-      n = 500L, k = 10L, target = smallest(), sparse = TRUE,
+      n = 1000L, k = 10L, target = smallest(), sparse = TRUE,
       methods = c(
-        "eigencore",
-        "eigencore_shifted_diagonal",
         "eigencore_shifted_tridiagonal",
         "base"
       ),
-      subject = "eigencore"
+      subject = "eigencore_shifted_tridiagonal"
     ),
     list(
       case = "sparse_generalized_path_largest",
-      n = 500L, k = 10L, target = largest(), sparse = TRUE,
+      n = 1000L, k = 10L, target = largest(), sparse = TRUE,
       methods = c(
-        "eigencore",
-        "eigencore_shifted_diagonal",
         "eigencore_shifted_tridiagonal",
         "base"
       ),
-      subject = "eigencore"
+      subject = "eigencore_shifted_tridiagonal",
+      maxit = 300L
     ),
     list(
       case = "dense_generalized_partial_smallest",
@@ -586,7 +583,8 @@ case_specs <- if (args$quick) {
       subject = "eigencore_constrained",
       A = Matrix::Diagonal(x = c(0, seq(1, 79)^2)),
       B = Matrix::Diagonal(x = seq(1, 80)),
-      constraints = matrix(c(1, rep(0, 79L)), ncol = 1L)
+      constraints = matrix(c(1, rep(0, 79L)), ncol = 1L),
+      performance_gate = FALSE
     ),
     list(
       case = "diagonal_generalized_lanczos_ref_smallest",

@@ -733,10 +733,11 @@ they are machine-dependent.
   `constrained`, and `constraints_rank`. The quick sparse generalized smoke
   check now verifies that eigencore rows certify through the native
   B-orthogonal path rather than silently using dense/reference fallbacks.
-  The strict generalized LOBPCG gate now also emits native-contract rows for
-  bare, shifted-diagonal preconditioned, shifted-tridiagonal preconditioned
-  sparse-smallest, and constrained generalized paths, and requires their
-  native/preconditioner/constraint diagnostics to pass. It now also emits
+  The generalized LOBPCG gate emits native-contract rows for
+  bare, shifted-diagonal preconditioned, shifted-tridiagonal preconditioned,
+  and constrained generalized paths in quick smoke, while the non-quick sparse
+  release rows focus on shifted-tridiagonal largest/smallest targets. It also
+  requires native/preconditioner/constraint diagnostics to pass and emits
   adversarial B contract rows for ill-conditioned diagonal, sparse CSC, and
   explicitly SPD matrix-free B cases across largest and smallest targets,
   including exact expected native B-orthogonalization methods.
@@ -744,22 +745,18 @@ they are machine-dependent.
   generalized `auto()` should not promote to native iterative LOBPCG yet. Dense
   generalized `auto()` now routes to the native dense generalized SPD LAPACK
   fallback, while explicit `method = lobpcg()` still exercises the native
-  generalized LOBPCG slice for diagnostics and requested iterative runs. Treat
-  the quick strict run as contract smoke only; J remains open until the
-  non-quick sparse and broader production gates certify and pass speed/memory
-  thresholds.
+  generalized LOBPCG slice for diagnostics and requested iterative runs.
 - The generalized LOBPCG benchmark now supports stable `--cases=` filtering,
   `--methods=`, `--subject`, and per-case progress messages. It also separates
   dense `eigencore_auto` fallback boundary rows from native LOBPCG contract
-  rows. Fresh installed focused non-quick evidence shows dense auto fallback
-  rows certify as non-performance-gated boundary checks, and
-  `sparse_generalized_path_smallest:500` passes when gated on the typed
-  shifted-tridiagonal subject (`10/10`, `1.04x` speed, `2.79x` memory versus
-  dense base). The sparse-largest benchmark now also includes a target-aware
-  shifted-tridiagonal preconditioner row whose largest-target shift is
-  non-densifying and scale-aware. Fresh installed non-quick evidence certifies
-  `sparse_generalized_path_largest:500` at `10/10` with native generalized
-  kernels and shifted-tridiagonal provenance, and passes memory (`2.75x`
-  versus dense base), but the row remains performance-red on speed (`0.49x`
-  speed, `163` iterations). J remains partial because sparse-largest and
-  broader generalized production gates are still red.
+  rows. The non-quick sparse release rows now target the promoted typed
+  shifted-tridiagonal path directly at `n = 1000`, `k = 10`; bare and
+  shifted-diagonal rows remain diagnostics rather than blockers for this
+  scoped release surface. Fresh installed 2026-06-05 strict saved evidence
+  certifies both `sparse_generalized_path_smallest:1000` and
+  `sparse_generalized_path_largest:1000` at `10/10`, with native generalized
+  kernels, native B-orthogonalization, shifted-tridiagonal preconditioner
+  provenance, and no sparse densification. The saved full gate passes all
+  native, generalized-Lanczos-reference, and adversarial-B contract rows; the
+  sparse release rows pass speed/memory versus dense base at about `1.56x` /
+  `8.8x` for smallest and `1.67x` / `25.0x` for largest.

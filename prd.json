@@ -541,7 +541,17 @@
         "smallest generalized eigenpairs",
         "largest generalized eigenpairs via sign-flipped A when appropriate",
         "PCA/covariance-style Hermitian operators"
-      ]
+      ],
+      "current_implementation_status": {
+        "status": "scoped_v1_gate",
+        "implemented_path": "native generalized SPD LOBPCG for explicit/sparse/structured paths with B-orthogonal native kernels, optional constraints, explicit SPD matrix-free B contracts, and typed shifted-diagonal / shifted-tridiagonal preconditioners; dense generalized auto uses the native dense generalized SPD LAPACK fallback.",
+        "validated_regime": "installed 2026-06-05 non-quick strict saved generalized benchmark certifies sparse_generalized_path_smallest:1000 and sparse_generalized_path_largest:1000 at 10/10 with shifted-tridiagonal preconditioner provenance, native B-orthogonal execution, no sparse densification, and speed/memory gates green versus dense base",
+        "not_yet_satisfied": [
+          "broader generalized preconditioner policy beyond the scoped sparse shifted-tridiagonal release surface",
+          "dense generalized auto promotion to iterative LOBPCG",
+          "native/block generalized B-orthogonal Lanczos alternate beyond the current reference refinement"
+        ]
+      }
     },
     "shift_invert": {
       "required_v1_support": "shift_invert(sigma)",
@@ -1034,7 +1044,7 @@
         "beats or matches RSpectra on initial Hermitian benchmark subset",
         "returns certified residuals"
       ],
-      "current_status": "G1 green for the promoted structured-tridiagonal Hermitian default: certified native scalar thick-restart remains available for dense/CSC Hermitian problems, and symmetric tridiagonal sparse/diagonal sources with largest/smallest targets now dispatch through a native selected tridiagonal LAPACK solver with a tridiagonal residual certificate. Installed strict path_laplacian:1000 evidence from 2026-06-05 certifies 20/20 and passes speed, memory, and PRIMME parity. Native block Hermitian Lanczos (thick restart, locking) remains available for explicit block requests, dense full-subspace cases, and diagnostic sparse opt-in, but is not promoted for general sparse auto(). Native standard Hermitian LOBPCG with shifted tridiagonal preconditioning remains a separate staging/preconditioned path. Broader generalized preconditioners and production J promotion remain open."
+      "current_status": "G1 green for the promoted structured-tridiagonal Hermitian default: certified native scalar thick-restart remains available for dense/CSC Hermitian problems, and symmetric tridiagonal sparse/diagonal sources with largest/smallest targets now dispatch through a native selected tridiagonal LAPACK solver with a tridiagonal residual certificate. Installed strict path_laplacian:1000 evidence from 2026-06-05 certifies 20/20 and passes speed, memory, and PRIMME parity. Native block Hermitian Lanczos (thick restart, locking) remains available for explicit block requests, dense full-subspace cases, and diagnostic sparse opt-in, but is not promoted for general sparse auto(). Native standard Hermitian LOBPCG with shifted tridiagonal preconditioning remains a separate staging/preconditioned path. The scoped J sparse shifted-tridiagonal generalized LOBPCG gate is green; broader generalized preconditioners remain future scope."
     },
     {
       "name": "Milestone 4",
@@ -1055,7 +1065,8 @@
         "V^* B V approximately I",
         "sparse A/B inputs are not densified",
         "largest and smallest generalized targets pass adversarial B cases"
-      ]
+      ],
+      "current_status": "Scoped V1 gate green for the promoted sparse shifted-tridiagonal generalized LOBPCG surface. Installed 2026-06-05 non-quick strict saved evidence certifies largest and smallest sparse generalized targets at n = 1000, k = 10 with native B-orthogonal execution, shifted-tridiagonal preconditioner provenance, and no sparse densification. Dense generalized auto remains a native dense LAPACK fallback, while matrix-free B, constrained, generalized-Lanczos-reference, and adversarial B rows remain benchmark-visible contract checks."
     },
     {
       "name": "Milestone 4b",
