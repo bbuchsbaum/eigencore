@@ -115,6 +115,12 @@ test_that("benchmark harness produces certificate-inclusive rows", {
     "irlba_lbd_bpro_max_post_append_orthogonality_loss",
     "irlba_lbd_bpro_basis_orthogonality_loss",
     "irlba_lbd_bpro_escalation_recommended",
+    "irlba_lbd_reorth_mode",
+    "irlba_lbd_one_sided_reorth_used",
+    "irlba_lbd_bpro_block_size",
+    "irlba_lbd_bpro_exact_orthogonality_loss",
+    "irlba_lbd_bpro_exact_orthogonality_passed",
+    "irlba_lbd_bpro_guard_fallback_reason",
     "irlba_lbd_retained_seed_strategy",
     "irlba_lbd_retained_from_scout",
     "irlba_lbd_retained_padding",
@@ -561,6 +567,8 @@ test_that("SVD surface H candidate preset selects retained native SVD subject", 
   expect_true("eigencore_irlba_lbd_one_sided" %in% methods)
   expect_true("eigencore_irlba_lbd_retained_native" %in% methods)
   expect_true("eigencore_irlba_lbd_retained_bpro" %in% methods)
+  expect_true("eigencore_irlba_lbd_retained_bpro_one_sided_guarded" %in% methods)
+  expect_true("eigencore_irlba_lbd_retained_bpro_block_guarded" %in% methods)
   expect_true("eigencore_irlba_lbd_normal_scout" %in% methods)
   expect_true("eigencore_golub_kahan_projected" %in% methods)
   expect_true("eigencore_implicit_normal_lanczos" %in% methods)
@@ -581,9 +589,13 @@ test_that("SVD surface H candidate preset selects retained native SVD subject", 
   expect_true("eigencore_irlba_lbd_one_sided" %in% svd_internal_methods())
   expect_true("eigencore_irlba_lbd_retained_native" %in% svd_internal_methods())
   expect_true("eigencore_irlba_lbd_retained_bpro" %in% svd_internal_methods())
+  expect_true("eigencore_irlba_lbd_retained_bpro_one_sided_guarded" %in% svd_internal_methods())
+  expect_true("eigencore_irlba_lbd_retained_bpro_block_guarded" %in% svd_internal_methods())
   expect_true("eigencore_irlba_lbd_normal_scout" %in% svd_internal_methods())
 
   default_methods <- svd_surface_default_methods(benchmark_args(character()))
+  expect_false("eigencore_irlba_lbd_retained_bpro_one_sided_guarded" %in% default_methods)
+  expect_false("eigencore_irlba_lbd_retained_bpro_block_guarded" %in% default_methods)
   expect_false("eigencore_block_golub_kahan_retained" %in% default_methods)
   expect_false("eigencore_block_golub_kahan_retained_cached" %in% default_methods)
 
@@ -620,6 +632,53 @@ test_that("SVD surface H candidate preset selects retained native SVD subject", 
     ),
     "Requested SVD benchmark method"
   )
+})
+
+test_that("SVD benchmark exposes guarded BPRO diagnostic rows", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_if_not_installed("bench")
+
+  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
+  if (!nzchar(helper_path)) {
+    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
+  }
+  source(helper_path)
+
+  set.seed(702)
+  A <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))
+  rows <- benchmark_svd_case(
+    A,
+    rank = 5L,
+    methods = c(
+      "eigencore_irlba_lbd_retained_bpro_one_sided_guarded",
+      "eigencore_irlba_lbd_retained_bpro_block_guarded"
+    ),
+    iterations = 1L,
+    seed = 702L
+  )
+
+  one_sided <- rows[
+    rows$method == "eigencore_irlba_lbd_retained_bpro_one_sided_guarded",
+    ,
+    drop = FALSE
+  ]
+  block <- rows[
+    rows$method == "eigencore_irlba_lbd_retained_bpro_block_guarded",
+    ,
+    drop = FALSE
+  ]
+  expect_true(one_sided$certificate_passed)
+  expect_true(block$certificate_passed)
+  expect_identical(one_sided$irlba_lbd_reorth_mode, "bpro_one_sided_guarded")
+  expect_identical(block$irlba_lbd_reorth_mode, "bpro_block_guarded")
+  expect_true(one_sided$irlba_lbd_one_sided_reorth_used)
+  expect_false(block$irlba_lbd_one_sided_reorth_used)
+  expect_equal(one_sided$irlba_lbd_bpro_block_size, 1L)
+  expect_equal(block$irlba_lbd_bpro_block_size, 5L)
+  expect_true(one_sided$irlba_lbd_bpro_exact_orthogonality_passed)
+  expect_true(block$irlba_lbd_bpro_exact_orthogonality_passed)
+  expect_true(is.na(one_sided$irlba_lbd_bpro_guard_fallback_reason))
+  expect_true(is.na(block$irlba_lbd_bpro_guard_fallback_reason))
 })
 
 test_that("SVD benchmark harness exposes Golub-Kahan candidate separately", {

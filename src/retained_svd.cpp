@@ -1428,7 +1428,7 @@ static void validate_irlba_lbd_retained_contract(int m, int n,
   if (!R_FINITE(tol) || tol <= 0.0) {
     error("tol must be a positive finite scalar");
   }
-  if (reorth_policy < 1 || reorth_policy > 3) {
+  if (reorth_policy < 1 || reorth_policy > 5) {
     error("reorth_policy must identify a known retained IRLBA/LBD policy");
   }
   validate_real_vector_length(initial_start_, n, "initial_start");
@@ -2213,10 +2213,13 @@ static SEXP irlba_lbd_retained_impl(ConfigureOperator configure_operator,
   (void) beta;
   const int attempts = (max_restarts < 0) ? 1 : max_restarts + 1;
   const int random_tail_cols = work - retained;
+  const int one_sided_policy = (reorth_policy == 1 || reorth_policy == 4);
+  const int bpro_policy =
+    (reorth_policy == 3 || reorth_policy == 4 || reorth_policy == 5);
   const int reorthogonalize_u =
-    (reorth_policy != 1) || (m <= n);
+    (!one_sided_policy) || (m <= n);
   const int reorthogonalize_v =
-    (reorth_policy != 1) || (n <= m);
+    (!one_sided_policy) || (n <= m);
   const int use_blas_reorthogonalization = 0;
   const int enable_projected_stop = 0;
   const double native_workspace_bytes =
@@ -2234,7 +2237,7 @@ static SEXP irlba_lbd_retained_impl(ConfigureOperator configure_operator,
     augmented_impl, augmented_apply, m, n, initial_start, retained_right,
     retained_left, random_tails, work, retained, max_restarts, rank,
     target_kind, tol, reorthogonalize_u, reorthogonalize_v,
-    native_workspace_bytes, reorth_policy == 3 ? 1 : 0
+    native_workspace_bytes, bpro_policy
   ));
   if (augmented_ != R_NilValue) {
     UNPROTECT(1);

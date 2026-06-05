@@ -129,6 +129,13 @@ they are machine-dependent.
   reason. These are hard locks only after the exact two-sided SVD certificate;
   `retained_deflation = FALSE` remains explicit, so this is H diagnostic
   evidence rather than production SVD promotion.
+- Added two opt-in retained IRLBA/LBD BPRO diagnostic modes:
+  `eigencore_irlba_lbd_retained_bpro_one_sided_guarded` and
+  `eigencore_irlba_lbd_retained_bpro_block_guarded`. They are benchmark-visible
+  under the H candidate surface but not default methods. Their rows expose
+  reorth mode, one-sided reorth use, block size, exact orthogonality loss/pass,
+  and guard fallback reason, and both still accept only the final exact SVD
+  certificate.
 - Fresh installed-package Hermitian gate evidence was collected on 2026-05-17
   using
   `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-native-hermitian-gate.R --quick --include-dense --strict --save`.

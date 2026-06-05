@@ -126,7 +126,9 @@ native_irlba_lbd_restart_abi <- function(op, rank, target = largest(),
                                          reorth_policy = c(
                                            "one_sided_small_side",
                                            "full_two_sided",
-                                           "bpro_two_sided"
+                                           "bpro_two_sided",
+                                           "bpro_one_sided_guarded",
+                                           "bpro_block_guarded"
                                          )) {
   reorth_policy <- match.arg(reorth_policy)
   op <- as_operator(op)
@@ -407,6 +409,70 @@ native_irlba_lbd_attach_lock_diagnostics <- function(restart, certificate, rank,
 }
 
 #' @keywords internal
+native_irlba_lbd_bpro_guard_diagnostics <- function(abi, native, certificate,
+                                                    fallback_used = FALSE,
+                                                    fallback_reason = NA_character_) {
+  mode <- abi$reorth_policy %||% NA_character_
+  bpro_mode <- mode %in% c(
+    "bpro_two_sided",
+    "bpro_one_sided_guarded",
+    "bpro_block_guarded"
+  )
+  reorthogonalize_u <- if (is.null(native)) {
+    NA
+  } else {
+    as.logical(native$reorthogonalize_u)
+  }
+  reorthogonalize_v <- if (is.null(native)) {
+    NA
+  } else {
+    as.logical(native$reorthogonalize_v)
+  }
+  one_sided_used <- isTRUE(bpro_mode) &&
+    identical(mode, "bpro_one_sided_guarded") &&
+    !isTRUE(fallback_used) &&
+    xor(isTRUE(reorthogonalize_u), isTRUE(reorthogonalize_v))
+  block_size <- if (!isTRUE(bpro_mode)) {
+    NA_integer_
+  } else if (identical(mode, "bpro_block_guarded")) {
+    as.integer(min(abi$rank, abi$retained))
+  } else {
+    1L
+  }
+  guard_reason <- if (isTRUE(fallback_used)) {
+    fallback_reason %||% "guarded BPRO native attempt fell back"
+  } else if (isTRUE(bpro_mode) && !isTRUE(certificate$orthogonality_passed)) {
+    "exact SVD orthogonality guard failed"
+  } else {
+    NA_character_
+  }
+  list(
+    irlba_lbd_reorth_mode = mode,
+    irlba_lbd_one_sided_reorth_used = isTRUE(one_sided_used),
+    irlba_lbd_bpro_block_size = block_size,
+    irlba_lbd_bpro_exact_orthogonality_loss =
+      certificate$max_orthogonality_loss %||% NA_real_,
+    irlba_lbd_bpro_exact_orthogonality_passed =
+      isTRUE(certificate$orthogonality_passed),
+    irlba_lbd_bpro_guard_fallback_reason = guard_reason
+  )
+}
+
+#' @keywords internal
+native_irlba_lbd_attach_bpro_guard_diagnostics <- function(restart, abi, native,
+                                                           certificate,
+                                                           fallback_used = FALSE,
+                                                           fallback_reason = NA_character_) {
+  c(restart, native_irlba_lbd_bpro_guard_diagnostics(
+    abi = abi,
+    native = native,
+    certificate = certificate,
+    fallback_used = fallback_used,
+    fallback_reason = fallback_reason
+  ))
+}
+
+#' @keywords internal
 native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
                                           tol = 1e-8,
                                           work = NULL,
@@ -416,7 +482,9 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
                                           reorth_policy = c(
                                             "one_sided_small_side",
                                             "full_two_sided",
-                                            "bpro_two_sided"
+                                            "bpro_two_sided",
+                                            "bpro_one_sided_guarded",
+                                            "bpro_block_guarded"
                                           )) {
   vectors <- match.arg(vectors)
   reorth_policy <- match.arg(reorth_policy)
@@ -510,6 +578,12 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
       rank = rank,
       source = "exact_scout_certificate"
     )
+    final$restart <- native_irlba_lbd_attach_bpro_guard_diagnostics(
+      final$restart,
+      abi = abi,
+      native = NULL,
+      certificate = final$certificate
+    )
     return(native_irlba_lbd_select_vectors(final, vectors))
   }
   retained_right <- native_irlba_lbd_pad_basis(
@@ -535,7 +609,13 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
   )
   reorth_code <- match(
     reorth_policy,
-    c("one_sided_small_side", "full_two_sided", "bpro_two_sided")
+    c(
+      "one_sided_small_side",
+      "full_two_sided",
+      "bpro_two_sided",
+      "bpro_one_sided_guarded",
+      "bpro_block_guarded"
+    )
   )
 
   native <- tryCatch(
@@ -868,6 +948,14 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
     source = "exact_fallback_certificate",
     fallback_reason = fallback_reason
   )
+  fallback$restart <- native_irlba_lbd_attach_bpro_guard_diagnostics(
+    fallback$restart,
+    abi = abi,
+    native = if (!inherits(native, "eigencore_irlba_lbd_native_error")) native else NULL,
+    certificate = fallback$certificate,
+    fallback_used = TRUE,
+    fallback_reason = fallback_reason
+  )
   native_irlba_lbd_select_vectors(fallback, vectors)
 }
 
@@ -1067,11 +1155,19 @@ native_irlba_lbd_restart_diagnostics <- function(abi, native, small, final,
     zero_singular_threshold = final$zero_singular_threshold %||% NA_real_,
     certified_in_original_coordinates = TRUE
   )
-  native_irlba_lbd_attach_lock_diagnostics(
+  restart <- native_irlba_lbd_attach_lock_diagnostics(
     restart,
     final$certificate,
     rank = abi$rank,
     source = "exact_retained_restart_certificate",
+    fallback_reason = fallback_reason
+  )
+  native_irlba_lbd_attach_bpro_guard_diagnostics(
+    restart,
+    abi = abi,
+    native = native,
+    certificate = final$certificate,
+    fallback_used = fallback_used,
     fallback_reason = fallback_reason
   )
 }

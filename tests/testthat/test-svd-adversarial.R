@@ -483,6 +483,63 @@ test_that("retained IRLBA BPRO policy certifies with monitored partial reorthogo
   expect_certificate_clean(bpro)
 })
 
+test_that("guarded retained IRLBA BPRO modes expose exact orthogonality guard diagnostics", {
+  set.seed(702)
+  wide <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))
+  one_sided <- eigencore:::run_svd_method(
+    "eigencore_irlba_lbd_retained_bpro_one_sided_guarded",
+    wide,
+    rank = 5L,
+    tol = 1e-8,
+    seed = 702L
+  )
+  block <- eigencore:::run_svd_method(
+    "eigencore_irlba_lbd_retained_bpro_block_guarded",
+    wide,
+    rank = 5L,
+    tol = 1e-8,
+    seed = 702L
+  )
+
+  expect_true(one_sided$certificate$passed)
+  expect_identical(
+    one_sided$restart$irlba_lbd_reorth_mode,
+    "bpro_one_sided_guarded"
+  )
+  expect_true(one_sided$restart$irlba_lbd_bpro_policy)
+  expect_true(xor(
+    one_sided$restart$reorthogonalize_u,
+    one_sided$restart$reorthogonalize_v
+  ))
+  expect_true(one_sided$restart$irlba_lbd_one_sided_reorth_used)
+  expect_equal(one_sided$restart$irlba_lbd_bpro_block_size, 1L)
+  expect_true(one_sided$restart$irlba_lbd_bpro_exact_orthogonality_passed)
+  expect_lte(
+    one_sided$restart$irlba_lbd_bpro_exact_orthogonality_loss,
+    one_sided$certificate$orthogonality_tolerance
+  )
+  expect_true(is.na(one_sided$restart$irlba_lbd_bpro_guard_fallback_reason))
+  expect_certificate_clean(one_sided)
+
+  expect_true(block$certificate$passed)
+  expect_identical(
+    block$restart$irlba_lbd_reorth_mode,
+    "bpro_block_guarded"
+  )
+  expect_true(block$restart$irlba_lbd_bpro_policy)
+  expect_false(block$restart$irlba_lbd_one_sided_reorth_used)
+  expect_true(block$restart$reorthogonalize_u)
+  expect_true(block$restart$reorthogonalize_v)
+  expect_equal(block$restart$irlba_lbd_bpro_block_size, 5L)
+  expect_true(block$restart$irlba_lbd_bpro_exact_orthogonality_passed)
+  expect_lte(
+    block$restart$irlba_lbd_bpro_exact_orthogonality_loss,
+    block$certificate$orthogonality_tolerance
+  )
+  expect_true(is.na(block$restart$irlba_lbd_bpro_guard_fallback_reason))
+  expect_certificate_clean(block)
+})
+
 test_that("retained IRLBA BPRO augmented restart covers clustered and slow-decay fixtures", {
   make_fixture <- function(m, n, values, seed) {
     set.seed(seed)

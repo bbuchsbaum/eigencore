@@ -972,6 +972,20 @@ Primary attack surfaces, in order:
    explicit because this slice does not claim operator deflation. It remains
    diagnostic because total time and memory are still red versus certified
    `RSpectra` and direct one-sided GK.
+   Two additional opt-in guarded BPRO diagnostic modes are now exposed for H
+   benchmarking and are not used by default:
+   `eigencore_irlba_lbd_retained_bpro_one_sided_guarded` and
+   `eigencore_irlba_lbd_retained_bpro_block_guarded`. They reuse the retained
+   residual-augmented projection, accept only the exact final SVD certificate,
+   and record `irlba_lbd_reorth_mode`,
+   `irlba_lbd_one_sided_reorth_used`, `irlba_lbd_bpro_block_size`,
+   `irlba_lbd_bpro_exact_orthogonality_loss`,
+   `irlba_lbd_bpro_exact_orthogonality_passed`, and
+   `irlba_lbd_bpro_guard_fallback_reason`. On the H-shaped
+   `wide_sparse:90x600` probe both certify without fallback; the one-sided
+   mode records right-side-only reorthogonalization, and the block-guarded
+   mode records block size 5. This is guard/diagnostic plumbing, not H
+   promotion.
    A separate normal-scout diagnostic, `eigencore_irlba_lbd_normal_scout`,
    runs bounded matrix-free normal scouts at 8/12/16/20 steps and uses the
    selected scout only as a warm start for certified one-sided LBD polish. The
