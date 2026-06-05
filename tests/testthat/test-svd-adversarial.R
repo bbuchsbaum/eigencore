@@ -611,6 +611,8 @@ test_that("retained IRLBA residual-augmented path certifies a larger sparse wide
   expect_false(fit$restart$fallback_used)
   expect_identical(fit$restart$irlba_lbd_restart_state_kind, "residual_augmented_projection")
   expect_true(fit$restart$irlba_lbd_augmented_recurrence)
+  expect_true(fit$restart$irlba_lbd_native_certificate_diagnostics_reused)
+  expect_true(fit$restart$irlba_lbd_native_certificate_diagnostics_swapped)
   expect_lte(fit$certificate$max_backward_error, 1e-8)
   expect_gte(fit$restart$irlba_lbd_augmented_basis_cols, 40L)
   expect_certificate_clean(fit)
@@ -808,6 +810,12 @@ test_that("retained IRLBA LBD native ABI entry points are registered", {
   expect_equal(dense_out$d, c(6, 4), tolerance = 1e-10)
   expect_equal(csc_out$d, c(6, 4), tolerance = 1e-10)
   expect_true(is.data.frame(dense_out$attempt_history))
+  expect_true("certificate_diagnostics" %in% names(dense_out))
+  expect_true(all(c(
+    "left", "right", "combined", "backward_error",
+    "orthogonality", "scale", "converged"
+  ) %in% names(dense_out$certificate_diagnostics)))
+  expect_true(all(dense_out$certificate_diagnostics$converged))
   expect_lte(nrow(dense_out$attempt_history), 2L)
   expect_true(any(isTRUE(dense_out$attempt_history$certificate_passed)))
   expect_equal(dense_out$restart_count, 1L)

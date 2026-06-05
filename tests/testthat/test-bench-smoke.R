@@ -106,6 +106,8 @@ test_that("benchmark harness produces certificate-inclusive rows", {
     "irlba_lbd_augmented_min_cheap_residual",
     "irlba_lbd_augmented_final_cheap_residual",
     "irlba_lbd_augmented_reduces_from_scratch_work",
+    "irlba_lbd_native_certificate_diagnostics_reused",
+    "irlba_lbd_native_certificate_diagnostics_swapped",
     "irlba_lbd_bpro_policy",
     "irlba_lbd_bpro_passes_per_append",
     "irlba_lbd_bpro_monitoring_threshold",

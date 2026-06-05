@@ -2236,10 +2236,19 @@ static SEXP irlba_lbd_augmented_retained_projection(
     &attempt_cheap_residuals, &attempt_certificate_passed,
     &attempt_max_backward_error, &attempt_max_residual
   ));
+  SEXP tol_ = PROTECT(ScalarReal(tol));
+  SEXP cert_diag_ = PROTECT(native_operator_svd_certificate_cached_av(
+    impl, apply, m, n, norm_A,
+    VECTOR_ELT(ritz_, 0),
+    VECTOR_ELT(ritz_, 1),
+    VECTOR_ELT(ritz_, 2),
+    VECTOR_ELT(ritz_, 3),
+    tol_
+  ));
 
   const int from_scratch_matvecs = 2 * retained_core + 2 * tail_steps_taken + q_cols;
   const int cached_matvec_savings = from_scratch_matvecs - matvecs;
-  SEXP out_ = PROTECT(allocVector(VECSXP, 42));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 43));
   const double augmented_workspace_bytes =
     static_cast<double>(sizeof(double)) *
     static_cast<double>(
@@ -2296,7 +2305,8 @@ static SEXP irlba_lbd_augmented_retained_projection(
   SET_VECTOR_ELT(out_, 39, ScalarReal(min_cheap_residual));
   SET_VECTOR_ELT(out_, 40, ScalarReal(final_cheap_residual));
   SET_VECTOR_ELT(out_, 41, ScalarLogical(cached_matvec_savings > 0 ? 1 : 0));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 42));
+  SET_VECTOR_ELT(out_, 42, cert_diag_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 43));
   SET_STRING_ELT(names_, 0, mkChar("d"));
   SET_STRING_ELT(names_, 1, mkChar("u"));
   SET_STRING_ELT(names_, 2, mkChar("v"));
@@ -2339,8 +2349,9 @@ static SEXP irlba_lbd_augmented_retained_projection(
   SET_STRING_ELT(names_, 39, mkChar("augmented_min_cheap_residual"));
   SET_STRING_ELT(names_, 40, mkChar("augmented_final_cheap_residual"));
   SET_STRING_ELT(names_, 41, mkChar("augmented_reduces_from_scratch_work"));
+  SET_STRING_ELT(names_, 42, mkChar("certificate_diagnostics"));
   setAttrib(out_, R_NamesSymbol, names_);
-  UNPROTECT(4);
+  UNPROTECT(6);
   return out_;
 }
 

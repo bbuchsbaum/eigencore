@@ -974,8 +974,19 @@ Primary attack surfaces, in order:
    steps / `46` columns / `8` small SVDs / `92` retained matvecs. A direct
    seed-702 probe certifies even earlier at `30` tail steps and `72` retained
    matvecs, while the larger `200x2000` sparse-wide fixture checks `30`, `35`,
-   and `40` tail steps and preserves the full-budget certified result. It now
-   also exposes exact-certified final lock diagnostics:
+   and `40` tail steps and preserves the full-budget certified result. The
+   retained IRLBA/LBD native result now carries cached-`A V` certificate
+   diagnostics across the C/R boundary, and the R wrapper builds the standard
+   certificate from that payload instead of recomputing the active certificate.
+   For internally transposed wide operators, the wrapper swaps left/right
+   residual sides and U/V orthogonality so the final certificate remains in
+   original coordinates without a second operator pass. The benchmark surface
+   exposes `irlba_lbd_native_certificate_diagnostics_reused` and
+   `irlba_lbd_native_certificate_diagnostics_swapped`; a source-loaded
+   `wide_sparse:90x600` one-iteration retained-BPRO row reports both as `TRUE`
+   with certificate phase time around `3.5us`, while still remaining red versus
+   certified `RSpectra` on total time and memory. It now also exposes
+   exact-certified final lock diagnostics:
    `retained_locked_count`, `irlba_lbd_soft_locked_count`,
    `irlba_lbd_hard_locked_count`,
    `irlba_lbd_locked_triplets_certified`,

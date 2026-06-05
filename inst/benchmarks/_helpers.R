@@ -1483,6 +1483,10 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
         result_restart_numeric(fit, "irlba_lbd_augmented_final_cheap_residual"),
       irlba_lbd_augmented_reduces_from_scratch_work =
         result_restart_logical(fit, "irlba_lbd_augmented_reduces_from_scratch_work"),
+      irlba_lbd_native_certificate_diagnostics_reused =
+        result_restart_logical(fit, "irlba_lbd_native_certificate_diagnostics_reused"),
+      irlba_lbd_native_certificate_diagnostics_swapped =
+        result_restart_logical(fit, "irlba_lbd_native_certificate_diagnostics_swapped"),
       irlba_lbd_bpro_policy =
         result_restart_logical(fit, "irlba_lbd_bpro_policy"),
       irlba_lbd_bpro_passes_per_append =

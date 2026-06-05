@@ -473,6 +473,42 @@ native_irlba_lbd_attach_bpro_guard_diagnostics <- function(restart, abi, native,
 }
 
 #' @keywords internal
+native_svd_certificate_from_diagnostics <- function(diagnostics, tol,
+                                                    norm_info,
+                                                    swap_sides = FALSE) {
+  if (is.null(diagnostics)) {
+    return(NULL)
+  }
+  left <- diagnostics$left
+  right <- diagnostics$right
+  orthogonality <- diagnostics$orthogonality
+  if (isTRUE(swap_sides)) {
+    left <- diagnostics$right
+    right <- diagnostics$left
+    if (length(orthogonality) >= 2L) {
+      orthogonality <- c(
+        U = unname(orthogonality[[2L]]),
+        V = unname(orthogonality[[1L]])
+      )
+    }
+  }
+  new_certificate(
+    tol = tol,
+    residuals = list(
+      left = left,
+      right = right,
+      combined = diagnostics$combined
+    ),
+    backward_error = diagnostics$backward_error,
+    orthogonality = orthogonality,
+    converged = diagnostics$converged,
+    scale = diagnostics$scale,
+    norm_bound_type = norm_info$norm_bound_type %||% "unspecified",
+    scale_is_estimate = isTRUE(norm_info$scale_is_estimate)
+  )
+}
+
+#' @keywords internal
 native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
                                           tol = 1e-8,
                                           work = NULL,
@@ -645,7 +681,23 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
   if (inherits(native, "eigencore_irlba_lbd_native_error")) {
     fallback_reason <- native$error
   } else {
-    cert <- certify_svd_operator(active_op, native$d, native$u, native$v, tol = tol)
+    native_certificate_reused <- FALSE
+    native_certificate_swapped <- FALSE
+    native_diag <- native[["certificate_diagnostics", exact = TRUE]]
+    cert <- if (is.null(native_diag)) {
+      NULL
+    } else {
+      native_svd_certificate_from_diagnostics(
+        native_diag,
+        tol = tol,
+        norm_info = operator_norm_for_certificate_info(active_op)
+      )
+    }
+    if (is.null(cert)) {
+      cert <- certify_svd_operator(active_op, native$d, native$u, native$v, tol = tol)
+    } else {
+      native_certificate_reused <- TRUE
+    }
     final <- list(
       d = native$d,
       u = native$u,
@@ -657,8 +709,18 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
       certificate = cert
     )
     final <- complete_zero_singular_triplets(active_op, final, rank, target, tol)
+    if (isTRUE(final$zero_singular_completion)) {
+      native_diag <- NULL
+      native_certificate_reused <- FALSE
+    }
     if (isTRUE(abi$internal_transposed)) {
-      final <- native_golub_kahan_swap_transposed_result(original_op, final, tol)
+      native_certificate_swapped <- !is.null(native_diag)
+      final <- native_golub_kahan_swap_transposed_result(
+        original_op,
+        final,
+        tol,
+        certificate_diagnostics = native_diag
+      )
     }
     final$iterations <- native$iterations + small$iterations
     final$matvecs <- native$matvecs + small$matvecs
@@ -686,7 +748,9 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
       final = final,
       fallback_attempted = FALSE,
       fallback_used = FALSE,
-      fallback_reason = NA_character_
+      fallback_reason = NA_character_,
+      native_certificate_reused = native_certificate_reused,
+      native_certificate_swapped = native_certificate_swapped
     )
     if (isTRUE(final$certificate$passed)) {
       return(native_irlba_lbd_select_vectors(final, vectors))
@@ -1041,7 +1105,9 @@ native_irlba_lbd_retained_call <- function(active_source, initial_start,
 native_irlba_lbd_restart_diagnostics <- function(abi, native, small, final,
                                                  fallback_attempted,
                                                  fallback_used,
-                                                 fallback_reason) {
+                                                 fallback_reason,
+                                                 native_certificate_reused = FALSE,
+                                                 native_certificate_swapped = FALSE) {
   restart <- list(
     kind = "irlba_lbd_native_retained_core",
     implemented = TRUE,
@@ -1107,6 +1173,10 @@ native_irlba_lbd_restart_diagnostics <- function(abi, native, small, final,
       native$augmented_final_cheap_residual %||% NA_real_,
     irlba_lbd_augmented_reduces_from_scratch_work =
       isTRUE(native$augmented_reduces_from_scratch_work),
+    irlba_lbd_native_certificate_diagnostics_reused =
+      isTRUE(native_certificate_reused),
+    irlba_lbd_native_certificate_diagnostics_swapped =
+      isTRUE(native_certificate_swapped),
     irlba_lbd_bpro_policy = isTRUE(native$bpro_policy),
     irlba_lbd_bpro_passes_per_append =
       native$bpro_reorthogonalization_passes_per_append %||% NA_integer_,
@@ -1546,13 +1616,22 @@ native_golub_kahan_transpose_source <- function(op) {
 }
 
 #' @keywords internal
-native_golub_kahan_swap_transposed_result <- function(original_op, final, tol) {
+native_golub_kahan_swap_transposed_result <- function(original_op, final, tol,
+                                                      certificate_diagnostics = NULL) {
   if (is.null(final$u) || is.null(final$v)) {
     return(final)
   }
   u <- final$v
   v <- final$u
-  cert <- certify_svd_operator(original_op, final$d, u, v, tol = tol)
+  cert <- native_svd_certificate_from_diagnostics(
+    certificate_diagnostics,
+    tol = tol,
+    norm_info = final$certificate,
+    swap_sides = TRUE
+  )
+  if (is.null(cert)) {
+    cert <- certify_svd_operator(original_op, final$d, u, v, tol = tol)
+  }
   final$u <- u
   final$v <- v
   final$residuals <- cert$residuals
