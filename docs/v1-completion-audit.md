@@ -39,7 +39,7 @@ V1 is complete only when all of these deliverables are true at the same time:
 | J generalized SPD LOBPCG | `inst/benchmarks/bench-generalized-lobpcg.R` | Sparse smallest/largest production gate passes with native generalized/B-orthogonal/shifted-tridiagonal provenance, while fallback/reference rows remain honestly labelled. | Green for the promoted sparse shifted-tridiagonal surface. Installed 2026-06-05 full strict saved evidence certifies `10/10` for both sparse-smallest and sparse-largest at `n = 1000`, passes speed/memory versus dense base, and keeps native, generalized-Lanczos-reference, constrained, matrix-free-B, and adversarial-B contract rows green. Dense generalized `auto()` remains a native dense LAPACK fallback boundary rather than a broader iterative promotion. |
 | K generalized SPD Lanczos | `R/reference_generalized_lanczos.R`, generalized benchmark K rows | Native/block alternate has production benchmark evidence, or reference label remains explicit. | Partial reference only. Dense/diagonal/CSC metric solves are honestly labelled reference refinements. |
 | L shift-invert | `R/transform_shift_invert.R`, `inst/benchmarks/bench-shift-invert.R` | Native labels cover claimed factorization paths; general sparse/user-solve boundaries remain honest. | Green for the scoped V1 surface. Installed 2026-06-05 strict saved evidence passes all eight native/reference contract rows, with dense/diagonal/tridiagonal native factorized Lanczos rows certifying in original coordinates and general sparse/user-solve rows retaining honest reference/cache provenance. |
-| Nonsymmetric eigen | `R/reference_arnoldi.R`, `inst/benchmarks/bench-nonsymmetric.R` | Dense/native-CSC Arnoldi compatibility and matrix-free reference labels are distinguished. | Compatibility-grade green for current labels; production-grade fully native restarted Arnoldi remains open. |
+| Nonsymmetric eigen | `R/reference_arnoldi.R`, `inst/benchmarks/bench-nonsymmetric.R` | Dense/native-CSC Arnoldi compatibility and matrix-free reference labels are distinguished. | Green for the scoped V1 compatibility surface on fresh 2026-06-05 installed evidence; fully restarted matrix-free native Arnoldi is future scope. |
 | Certificates and result contracts | `R/certification.R`, `tests/testthat/test-validation.R`, `tests/testthat/test-result-contracts.R` | Estimated-scale certificates cannot mark `passed`; diagnostics/accessors are stable across current families. | Covered for current paths; re-audit after new certificate constructors or solver promotions. |
 | Benchmark manifest | `docs/v1-benchmark-manifest.md` | Every release surface maps to installed commands, saved artifact names, and current gate status. | Present but not signoff because red rows remain. |
 | Documentation scope | `docs/v1-doc-scope-audit.md`, README, vignettes, migration docs, limitations docs | User-facing docs match the final solver surface and open limitations. | Partial. Current docs are mapped; README/vignette refresh remains blocked by final gate decisions. |
@@ -50,11 +50,11 @@ V1 is complete only when all of these deliverables are true at the same time:
 
 Current decision: **not V1 ready**.
 
-The blocking requirements are K native production promotion, production-grade
-nonsymmetric Arnoldi, final sanitizer/valgrind-style coverage, final benchmark
-artifacts, and final README/vignette refresh. Passing tests and `R CMD check`
-are necessary but not sufficient because they do not cover the remaining
-benchmark gates or release hardening blockers.
+The blocking requirements are K native production promotion, final
+sanitizer/valgrind-style coverage, final benchmark artifacts, and final
+README/vignette refresh. Passing tests and `R CMD check` are necessary but not
+sufficient because they do not cover the remaining benchmark gates or release
+hardening blockers.
 
 ## Stop Rule
 

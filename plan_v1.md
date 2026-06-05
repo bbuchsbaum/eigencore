@@ -574,8 +574,9 @@ Hermitian benchmark scripts enforce certification only, while non-quick
   materialization. This covers non-normal real-spectrum cases plus sparse CSC
   complex conjugate pairs under largest-real/imaginary/magnitude target
   taxonomy; dense and sparse CSC `eigs(..., which = "LI")` now use native
-  Arnoldi compatibility. Production-grade fully native restarted Arnoldi
-  remains open.
+  Arnoldi compatibility. Fresh installed 2026-06-05 nonsymmetric evidence
+  closes the scoped V1 compatibility gate for explicit dense/CSC matrices;
+  fully restarted matrix-free native Arnoldi remains future scope.
 - a property-based test grid now runs under `NOT_CRAN=true` covering Hermitian
   and SVD certificate residual contracts across 5 spectrum patterns
   (`uniform`, `clustered`, `exponential`, `geometric`, `two_cluster`),

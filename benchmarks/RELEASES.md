@@ -94,8 +94,9 @@ they are machine-dependent.
   remain solver-local.
 - Added `docs/v1-readiness-audit.md` as the release-hardening checklist that
   maps each PRD/plan gate to current evidence, verification commands, and
-  blockers. It records that V1 is not release-ready while H, I, J, K, sparse
-  shift-invert, nonsymmetric Arnoldi, and release-hardening checks remain open.
+  blockers. It now records that H, I, J, L, and nonsymmetric compatibility are
+  green on fresh installed evidence while K and release-hardening checks remain
+  open.
 - Added `docs/v1-benchmark-manifest.md` as the benchmark inventory for the V1
   audit. It maps each release surface to the installed-package command, saved
   artifacts, gate meaning, and current red/green status so benchmark evidence
@@ -105,9 +106,8 @@ they are machine-dependent.
 - Added `docs/v1-completion-audit.md` as the final stop-rule checklist for the
   active V1 readiness goal. It restates the deliverables, maps each prompt
   requirement to concrete artifacts and evidence, and records the current
-  decision as not V1 ready while H, I, J, K, sparse-native L,
-  production-grade nonsymmetric Arnoldi, sanitizer/valgrind-style coverage,
-  final benchmark artifacts, and final README/vignette refresh remain open.
+  decision as not V1 ready while K, sanitizer/valgrind-style coverage, final
+  benchmark artifacts, and final README/vignette refresh remain open.
 - Added migration-facing release-hardening docs:
   `docs/rspectra-migration.md` for the RSpectra shim contract and
   `docs/known-limitations.md` for the current non-V1 solver and validation
@@ -618,11 +618,11 @@ they are machine-dependent.
   pretending a dense oracle could service matrix-free operators or silently
   densifying sparse general matrices when a Krylov path was available. The
   path carried nonnative restart diagnostics and right-residual certification;
-  it was compatibility evidence, not the native restarted Arnoldi
-  implementation required for V1 promotion.
-- Dense and sparse CSC nonsymmetric real- and imaginary-target auto paths now run a native Arnoldi
-  cycle and native projected Ritz extraction instead of the R-level reference
-  cycle. The compatibility label is
+  it was compatibility evidence until the native dense/CSC Arnoldi-cycle and
+  native-Ritz route landed.
+- Dense and sparse CSC nonsymmetric real- and imaginary-target auto paths now
+  run a native Arnoldi cycle and native projected Ritz extraction instead of
+  the R-level reference cycle. The compatibility label is
   `native Arnoldi cycle + native Ritz extraction (compatibility)`: basis
   expansion, two-pass orthogonalization, the projected Hessenberg `dgeev`
   solve, and Ritz-vector formation run in native code, while exact
@@ -634,10 +634,10 @@ they are machine-dependent.
   Arnoldi auto paths, and restart loops retain the best attempt by certificate
   pass state, convergence count, and backward error instead of blindly
   returning the last attempt. Dense explicit nonsymmetric `eigs(..., which =
-  "LI")` now shares this native compatibility route. Matrix-free nonsymmetric operators remain
-  reference-labelled, and production-grade fully native restarted Arnoldi
-  remains open. Installed non-quick strict evidence from
-  `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-nonsymmetric.R --iterations=1 --save --strict`
+  "LI")` now shares this native compatibility route. Matrix-free nonsymmetric
+  operators remain reference-labelled, and fully restarted matrix-free native
+  Arnoldi is future scope. Fresh installed non-quick strict evidence from
+  `R_LIBS_USER=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-nonsymmetric.R --iterations=1 --save --strict`
   certifies `dense_native_arnoldi_lm`, `dense_native_arnoldi_li`,
   `dense_eigs_native_arnoldi_li`, `sparse_native_arnoldi_lr`, and
   `sparse_native_arnoldi_li`; all rows report `native_arnoldi_label = TRUE`,
@@ -645,10 +645,11 @@ they are machine-dependent.
   native Arnoldi uses the full dense subspace by default (`80` matvecs for
   `dense_native_arnoldi_lm`, `40` for the dense `LI` rows), while sparse CSC
   rows keep the bounded restart policy (`72` matvecs for
-  `sparse_native_arnoldi_lr`, `56` for `sparse_native_arnoldi_li`). Saved
+  `sparse_native_arnoldi_lr`, with `sparse_native_arnoldi_li` using bounded
+  restarts). Saved
   installed artifacts:
-  `inst/benchmarks/results/20260517-nonsymmetric-rows.rds` and
-  `inst/benchmarks/results/20260517-nonsymmetric-contracts.rds`.
+  `inst/benchmarks/results/20260605-nonsymmetric-rows.rds` and
+  `inst/benchmarks/results/20260605-nonsymmetric-contracts.rds`.
 - A follow-up quick installed strict smoke after restart-control wiring also
   passed on 2026-05-17 with the same restart diagnostics for the sparse native
   Arnoldi row.
@@ -663,9 +664,9 @@ they are machine-dependent.
   `stage_arnoldi_cycle_seconds`, `stage_ritz_extraction_seconds`, and
   `ritz_extraction_native`. These make the current compatibility boundary
   auditable: sparse CSC real- and imaginary-target rows now report
-  `ritz_extraction_native = TRUE`, so production-grade native restarted Arnoldi
-  remains open on restart policy, matrix-free/native callback support, and final performance
-  gates rather than on the projected Ritz extraction itself.
+  `ritz_extraction_native = TRUE`, so the scoped V1 compatibility gate is about
+  native explicit dense/CSC Arnoldi plus certificate honesty, while fully
+  restarted matrix-free native Arnoldi remains future scope.
 - The randomized SVD milestone now has an explicit `rsvd` parity benchmark
   surface at `inst/benchmarks/bench-randomized-rsvd.R`. It compares
   `eigencore_randomized` against `rsvd` using oracle singular-value error,

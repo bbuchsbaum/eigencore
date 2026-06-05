@@ -87,10 +87,9 @@ Additional target mappings:
 Current limitation: dense and sparse CSC nonsymmetric matrices with supported
 real/imaginary/magnitude targets can use a native Arnoldi cycle with native
 projected Ritz extraction, right-residual certification, a wired restart
-budget, and best-attempt retention, but production-grade fully native
-restarted Arnoldi is not implemented yet. Matrix-free general operators remain
-reference-labelled. Treat these paths as compatibility bridges, not the final
-V1 production nonsymmetric solver.
+budget, and best-attempt retention. Matrix-free general operators remain
+reference-labelled. Treat this as the scoped V1 compatibility surface; fully
+restarted matrix-free native Arnoldi is future scope.
 
 ## `svds()`
 
@@ -228,8 +227,8 @@ audit contract.
    workload that depends on a native path.
 5. Add `allow_dense_fallback = "never"` to sparse memory-safety tests.
 6. Keep reference/oracle-labelled paths out of production performance claims.
-7. Revisit the migration after H/I/J/L and nonsymmetric Arnoldi gates are
-   completed.
+7. Revisit the migration after K and final release-hardening decisions if
+   public labels or recommended methods change.
 
 See `docs/known-limitations.md` and `docs/v1-readiness-audit.md` for the
 current release blockers. See `docs/method-selection-and-workflows.md` for the

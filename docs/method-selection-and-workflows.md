@@ -82,8 +82,9 @@ Current limitation: dense and sparse CSC nonsymmetric problems with supported
 real/imaginary/magnitude targets can use a native Arnoldi cycle with native
 projected Ritz extraction, right-residual certification, a planner-wired
 restart budget, and best-attempt retention across restart attempts. Matrix-free
-general problems remain reference-labelled. These are compatibility and
-correctness bridges, not the final V1 nonsymmetric production solver.
+general problems remain reference-labelled. This is the scoped V1
+compatibility surface; fully restarted matrix-free native Arnoldi is future
+scope.
 
 ## Partial SVD
 
@@ -244,7 +245,7 @@ V1 requires those cases to remain explicitly labelled.
 |---|---|---|
 | Standard Hermitian eigen | `eig_partial(A, k)` | `lanczos()` to force Lanczos controls. |
 | RSpectra-compatible Hermitian | `eigs_sym(A, k, which)` | Migrating existing RSpectra call sites. |
-| General eigen | `eigs(A, k, which)` or `eigen_problem(..., general())` | You need `LR/SR/LI/SI` target semantics; expect dense oracle until Arnoldi lands. |
+| General eigen | `eigs(A, k, which)` or `eigen_problem(..., general())` | You need `LR/SR/LI/SI` target semantics; dense and sparse CSC matrices use native Arnoldi compatibility for supported targets, while matrix-free general operators remain reference-labelled. |
 | Partial SVD | `svd_partial(X, rank)` | `golub_kahan()` for explicit GK, `randomized()` for the reference randomized prototype. |
 | Generalized SPD | `eig_partial(A, k, B = B, method = lobpcg())` | You need original generalized residual certification. |
 | Interior/shifted eigen | `eig_partial(..., method = shift_invert(sigma))` | Dense standard/generalized, sparse diagonal/symmetric-tridiagonal standard, and tridiagonal generalized cases with diagonal `B` use native shift-invert; general sparse remains reference-labelled with cache provenance. |

@@ -457,6 +457,7 @@
         "right eigenvectors",
         "residual certification"
       ],
+      "v1_acceptance_boundary": "Dense and sparse CSC explicit matrices must use a native Arnoldi cycle with native projected Ritz extraction, restart diagnostics, and right-residual certification for supported real/imaginary/magnitude targets. Matrix-free/user-operator paths may remain reference-labelled unless a native callback ABI is promoted.",
       "v1_non_goals": [
         "full generalized nonsymmetric eigenproblems",
         "advanced harmonic/refined extraction",
