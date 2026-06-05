@@ -503,17 +503,17 @@ they are machine-dependent.
   with available methods. This keeps H probes from dropping
   `eigencore_irlba_lbd_retained_native` when a stale installed package is
   accidentally used.
-- The retained IRLBA/LBD H benchmark candidate now uses a single retained
-  native fixed-work attempt before the certified fallback. The current native
-  scaffold does not yet update a coupled augmented recurrence across attempts,
-  so repeated seeded attempts added diagnostic overhead without satisfying the
-  release gate. Rows now expose this boundary directly through
-  `irlba_lbd_restart_state_kind = "ritz_subspace_only"`,
-  `irlba_lbd_recurrence_available = FALSE`,
-  `irlba_lbd_augmented_recurrence = FALSE`,
-  `irlba_lbd_retained_seed_strategy`, `irlba_lbd_retained_from_scout`,
-  `irlba_lbd_retained_padding`, and
-  `irlba_lbd_retained_fixed_work_attempts`.
+- The retained IRLBA/LBD H benchmark candidate now has a native
+  residual-augmented projection path. After a failed small-work scout, the
+  native core forms the right-side Ritz residual `A' U_ret - V_ret H'`,
+  augments the retained Ritz right subspace with that residual direction and a
+  bounded Krylov tail, solves the projected SVD, and still accepts only the
+  exact original-coordinate SVD certificate. Source-loaded `wide_sparse:90x600`
+  evidence certifies directly with `24` scout matvecs, `136` retained-native
+  matvecs, one residual direction, `40` tail steps, and `46` augmented basis
+  columns. The row is faster than retained block-GK on that fixture, but still
+  slower and higher-allocation than certified `RSpectra`, so H remains
+  unpromoted.
 - Added `eigencore_irlba_lbd_normal_scout` as an H diagnostic benchmark
   method. It runs bounded matrix-free normal scouts at 8/12/16/20 steps,
   uses the selected scout only as a warm start for certified one-sided

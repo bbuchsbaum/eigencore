@@ -631,17 +631,61 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
   fallback$restart$retained_restart_native <- !inherits(native, "eigencore_irlba_lbd_native_error")
   fallback$restart$retained_restart_abi_version <- abi$version
   fallback$restart$native_attempt_certification <- !inherits(native, "eigencore_irlba_lbd_native_error")
-  fallback$restart$irlba_lbd_restart_state_kind <- "ritz_subspace_only"
-  fallback$restart$irlba_lbd_recurrence_available <- FALSE
-  fallback$restart$irlba_lbd_augmented_recurrence <- FALSE
-  fallback$restart$irlba_lbd_retained_seed_strategy <- "ritz_subspace_seeded_fixed_work"
+  fallback$restart$irlba_lbd_restart_state_kind <- if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+    native$restart_state_kind %||% "ritz_subspace_only"
+  } else {
+    "ritz_subspace_only"
+  }
+  fallback$restart$irlba_lbd_recurrence_available <- if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+    isTRUE(native$recurrence_available)
+  } else {
+    FALSE
+  }
+  fallback$restart$irlba_lbd_augmented_recurrence <- if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+    isTRUE(native$augmented_recurrence)
+  } else {
+    FALSE
+  }
+  fallback$restart$irlba_lbd_retained_seed_strategy <- if (identical(
+    fallback$restart$irlba_lbd_restart_state_kind,
+    "residual_augmented_projection"
+  )) {
+    "ritz_residual_augmented_krylov_projection"
+  } else {
+    "ritz_subspace_seeded_fixed_work"
+  }
   fallback$restart$irlba_lbd_retained_from_scout <- retained_from_scout
   fallback$restart$irlba_lbd_retained_padding <- retained_padding
   fallback$restart$irlba_lbd_retained_fixed_work_attempts <-
     if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
-      nrow(native$attempt_history)
+      if (identical(
+        fallback$restart$irlba_lbd_restart_state_kind,
+        "residual_augmented_projection"
+      )) {
+        0L
+      } else {
+        nrow(native$attempt_history)
+      }
     } else {
       0L
+    }
+  fallback$restart$irlba_lbd_residual_augmented_cols <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$residual_augmented_cols %||% NA_integer_
+    } else {
+      NA_integer_
+    }
+  fallback$restart$irlba_lbd_augmented_tail_steps <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$augmented_tail_steps %||% NA_integer_
+    } else {
+      NA_integer_
+    }
+  fallback$restart$irlba_lbd_augmented_basis_cols <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$augmented_basis_cols %||% NA_integer_
+    } else {
+      NA_integer_
     }
   fallback$restart$work <- abi$work
   fallback$restart$retained <- abi$retained
@@ -750,6 +794,8 @@ native_irlba_lbd_restart_diagnostics <- function(abi, native, small, final,
     kind = "irlba_lbd_native_retained_core",
     implemented = TRUE,
     irlba_lbd_policy = "retained one-sided LBD native core",
+    irlba_lbd_retained_native_attempted = TRUE,
+    irlba_lbd_retained_native_fallback_reason = NA_character_,
     retained_restart = TRUE,
     retained_restart_native = TRUE,
     retained_restart_abi_version = abi$version,
@@ -767,18 +813,46 @@ native_irlba_lbd_restart_diagnostics <- function(abi, native, small, final,
     reorthogonalize_u = as.logical(native$reorthogonalize_u),
     reorthogonalize_v = as.logical(native$reorthogonalize_v),
     reorthogonalization_passes = native$reorthogonalization_passes,
-    irlba_lbd_restart_state_kind = "ritz_subspace_only",
-    irlba_lbd_recurrence_available = FALSE,
-    irlba_lbd_augmented_recurrence = FALSE,
-    irlba_lbd_retained_seed_strategy = "ritz_subspace_seeded_fixed_work",
+    irlba_lbd_restart_state_kind = native$restart_state_kind %||% "ritz_subspace_only",
+    irlba_lbd_recurrence_available = isTRUE(native$recurrence_available),
+    irlba_lbd_augmented_recurrence = isTRUE(native$augmented_recurrence),
+    irlba_lbd_retained_seed_strategy = if (identical(
+      native$restart_state_kind %||% "ritz_subspace_only",
+      "residual_augmented_projection"
+    )) {
+      "ritz_residual_augmented_krylov_projection"
+    } else {
+      "ritz_subspace_seeded_fixed_work"
+    },
     irlba_lbd_retained_from_scout = min(ncol(small$v), ncol(small$u), abi$retained),
     irlba_lbd_retained_padding = abi$retained - min(ncol(small$v), ncol(small$u), abi$retained),
-    irlba_lbd_retained_fixed_work_attempts = nrow(native$attempt_history),
+    irlba_lbd_retained_fixed_work_attempts = if (identical(
+      native$restart_state_kind %||% "ritz_subspace_only",
+      "residual_augmented_projection"
+    )) {
+      0L
+    } else {
+      nrow(native$attempt_history)
+    },
+    irlba_lbd_residual_augmented_cols = native$residual_augmented_cols %||% NA_integer_,
+    irlba_lbd_augmented_tail_steps = native$augmented_tail_steps %||% NA_integer_,
+    irlba_lbd_augmented_basis_cols = native$augmented_basis_cols %||% NA_integer_,
     internal_orientation = abi$internal_orientation,
     internal_transposed = abi$internal_transposed,
     scout_matvecs = small$matvecs,
     scout_iterations = small$iterations,
     scout_certificate_passed = isTRUE(small$certificate$passed),
+    irlba_lbd_scout_matvecs = small$matvecs,
+    irlba_lbd_scout_accounted_seconds =
+      sum(small$stage_seconds %||% NA_real_, na.rm = TRUE),
+    irlba_lbd_scout_certificate_passed = isTRUE(small$certificate$passed),
+    irlba_lbd_retained_matvecs = native$matvecs %||% NA_integer_,
+    irlba_lbd_retained_iterations = native$iterations %||% NA_integer_,
+    irlba_lbd_total_matvecs = (small$matvecs %||% 0L) + (native$matvecs %||% 0L),
+    irlba_lbd_total_iterations =
+      (small$iterations %||% 0L) + (native$iterations %||% 0L),
+    irlba_lbd_fallback_matvecs = NA_integer_,
+    irlba_lbd_fallback_iterations = NA_integer_,
     fallback_attempted = fallback_attempted,
     fallback_used = fallback_used,
     fallback_method = if (fallback_used) "adaptive one-sided Golub-Kahan" else NA_character_,

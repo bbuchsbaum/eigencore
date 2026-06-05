@@ -676,7 +676,7 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
         target = largest(),
         work = max(rank + 7L, 2L * rank + 1L),
         retained = min(max(rank, rank + 2L), max(rank + 6L, 2L * rank)),
-        max_restarts = 0L,
+        max_restarts = 7L,
         tol = tol,
         vectors = "both"
       )

@@ -355,7 +355,7 @@ test_that("retained IRLBA LBD native core certifies or falls back honestly", {
     rank = 5L,
     work = 12L,
     retained = 7L,
-    max_restarts = 1L,
+    max_restarts = 7L,
     tol = 1e-8,
     vectors = "both"
   )
@@ -365,24 +365,25 @@ test_that("retained IRLBA LBD native core certifies or falls back honestly", {
   expect_true(fit$restart$retained_restart)
   expect_true(fit$restart$native_attempt_certification)
   expect_equal(fit$restart$retained_restart_abi_version, 1L)
-  expect_identical(fit$restart$irlba_lbd_restart_state_kind, "ritz_subspace_only")
-  expect_false(fit$restart$irlba_lbd_recurrence_available)
-  expect_false(fit$restart$irlba_lbd_augmented_recurrence)
-  expect_identical(fit$restart$irlba_lbd_retained_seed_strategy, "ritz_subspace_seeded_fixed_work")
+  expect_false(fit$restart$fallback_used)
+  expect_identical(fit$restart$irlba_lbd_restart_state_kind, "residual_augmented_projection")
+  expect_true(fit$restart$irlba_lbd_recurrence_available)
+  expect_true(fit$restart$irlba_lbd_augmented_recurrence)
+  expect_identical(fit$restart$irlba_lbd_retained_seed_strategy, "ritz_residual_augmented_krylov_projection")
   expect_equal(fit$restart$irlba_lbd_retained_from_scout, 5L)
   expect_equal(fit$restart$irlba_lbd_retained_padding, 2L)
+  expect_equal(fit$restart$irlba_lbd_residual_augmented_cols, 1L)
+  expect_equal(fit$restart$irlba_lbd_augmented_tail_steps, 40L)
+  expect_gte(fit$restart$irlba_lbd_augmented_basis_cols, 40L)
   expect_identical(fit$restart$internal_orientation, "transposed_wide_operator")
   expect_true(fit$restart$internal_transposed)
-  if (isTRUE(fit$restart$fallback_used)) {
-    expect_equal(
-      fit$matvecs,
-      fit$restart$irlba_lbd_scout_matvecs +
-        fit$restart$irlba_lbd_retained_matvecs +
-        fit$restart$irlba_lbd_fallback_matvecs
-    )
-    expect_equal(fit$restart$irlba_lbd_total_matvecs, fit$matvecs)
-    expect_false(fit$restart$irlba_lbd_scout_certificate_passed)
-  }
+  expect_equal(
+    fit$matvecs,
+    fit$restart$irlba_lbd_scout_matvecs +
+      fit$restart$irlba_lbd_retained_matvecs
+  )
+  expect_equal(fit$restart$irlba_lbd_total_matvecs, fit$matvecs)
+  expect_false(fit$restart$irlba_lbd_scout_certificate_passed)
   expect_certificate_clean(fit)
 })
 
@@ -399,21 +400,44 @@ test_that("retained IRLBA benchmark candidate avoids repeated fixed-work native 
 
   expect_true(fit$certificate$passed)
   expect_true(fit$restart$irlba_lbd_retained_native_attempted)
-  expect_true(fit$restart$fallback_attempted)
-  expect_true(fit$restart$fallback_used)
-  expect_identical(fit$restart$irlba_lbd_restart_state_kind, "ritz_subspace_only")
-  expect_false(fit$restart$irlba_lbd_recurrence_available)
-  expect_false(fit$restart$irlba_lbd_augmented_recurrence)
-  expect_equal(fit$restart$irlba_lbd_retained_fixed_work_attempts, 1L)
+  expect_false(fit$restart$fallback_attempted)
+  expect_false(fit$restart$fallback_used)
+  expect_identical(fit$restart$irlba_lbd_restart_state_kind, "residual_augmented_projection")
+  expect_true(fit$restart$irlba_lbd_recurrence_available)
+  expect_true(fit$restart$irlba_lbd_augmented_recurrence)
+  expect_equal(fit$restart$irlba_lbd_retained_fixed_work_attempts, 0L)
   expect_equal(fit$restart$irlba_lbd_scout_matvecs, 24L)
-  expect_equal(fit$restart$irlba_lbd_retained_matvecs, 24L)
+  expect_equal(fit$restart$irlba_lbd_retained_matvecs, 136L)
+  expect_equal(fit$restart$irlba_lbd_augmented_tail_steps, 40L)
+  expect_equal(fit$restart$irlba_lbd_augmented_basis_cols, 46L)
   expect_equal(
     fit$matvecs,
     fit$restart$irlba_lbd_scout_matvecs +
-      fit$restart$irlba_lbd_retained_matvecs +
-      fit$restart$irlba_lbd_fallback_matvecs
+      fit$restart$irlba_lbd_retained_matvecs
   )
   expect_equal(fit$restart$irlba_lbd_total_matvecs, fit$matvecs)
+  expect_certificate_clean(fit)
+})
+
+test_that("retained IRLBA residual-augmented path certifies a larger sparse wide fixture", {
+  set.seed(703)
+  wide <- Matrix::t(Matrix::rsparsematrix(2000L, 200L, density = 0.02))
+  fit <- eigencore:::native_irlba_lbd_retained_svd(
+    wide,
+    rank = 5L,
+    work = 12L,
+    retained = 7L,
+    max_restarts = 7L,
+    tol = 1e-8,
+    vectors = "both"
+  )
+
+  expect_true(fit$certificate$passed)
+  expect_false(fit$restart$fallback_used)
+  expect_identical(fit$restart$irlba_lbd_restart_state_kind, "residual_augmented_projection")
+  expect_true(fit$restart$irlba_lbd_augmented_recurrence)
+  expect_lte(fit$certificate$max_backward_error, 1e-8)
+  expect_gte(fit$restart$irlba_lbd_augmented_basis_cols, 40L)
   expect_certificate_clean(fit)
 })
 

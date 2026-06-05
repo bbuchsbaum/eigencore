@@ -921,20 +921,29 @@ Primary attack surfaces, in order:
    `irlba_lbd_retained_native_fallback_reason`, scout matvecs, and explicit
    retained-state fields such as `irlba_lbd_restart_state_kind`,
    `irlba_lbd_recurrence_available`, and
-   `irlba_lbd_augmented_recurrence`). On the
+   `irlba_lbd_augmented_recurrence`, plus residual-augmented restart fields
+   `irlba_lbd_residual_augmented_cols`,
+   `irlba_lbd_augmented_tail_steps`, and
+   `irlba_lbd_augmented_basis_cols`). On the
    measurement side, explicit SVD benchmark method requests now fail loudly if
    the loaded eigencore namespace cannot run them, so H probes cannot silently
    drop the retained IRLBA/LBD candidate when a stale installed package is on
-   the library path. On the current H-shaped rank-5 sparse probe it certifies
-   only after fallback:
-   the current capped retained row uses `24` retained-native matvecs after a
-   `24`-matvec scout, then the certified adaptive fallback still uses `90`
-   matvecs. It reports `restart_state_kind = "ritz_subspace_only"` and
-   `irlba_lbd_recurrence_available = FALSE`, so the benchmark surface now
-   distinguishes fixed-work retained seeding from a true augmented recurrence.
-   That makes the row
-   useful for measuring retained-restart work, but not a promotion candidate
-   until the native retained attempt certifies directly.
+   the library path. The retained native core now has a bounded
+   residual-augmented projection path: after a failed scout, it forms the
+   right-side Ritz residual `A' U_ret - V_ret H'`, augments the retained Ritz
+   right subspace with that residual direction and a Krylov tail, solves the
+   projected SVD, and still accepts only the exact original-coordinate SVD
+   certificate. On the source-loaded H-shaped `wide_sparse:90x600` probe this
+   certifies directly with `24` scout matvecs plus `136` retained-native
+   matvecs, `restart_state_kind = "residual_augmented_projection"`,
+   `irlba_lbd_recurrence_available = TRUE`,
+   `irlba_lbd_augmented_recurrence = TRUE`, one residual-augmented direction,
+   `40` tail steps, and `46` augmented basis columns. A seeded larger
+   `200x2000` sparse wide fixture also certifies directly. The H source-loaded
+   surface row is faster than retained block-GK on the same fixture, but it is
+   still slower and higher-allocation than the best certified reference
+   (`RSpectra`) and slower than direct one-sided GK, so this is Track B
+   progress, not H promotion.
    A separate normal-scout diagnostic, `eigencore_irlba_lbd_normal_scout`,
    runs bounded matrix-free normal scouts at 8/12/16/20 steps and uses the
    selected scout only as a warm start for certified one-sided LBD polish. The
@@ -959,9 +968,9 @@ Primary attack surfaces, in order:
    while `irlba_lbd_fallback_matvecs`, `irlba_lbd_retained_matvecs`, and
    `irlba_lbd_total_matvecs` expose the breakdown. This prevents the diagnostic
    retained row from under-reporting time-to-certified-answer work. The H
-   benchmark retained-IRLBA candidate now caps this ritz-subspace-only scaffold
-   at one retained native attempt before fallback, avoiding repeated fixed-work
-   seeded attempts until a true augmented recurrence is implemented.
+   benchmark retained-IRLBA candidate now gives the residual-augmented native
+   recurrence a bounded restart budget before fallback; fixed-work
+   ritz-subspace-only seeding remains rejected.
    Retained fallback orientation is now covered explicitly: when a wide
    operator is run internally on `A^T`, the one-sided fallback also transposes
    and must warm-start from the active right vector, while the full two-sided
@@ -972,12 +981,12 @@ Primary attack surfaces, in order:
    failed small-work scout into that ABI: for wide matrices it maps original
    `u` into the active right subspace of `A^T`, original `v` into the active
    left subspace, pads retained subspaces deterministically to full rank, and
-   marks the recurrence as unavailable (`restart_state_kind =
-   "ritz_subspace_only"`). The remaining native gap is algorithmic rather than
-   contractual: the current retained core still seeds repeated fixed-work
-   Golub-Kahan attempts from retained vectors, so it can fall back; it still
-   must build or update the coupled bidiagonal recurrence inside a true
-   augmented restart loop.
+   marks the packaged scout state as recurrence-unavailable until the native
+   residual-augmented projection consumes it. The remaining native gap is now
+   broader algorithmic performance and robustness: residual augmentation can
+   certify the H fixture and one larger seeded sparse-wide fixture directly, but
+   random larger sparse probes can still fall back and the promoted H speed and
+   memory gates remain red.
    The next H work therefore must attack the amount of retained-restart
    projected work directly rather than assuming partial locking will appear on
    the release benchmark surface.

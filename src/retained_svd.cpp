@@ -1527,6 +1527,369 @@ static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
   return out_;
 }
 
+static int append_orthonormal_column(double* basis,
+                                     int n,
+                                     int capacity,
+                                     int* cols,
+                                     const double* candidate,
+                                     double tol,
+                                     int* orthogonalization_passes,
+                                     double* accepted_norm = nullptr) {
+  if (accepted_norm != nullptr) {
+    *accepted_norm = 0.0;
+  }
+  if (*cols >= capacity) {
+    return 0;
+  }
+  std::vector<double> z(static_cast<size_t>(n), 0.0);
+  std::memcpy(z.data(), candidate, sizeof(double) * static_cast<size_t>(n));
+  const int passes = (*cols > 0) ? 2 : 1;
+  for (int pass = 0; pass < passes; ++pass) {
+    for (int col = 0; col < *cols; ++col) {
+      const double* q = basis + static_cast<int64_t>(col) * n;
+      double dot = 0.0;
+      for (int row = 0; row < n; ++row) {
+        dot += q[row] * z[row];
+      }
+      for (int row = 0; row < n; ++row) {
+        z[row] -= dot * q[row];
+      }
+    }
+    if (orthogonalization_passes != nullptr && *cols > 0) {
+      ++(*orthogonalization_passes);
+    }
+  }
+  long double norm2 = 0.0L;
+  for (int row = 0; row < n; ++row) {
+    norm2 += static_cast<long double>(z[row]) * z[row];
+  }
+  const double norm = sqrt(static_cast<double>(norm2));
+  const double threshold = fmax(100.0 * DBL_EPSILON, tol * 1.0e-4);
+  if (!R_FINITE(norm) || norm <= threshold) {
+    return 0;
+  }
+  if (accepted_norm != nullptr) {
+    *accepted_norm = norm;
+  }
+  double* dst = basis + static_cast<int64_t>(*cols) * n;
+  for (int row = 0; row < n; ++row) {
+    dst[row] = z[row] / norm;
+  }
+  ++(*cols);
+  return 1;
+}
+
+static int append_orthonormal_block(double* basis,
+                                    int n,
+                                    int capacity,
+                                    int* cols,
+                                    const double* candidates,
+                                    int candidate_cols,
+                                    double tol,
+                                    int* orthogonalization_passes) {
+  int accepted = 0;
+  for (int col = 0; col < candidate_cols && *cols < capacity; ++col) {
+    accepted += append_orthonormal_column(
+      basis, n, capacity, cols,
+      candidates + static_cast<int64_t>(col) * n,
+      tol, orthogonalization_passes
+    );
+  }
+  return accepted;
+}
+
+static SEXP irlba_lbd_augmented_retained_projection(
+    void* impl,
+    EigencoreApplyFn apply,
+    int m,
+    int n,
+    const double* initial_start,
+    const double* retained_right,
+    const double* retained_left,
+    const double* random_tails,
+    int work,
+    int retained,
+    int max_restarts,
+    int rank,
+    int target_kind,
+    double tol,
+    int reorthogonalize_u,
+    int reorthogonalize_v,
+    double native_workspace_bytes) {
+  const int tail_width = work - retained;
+  const int retained_core = (rank < retained) ? rank : retained;
+  const int requested_tail_steps = (tail_width > 0)
+    ? (max_restarts + 1) * tail_width
+    : 0;
+  const int capacity = (n < retained_core + retained_core + requested_tail_steps + 1)
+    ? n
+    : retained_core + retained_core + requested_tail_steps + 1;
+  if (capacity < rank) {
+    return R_NilValue;
+  }
+
+  std::vector<double> Q(static_cast<size_t>(n) * static_cast<size_t>(capacity), 0.0);
+  std::vector<double> AV_ret(static_cast<size_t>(m) * static_cast<size_t>(retained_core), 0.0);
+  std::vector<double> ATU_ret(static_cast<size_t>(n) * static_cast<size_t>(retained_core), 0.0);
+  std::vector<double> H(static_cast<size_t>(retained_core) * static_cast<size_t>(retained_core), 0.0);
+  std::vector<double> residual(static_cast<size_t>(n) * static_cast<size_t>(retained_core), 0.0);
+  std::vector<double> AQ(static_cast<size_t>(m) * static_cast<size_t>(capacity), 0.0);
+  std::vector<double> u(static_cast<size_t>(m), 0.0);
+  std::vector<double> u_prev(static_cast<size_t>(m), 0.0);
+  std::vector<double> z(static_cast<size_t>(n), 0.0);
+
+  EigencoreWorkspace workspace = {0, 0, nullptr, 0};
+  int q_cols = 0;
+  int orthogonalization_passes = 0;
+  double stage_apply_seconds = 0.0;
+  double stage_recurrence_seconds = 0.0;
+  double stage_reorthogonalization_seconds = 0.0;
+  double stage_projected_seconds = 0.0;
+  int matvecs = 0;
+
+  auto stage_timer = native_timer_now();
+  int status = apply(impl, EIGENCORE_TRANSPOSE_NONE, retained_core,
+                     retained_right, n, 1.0, 0.0, AV_ret.data(), m, &workspace);
+  stage_apply_seconds += native_timer_elapsed(stage_timer);
+  if (status != 0) {
+    return R_NilValue;
+  }
+  matvecs += retained_core;
+  stage_timer = native_timer_now();
+  status = apply(impl, EIGENCORE_TRANSPOSE_ADJOINT, retained_core,
+                 retained_left, m, 1.0, 0.0, ATU_ret.data(), n, &workspace);
+  stage_apply_seconds += native_timer_elapsed(stage_timer);
+  if (status != 0) {
+    return R_NilValue;
+  }
+  matvecs += retained_core;
+
+  append_orthonormal_block(
+    Q.data(), n, capacity, &q_cols, retained_right, retained_core, tol,
+    &orthogonalization_passes
+  );
+  if (q_cols < rank) {
+    append_orthonormal_column(
+      Q.data(), n, capacity, &q_cols, initial_start, tol,
+      &orthogonalization_passes
+    );
+  }
+
+  stage_timer = native_timer_now();
+  const char trans = 'T';
+  const char notrans = 'N';
+  const double one = 1.0;
+  const double zero = 0.0;
+  F77_CALL(dgemm)(&trans, &notrans, &retained_core, &retained_core, &m,
+                  &one, const_cast<double*>(retained_left), &m,
+                  AV_ret.data(), &m, &zero, H.data(), &retained_core FCONE FCONE);
+  stage_projected_seconds += native_timer_elapsed(stage_timer);
+
+  stage_timer = native_timer_now();
+  std::memcpy(residual.data(), ATU_ret.data(),
+              sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(retained_core));
+  const double minus_one = -1.0;
+  F77_CALL(dgemm)(&notrans, &trans, &n, &retained_core, &retained_core,
+                  &minus_one, const_cast<double*>(retained_right), &n,
+                  H.data(), &retained_core, &one, residual.data(), &n FCONE FCONE);
+  stage_recurrence_seconds += native_timer_elapsed(stage_timer);
+  const int residual_cols_before = q_cols;
+  append_orthonormal_block(
+    Q.data(), n, capacity, &q_cols, residual.data(), retained_core, tol,
+    &orthogonalization_passes
+  );
+  const int residual_cols = q_cols - residual_cols_before;
+
+  if (q_cols == 0) {
+    append_orthonormal_column(
+      Q.data(), n, capacity, &q_cols, initial_start, tol,
+      &orthogonalization_passes
+    );
+  }
+  if (q_cols == 0) {
+    return R_NilValue;
+  }
+
+  const double* seed = Q.data() + static_cast<int64_t>(q_cols - 1) * n;
+  std::memcpy(z.data(), seed, sizeof(double) * static_cast<size_t>(n));
+  double beta_prev = 0.0;
+  int tail_steps_taken = 0;
+  for (int step = 0; step < requested_tail_steps && q_cols < capacity; ++step) {
+    stage_timer = native_timer_now();
+    status = apply(impl, EIGENCORE_TRANSPOSE_NONE, 1, z.data(), n,
+                   1.0, 0.0, u.data(), m, &workspace);
+    stage_apply_seconds += native_timer_elapsed(stage_timer);
+    if (status != 0) {
+      break;
+    }
+    ++matvecs;
+    stage_timer = native_timer_now();
+    if (beta_prev != 0.0) {
+      for (int row = 0; row < m; ++row) {
+        u[row] -= beta_prev * u_prev[row];
+      }
+    }
+    long double alpha_norm2 = 0.0L;
+    for (int row = 0; row < m; ++row) {
+      alpha_norm2 += static_cast<long double>(u[row]) * u[row];
+    }
+    const double alpha_step = sqrt(static_cast<double>(alpha_norm2));
+    if (!R_FINITE(alpha_step) || alpha_step <= 100.0 * DBL_EPSILON) {
+      stage_recurrence_seconds += native_timer_elapsed(stage_timer);
+      break;
+    }
+    for (int row = 0; row < m; ++row) {
+      u[row] /= alpha_step;
+    }
+    stage_recurrence_seconds += native_timer_elapsed(stage_timer);
+
+    stage_timer = native_timer_now();
+    status = apply(impl, EIGENCORE_TRANSPOSE_ADJOINT, 1, u.data(), m,
+                   1.0, 0.0, z.data(), n, &workspace);
+    stage_apply_seconds += native_timer_elapsed(stage_timer);
+    if (status != 0) {
+      break;
+    }
+    ++matvecs;
+    stage_timer = native_timer_now();
+    const double* current_v = Q.data() + static_cast<int64_t>(q_cols - 1) * n;
+    for (int row = 0; row < n; ++row) {
+      z[row] -= alpha_step * current_v[row];
+    }
+    stage_recurrence_seconds += native_timer_elapsed(stage_timer);
+
+    const int before = q_cols;
+    stage_timer = native_timer_now();
+    double beta_next = 0.0;
+    append_orthonormal_column(
+      Q.data(), n, capacity, &q_cols, z.data(), tol,
+      &orthogonalization_passes, &beta_next
+    );
+    stage_reorthogonalization_seconds += native_timer_elapsed(stage_timer);
+    if (q_cols == before) {
+      break;
+    }
+    std::memcpy(u_prev.data(), u.data(), sizeof(double) * static_cast<size_t>(m));
+    const double* accepted_v = Q.data() + static_cast<int64_t>(q_cols - 1) * n;
+    std::memcpy(z.data(), accepted_v, sizeof(double) * static_cast<size_t>(n));
+    beta_prev = beta_next;
+    ++tail_steps_taken;
+  }
+
+  if (q_cols < rank) {
+    return R_NilValue;
+  }
+  stage_timer = native_timer_now();
+  status = apply(impl, EIGENCORE_TRANSPOSE_NONE, q_cols,
+                 Q.data(), n, 1.0, 0.0, AQ.data(), m, &workspace);
+  stage_apply_seconds += native_timer_elapsed(stage_timer);
+  if (status != 0) {
+    return R_NilValue;
+  }
+  matvecs += q_cols;
+
+  stage_timer = native_timer_now();
+  SEXP ritz_ = PROTECT(eigencore_block_golub_kahan_ritz_from_ptr(
+    Q.data(), n, AQ.data(), m, q_cols, rank, target_kind
+  ));
+  stage_projected_seconds += native_timer_elapsed(stage_timer);
+
+  std::vector<int> attempted_subspaces;
+  std::vector<int> attempt_iterations;
+  std::vector<int> attempt_matvecs;
+  std::vector<int> attempt_warm_started;
+  const int chunks = max_restarts + 1;
+  attempted_subspaces.reserve(static_cast<size_t>(chunks));
+  attempt_iterations.reserve(static_cast<size_t>(chunks));
+  attempt_matvecs.reserve(static_cast<size_t>(chunks));
+  attempt_warm_started.reserve(static_cast<size_t>(chunks));
+  for (int attempt = 0; attempt < chunks; ++attempt) {
+    int tail_for_attempt = tail_width * (attempt + 1);
+    if (tail_for_attempt > tail_steps_taken) {
+      tail_for_attempt = tail_steps_taken;
+    }
+    int subspace = retained_core + residual_cols + tail_for_attempt;
+    if (subspace > q_cols) {
+      subspace = q_cols;
+    }
+    attempted_subspaces.push_back(subspace);
+    attempt_iterations.push_back(tail_for_attempt);
+    attempt_matvecs.push_back(2 * retained_core + 2 * tail_for_attempt + subspace);
+    attempt_warm_started.push_back(attempt > 0 ? 1 : 0);
+  }
+  SEXP history_ = PROTECT(irlba_lbd_attempt_history_pack(
+    attempted_subspaces, attempt_iterations, attempt_matvecs, attempt_warm_started
+  ));
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 24));
+  const double augmented_workspace_bytes =
+    static_cast<double>(sizeof(double)) *
+    static_cast<double>(
+      static_cast<int64_t>(n) * static_cast<int64_t>(capacity) +
+      static_cast<int64_t>(m) * static_cast<int64_t>(capacity) +
+      static_cast<int64_t>(m) * static_cast<int64_t>(retained_core) +
+      static_cast<int64_t>(n) * static_cast<int64_t>(retained_core) +
+      static_cast<int64_t>(retained_core) * static_cast<int64_t>(retained_core) +
+      static_cast<int64_t>(m + m + n)
+    );
+  SET_VECTOR_ELT(out_, 0, VECTOR_ELT(ritz_, 0));
+  SET_VECTOR_ELT(out_, 1, VECTOR_ELT(ritz_, 1));
+  SET_VECTOR_ELT(out_, 2, VECTOR_ELT(ritz_, 2));
+  SET_VECTOR_ELT(out_, 3, ScalarInteger(tail_steps_taken));
+  SET_VECTOR_ELT(out_, 4, ScalarInteger(tail_steps_taken));
+  SET_VECTOR_ELT(out_, 5, ScalarInteger(matvecs));
+  SET_VECTOR_ELT(out_, 6, ScalarInteger(max_restarts));
+  SET_VECTOR_ELT(out_, 7, history_);
+  SET_VECTOR_ELT(out_, 8, ScalarReal(
+    augmented_workspace_bytes > native_workspace_bytes
+      ? augmented_workspace_bytes
+      : native_workspace_bytes
+  ));
+  SET_VECTOR_ELT(out_, 9, ScalarReal(stage_apply_seconds));
+  SET_VECTOR_ELT(out_, 10, ScalarReal(stage_recurrence_seconds));
+  SET_VECTOR_ELT(out_, 11, ScalarReal(stage_reorthogonalization_seconds));
+  SET_VECTOR_ELT(out_, 12, ScalarReal(stage_projected_seconds));
+  SET_VECTOR_ELT(out_, 13, ScalarInteger(orthogonalization_passes));
+  SET_VECTOR_ELT(out_, 14, ScalarInteger(reorthogonalize_u));
+  SET_VECTOR_ELT(out_, 15, ScalarInteger(reorthogonalize_v));
+  SET_VECTOR_ELT(out_, 16, ScalarInteger(work));
+  SET_VECTOR_ELT(out_, 17, ScalarInteger(retained));
+  SET_VECTOR_ELT(out_, 18, mkString("residual_augmented_projection"));
+  SET_VECTOR_ELT(out_, 19, ScalarLogical(1));
+  SET_VECTOR_ELT(out_, 20, ScalarLogical(1));
+  SET_VECTOR_ELT(out_, 21, ScalarInteger(residual_cols));
+  SET_VECTOR_ELT(out_, 22, ScalarInteger(tail_steps_taken));
+  SET_VECTOR_ELT(out_, 23, ScalarInteger(q_cols));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 24));
+  SET_STRING_ELT(names_, 0, mkChar("d"));
+  SET_STRING_ELT(names_, 1, mkChar("u"));
+  SET_STRING_ELT(names_, 2, mkChar("v"));
+  SET_STRING_ELT(names_, 3, mkChar("final_iterations"));
+  SET_STRING_ELT(names_, 4, mkChar("iterations"));
+  SET_STRING_ELT(names_, 5, mkChar("matvecs"));
+  SET_STRING_ELT(names_, 6, mkChar("restart_count"));
+  SET_STRING_ELT(names_, 7, mkChar("attempt_history"));
+  SET_STRING_ELT(names_, 8, mkChar("native_workspace_bytes"));
+  SET_STRING_ELT(names_, 9, mkChar("stage_apply_seconds"));
+  SET_STRING_ELT(names_, 10, mkChar("stage_recurrence_seconds"));
+  SET_STRING_ELT(names_, 11, mkChar("stage_reorthogonalization_seconds"));
+  SET_STRING_ELT(names_, 12, mkChar("stage_projected_solve_seconds"));
+  SET_STRING_ELT(names_, 13, mkChar("reorthogonalization_passes"));
+  SET_STRING_ELT(names_, 14, mkChar("reorthogonalize_u"));
+  SET_STRING_ELT(names_, 15, mkChar("reorthogonalize_v"));
+  SET_STRING_ELT(names_, 16, mkChar("work"));
+  SET_STRING_ELT(names_, 17, mkChar("retained"));
+  SET_STRING_ELT(names_, 18, mkChar("restart_state_kind"));
+  SET_STRING_ELT(names_, 19, mkChar("recurrence_available"));
+  SET_STRING_ELT(names_, 20, mkChar("augmented_recurrence"));
+  SET_STRING_ELT(names_, 21, mkChar("residual_augmented_cols"));
+  SET_STRING_ELT(names_, 22, mkChar("augmented_tail_steps"));
+  SET_STRING_ELT(names_, 23, mkChar("augmented_basis_cols"));
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(4);
+  return out_;
+}
+
 template <typename ConfigureOperator>
 static SEXP irlba_lbd_retained_impl(ConfigureOperator configure_operator,
                                     int m,
@@ -1544,7 +1907,6 @@ static SEXP irlba_lbd_retained_impl(ConfigureOperator configure_operator,
                                     int target_kind,
                                     double tol,
                                     int reorth_policy) {
-  (void) retained_left;
   (void) alpha;
   (void) beta;
   const int attempts = (max_restarts < 0) ? 1 : max_restarts + 1;
@@ -1562,6 +1924,21 @@ static SEXP irlba_lbd_retained_impl(ConfigureOperator configure_operator,
       static_cast<int64_t>(work) +
       static_cast<int64_t>(2 * m + 2 * n)
     );
+
+  void* augmented_impl = nullptr;
+  EigencoreApplyFn augmented_apply = nullptr;
+  configure_operator(&augmented_impl, &augmented_apply);
+  SEXP augmented_ = PROTECT(irlba_lbd_augmented_retained_projection(
+    augmented_impl, augmented_apply, m, n, initial_start, retained_right,
+    retained_left, random_tails, work, retained, max_restarts, rank,
+    target_kind, tol, reorthogonalize_u, reorthogonalize_v,
+    native_workspace_bytes
+  ));
+  if (augmented_ != R_NilValue) {
+    UNPROTECT(1);
+    return augmented_;
+  }
+  UNPROTECT(1);
 
   std::vector<double> start(static_cast<size_t>(n), 0.0);
   std::vector<double> U_work(static_cast<size_t>(m) * static_cast<size_t>(work), 0.0);

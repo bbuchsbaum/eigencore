@@ -1437,6 +1437,12 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
         result_restart_logical(fit, "irlba_lbd_recurrence_available"),
       irlba_lbd_augmented_recurrence =
         result_restart_logical(fit, "irlba_lbd_augmented_recurrence"),
+      irlba_lbd_residual_augmented_cols =
+        result_restart_integer(fit, "irlba_lbd_residual_augmented_cols"),
+      irlba_lbd_augmented_tail_steps =
+        result_restart_integer(fit, "irlba_lbd_augmented_tail_steps"),
+      irlba_lbd_augmented_basis_cols =
+        result_restart_integer(fit, "irlba_lbd_augmented_basis_cols"),
       irlba_lbd_retained_seed_strategy =
         result_restart_character(fit, "irlba_lbd_retained_seed_strategy"),
       irlba_lbd_retained_from_scout =
