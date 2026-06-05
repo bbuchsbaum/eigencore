@@ -558,6 +558,29 @@ test_that("randomized-rsvd gate enforces accuracy and speed versus rsvd", {
   expect_match(uncertified_ref$note, "rsvd baseline did not satisfy")
 })
 
+test_that("randomized-rsvd benchmark rows expose projection diagnostics", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+
+  helper_path <- benchmark_file("_helpers.R")
+  source(helper_path)
+
+  set.seed(1603)
+  A <- Matrix::rsparsematrix(140L, 12L, density = 0.12) %*%
+    Matrix::rsparsematrix(12L, 90L, density = 0.12)
+  rows <- benchmark_randomized_rsvd_case(
+    A,
+    rank = 8L,
+    methods = "eigencore_randomized",
+    iterations = 1L,
+    seed = 1603L
+  )
+
+  expect_true("randomized_projection_kind" %in% names(rows))
+  expect_true("randomized_projection_transposed" %in% names(rows))
+  expect_equal(rows$randomized_projection_kind, "direct_qt_a")
+  expect_true(rows$randomized_projection_transposed)
+})
+
 test_that("SVD surface H candidate preset selects retained native SVD subject", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
 

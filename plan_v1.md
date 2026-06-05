@@ -148,9 +148,14 @@ Deliver the native engine in order. Each step ships with adversarial tests
   green at roughly `2.97x` versus certified `rsvd`. Quick
   exact-low-rank and sparse rows also improve modestly but remain below the
   global `2x` speed threshold because fixed R/benchmark overhead dominates at
-  those sizes; fresh installed quick sparse evidence certifies
-  `low_rank_sparse:140x90` but remains red at about `1.87x` versus certified
-  `rsvd`. The benchmark gate now requires the `rsvd` baseline itself to
+  those sizes. The sparse CSC randomized path now also has a direct `Q' A`
+  projected-core shortcut mirroring the dense path and benchmark-visible
+  `randomized_projection_kind = "direct_qt_a"` diagnostics. A fresh installed
+  5-iteration quick run certifies `low_rank_sparse:140x90`, trims eigencore
+  allocation to about `385KB` versus `965KB` for certified `rsvd`, but remains
+  speed-red at about `1.75x`; `exact_low_rank_dense:120x80` is also close but
+  red at about `1.94x`. The benchmark gate now requires the `rsvd` baseline
+  itself to
   pass eigencore certification before speed/parity can pass, so slow-decay rows
   where `rsvd` is faster but uncertified are recorded as
   `baseline_certified = FALSE`, `speed_gate = FALSE`, and `passed = FALSE`, not
@@ -158,10 +163,9 @@ Deliver the native engine in order. Each step ships with adversarial tests
   the tiny projected-core `left_gram_eigen` helper with base `svd()` for
   `exact_low_rank_dense:120x80` was rejected: isolated core timing looked
   promising, but the full row worsened to about `1.63x` versus certified `rsvd`
-  and allocated more. A direct CSC projected-core experiment (`Q' A` instead of
-  `t(A' Q)`) was also rejected after the sparse quick row worsened to about
-  `0.71x`; real progress here requires a native sparse sketch/projection
-  kernel or stronger adaptive planning, not a Matrix-level projection swap.
+  and allocated more. Real progress for the remaining red rows still requires a
+  native sparse sketch/projection kernel or stronger adaptive planning, not just
+  Matrix-level projected-core plumbing.
    The broader randomized release gate remains open for slow-decay and other
    non-exact cases and is expected to require native sketch/projection kernels
    and/or stronger adaptive randomized planning.

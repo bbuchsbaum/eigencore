@@ -2189,13 +2189,15 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
 
   candidate_from_Q <- function(Q) {
     t0 <- tick()
-    B_t <- if (is.null(apply_pair$project)) {
-      apply_pair$apply_adjoint(Q)
-    } else {
+    uses_direct_projection <- !is.null(apply_pair$project)
+    B_t <- if (uses_direct_projection) {
       apply_pair$project(Q)
+    } else {
+      apply_pair$apply_adjoint(Q)
     }
     add_stage("apply", t0)
-    core <- if (isTRUE(attr(B_t, "transposed", exact = TRUE))) {
+    projection_transposed <- isTRUE(attr(B_t, "transposed", exact = TRUE))
+    core <- if (projection_transposed) {
       B_t
     } else {
       t(B_t)
@@ -2223,7 +2225,19 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
       tol = tol
     )
     add_stage("certificate", t0)
-    list(d = d, u = u, v = v, cert = cert, core_solver = small$solver)
+    list(
+      d = d,
+      u = u,
+      v = v,
+      cert = cert,
+      core_solver = small$solver,
+      projection_kind = if (uses_direct_projection) {
+        apply_pair$project_kind %||% "direct_qt_a"
+      } else {
+        "adjoint_apply"
+      },
+      projection_transposed = projection_transposed
+    )
   }
 
   t0 <- tick()
@@ -2334,6 +2348,8 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
       normalizer = normalizer,
       apply_kind = apply_pair$kind,
       core_solver = candidate$core_solver %||% NA_character_,
+      projection_kind = candidate$projection_kind %||% NA_character_,
+      projection_transposed = isTRUE(candidate$projection_transposed),
       certificate_reuses_projection = TRUE,
       adaptive_stop = adaptive_stop,
       adaptive_stop_used = early_stop_used,
@@ -2438,6 +2454,7 @@ randomized_svd_apply_pair <- function(op) {
       kind = "dense_direct",
       apply = function(X) source %*% X,
       apply_adjoint = function(X) crossprod(source, X),
+      project_kind = "direct_qt_a",
       project = function(Q) {
         out <- crossprod(Q, source)
         attr(out, "transposed") <- TRUE
@@ -2449,7 +2466,13 @@ randomized_svd_apply_pair <- function(op) {
     return(list(
       kind = "csc_direct",
       apply = function(X) as.matrix(source %*% X),
-      apply_adjoint = function(X) as.matrix(Matrix::crossprod(source, X))
+      apply_adjoint = function(X) as.matrix(Matrix::crossprod(source, X)),
+      project_kind = "direct_qt_a",
+      project = function(Q) {
+        out <- as.matrix(crossprod(Q, source))
+        attr(out, "transposed") <- TRUE
+        out
+      }
     ))
   }
   list(
