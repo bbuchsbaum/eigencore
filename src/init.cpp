@@ -4,9 +4,11 @@
 
 extern "C" SEXP eigencore_dense_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_randomized_apply(SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_dense_randomized_sketch(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_randomized_project_transposed(SEXP, SEXP);
 extern "C" SEXP eigencore_csc_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_randomized_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_csc_randomized_sketch(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_randomized_project_transposed(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_centered_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_diagonal_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -97,9 +99,11 @@ extern "C" SEXP eigencore_tridiagonal_solve(SEXP, SEXP, SEXP, SEXP);
 static const R_CallMethodDef CallEntries[] = {
   {"eigencore_dense_block_apply", (DL_FUNC) &eigencore_dense_block_apply, 6},
   {"eigencore_dense_randomized_apply", (DL_FUNC) &eigencore_dense_randomized_apply, 3},
+  {"eigencore_dense_randomized_sketch", (DL_FUNC) &eigencore_dense_randomized_sketch, 2},
   {"eigencore_dense_randomized_project_transposed", (DL_FUNC) &eigencore_dense_randomized_project_transposed, 2},
   {"eigencore_csc_block_apply", (DL_FUNC) &eigencore_csc_block_apply, 9},
   {"eigencore_csc_randomized_apply", (DL_FUNC) &eigencore_csc_randomized_apply, 6},
+  {"eigencore_csc_randomized_sketch", (DL_FUNC) &eigencore_csc_randomized_sketch, 5},
   {"eigencore_csc_randomized_project_transposed", (DL_FUNC) &eigencore_csc_randomized_project_transposed, 5},
   {"eigencore_csc_centered_block_apply", (DL_FUNC) &eigencore_csc_centered_block_apply, 13},
   {"eigencore_diagonal_block_apply", (DL_FUNC) &eigencore_diagonal_block_apply, 7},

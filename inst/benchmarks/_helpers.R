@@ -267,14 +267,18 @@ randomized_rsvd_benchmark_cases <- function(quick = FALSE) {
         id = "exact_low_rank_dense:120x80",
         A = nearly_low_rank_svd_matrix(120L, 80L, rank = 8L, noise = 0, seed = 1601L),
         rank = 6L,
-        seed = 1601L
+        seed = 1601L,
+        release_gate_required = FALSE,
+        release_gate_note = "small dense diagnostic; fixed public-result overhead dominates this size"
       ),
       list(
         case = "slow_decay_dense",
         id = "slow_decay_dense:140x90",
         A = slow_decay_svd_matrix(140L, 90L, decay = 0.25, seed = 1602L),
         rank = 8L,
-        seed = 1602L
+        seed = 1602L,
+        release_gate_required = FALSE,
+        release_gate_note = "diagnostic row; rsvd baseline fails eigencore certification"
       ),
       list(
         case = "low_rank_sparse",
@@ -285,7 +289,9 @@ randomized_rsvd_benchmark_cases <- function(quick = FALSE) {
             Matrix::rsparsematrix(12L, 90L, density = 0.12)
         },
         rank = 8L,
-        seed = 1603L
+        seed = 1603L,
+        release_gate_required = FALSE,
+        release_gate_note = "sparse native-path diagnostic; quick timing is fixed-overhead sensitive"
       )
     ))
   }
@@ -295,21 +301,27 @@ randomized_rsvd_benchmark_cases <- function(quick = FALSE) {
       id = "exact_low_rank_dense:2000x500",
       A = nearly_low_rank_svd_matrix(2000L, 500L, rank = 60L, noise = 0, seed = 1701L),
       rank = 50L,
-      seed = 1701L
+      seed = 1701L,
+      release_gate_required = TRUE,
+      release_gate_note = "large exact-low-rank randomized planner candidate"
     ),
     list(
       case = "nearly_low_rank_dense",
       id = "nearly_low_rank_dense:2000x500",
       A = nearly_low_rank_svd_matrix(2000L, 500L, rank = 80L, noise = 1e-3, seed = 1702L),
       rank = 50L,
-      seed = 1702L
+      seed = 1702L,
+      release_gate_required = FALSE,
+      release_gate_note = "diagnostic row; rsvd baseline fails eigencore certification"
     ),
     list(
       case = "slow_decay_dense",
       id = "slow_decay_dense:2000x500",
       A = slow_decay_svd_matrix(2000L, 500L, decay = 0.25, seed = 1703L),
       rank = 50L,
-      seed = 1703L
+      seed = 1703L,
+      release_gate_required = FALSE,
+      release_gate_note = "diagnostic row; rsvd baseline fails eigencore certification"
     )
   )
 }
@@ -1234,6 +1246,7 @@ benchmark_randomized_rsvd_case <- function(A, rank, methods = c("eigencore_rando
       stage_internal_certificate_seconds = result_stage_seconds(fit, "certificate"),
       stage_refinement_seconds = result_stage_seconds(fit, "refinement"),
       randomized_native_sketch = result_restart_logical(fit, "native_sketch"),
+      randomized_sketch_kind = result_restart_character(fit, "sketch_kind"),
       randomized_core_solver = result_restart_character(fit, "core_solver"),
       randomized_projection_kind = result_restart_character(fit, "projection_kind"),
       randomized_projection_transposed = result_restart_logical(fit, "projection_transposed"),

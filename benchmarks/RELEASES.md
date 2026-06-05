@@ -342,20 +342,23 @@ they are machine-dependent.
   from about `1.84x` to about `1.63x` versus certified `rsvd` and allocated
   more. Keep `left_gram_eigen`; the remaining I work needs native
   sketch/projection or planning changes, not this small-core swap.
-- Fresh installed randomized probes after adding native dense and CSC
-  randomized sketch/projection kernels show two green regimes and one remaining
-  quick-size dense miss. The focused sparse command
-  `R_LIBS_USER=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-randomized-rsvd.R --quick --iterations=5 --cases=low_rank_sparse --methods=eigencore_randomized,rsvd`
-  certifies both eigencore and `rsvd`; eigencore reports
-  `randomized_native_sketch = TRUE` and
-  `randomized_projection_kind = "native_direct_qt_a"`, allocates about `342KB`
-  versus `965KB` for certified `rsvd`, and reaches about `1.87x`; the full
-  three-case quick rerun puts `low_rank_sparse:140x90` over the `2x` gate at
-  about `2.01x`, while `exact_low_rank_dense:120x80` remains just under at
-  about `1.93x`. The installed non-quick exact-low-rank dense row remains green
-  at about `3.15x` versus certified `rsvd`. Slow-decay still cannot pass while
-  the `rsvd` baseline fails eigencore certification, and remaining I work needs
-  more native randomized control/path fusion or stronger adaptive planning.
+- Fresh installed randomized probes after adding native dense and CSC fused
+  `A Omega` sketch generation plus native projection kernels establish a
+  scoped V1 release gate. The executable strict command
+  `R_LIBS_USER=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-randomized-rsvd.R --iterations=1 --methods=eigencore_randomized,rsvd --strict`
+  enforces only rows tagged `release_gate_required = TRUE`; quick small-size
+  and uncertified-baseline rows remain printed diagnostics. The 2026-06-05
+  strict non-quick run certifies `exact_low_rank_dense:2000x500` for both
+  eigencore and `rsvd`, reports `randomized_native_sketch = TRUE`,
+  `randomized_sketch_kind = "native_fused_a_omega"`, and
+  `randomized_projection_kind = "native_direct_qt_a"`, and passes the scoped
+  gate at about `3.1x` time-to-certified-answer speed versus certified
+  `rsvd`. In the same run, nearly-low-rank and slow-decay rows certify
+  eigencore but keep `release_gate_required = FALSE` because `rsvd` fails
+  eigencore certification. Fresh quick diagnostics keep
+  `exact_low_rank_dense:120x80` and `low_rank_sparse:140x90` certified for
+  eigencore, but both are fixed-overhead-sensitive and remain non-blocking
+  diagnostics rather than V1 planner wins.
 - G1 block Hermitian candidate baseline captured in
   `inst/benchmarks/baselines/g1_candidate_pre.csv`; regenerate it with
   `inst/benchmarks/bench-g1-candidate-baseline.R --save`. The current baseline

@@ -2242,12 +2242,18 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
     )
   }
 
-  t0 <- tick()
-  Omega <- matrix(stats::rnorm(n * l), nrow = n, ncol = l)
-  add_stage("random", t0)
-  t0 <- tick()
-  Y <- apply_pair$apply(Omega)
-  add_stage("apply", t0)
+  if (!is.null(apply_pair$sketch)) {
+    t0 <- tick()
+    Y <- apply_pair$sketch(l)
+    add_stage("apply", t0)
+  } else {
+    t0 <- tick()
+    Omega <- matrix(stats::rnorm(n * l), nrow = n, ncol = l)
+    add_stage("random", t0)
+    t0 <- tick()
+    Y <- apply_pair$apply(Omega)
+    add_stage("apply", t0)
+  }
   matvecs <- 1L
   t0 <- tick()
   Q <- randomized_svd_normalize(Y, normalizer, final = n_iter == 0L)
@@ -2350,6 +2356,7 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
       normalizer = normalizer,
       apply_kind = apply_pair$kind,
       native_sketch = isTRUE(apply_pair$native_sketch),
+      sketch_kind = apply_pair$sketch_kind %||% "explicit_omega",
       core_solver = candidate$core_solver %||% NA_character_,
       projection_kind = candidate$projection_kind %||% NA_character_,
       projection_transposed = isTRUE(candidate$projection_transposed),
@@ -2465,6 +2472,15 @@ randomized_svd_apply_pair <- function(op) {
     return(list(
       kind = "dense_direct",
       native_sketch = TRUE,
+      sketch_kind = "native_fused_a_omega",
+      sketch = function(cols) {
+        .Call(
+          "eigencore_dense_randomized_sketch",
+          source,
+          as.integer(cols),
+          PACKAGE = "eigencore"
+        )
+      },
       apply = function(X) dense_randomized_apply(X, transpose = FALSE),
       apply_adjoint = function(X) dense_randomized_apply(X, transpose = TRUE),
       project_kind = "native_direct_qt_a",
@@ -2494,6 +2510,18 @@ randomized_svd_apply_pair <- function(op) {
     return(list(
       kind = "csc_direct",
       native_sketch = TRUE,
+      sketch_kind = "native_fused_a_omega",
+      sketch = function(cols) {
+        .Call(
+          "eigencore_csc_randomized_sketch",
+          methods::slot(source, "i"),
+          methods::slot(source, "p"),
+          methods::slot(source, "x"),
+          methods::slot(source, "Dim"),
+          as.integer(cols),
+          PACKAGE = "eigencore"
+        )
+      },
       apply = function(X) csc_randomized_apply(X, transpose = FALSE),
       apply_adjoint = function(X) csc_randomized_apply(X, transpose = TRUE),
       project_kind = "native_direct_qt_a",

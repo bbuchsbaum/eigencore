@@ -1264,7 +1264,11 @@ test_that("randomized SVD reports approximation and certificate policy", {
   expect_true(is.finite(fit$restart$initial_max_backward_error))
 
   pair <- eigencore:::randomized_svd_apply_pair(as_operator(M))
+  set.seed(817)
+  fused_sketch <- pair$sketch(6L)
+  set.seed(817)
   Omega <- matrix(rnorm(ncol(M) * 6L), ncol(M), 6L)
+  expect_equal(fused_sketch, as.matrix(M %*% Omega), tolerance = 1e-12)
   sketch <- pair$apply(Omega)
   expect_equal(sketch, as.matrix(M %*% Omega), tolerance = 1e-12)
   adjoint_sketch <- pair$apply_adjoint(sketch)
@@ -1276,4 +1280,18 @@ test_that("randomized SVD reports approximation and certificate policy", {
   expect_true(isTRUE(attr(projected, "transposed", exact = TRUE)))
   attr(projected, "transposed") <- NULL
   expect_equal(projected, t(adjoint), tolerance = 1e-12)
+})
+
+test_that("randomized SVD dense fused sketch preserves seeded R Gaussian contract", {
+  set.seed(818)
+  M <- matrix(rnorm(30 * 18), nrow = 30, ncol = 18)
+  pair <- eigencore:::randomized_svd_apply_pair(as_operator(M))
+
+  set.seed(819)
+  fused_sketch <- pair$sketch(7L)
+  set.seed(819)
+  Omega <- matrix(rnorm(ncol(M) * 7L), ncol(M), 7L)
+
+  expect_equal(pair$sketch_kind, "native_fused_a_omega")
+  expect_equal(fused_sketch, M %*% Omega, tolerance = 1e-12)
 })

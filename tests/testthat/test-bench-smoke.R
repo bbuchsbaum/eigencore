@@ -374,10 +374,34 @@ test_that("randomized-rsvd benchmark script is available", {
   expect_true(any(grepl("randomized_rsvd_benchmark_cases", lines, fixed = TRUE)))
   expect_true(any(grepl("filter_benchmark_cases(cases, args$cases)", lines, fixed = TRUE)))
   expect_true(any(grepl("message_benchmark_case(\"bench-randomized-rsvd\"", lines, fixed = TRUE)))
+  expect_true(any(grepl("release_gate_required", lines, fixed = TRUE)))
   expect_true(any(grepl("exact_low_rank_dense:120x80", lines, fixed = TRUE)))
   expect_true(any(grepl("slow_decay_dense:2000x500", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_randomized", lines, fixed = TRUE)))
   expect_true(any(grepl("rsvd", lines, fixed = TRUE)))
+})
+
+test_that("randomized-rsvd cases mark release and diagnostic rows", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+
+  source(benchmark_file("_helpers.R"))
+  quick <- randomized_rsvd_benchmark_cases(quick = TRUE)
+  full <- randomized_rsvd_benchmark_cases(quick = FALSE)
+
+  quick_required <- vapply(quick, `[[`, logical(1), "release_gate_required")
+  full_required <- vapply(full, `[[`, logical(1), "release_gate_required")
+
+  expect_equal(
+    vapply(quick[quick_required], `[[`, character(1), "case"),
+    character()
+  )
+  expect_equal(
+    vapply(full[full_required], `[[`, character(1), "case"),
+    "exact_low_rank_dense"
+  )
+  expect_true(all(vapply(c(quick, full), function(case) {
+    is.character(case$release_gate_note) && nzchar(case$release_gate_note)
+  }, logical(1))))
 })
 
 test_that("shift-invert benchmark script is available", {
@@ -586,9 +610,11 @@ test_that("randomized-rsvd benchmark rows expose native projection diagnostics",
 
   for (rows in list(dense_rows, sparse_rows)) {
     expect_true("randomized_native_sketch" %in% names(rows))
+    expect_true("randomized_sketch_kind" %in% names(rows))
     expect_true("randomized_projection_kind" %in% names(rows))
     expect_true("randomized_projection_transposed" %in% names(rows))
     expect_true(rows$randomized_native_sketch)
+    expect_equal(rows$randomized_sketch_kind, "native_fused_a_omega")
     expect_equal(rows$randomized_projection_kind, "native_direct_qt_a")
     expect_true(rows$randomized_projection_transposed)
   }

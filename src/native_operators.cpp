@@ -3,6 +3,7 @@
 #include <Rdefines.h>
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
+#include <R_ext/Random.h>
 #include <cstring>
 #include <cmath>
 #include <climits>
@@ -573,6 +574,52 @@ extern "C" SEXP eigencore_dense_randomized_apply(SEXP A_, SEXP X_,
   return out_;
 }
 
+extern "C" SEXP eigencore_dense_randomized_sketch(SEXP A_, SEXP cols_) {
+  if (!isReal(A_)) {
+    error("invalid dense randomized sketch inputs");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  if (dimA == R_NilValue) {
+    error("A must be a matrix");
+  }
+
+  const int m = INTEGER(dimA)[0];
+  const int n = INTEGER(dimA)[1];
+  const int sketch_cols = asInteger(cols_);
+  if (sketch_cols == NA_INTEGER || sketch_cols < 0) {
+    error("sketch column count must be non-negative");
+  }
+
+  SEXP out_ = PROTECT(allocMatrix(REALSXP, m, sketch_cols));
+  if (sketch_cols == 0) {
+    UNPROTECT(1);
+    return out_;
+  }
+
+  double* omega = reinterpret_cast<double*>(
+    R_alloc(static_cast<size_t>(n) * static_cast<size_t>(sketch_cols),
+            sizeof(double))
+  );
+  GetRNGstate();
+  for (int64_t pos = 0;
+       pos < static_cast<int64_t>(n) * static_cast<int64_t>(sketch_cols);
+       ++pos) {
+    omega[pos] = norm_rand();
+  }
+  PutRNGstate();
+
+  const char trans_a = 'N';
+  const char trans_omega = 'N';
+  const double alpha = 1.0;
+  const double beta = 0.0;
+  F77_CALL(dgemm)(&trans_a, &trans_omega, &m, &sketch_cols, &n,
+                  &alpha, REAL(A_), &m, omega, &n,
+                  &beta, REAL(out_), &m FCONE FCONE);
+
+  UNPROTECT(1);
+  return out_;
+}
+
 extern "C" SEXP eigencore_dense_randomized_project_transposed(SEXP A_,
                                                               SEXP Q_) {
   if (!isReal(A_) || !isReal(Q_)) {
@@ -710,6 +757,47 @@ extern "C" SEXP eigencore_csc_randomized_apply(SEXP i_, SEXP p_, SEXP x_,
   if (status != 0) {
     eigencore_apply_status_error("CSC randomized apply", status);
   }
+
+  UNPROTECT(1);
+  return out_;
+}
+
+extern "C" SEXP eigencore_csc_randomized_sketch(SEXP i_, SEXP p_, SEXP x_,
+                                                SEXP dim_, SEXP cols_) {
+  if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
+    error("invalid CSC randomized sketch inputs");
+  }
+
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  const int sketch_cols = asInteger(cols_);
+  if (sketch_cols == NA_INTEGER || sketch_cols < 0) {
+    error("sketch column count must be non-negative");
+  }
+
+  SEXP out_ = PROTECT(allocMatrix(REALSXP, m, sketch_cols));
+  double* out = REAL(out_);
+  std::memset(out, 0, sizeof(double) * static_cast<size_t>(m) *
+                       static_cast<size_t>(sketch_cols));
+  if (sketch_cols == 0) {
+    UNPROTECT(1);
+    return out_;
+  }
+
+  const int* row_idx = INTEGER(i_);
+  const int* col_ptr = INTEGER(p_);
+  const double* values = REAL(x_);
+  GetRNGstate();
+  for (int block = 0; block < sketch_cols; ++block) {
+    double* out_col = out + static_cast<int64_t>(block) * m;
+    for (int col = 0; col < n; ++col) {
+      const double omega = norm_rand();
+      for (int pos = col_ptr[col]; pos < col_ptr[col + 1]; ++pos) {
+        out_col[row_idx[pos]] += values[pos] * omega;
+      }
+    }
+  }
+  PutRNGstate();
 
   UNPROTECT(1);
   return out_;

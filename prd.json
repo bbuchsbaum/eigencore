@@ -514,13 +514,13 @@
       "reference_baseline": "vendor/rsvd is the minimum public-package baseline for randomized SVD: eigencore must match or improve rsvd::rsvd() accuracy and exceed rsvd performance once certification/refinement cost is included.",
       "benchmark_surface": "inst/benchmarks/bench-randomized-rsvd.R reports oracle singular-value error, left/right subspace error, true SVD certificate fields, rsvd speed ratios, and whether the rsvd baseline itself passes eigencore certification.",
       "current_implementation_status": {
-        "status": "prototype",
-        "implemented_path": "reference randomized range finder with deterministic seed, QR/LU/none normalization controls, native dense/CSC sketch and direct Q' A projected-core kernels, projected-certificate reuse, certified q=0 early stop, deterministic native Gram refinement when needed, and a wide-core left-Gram eigensolve for small projected cores.",
-        "validated_regime": "installed large exact-low-rank dense benchmark passes the randomized 2x speed gate versus certified rsvd at about 3.15x with accuracy and certificate gates green; quick low-rank sparse now also passes the 2x randomized gate in the full quick surface",
+        "status": "scoped_v1_gate",
+        "implemented_path": "reference-control randomized range finder with deterministic seed, QR/LU/none normalization controls, native dense/CSC fused A Omega sketch generation, native A'Q and direct Q' A projected-core kernels, projected-certificate reuse, certified q=0 early stop, deterministic native Gram refinement when needed, and a wide-core left-Gram eigensolve for small projected cores.",
+        "validated_regime": "installed strict non-quick exact-low-rank dense benchmark passes the scoped randomized 2x release gate versus certified rsvd at about 3.1x with accuracy and certificate gates green; quick dense/sparse and uncertified-baseline rows remain printed diagnostics with release_gate_required = false",
         "not_yet_satisfied": [
-          "fully native randomized solver control path beyond dense/CSC sketch/projection kernels",
+          "fully native randomized solver controller beyond the current reference-control path with native dense/CSC kernels",
           "broader slow-decay adaptive planner regimes",
-          "global randomized speed gate across all benchmark cases"
+          "stable sparse-size release candidate against a certified rsvd baseline"
         ]
       }
     },

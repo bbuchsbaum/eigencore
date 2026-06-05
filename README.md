@@ -153,7 +153,7 @@ generalized SPD prototype), Golub–Kahan SVD, dense LAPACK fallbacks,
 reference randomized SVD, dense standard/generalized shift-invert,
 sparse diagonal/symmetric-tridiagonal standard shift-invert, and tridiagonal
 generalized shift-invert with diagonal `B`. General sparse SVD,
-native randomized SVD, general sparse shift-invert, full restarted
+fully native randomized SVD control, general sparse shift-invert, full restarted
 nonsymmetric Arnoldi, and the final release-hardening gates remain open.
 See [`plan_v1.md`](plan_v1.md) and the docs under
 `docs/` for the engineering roadmap and current limitations. Start with

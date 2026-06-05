@@ -123,8 +123,10 @@ The production V1 SVD promise is not complete. The tiny sparse Gram special
 case is promoted and certified in original coordinates; dense inputs may use a
 native dense LAPACK fallback; explicit dense/CSC Golub-Kahan exists as a native
 prototype; general sparse and matrix-free thick-restart SVD remain open
-performance work. Randomized SVD is still a reference prototype unless and
-until the planner and benchmark gates say otherwise.
+performance work. Randomized SVD has a scoped exact-low-rank V1 gate with
+native fused sketch/projection kernels, but public randomized control remains
+reference-labelled and broader sparse/slow-decay/native-controller promotion
+remains future work.
 
 ## Dense Fallback Policy
 

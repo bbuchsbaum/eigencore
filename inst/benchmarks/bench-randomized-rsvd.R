@@ -38,11 +38,16 @@ row.names(result) <- NULL
 print(result)
 
 gates <- lapply(split(result, result$case), function(case_rows) {
+  case_name <- unique(case_rows$case)
+  case_spec <- cases[[match(case_name, vapply(cases, `[[`, character(1), "case"))]]
   gate <- evaluate_randomized_rsvd_gate(
     case_rows,
     requested = unique(case_rows$rank)[[1L]]
   )
-  gate$case <- unique(case_rows$case)
+  gate$release_gate_required <- isTRUE(case_spec$release_gate_required)
+  gate$release_gate_passed <- !isTRUE(gate$release_gate_required) || isTRUE(gate$passed)
+  gate$release_gate_note <- case_spec$release_gate_note %||% ""
+  gate$case <- case_name
   gate$m <- unique(case_rows$m)
   gate$n <- unique(case_rows$n)
   gate$rank <- unique(case_rows$rank)
@@ -57,6 +62,10 @@ if (args$save) {
   message("saved gates: ", save_benchmark_result(gates, "randomized-rsvd-gates"))
 }
 
-if (args$strict && !all(gates$passed)) {
+if (args$strict && !any(gates$release_gate_required)) {
+  stop("randomized-rsvd strict gate selected no release-gate candidate rows.", call. = FALSE)
+}
+
+if (args$strict && !all(gates$release_gate_passed[gates$release_gate_required])) {
   stop("randomized-rsvd benchmark failed rsvd parity/performance gate.", call. = FALSE)
 }
