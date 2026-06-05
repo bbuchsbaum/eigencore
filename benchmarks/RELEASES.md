@@ -121,6 +121,14 @@ they are machine-dependent.
   documentation requirements. It records the remaining doc blockers explicitly:
   README/vignette refresh after solver-gate decisions, final strict benchmark
   artifacts, and unresolved ASan/valgrind-equivalent release coverage.
+- Retained IRLBA/LBD BPRO diagnostics now include exact-final lock provenance.
+  The benchmark rows expose `retained_locked_count`,
+  `irlba_lbd_soft_locked_count`, `irlba_lbd_hard_locked_count`,
+  `irlba_lbd_locked_triplets_certified`,
+  `irlba_lbd_future_vectors_orthogonal_to_locks`, lock source, and fallback
+  reason. These are hard locks only after the exact two-sided SVD certificate;
+  `retained_deflation = FALSE` remains explicit, so this is H diagnostic
+  evidence rather than production SVD promotion.
 - Fresh installed-package Hermitian gate evidence was collected on 2026-05-17
   using
   `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-native-hermitian-gate.R --quick --include-dense --strict --save`.

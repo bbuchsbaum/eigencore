@@ -367,6 +367,46 @@ native_irlba_lbd_retained_state_from_scout <- function(op, scout, abi = NULL,
 }
 
 #' @keywords internal
+native_irlba_lbd_lock_diagnostics <- function(certificate, rank,
+                                              source = "exact_final_certificate",
+                                              fallback_reason = NA_character_) {
+  converged <- certificate$converged %||% logical(0)
+  hard_locked <- min(as.integer(rank), sum(isTRUE(certificate$passed) & converged))
+  lock_complete <- hard_locked >= as.integer(rank)
+  list(
+    retained_locked_count = hard_locked,
+    retained_deflation = FALSE,
+    irlba_lbd_locking_policy =
+      "hard locks require exact two-sided final SVD certificate",
+    irlba_lbd_lock_source = source,
+    irlba_lbd_soft_locked_count = 0L,
+    irlba_lbd_hard_locked_count = hard_locked,
+    irlba_lbd_locked_triplets_certified = isTRUE(lock_complete),
+    irlba_lbd_locked_orthogonality_loss =
+      certificate$max_orthogonality_loss %||% NA_real_,
+    irlba_lbd_future_vectors_orthogonal_to_locks =
+      isTRUE(certificate$orthogonality_passed),
+    irlba_lbd_lock_fallback_reason = if (isTRUE(lock_complete)) {
+      NA_character_
+    } else {
+      fallback_reason %||% "exact final certificate did not converge all requested triplets"
+    }
+  )
+}
+
+#' @keywords internal
+native_irlba_lbd_attach_lock_diagnostics <- function(restart, certificate, rank,
+                                                     source = "exact_final_certificate",
+                                                     fallback_reason = NA_character_) {
+  c(restart, native_irlba_lbd_lock_diagnostics(
+    certificate = certificate,
+    rank = rank,
+    source = source,
+    fallback_reason = fallback_reason
+  ))
+}
+
+#' @keywords internal
 native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
                                           tol = 1e-8,
                                           work = NULL,
@@ -463,6 +503,12 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
       max_backward_error = final$certificate$max_backward_error,
       max_residual = final$certificate$max_residual,
       stringsAsFactors = FALSE
+    )
+    final$restart <- native_irlba_lbd_attach_lock_diagnostics(
+      final$restart,
+      final$certificate,
+      rank = rank,
+      source = "exact_scout_certificate"
     )
     return(native_irlba_lbd_select_vectors(final, vectors))
   }
@@ -815,6 +861,13 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
     fallback$restart$irlba_lbd_retained_matvecs <- retained_matvecs
     fallback$restart$irlba_lbd_retained_iterations <- retained_iterations
   }
+  fallback$restart <- native_irlba_lbd_attach_lock_diagnostics(
+    fallback$restart,
+    fallback$certificate,
+    rank = rank,
+    source = "exact_fallback_certificate",
+    fallback_reason = fallback_reason
+  )
   native_irlba_lbd_select_vectors(fallback, vectors)
 }
 
@@ -901,7 +954,7 @@ native_irlba_lbd_restart_diagnostics <- function(abi, native, small, final,
                                                  fallback_attempted,
                                                  fallback_used,
                                                  fallback_reason) {
-  list(
+  restart <- list(
     kind = "irlba_lbd_native_retained_core",
     implemented = TRUE,
     irlba_lbd_policy = "retained one-sided LBD native core",
@@ -1013,6 +1066,13 @@ native_irlba_lbd_restart_diagnostics <- function(abi, native, small, final,
     zero_singular_completion = isTRUE(final$zero_singular_completion),
     zero_singular_threshold = final$zero_singular_threshold %||% NA_real_,
     certified_in_original_coordinates = TRUE
+  )
+  native_irlba_lbd_attach_lock_diagnostics(
+    restart,
+    final$certificate,
+    rank = abi$rank,
+    source = "exact_retained_restart_certificate",
+    fallback_reason = fallback_reason
   )
 }
 

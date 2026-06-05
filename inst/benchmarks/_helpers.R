@@ -1433,6 +1433,22 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
         result_restart_integer(fit, "irlba_lbd_total_matvecs"),
       irlba_lbd_retained_native_fallback_reason =
         result_restart_character(fit, "irlba_lbd_retained_native_fallback_reason"),
+      irlba_lbd_locking_policy =
+        result_restart_character(fit, "irlba_lbd_locking_policy"),
+      irlba_lbd_lock_source =
+        result_restart_character(fit, "irlba_lbd_lock_source"),
+      irlba_lbd_soft_locked_count =
+        result_restart_integer(fit, "irlba_lbd_soft_locked_count"),
+      irlba_lbd_hard_locked_count =
+        result_restart_integer(fit, "irlba_lbd_hard_locked_count"),
+      irlba_lbd_locked_triplets_certified =
+        result_restart_logical(fit, "irlba_lbd_locked_triplets_certified"),
+      irlba_lbd_locked_orthogonality_loss =
+        result_restart_numeric(fit, "irlba_lbd_locked_orthogonality_loss"),
+      irlba_lbd_future_vectors_orthogonal_to_locks =
+        result_restart_logical(fit, "irlba_lbd_future_vectors_orthogonal_to_locks"),
+      irlba_lbd_lock_fallback_reason =
+        result_restart_character(fit, "irlba_lbd_lock_fallback_reason"),
       irlba_lbd_restart_state_kind =
         result_restart_character(fit, "irlba_lbd_restart_state_kind"),
       irlba_lbd_recurrence_available =

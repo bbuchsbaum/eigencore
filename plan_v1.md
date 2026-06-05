@@ -962,8 +962,16 @@ Primary attack surfaces, in order:
    reorthogonalization passes versus `98` for full retained native, exact basis
    loss below `1e-15`, clustered/slow-decay adversarial coverage, and raw
    retained solver time below the full retained-native diagnostic in the
-   one-iteration surface probe. It remains diagnostic because total time and
-   memory are still red versus certified `RSpectra` and direct one-sided GK.
+   one-iteration surface probe. It now also exposes exact-certified final lock
+   diagnostics: `retained_locked_count`, `irlba_lbd_soft_locked_count`,
+   `irlba_lbd_hard_locked_count`,
+   `irlba_lbd_locked_triplets_certified`,
+   `irlba_lbd_future_vectors_orthogonal_to_locks`, and
+   `irlba_lbd_lock_fallback_reason`. These hard locks are counted only from the
+   exact final two-sided SVD certificate; `retained_deflation = FALSE` remains
+   explicit because this slice does not claim operator deflation. It remains
+   diagnostic because total time and memory are still red versus certified
+   `RSpectra` and direct one-sided GK.
    A separate normal-scout diagnostic, `eigencore_irlba_lbd_normal_scout`,
    runs bounded matrix-free normal scouts at 8/12/16/20 steps and uses the
    selected scout only as a warm start for certified one-sided LBD polish. The

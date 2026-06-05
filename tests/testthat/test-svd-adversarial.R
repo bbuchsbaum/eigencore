@@ -450,6 +450,21 @@ test_that("retained IRLBA BPRO policy certifies with monitored partial reorthogo
 
   expect_true(bpro$certificate$passed)
   expect_false(bpro$restart$fallback_used)
+  expect_false(bpro$restart$retained_deflation)
+  expect_equal(bpro$restart$retained_locked_count, 5L)
+  expect_equal(bpro$restart$irlba_lbd_soft_locked_count, 0L)
+  expect_equal(bpro$restart$irlba_lbd_hard_locked_count, 5L)
+  expect_identical(
+    bpro$restart$irlba_lbd_lock_source,
+    "exact_retained_restart_certificate"
+  )
+  expect_true(bpro$restart$irlba_lbd_locked_triplets_certified)
+  expect_true(bpro$restart$irlba_lbd_future_vectors_orthogonal_to_locks)
+  expect_lte(
+    bpro$restart$irlba_lbd_locked_orthogonality_loss,
+    bpro$certificate$orthogonality_tolerance
+  )
+  expect_true(is.na(bpro$restart$irlba_lbd_lock_fallback_reason))
   expect_true(bpro$restart$irlba_lbd_bpro_policy)
   expect_equal(bpro$restart$irlba_lbd_bpro_passes_per_append, 1L)
   expect_gte(bpro$restart$irlba_lbd_bpro_monitored_appends, 32L)
@@ -596,6 +611,12 @@ test_that("retained IRLBA LBD native wrapper supports tall CSC and scout early r
   expect_false(fit$restart$internal_transposed)
   expect_false(fit$restart$irlba_lbd_retained_native_attempted)
   expect_false(fit$restart$retained_restart)
+  expect_false(fit$restart$retained_deflation)
+  expect_equal(fit$restart$retained_locked_count, 2L)
+  expect_equal(fit$restart$irlba_lbd_hard_locked_count, 2L)
+  expect_identical(fit$restart$irlba_lbd_lock_source, "exact_scout_certificate")
+  expect_true(fit$restart$irlba_lbd_locked_triplets_certified)
+  expect_true(fit$restart$irlba_lbd_future_vectors_orthogonal_to_locks)
   expect_false(fit$restart$fallback_attempted)
   expect_equal(fit$restart$certified_attempt, 1L)
   expect_equal(fit$restart$attempted_subspaces, 6L)
@@ -622,6 +643,11 @@ test_that("retained IRLBA fallback warm start matches transposed orientation", {
   expect_true(fit$restart$internal_transposed)
   expect_true(fit$restart$retained_restart)
   expect_true(fit$restart$fallback_attempted)
+  expect_identical(fit$restart$irlba_lbd_lock_source, "exact_fallback_certificate")
+  expect_equal(fit$restart$retained_locked_count, 5L)
+  expect_equal(fit$restart$irlba_lbd_hard_locked_count, 5L)
+  expect_true(fit$restart$irlba_lbd_locked_triplets_certified)
+  expect_true(fit$restart$irlba_lbd_future_vectors_orthogonal_to_locks)
   expect_certificate_clean(fit)
 })
 
