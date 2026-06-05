@@ -632,6 +632,36 @@ test_that("retained IRLBA residual-augmented path certifies a larger sparse wide
   expect_certificate_clean(fit)
 })
 
+test_that("retained IRLBA reused native certificate diagnostics match direct recomputation", {
+  set.seed(702)
+  wide <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))
+  fit <- eigencore:::native_irlba_lbd_retained_svd(
+    wide,
+    rank = 5L,
+    work = 12L,
+    retained = 7L,
+    max_restarts = 7L,
+    tol = 1e-8,
+    vectors = "both",
+    reorth_policy = "bpro_two_sided"
+  )
+  direct <- eigencore:::certify_svd_operator(
+    as_operator(wide),
+    fit$d,
+    fit$u,
+    fit$v,
+    tol = 1e-8
+  )
+
+  expect_true(fit$restart$irlba_lbd_native_certificate_diagnostics_reused)
+  expect_true(fit$restart$irlba_lbd_native_certificate_diagnostics_swapped)
+  expect_lt(max(abs(fit$certificate$residuals$left - direct$residuals$left)), 1e-10)
+  expect_lt(max(abs(fit$certificate$residuals$right - direct$residuals$right)), 1e-10)
+  expect_lt(max(abs(fit$certificate$backward_error - direct$backward_error)), 1e-10)
+  expect_lt(max(abs(fit$certificate$orthogonality - direct$orthogonality)), 1e-10)
+  expect_equal(fit$certificate$passed, direct$passed)
+})
+
 test_that("normal-scout IRLBA benchmark candidate only trusts final SVD certificate", {
   set.seed(702)
   wide <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))

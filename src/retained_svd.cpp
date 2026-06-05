@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cfloat>
 #include <cstring>
+#include <utility>
 #include <vector>
 #include "eigencore_common.h"
 #include "native_operators.h"
@@ -305,6 +306,99 @@ static int retained_subspace_sequence(int n,
   return 0;
 }
 
+struct CachedSvdDiagnostics {
+  int k = 0;
+  double scale_value = R_NaReal;
+  double orth_u = R_NaReal;
+  double orth_v = R_NaReal;
+  int workspace_allocation_count = 0;
+  int workspace_bytes_allocated = 0;
+  bool valid = false;
+  std::vector<double> left;
+  std::vector<double> right;
+  std::vector<double> combined;
+  std::vector<double> backward;
+  std::vector<double> scale;
+  std::vector<int> converged;
+
+  void reset(int cols, double scale) {
+    k = cols;
+    scale_value = scale;
+    orth_u = R_NaReal;
+    orth_v = R_NaReal;
+    workspace_allocation_count = 0;
+    workspace_bytes_allocated = 0;
+    valid = false;
+    left.assign(static_cast<size_t>(cols), 0.0);
+    right.assign(static_cast<size_t>(cols), 0.0);
+    combined.assign(static_cast<size_t>(cols), 0.0);
+    backward.assign(static_cast<size_t>(cols), 0.0);
+    this->scale.assign(static_cast<size_t>(cols), scale);
+    converged.assign(static_cast<size_t>(cols), 0);
+  }
+};
+
+static SEXP cached_svd_diagnostics_pack(const CachedSvdDiagnostics& diagnostics) {
+  if (!diagnostics.valid || diagnostics.k < 1) {
+    return R_NilValue;
+  }
+  const int k = diagnostics.k;
+  SEXP left_ = PROTECT(allocVector(REALSXP, k));
+  SEXP right_ = PROTECT(allocVector(REALSXP, k));
+  SEXP combined_ = PROTECT(allocVector(REALSXP, k));
+  SEXP backward_ = PROTECT(allocVector(REALSXP, k));
+  SEXP orth_ = PROTECT(allocVector(REALSXP, 2));
+  SEXP scale_ = PROTECT(allocVector(REALSXP, k));
+  SEXP converged_ = PROTECT(allocVector(LGLSXP, k));
+  for (int col = 0; col < k; ++col) {
+    REAL(left_)[col] = diagnostics.left[static_cast<size_t>(col)];
+    REAL(right_)[col] = diagnostics.right[static_cast<size_t>(col)];
+    REAL(combined_)[col] = diagnostics.combined[static_cast<size_t>(col)];
+    REAL(backward_)[col] = diagnostics.backward[static_cast<size_t>(col)];
+    REAL(scale_)[col] = diagnostics.scale[static_cast<size_t>(col)];
+    LOGICAL(converged_)[col] =
+      diagnostics.converged[static_cast<size_t>(col)] ? TRUE : FALSE;
+  }
+  REAL(orth_)[0] = diagnostics.orth_u;
+  REAL(orth_)[1] = diagnostics.orth_v;
+  SEXP orth_names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(orth_names_, 0, mkChar("U"));
+  SET_STRING_ELT(orth_names_, 1, mkChar("V"));
+  setAttrib(orth_, R_NamesSymbol, orth_names_);
+
+  SEXP workspace_ = PROTECT(allocVector(INTSXP, 2));
+  INTEGER(workspace_)[0] = diagnostics.workspace_allocation_count;
+  INTEGER(workspace_)[1] = diagnostics.workspace_bytes_allocated;
+  SEXP workspace_names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(workspace_names_, 0, mkChar("allocation_count"));
+  SET_STRING_ELT(workspace_names_, 1, mkChar("bytes_allocated"));
+  setAttrib(workspace_, R_NamesSymbol, workspace_names_);
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 9));
+  SET_VECTOR_ELT(out_, 0, left_);
+  SET_VECTOR_ELT(out_, 1, right_);
+  SET_VECTOR_ELT(out_, 2, combined_);
+  SET_VECTOR_ELT(out_, 3, backward_);
+  SET_VECTOR_ELT(out_, 4, orth_);
+  SET_VECTOR_ELT(out_, 5, scale_);
+  SET_VECTOR_ELT(out_, 6, converged_);
+  SET_VECTOR_ELT(out_, 7, ScalarReal(diagnostics.scale_value));
+  SET_VECTOR_ELT(out_, 8, workspace_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 9));
+  SET_STRING_ELT(names_, 0, mkChar("left"));
+  SET_STRING_ELT(names_, 1, mkChar("right"));
+  SET_STRING_ELT(names_, 2, mkChar("combined"));
+  SET_STRING_ELT(names_, 3, mkChar("backward_error"));
+  SET_STRING_ELT(names_, 4, mkChar("orthogonality"));
+  SET_STRING_ELT(names_, 5, mkChar("scale"));
+  SET_STRING_ELT(names_, 6, mkChar("converged"));
+  SET_STRING_ELT(names_, 7, mkChar("scale_value"));
+  SET_STRING_ELT(names_, 8, mkChar("workspace"));
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(12);
+  return out_;
+}
+
 static SEXP retained_attempt_history_pack(const std::vector<int>& subspaces,
                                           const std::vector<int>& active_cols,
                                           const std::vector<int>& start_cols,
@@ -406,9 +500,13 @@ static int retained_cached_av_certificate_passed(void* impl,
                                                  double* max_backward_error,
                                                  double* max_residual,
                                                  int* converged_count,
-                                                 int* leading_converged_count) {
+                                                 int* leading_converged_count,
+                                                 CachedSvdDiagnostics* diagnostics = nullptr) {
   const double eps = DBL_EPSILON;
   const double scale_value = fmax(norm_A, eps);
+  if (diagnostics != nullptr) {
+    diagnostics->reset(k, scale_value);
+  }
   std::vector<double> right(static_cast<size_t>(n) * static_cast<size_t>(k), 0.0);
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
   const int status = apply(impl, EIGENCORE_TRANSPOSE_ADJOINT, k,
@@ -441,6 +539,14 @@ static int retained_cached_av_certificate_passed(void* impl,
     }
     const double combined = sqrt(left_sum + right_sum);
     const double backward = combined / scale_value;
+    if (diagnostics != nullptr) {
+      diagnostics->left[static_cast<size_t>(col)] = sqrt(left_sum);
+      diagnostics->right[static_cast<size_t>(col)] = sqrt(right_sum);
+      diagnostics->combined[static_cast<size_t>(col)] = combined;
+      diagnostics->backward[static_cast<size_t>(col)] = backward;
+      diagnostics->converged[static_cast<size_t>(col)] =
+        (R_FINITE(backward) && backward <= tol) ? 1 : 0;
+    }
     if (backward > *max_backward_error || col == 0) {
       *max_backward_error = backward;
     }
@@ -475,6 +581,15 @@ static int retained_cached_av_certificate_passed(void* impl,
     max_orthogonality_loss(gram_u.data(), k),
     max_orthogonality_loss(gram_v.data(), k)
   );
+  if (diagnostics != nullptr) {
+    diagnostics->orth_u = max_orthogonality_loss(gram_u.data(), k);
+    diagnostics->orth_v = max_orthogonality_loss(gram_v.data(), k);
+    diagnostics->workspace_allocation_count =
+      static_cast<int>(workspace.allocation_count);
+    diagnostics->workspace_bytes_allocated =
+      static_cast<int>(workspace.bytes_allocated);
+    diagnostics->valid = true;
+  }
   const double orth_tol = (tol > sqrt(DBL_EPSILON)) ? tol : sqrt(DBL_EPSILON);
   if (orth > orth_tol) {
     passed = 0;
@@ -1906,6 +2021,7 @@ static SEXP irlba_lbd_augmented_retained_projection(
   attempt_leading_converged_count.reserve(static_cast<size_t>(chunks));
   SEXP ritz_ = R_NilValue;
   int ritz_protected = 0;
+  CachedSvdDiagnostics final_certificate_diagnostics;
   int small_svds = 0;
   double min_cheap_residual = R_PosInf;
   double final_cheap_residual = R_NaReal;
@@ -2082,6 +2198,7 @@ static SEXP irlba_lbd_augmented_retained_projection(
     double max_residual = R_NaReal;
     int converged_count = 0;
     int leading_converged_count = 0;
+    CachedSvdDiagnostics attempt_certificate_diagnostics;
     if (force_certificate) {
       attempt_timer = native_timer_now();
       certificate_passed = retained_cached_av_certificate_passed(
@@ -2095,7 +2212,8 @@ static SEXP irlba_lbd_augmented_retained_projection(
         &max_backward_error,
         &max_residual,
         &converged_count,
-        &leading_converged_count
+        &leading_converged_count,
+        &attempt_certificate_diagnostics
       );
       stage_projected_seconds += native_timer_elapsed(attempt_timer);
       if (certificate_passed < 0) {
@@ -2135,6 +2253,9 @@ static SEXP irlba_lbd_augmented_retained_projection(
       }
       ritz_ = attempt_ritz_;
       ritz_protected = 1;
+      if (attempt_certificate_diagnostics.valid) {
+        final_certificate_diagnostics = std::move(attempt_certificate_diagnostics);
+      }
       final_cheap_residual = cheap_residual;
       return certificate_passed == 1 ? 1 : 0;
     }
@@ -2293,14 +2414,19 @@ static SEXP irlba_lbd_augmented_retained_projection(
     &attempt_converged_count, &attempt_leading_converged_count
   ));
   SEXP tol_ = PROTECT(ScalarReal(tol));
-  SEXP cert_diag_ = PROTECT(native_operator_svd_certificate_cached_av(
-    impl, apply, m, n, norm_A,
-    VECTOR_ELT(ritz_, 0),
-    VECTOR_ELT(ritz_, 1),
-    VECTOR_ELT(ritz_, 2),
-    VECTOR_ELT(ritz_, 3),
-    tol_
-  ));
+  SEXP cert_diag_ = R_NilValue;
+  if (final_certificate_diagnostics.valid) {
+    cert_diag_ = PROTECT(cached_svd_diagnostics_pack(final_certificate_diagnostics));
+  } else {
+    cert_diag_ = PROTECT(native_operator_svd_certificate_cached_av(
+      impl, apply, m, n, norm_A,
+      VECTOR_ELT(ritz_, 0),
+      VECTOR_ELT(ritz_, 1),
+      VECTOR_ELT(ritz_, 2),
+      VECTOR_ELT(ritz_, 3),
+      tol_
+    ));
+  }
 
   const int from_scratch_matvecs = 2 * retained_core + 2 * tail_steps_taken + q_cols;
   const int cached_matvec_savings = from_scratch_matvecs - matvecs;

@@ -485,7 +485,7 @@
         "status": "partial_unpromoted",
         "implemented_path": "native Golub-Kahan staging path for dense double matrices and dgCMatrix operators; native CSC left-Gram and right-Gram certified special cases cover tiny wide/tall sparse largest-SVD rows with exact two-sided certification; unexported block-Golub-Kahan thick-restart oracle, native block Ritz extraction kernel, dense/CSC native block basis-cycle scaffolding, and retained IRLBA/LBD BPRO diagnostics exist for broader H",
         "tiny_sparse_gram_gate_status": "historical green narrow evidence only; fresh installed quick H evidence keeps production SVD red",
-        "retained_h_candidate_status": "the executable --h-candidate gate now uses eigencore_irlba_lbd_retained_bpro instead of the stale retained block-GK row; installed 3-iteration tall_sparse:600x90 and wide_sparse:90x600 probes certify all five requested triplets but fail speed and memory, with speed ratios about 0.124x and 0.196x and memory ratios about 0.168x and 0.160x versus the best certified references",
+        "retained_h_candidate_status": "the executable --h-candidate gate now uses eigencore_irlba_lbd_retained_bpro instead of the stale retained block-GK row; retained BPRO returns accepted native certificate diagnostics without final recomputation; installed 3-iteration tall_sparse:600x90 and wide_sparse:90x600 probes certify all five requested triplets but fail speed and memory, with speed ratios about 0.140x and 0.177x and memory ratios about 0.170x and 0.162x versus the best certified references",
         "native_certificate_paths": [
           "dense SVD certificate diagnostics",
           "built-in dense, dgCMatrix, and diagonal SVD operator certificate diagnostics"

@@ -287,8 +287,8 @@ they are machine-dependent.
   row. A fresh installed 3-iteration probe:
   `R_LIBS_USER=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-svd-surface.R --quick --iterations=3 --subject=eigencore_irlba_lbd_retained_bpro --methods=eigencore_irlba_lbd_retained_bpro,RSpectra,PRIMME,irlba,rsvd --cases=tall_sparse:600x90,wide_sparse:90x600`
   keeps H red. The retained BPRO subject certified all five requested singular
-  triplets on both rows, but failed speed (`0.124x` tall, `0.196x` wide versus
-  the best certified reference) and memory (`0.168x` tall, `0.160x` wide versus
+  triplets on both rows, but failed speed (`0.140x` tall, `0.177x` wide versus
+  the best certified reference) and memory (`0.170x` tall, `0.162x` wide versus
   the best certified reference). Gram/implicit-normal paths remain faster on
   some tiny fixtures, but they are bounded diagnostic paths, not the general H
   production answer.
@@ -541,10 +541,12 @@ they are machine-dependent.
   triggers a second pass only when the threshold requires it (`4` of `49`
   monitored appends on the source-loaded row), cuts retained-basis
   reorthogonalization passes to `53` from `98`, and keeps exact SVD
-  certification green. Focused adversarial coverage now includes clustered and
-  slow-decay retained-BPRO fixtures. The row is faster than retained block-GK on
-  that fixture, but still slower and higher-allocation than certified
-  `RSpectra`, so H remains unpromoted.
+  certification green. The accepted native certificate diagnostics are now
+  returned directly instead of recomputed during result packaging, with focused
+  coverage against direct original-operator certification. Focused adversarial
+  coverage now includes clustered and slow-decay retained-BPRO fixtures. The row
+  is faster than retained block-GK on that fixture, but still slower and
+  higher-allocation than certified `RSpectra`, so H remains unpromoted.
 - Added `eigencore_irlba_lbd_normal_scout` as an H diagnostic benchmark
   method. It runs bounded matrix-free normal scouts at 8/12/16/20 steps,
   uses the selected scout only as a warm start for certified one-sided
