@@ -375,6 +375,10 @@ test_that("retained IRLBA LBD native core certifies or falls back honestly", {
   expect_equal(fit$restart$irlba_lbd_residual_augmented_cols, 1L)
   expect_equal(fit$restart$irlba_lbd_augmented_tail_steps, 40L)
   expect_gte(fit$restart$irlba_lbd_augmented_basis_cols, 40L)
+  expect_equal(fit$restart$irlba_lbd_augmented_cached_aq_cols,
+               fit$restart$irlba_lbd_augmented_basis_cols)
+  expect_true(fit$restart$irlba_lbd_augmented_reduces_from_scratch_work)
+  expect_gt(fit$restart$irlba_lbd_augmented_matvec_savings, 0L)
   expect_identical(fit$restart$internal_orientation, "transposed_wide_operator")
   expect_true(fit$restart$internal_transposed)
   expect_equal(
@@ -407,9 +411,16 @@ test_that("retained IRLBA benchmark candidate avoids repeated fixed-work native 
   expect_true(fit$restart$irlba_lbd_augmented_recurrence)
   expect_equal(fit$restart$irlba_lbd_retained_fixed_work_attempts, 0L)
   expect_equal(fit$restart$irlba_lbd_scout_matvecs, 24L)
-  expect_equal(fit$restart$irlba_lbd_retained_matvecs, 136L)
+  expect_lt(fit$restart$irlba_lbd_retained_matvecs, 136L)
   expect_equal(fit$restart$irlba_lbd_augmented_tail_steps, 40L)
   expect_equal(fit$restart$irlba_lbd_augmented_basis_cols, 46L)
+  expect_equal(fit$restart$irlba_lbd_augmented_restart_cycles, 8L)
+  expect_equal(fit$restart$irlba_lbd_augmented_kept_vectors, 5L)
+  expect_equal(fit$restart$irlba_lbd_augmented_small_svds, 8L)
+  expect_equal(fit$restart$irlba_lbd_augmented_cached_aq_cols, 46L)
+  expect_true(fit$restart$irlba_lbd_augmented_reduces_from_scratch_work)
+  expect_gt(fit$restart$irlba_lbd_augmented_matvec_savings, 0L)
+  expect_true(is.finite(fit$restart$irlba_lbd_augmented_min_cheap_residual))
   expect_equal(
     fit$matvecs,
     fit$restart$irlba_lbd_scout_matvecs +
@@ -455,6 +466,54 @@ test_that("retained IRLBA BPRO policy certifies with monitored partial reorthogo
   expect_equal(bpro$matvecs, full$matvecs)
   expect_lt(bpro$restart$reorthogonalization_passes, full$restart$reorthogonalization_passes)
   expect_certificate_clean(bpro)
+})
+
+test_that("retained IRLBA BPRO augmented restart covers clustered and slow-decay fixtures", {
+  make_fixture <- function(m, n, values, seed) {
+    set.seed(seed)
+    basis_rank <- length(values)
+    U <- qr.Q(qr(matrix(rnorm(m * basis_rank), m, basis_rank)))
+    V <- qr.Q(qr(matrix(rnorm(n * basis_rank), n, basis_rank)))
+    U %*% (diag(values, basis_rank, basis_rank) %*% t(V))
+  }
+  fixtures <- list(
+    clustered = make_fixture(
+      180L, 120L,
+      c(rep(10, 8), rep(9.999, 8), rep(9.99, 8), exp(-0.03 * seq_len(30L))),
+      812L
+    ),
+    slow_decay = make_fixture(140L, 90L, exp(-0.08 * seq_len(24L)), 811L)
+  )
+
+  for (A in fixtures) {
+    fit <- eigencore:::native_irlba_lbd_retained_svd(
+      A,
+      rank = 5L,
+      work = 12L,
+      retained = 7L,
+      max_restarts = 7L,
+      tol = 1e-8,
+      vectors = "both",
+      reorth_policy = "bpro_two_sided"
+    )
+
+    expect_true(fit$certificate$passed)
+    expect_false(fit$restart$fallback_used)
+    expect_true(fit$restart$irlba_lbd_retained_native_attempted)
+    expect_identical(fit$restart$irlba_lbd_restart_state_kind, "residual_augmented_projection")
+    expect_equal(fit$restart$irlba_lbd_augmented_restart_cycles, 8L)
+    expect_equal(fit$restart$irlba_lbd_augmented_kept_vectors, 5L)
+    expect_equal(fit$restart$irlba_lbd_augmented_small_svds, 8L)
+    expect_equal(
+      fit$restart$irlba_lbd_augmented_cached_aq_cols,
+      fit$restart$irlba_lbd_augmented_basis_cols
+    )
+    expect_true(fit$restart$irlba_lbd_augmented_reduces_from_scratch_work)
+    expect_gt(fit$restart$irlba_lbd_augmented_matvec_savings, 0L)
+    expect_true("cheap_residual" %in% names(fit$restart$attempt_history))
+    expect_true(any(is.finite(fit$restart$attempt_history$cheap_residual)))
+    expect_certificate_clean(fit)
+  }
 })
 
 test_that("retained IRLBA residual-augmented path certifies a larger sparse wide fixture", {

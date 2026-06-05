@@ -1445,6 +1445,24 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
         result_restart_integer(fit, "irlba_lbd_augmented_tail_steps"),
       irlba_lbd_augmented_basis_cols =
         result_restart_integer(fit, "irlba_lbd_augmented_basis_cols"),
+      irlba_lbd_augmented_restart_cycles =
+        result_restart_integer(fit, "irlba_lbd_augmented_restart_cycles"),
+      irlba_lbd_augmented_kept_vectors =
+        result_restart_integer(fit, "irlba_lbd_augmented_kept_vectors"),
+      irlba_lbd_augmented_small_svds =
+        result_restart_integer(fit, "irlba_lbd_augmented_small_svds"),
+      irlba_lbd_augmented_cached_aq_cols =
+        result_restart_integer(fit, "irlba_lbd_augmented_cached_aq_cols"),
+      irlba_lbd_augmented_from_scratch_matvecs =
+        result_restart_integer(fit, "irlba_lbd_augmented_from_scratch_matvecs"),
+      irlba_lbd_augmented_matvec_savings =
+        result_restart_integer(fit, "irlba_lbd_augmented_matvec_savings"),
+      irlba_lbd_augmented_min_cheap_residual =
+        result_restart_numeric(fit, "irlba_lbd_augmented_min_cheap_residual"),
+      irlba_lbd_augmented_final_cheap_residual =
+        result_restart_numeric(fit, "irlba_lbd_augmented_final_cheap_residual"),
+      irlba_lbd_augmented_reduces_from_scratch_work =
+        result_restart_logical(fit, "irlba_lbd_augmented_reduces_from_scratch_work"),
       irlba_lbd_bpro_policy =
         result_restart_logical(fit, "irlba_lbd_bpro_policy"),
       irlba_lbd_bpro_passes_per_append =

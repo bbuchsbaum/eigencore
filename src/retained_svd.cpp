@@ -1488,33 +1488,48 @@ static void irlba_lbd_retained_seed(int n,
 static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
                                            const std::vector<int>& iterations,
                                            const std::vector<int>& matvecs,
-                                           const std::vector<int>& warm_started) {
+                                           const std::vector<int>& warm_started,
+                                           const std::vector<double>* cheap_residuals = nullptr) {
   const int rows = static_cast<int>(attempts.size());
+  const int cols = (cheap_residuals != nullptr) ? 6 : 5;
   SEXP attempt_ = PROTECT(allocVector(INTSXP, rows));
   SEXP max_subspace_ = PROTECT(allocVector(INTSXP, rows));
   SEXP iterations_ = PROTECT(allocVector(INTSXP, rows));
   SEXP matvecs_ = PROTECT(allocVector(INTSXP, rows));
   SEXP warm_started_ = PROTECT(allocVector(LGLSXP, rows));
+  SEXP cheap_residual_ = R_NilValue;
+  if (cheap_residuals != nullptr) {
+    cheap_residual_ = PROTECT(allocVector(REALSXP, rows));
+  }
   for (int row = 0; row < rows; ++row) {
     INTEGER(attempt_)[row] = row + 1;
     INTEGER(max_subspace_)[row] = attempts[static_cast<size_t>(row)];
     INTEGER(iterations_)[row] = iterations[static_cast<size_t>(row)];
     INTEGER(matvecs_)[row] = matvecs[static_cast<size_t>(row)];
     LOGICAL(warm_started_)[row] = warm_started[static_cast<size_t>(row)] ? TRUE : FALSE;
+    if (cheap_residuals != nullptr) {
+      REAL(cheap_residual_)[row] = (*cheap_residuals)[static_cast<size_t>(row)];
+    }
   }
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 5));
+  SEXP out_ = PROTECT(allocVector(VECSXP, cols));
   SET_VECTOR_ELT(out_, 0, attempt_);
   SET_VECTOR_ELT(out_, 1, max_subspace_);
   SET_VECTOR_ELT(out_, 2, iterations_);
   SET_VECTOR_ELT(out_, 3, matvecs_);
   SET_VECTOR_ELT(out_, 4, warm_started_);
-  SEXP names_ = PROTECT(allocVector(STRSXP, 5));
+  if (cheap_residuals != nullptr) {
+    SET_VECTOR_ELT(out_, 5, cheap_residual_);
+  }
+  SEXP names_ = PROTECT(allocVector(STRSXP, cols));
   SET_STRING_ELT(names_, 0, mkChar("attempt"));
   SET_STRING_ELT(names_, 1, mkChar("max_subspace"));
   SET_STRING_ELT(names_, 2, mkChar("iterations"));
   SET_STRING_ELT(names_, 3, mkChar("matvecs"));
   SET_STRING_ELT(names_, 4, mkChar("warm_started"));
+  if (cheap_residuals != nullptr) {
+    SET_STRING_ELT(names_, 5, mkChar("cheap_residual"));
+  }
   setAttrib(out_, R_NamesSymbol, names_);
   SEXP row_names_ = PROTECT(allocVector(INTSXP, 2));
   INTEGER(row_names_)[0] = NA_INTEGER;
@@ -1523,7 +1538,7 @@ static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
   SEXP class_ = PROTECT(allocVector(STRSXP, 1));
   SET_STRING_ELT(class_, 0, mkChar("data.frame"));
   setAttrib(out_, R_ClassSymbol, class_);
-  UNPROTECT(9);
+  UNPROTECT(cheap_residuals != nullptr ? 10 : 9);
   return out_;
 }
 
@@ -1694,6 +1709,36 @@ static double basis_orthogonality_loss(const double* basis, int n, int cols) {
   return max_orthogonality_loss(gram.data(), cols);
 }
 
+static int apply_augmented_basis_columns(void* impl,
+                                         EigencoreApplyFn apply,
+                                         int m,
+                                         int n,
+                                         const double* Q,
+                                         int from_col,
+                                         int to_col,
+                                         double* AQ,
+                                         double* stage_apply_seconds,
+                                         int* matvecs,
+                                         EigencoreWorkspace* workspace) {
+  if (from_col >= to_col) {
+    return 0;
+  }
+  const int cols = to_col - from_col;
+  auto stage_timer = native_timer_now();
+  const int status = apply(
+    impl, EIGENCORE_TRANSPOSE_NONE, cols,
+    Q + static_cast<int64_t>(from_col) * n, n,
+    1.0, 0.0,
+    AQ + static_cast<int64_t>(from_col) * m, m,
+    workspace
+  );
+  *stage_apply_seconds += native_timer_elapsed(stage_timer);
+  if (status == 0 && matvecs != nullptr) {
+    *matvecs += cols;
+  }
+  return status;
+}
+
 static SEXP irlba_lbd_augmented_retained_projection(
     void* impl,
     EigencoreApplyFn apply,
@@ -1737,6 +1782,7 @@ static SEXP irlba_lbd_augmented_retained_projection(
 
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
   int q_cols = 0;
+  int aq_cols = 0;
   int orthogonalization_passes = 0;
   const int requested_orthogonalization_passes = bpro_policy ? 1 : 2;
   const double bpro_threshold = fmax(tol, sqrt(DBL_EPSILON));
@@ -1754,6 +1800,8 @@ static SEXP irlba_lbd_augmented_retained_projection(
   double stage_reorthogonalization_seconds = 0.0;
   double stage_projected_seconds = 0.0;
   int matvecs = 0;
+  std::vector<double> tail_beta_history;
+  tail_beta_history.reserve(static_cast<size_t>(requested_tail_steps));
 
   auto stage_timer = native_timer_now();
   int status = apply(impl, EIGENCORE_TRANSPOSE_NONE, retained_core,
@@ -1776,12 +1824,36 @@ static SEXP irlba_lbd_augmented_retained_projection(
     Q.data(), n, capacity, &q_cols, retained_right, retained_core, tol,
     &orthogonalization_passes, requested_orthogonalization_passes, bpro_ptr
   );
+  if (q_cols == retained_core) {
+    std::memcpy(AQ.data(), AV_ret.data(),
+                sizeof(double) * static_cast<size_t>(m) * static_cast<size_t>(retained_core));
+    aq_cols = q_cols;
+  } else if (q_cols > aq_cols) {
+    status = apply_augmented_basis_columns(
+      impl, apply, m, n, Q.data(), aq_cols, q_cols, AQ.data(),
+      &stage_apply_seconds, &matvecs, &workspace
+    );
+    if (status != 0) {
+      return R_NilValue;
+    }
+    aq_cols = q_cols;
+  }
   if (q_cols < rank) {
     append_orthonormal_column(
       Q.data(), n, capacity, &q_cols, initial_start, tol,
       &orthogonalization_passes, nullptr, requested_orthogonalization_passes,
       bpro_ptr
     );
+    if (q_cols > aq_cols) {
+      status = apply_augmented_basis_columns(
+        impl, apply, m, n, Q.data(), aq_cols, q_cols, AQ.data(),
+        &stage_apply_seconds, &matvecs, &workspace
+      );
+      if (status != 0) {
+        return R_NilValue;
+      }
+      aq_cols = q_cols;
+    }
   }
 
   stage_timer = native_timer_now();
@@ -1808,6 +1880,16 @@ static SEXP irlba_lbd_augmented_retained_projection(
     &orthogonalization_passes, requested_orthogonalization_passes, bpro_ptr
   );
   const int residual_cols = q_cols - residual_cols_before;
+  if (q_cols > aq_cols) {
+    status = apply_augmented_basis_columns(
+      impl, apply, m, n, Q.data(), aq_cols, q_cols, AQ.data(),
+      &stage_apply_seconds, &matvecs, &workspace
+    );
+    if (status != 0) {
+      return R_NilValue;
+    }
+    aq_cols = q_cols;
+  }
 
   if (q_cols == 0) {
     append_orthonormal_column(
@@ -1815,6 +1897,16 @@ static SEXP irlba_lbd_augmented_retained_projection(
       &orthogonalization_passes, nullptr, requested_orthogonalization_passes,
       bpro_ptr
     );
+    if (q_cols > aq_cols) {
+      status = apply_augmented_basis_columns(
+        impl, apply, m, n, Q.data(), aq_cols, q_cols, AQ.data(),
+        &stage_apply_seconds, &matvecs, &workspace
+      );
+      if (status != 0) {
+        return R_NilValue;
+      }
+      aq_cols = q_cols;
+    }
   }
   if (q_cols == 0) {
     return R_NilValue;
@@ -1833,6 +1925,25 @@ static SEXP irlba_lbd_augmented_retained_projection(
       break;
     }
     ++matvecs;
+    const int current_v_col = q_cols - 1;
+    if (aq_cols < current_v_col) {
+      status = apply_augmented_basis_columns(
+        impl, apply, m, n, Q.data(), aq_cols, current_v_col, AQ.data(),
+        &stage_apply_seconds, &matvecs, &workspace
+      );
+      if (status != 0) {
+        break;
+      }
+      aq_cols = current_v_col;
+    }
+    if (aq_cols == current_v_col) {
+      std::memcpy(
+        AQ.data() + static_cast<int64_t>(current_v_col) * m,
+        u.data(),
+        sizeof(double) * static_cast<size_t>(m)
+      );
+      aq_cols = q_cols;
+    }
     stage_timer = native_timer_now();
     if (beta_prev != 0.0) {
       for (int row = 0; row < m; ++row) {
@@ -1884,11 +1995,22 @@ static SEXP irlba_lbd_augmented_retained_projection(
     const double* accepted_v = Q.data() + static_cast<int64_t>(q_cols - 1) * n;
     std::memcpy(z.data(), accepted_v, sizeof(double) * static_cast<size_t>(n));
     beta_prev = beta_next;
+    tail_beta_history.push_back(beta_next);
     ++tail_steps_taken;
   }
 
   if (q_cols < rank) {
     return R_NilValue;
+  }
+  if (q_cols > aq_cols) {
+    status = apply_augmented_basis_columns(
+      impl, apply, m, n, Q.data(), aq_cols, q_cols, AQ.data(),
+      &stage_apply_seconds, &matvecs, &workspace
+    );
+    if (status != 0) {
+      return R_NilValue;
+    }
+    aq_cols = q_cols;
   }
   const double augmented_basis_orthogonality_loss =
     basis_orthogonality_loss(Q.data(), n, q_cols);
@@ -1896,30 +2018,18 @@ static SEXP irlba_lbd_augmented_retained_projection(
       augmented_basis_orthogonality_loss > bpro.threshold) {
     bpro.escalation_recommended = 1;
   }
-  stage_timer = native_timer_now();
-  status = apply(impl, EIGENCORE_TRANSPOSE_NONE, q_cols,
-                 Q.data(), n, 1.0, 0.0, AQ.data(), m, &workspace);
-  stage_apply_seconds += native_timer_elapsed(stage_timer);
-  if (status != 0) {
-    return R_NilValue;
-  }
-  matvecs += q_cols;
-
-  stage_timer = native_timer_now();
-  SEXP ritz_ = PROTECT(eigencore_block_golub_kahan_ritz_from_ptr(
-    Q.data(), n, AQ.data(), m, q_cols, rank, target_kind
-  ));
-  stage_projected_seconds += native_timer_elapsed(stage_timer);
 
   std::vector<int> attempted_subspaces;
   std::vector<int> attempt_iterations;
   std::vector<int> attempt_matvecs;
   std::vector<int> attempt_warm_started;
+  std::vector<double> attempt_cheap_residuals;
   const int chunks = max_restarts + 1;
   attempted_subspaces.reserve(static_cast<size_t>(chunks));
   attempt_iterations.reserve(static_cast<size_t>(chunks));
   attempt_matvecs.reserve(static_cast<size_t>(chunks));
   attempt_warm_started.reserve(static_cast<size_t>(chunks));
+  attempt_cheap_residuals.reserve(static_cast<size_t>(chunks));
   for (int attempt = 0; attempt < chunks; ++attempt) {
     int tail_for_attempt = tail_width * (attempt + 1);
     if (tail_for_attempt > tail_steps_taken) {
@@ -1931,14 +2041,53 @@ static SEXP irlba_lbd_augmented_retained_projection(
     }
     attempted_subspaces.push_back(subspace);
     attempt_iterations.push_back(tail_for_attempt);
-    attempt_matvecs.push_back(2 * retained_core + 2 * tail_for_attempt + subspace);
+    attempt_matvecs.push_back(
+      2 * retained_core + residual_cols + 2 * tail_for_attempt +
+        (tail_for_attempt > 0 ? 1 : 0)
+    );
     attempt_warm_started.push_back(attempt > 0 ? 1 : 0);
+    double cheap_residual = R_NaReal;
+    if (tail_for_attempt > 0 &&
+        tail_for_attempt <= static_cast<int>(tail_beta_history.size())) {
+      cheap_residual = tail_beta_history[static_cast<size_t>(tail_for_attempt - 1)];
+    }
+    attempt_cheap_residuals.push_back(cheap_residual);
+  }
+
+  SEXP ritz_ = R_NilValue;
+  int small_svds = 0;
+  double min_cheap_residual = R_PosInf;
+  double final_cheap_residual = R_NaReal;
+  for (int attempt = 0; attempt < chunks; ++attempt) {
+    const int subspace = attempted_subspaces[static_cast<size_t>(attempt)];
+    stage_timer = native_timer_now();
+    SEXP attempt_ritz_ = PROTECT(eigencore_block_golub_kahan_ritz_from_ptr(
+      Q.data(), n, AQ.data(), m, subspace, rank, target_kind
+    ));
+    stage_projected_seconds += native_timer_elapsed(stage_timer);
+    ++small_svds;
+    const double cheap_residual = attempt_cheap_residuals[static_cast<size_t>(attempt)];
+    if (R_FINITE(cheap_residual) && cheap_residual < min_cheap_residual) {
+      min_cheap_residual = cheap_residual;
+    }
+    if (attempt + 1 == chunks) {
+      ritz_ = attempt_ritz_;
+      final_cheap_residual = cheap_residual;
+    } else {
+      UNPROTECT(1);
+    }
+  }
+  if (!R_FINITE(min_cheap_residual)) {
+    min_cheap_residual = R_NaReal;
   }
   SEXP history_ = PROTECT(irlba_lbd_attempt_history_pack(
-    attempted_subspaces, attempt_iterations, attempt_matvecs, attempt_warm_started
+    attempted_subspaces, attempt_iterations, attempt_matvecs, attempt_warm_started,
+    &attempt_cheap_residuals
   ));
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 33));
+  const int from_scratch_matvecs = 2 * retained_core + 2 * tail_steps_taken + q_cols;
+  const int cached_matvec_savings = from_scratch_matvecs - matvecs;
+  SEXP out_ = PROTECT(allocVector(VECSXP, 42));
   const double augmented_workspace_bytes =
     static_cast<double>(sizeof(double)) *
     static_cast<double>(
@@ -1986,7 +2135,16 @@ static SEXP irlba_lbd_augmented_retained_projection(
   SET_VECTOR_ELT(out_, 30, ScalarReal(bpro.max_post_append_orthogonality_loss));
   SET_VECTOR_ELT(out_, 31, ScalarReal(augmented_basis_orthogonality_loss));
   SET_VECTOR_ELT(out_, 32, ScalarLogical(bpro.escalation_recommended ? 1 : 0));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 33));
+  SET_VECTOR_ELT(out_, 33, ScalarInteger(chunks));
+  SET_VECTOR_ELT(out_, 34, ScalarInteger(retained_core));
+  SET_VECTOR_ELT(out_, 35, ScalarInteger(small_svds));
+  SET_VECTOR_ELT(out_, 36, ScalarInteger(aq_cols));
+  SET_VECTOR_ELT(out_, 37, ScalarInteger(from_scratch_matvecs));
+  SET_VECTOR_ELT(out_, 38, ScalarInteger(cached_matvec_savings));
+  SET_VECTOR_ELT(out_, 39, ScalarReal(min_cheap_residual));
+  SET_VECTOR_ELT(out_, 40, ScalarReal(final_cheap_residual));
+  SET_VECTOR_ELT(out_, 41, ScalarLogical(cached_matvec_savings > 0 ? 1 : 0));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 42));
   SET_STRING_ELT(names_, 0, mkChar("d"));
   SET_STRING_ELT(names_, 1, mkChar("u"));
   SET_STRING_ELT(names_, 2, mkChar("v"));
@@ -2020,6 +2178,15 @@ static SEXP irlba_lbd_augmented_retained_projection(
   SET_STRING_ELT(names_, 30, mkChar("bpro_max_post_append_orthogonality_loss"));
   SET_STRING_ELT(names_, 31, mkChar("bpro_augmented_basis_orthogonality_loss"));
   SET_STRING_ELT(names_, 32, mkChar("bpro_escalation_recommended"));
+  SET_STRING_ELT(names_, 33, mkChar("augmented_restart_cycles"));
+  SET_STRING_ELT(names_, 34, mkChar("augmented_kept_vectors"));
+  SET_STRING_ELT(names_, 35, mkChar("augmented_small_svds"));
+  SET_STRING_ELT(names_, 36, mkChar("augmented_cached_aq_cols"));
+  SET_STRING_ELT(names_, 37, mkChar("augmented_from_scratch_matvecs"));
+  SET_STRING_ELT(names_, 38, mkChar("augmented_matvec_savings"));
+  SET_STRING_ELT(names_, 39, mkChar("augmented_min_cheap_residual"));
+  SET_STRING_ELT(names_, 40, mkChar("augmented_final_cheap_residual"));
+  SET_STRING_ELT(names_, 41, mkChar("augmented_reduces_from_scratch_work"));
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(4);
   return out_;

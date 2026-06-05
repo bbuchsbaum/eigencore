@@ -924,7 +924,14 @@ Primary attack surfaces, in order:
    `irlba_lbd_augmented_recurrence`, plus residual-augmented restart fields
    `irlba_lbd_residual_augmented_cols`,
    `irlba_lbd_augmented_tail_steps`, and
-   `irlba_lbd_augmented_basis_cols`). On the
+   `irlba_lbd_augmented_basis_cols`). The retained-BPRO row now also exposes
+   thick augmented restart diagnostics:
+   `irlba_lbd_augmented_restart_cycles`,
+   `irlba_lbd_augmented_kept_vectors`,
+   `irlba_lbd_augmented_small_svds`,
+   `irlba_lbd_augmented_cached_aq_cols`,
+   `irlba_lbd_augmented_from_scratch_matvecs`,
+   `irlba_lbd_augmented_matvec_savings`, and cheap residual summaries. On the
    measurement side, explicit SVD benchmark method requests now fail loudly if
    the loaded eigencore namespace cannot run them, so H probes cannot silently
    drop the retained IRLBA/LBD candidate when a stale installed package is on
@@ -934,15 +941,16 @@ Primary attack surfaces, in order:
    right subspace with that residual direction and a Krylov tail, solves the
    projected SVD, and still accepts only the exact original-coordinate SVD
    certificate. On the source-loaded H-shaped `wide_sparse:90x600` probe this
-   certifies directly with `24` scout matvecs plus `136` retained-native
-   matvecs, `restart_state_kind = "residual_augmented_projection"`,
+   certifies directly with `24` scout matvecs plus `92` retained-native
+   matvecs (`44` fewer than full post-hoc basis application),
+   `restart_state_kind = "residual_augmented_projection"`,
    `irlba_lbd_recurrence_available = TRUE`,
    `irlba_lbd_augmented_recurrence = TRUE`, one residual-augmented direction,
-   `40` tail steps, and `46` augmented basis columns. A seeded larger
-   `200x2000` sparse wide fixture also certifies directly. The H source-loaded
-   surface row is faster than retained block-GK on the same fixture, but it is
-   still slower and higher-allocation than the best certified reference
-   (`RSpectra`) and slower than direct one-sided GK, so this is Track B
+   `40` tail steps, `46` cached augmented basis columns, and `8` prefix small
+   SVDs. A seeded larger `200x2000` sparse wide fixture also certifies directly.
+   The H source-loaded surface row is faster than retained block-GK on the same
+   fixture, but it is still slower and higher-allocation than the best certified
+   reference (`RSpectra`) and slower than direct one-sided GK, so this is Track B
    progress, not H promotion.
    The first BPRO-policy slice is also benchmark-visible as
    `eigencore_irlba_lbd_retained_bpro`: it uses a monitored one-pass default
@@ -952,9 +960,10 @@ Primary attack surfaces, in order:
    source-loaded H row it certifies directly with `49` monitored appends, `4`
    threshold-triggered second passes, `53` total retained-basis
    reorthogonalization passes versus `98` for full retained native, exact basis
-   loss below `1e-15`, and raw retained solver time `0.00383s` versus `0.00650s`
-   in the one-iteration surface probe. It remains diagnostic because total time
-   and memory are still red versus certified `RSpectra` and direct one-sided GK.
+   loss below `1e-15`, clustered/slow-decay adversarial coverage, and raw
+   retained solver time below the full retained-native diagnostic in the
+   one-iteration surface probe. It remains diagnostic because total time and
+   memory are still red versus certified `RSpectra` and direct one-sided GK.
    A separate normal-scout diagnostic, `eigencore_irlba_lbd_normal_scout`,
    runs bounded matrix-free normal scouts at 8/12/16/20 steps and uses the
    selected scout only as a warm start for certified one-sided LBD polish. The

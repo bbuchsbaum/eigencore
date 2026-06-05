@@ -687,6 +687,60 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
     } else {
       NA_integer_
     }
+  fallback$restart$irlba_lbd_augmented_restart_cycles <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$augmented_restart_cycles %||% NA_integer_
+    } else {
+      NA_integer_
+    }
+  fallback$restart$irlba_lbd_augmented_kept_vectors <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$augmented_kept_vectors %||% NA_integer_
+    } else {
+      NA_integer_
+    }
+  fallback$restart$irlba_lbd_augmented_small_svds <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$augmented_small_svds %||% NA_integer_
+    } else {
+      NA_integer_
+    }
+  fallback$restart$irlba_lbd_augmented_cached_aq_cols <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$augmented_cached_aq_cols %||% NA_integer_
+    } else {
+      NA_integer_
+    }
+  fallback$restart$irlba_lbd_augmented_from_scratch_matvecs <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$augmented_from_scratch_matvecs %||% NA_integer_
+    } else {
+      NA_integer_
+    }
+  fallback$restart$irlba_lbd_augmented_matvec_savings <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$augmented_matvec_savings %||% NA_integer_
+    } else {
+      NA_integer_
+    }
+  fallback$restart$irlba_lbd_augmented_min_cheap_residual <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$augmented_min_cheap_residual %||% NA_real_
+    } else {
+      NA_real_
+    }
+  fallback$restart$irlba_lbd_augmented_final_cheap_residual <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$augmented_final_cheap_residual %||% NA_real_
+    } else {
+      NA_real_
+    }
+  fallback$restart$irlba_lbd_augmented_reduces_from_scratch_work <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      isTRUE(native$augmented_reduces_from_scratch_work)
+    } else {
+      NA
+    }
   fallback$restart$irlba_lbd_bpro_policy <-
     if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
       isTRUE(native$bpro_policy)
@@ -894,6 +948,24 @@ native_irlba_lbd_restart_diagnostics <- function(abi, native, small, final,
     irlba_lbd_residual_augmented_cols = native$residual_augmented_cols %||% NA_integer_,
     irlba_lbd_augmented_tail_steps = native$augmented_tail_steps %||% NA_integer_,
     irlba_lbd_augmented_basis_cols = native$augmented_basis_cols %||% NA_integer_,
+    irlba_lbd_augmented_restart_cycles =
+      native$augmented_restart_cycles %||% NA_integer_,
+    irlba_lbd_augmented_kept_vectors =
+      native$augmented_kept_vectors %||% NA_integer_,
+    irlba_lbd_augmented_small_svds =
+      native$augmented_small_svds %||% NA_integer_,
+    irlba_lbd_augmented_cached_aq_cols =
+      native$augmented_cached_aq_cols %||% NA_integer_,
+    irlba_lbd_augmented_from_scratch_matvecs =
+      native$augmented_from_scratch_matvecs %||% NA_integer_,
+    irlba_lbd_augmented_matvec_savings =
+      native$augmented_matvec_savings %||% NA_integer_,
+    irlba_lbd_augmented_min_cheap_residual =
+      native$augmented_min_cheap_residual %||% NA_real_,
+    irlba_lbd_augmented_final_cheap_residual =
+      native$augmented_final_cheap_residual %||% NA_real_,
+    irlba_lbd_augmented_reduces_from_scratch_work =
+      isTRUE(native$augmented_reduces_from_scratch_work),
     irlba_lbd_bpro_policy = isTRUE(native$bpro_policy),
     irlba_lbd_bpro_passes_per_append =
       native$bpro_reorthogonalization_passes_per_append %||% NA_integer_,
