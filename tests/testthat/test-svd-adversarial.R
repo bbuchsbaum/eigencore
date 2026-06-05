@@ -1153,7 +1153,8 @@ test_that("randomized SVD reports approximation and certificate policy", {
 
   expect_true(fit$restart$approximate)
   expect_equal(fit$restart$apply_kind, "csc_direct")
-  expect_equal(fit$restart$projection_kind, "direct_qt_a")
+  expect_true(fit$restart$native_sketch)
+  expect_equal(fit$restart$projection_kind, "native_direct_qt_a")
   expect_true(fit$restart$projection_transposed)
   expect_true(fit$restart$certificate_reuses_projection)
   expect_match(fit$restart$certificate_policy, "stochastic sketch is not sufficient")
@@ -1163,7 +1164,13 @@ test_that("randomized SVD reports approximation and certificate policy", {
   expect_true(is.finite(fit$restart$initial_max_backward_error))
 
   pair <- eigencore:::randomized_svd_apply_pair(as_operator(M))
-  Q <- qr.Q(qr(as.matrix(M %*% matrix(rnorm(ncol(M) * 6L), ncol(M), 6L))))
+  Omega <- matrix(rnorm(ncol(M) * 6L), ncol(M), 6L)
+  sketch <- pair$apply(Omega)
+  expect_equal(sketch, as.matrix(M %*% Omega), tolerance = 1e-12)
+  adjoint_sketch <- pair$apply_adjoint(sketch)
+  expect_equal(adjoint_sketch, as.matrix(Matrix::crossprod(M, sketch)), tolerance = 1e-12)
+
+  Q <- qr.Q(qr(as.matrix(M %*% Omega)))
   projected <- pair$project(Q)
   adjoint <- pair$apply_adjoint(Q)
   expect_true(isTRUE(attr(projected, "transposed", exact = TRUE)))

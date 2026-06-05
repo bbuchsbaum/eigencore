@@ -328,7 +328,7 @@ they are machine-dependent.
   passed accuracy, and reported `2.97x` time-to-certified-answer speed versus
   certified `rsvd` with the `left_gram_eigen` randomized core solver. Treat
   this as a validated exact-low-rank regime, not a full I promotion: quick
-  small rows and slow-decay/native sketch-projection gates remain open.
+  small rows and slow-decay/native solver-control gates remain open.
 - A source-loaded quick experiment replacing the tiny projected-core
   `left_gram_eigen` helper with base `svd()` for the
   `exact_low_rank_dense:120x80` core was rejected. Isolated micro-timing on the
@@ -336,17 +336,17 @@ they are machine-dependent.
   from about `1.84x` to about `1.63x` versus certified `rsvd` and allocated
   more. Keep `left_gram_eigen`; the remaining I work needs native
   sketch/projection or planning changes, not this small-core swap.
-- A fresh installed quick sparse randomized probe after adding the CSC direct
-  projected-core path:
+- A fresh installed quick sparse randomized probe after adding native CSC
+  randomized sketch/projection kernels:
   `R_LIBS_USER=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-randomized-rsvd.R --quick --iterations=5 --cases=low_rank_sparse --methods=eigencore_randomized,rsvd`
   certifies both eigencore and `rsvd`; eigencore reports
-  `randomized_projection_kind = "direct_qt_a"`, allocates about `385KB` versus
-  `965KB` for certified `rsvd`, and remains speed-red at about `1.58x` in the
-  focused sparse rerun. The full three-case quick rerun reports about `1.75x`
-  for `low_rank_sparse:140x90` and about `1.94x` for
-  `exact_low_rank_dense:120x80`, so the `2x` randomized gate is still open.
-  Remaining I work needs native sparse sketch/projection kernels or stronger
-  adaptive planning, not just Matrix-level projected-core plumbing.
+  `randomized_native_sketch = TRUE` and
+  `randomized_projection_kind = "native_direct_qt_a"`, allocates about `342KB`
+  versus `965KB` for certified `rsvd`, and remains speed-red at about `1.87x`
+  in the focused sparse rerun. The full three-case quick rerun reports about
+  `1.94x` for `low_rank_sparse:140x90`; the `2x` randomized gate is still open.
+  Remaining I work needs more native randomized control/path fusion or stronger
+  adaptive planning.
 - G1 block Hermitian candidate baseline captured in
   `inst/benchmarks/baselines/g1_candidate_pre.csv`; regenerate it with
   `inst/benchmarks/bench-g1-candidate-baseline.R --save`. The current baseline

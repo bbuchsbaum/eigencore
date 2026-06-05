@@ -2347,6 +2347,7 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
       n_iter = n_iter,
       normalizer = normalizer,
       apply_kind = apply_pair$kind,
+      native_sketch = isTRUE(apply_pair$native_sketch),
       core_solver = candidate$core_solver %||% NA_character_,
       projection_kind = candidate$projection_kind %||% NA_character_,
       projection_transposed = isTRUE(candidate$projection_transposed),
@@ -2452,6 +2453,7 @@ randomized_svd_apply_pair <- function(op) {
   if (is.matrix(source) && is.double(source)) {
     return(list(
       kind = "dense_direct",
+      native_sketch = FALSE,
       apply = function(X) source %*% X,
       apply_adjoint = function(X) crossprod(source, X),
       project_kind = "direct_qt_a",
@@ -2463,20 +2465,40 @@ randomized_svd_apply_pair <- function(op) {
     ))
   }
   if (inherits(source, "dgCMatrix")) {
+    csc_randomized_apply <- function(X, transpose = FALSE) {
+      .Call(
+        "eigencore_csc_randomized_apply",
+        methods::slot(source, "i"),
+        methods::slot(source, "p"),
+        methods::slot(source, "x"),
+        methods::slot(source, "Dim"),
+        X,
+        as.logical(transpose),
+        PACKAGE = "eigencore"
+      )
+    }
     return(list(
       kind = "csc_direct",
-      apply = function(X) as.matrix(source %*% X),
-      apply_adjoint = function(X) as.matrix(Matrix::crossprod(source, X)),
-      project_kind = "direct_qt_a",
+      native_sketch = TRUE,
+      apply = function(X) csc_randomized_apply(X, transpose = FALSE),
+      apply_adjoint = function(X) csc_randomized_apply(X, transpose = TRUE),
+      project_kind = "native_direct_qt_a",
       project = function(Q) {
-        out <- as.matrix(crossprod(Q, source))
-        attr(out, "transposed") <- TRUE
-        out
+        .Call(
+          "eigencore_csc_randomized_project_transposed",
+          methods::slot(source, "i"),
+          methods::slot(source, "p"),
+          methods::slot(source, "x"),
+          methods::slot(source, "Dim"),
+          Q,
+          PACKAGE = "eigencore"
+        )
       }
     ))
   }
   list(
     kind = "operator",
+    native_sketch = FALSE,
     apply = function(X) apply_operator(op, X),
     apply_adjoint = function(X) apply_adjoint_operator(op, X)
   )

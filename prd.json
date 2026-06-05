@@ -514,10 +514,10 @@
       "benchmark_surface": "inst/benchmarks/bench-randomized-rsvd.R reports oracle singular-value error, left/right subspace error, true SVD certificate fields, rsvd speed ratios, and whether the rsvd baseline itself passes eigencore certification.",
       "current_implementation_status": {
         "status": "prototype",
-        "implemented_path": "reference randomized range finder with deterministic seed, QR/LU/none normalization controls, dense/CSC direct Q' A projected-core paths, projected-certificate reuse, certified q=0 early stop, deterministic native Gram refinement when needed, and a wide-core left-Gram eigensolve for small projected cores.",
+        "implemented_path": "reference randomized range finder with deterministic seed, QR/LU/none normalization controls, native CSC sketch/projection kernels for sparse inputs, dense/CSC direct Q' A projected-core paths, projected-certificate reuse, certified q=0 early stop, deterministic native Gram refinement when needed, and a wide-core left-Gram eigensolve for small projected cores.",
         "validated_regime": "installed large exact-low-rank dense benchmark passes the randomized 2x speed gate versus certified rsvd at about 3.08x with accuracy and certificate gates green",
         "not_yet_satisfied": [
-          "native sketch/projection kernels",
+          "fully native randomized solver control path beyond CSC sketch/projection kernels",
           "broader slow-decay adaptive planner regimes",
           "global randomized speed gate across all benchmark cases"
         ]

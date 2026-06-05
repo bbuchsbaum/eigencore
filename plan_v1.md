@@ -148,14 +148,17 @@ Deliver the native engine in order. Each step ships with adversarial tests
   green at roughly `2.97x` versus certified `rsvd`. Quick
   exact-low-rank and sparse rows also improve modestly but remain below the
   global `2x` speed threshold because fixed R/benchmark overhead dominates at
-  those sizes. The sparse CSC randomized path now also has a direct `Q' A`
-  projected-core shortcut mirroring the dense path and benchmark-visible
-  `randomized_projection_kind = "direct_qt_a"` diagnostics. A fresh installed
-  5-iteration quick run certifies `low_rank_sparse:140x90`, trims eigencore
-  allocation to about `385KB` versus `965KB` for certified `rsvd`, but remains
-  speed-red at about `1.75x`; `exact_low_rank_dense:120x80` is also close but
-  red at about `1.94x`. The benchmark gate now requires the `rsvd` baseline
-  itself to
+  those sizes. The sparse CSC randomized path now also has native CSC
+  sketch/projection kernels for `A Omega`, `A' Q`, and direct `Q' A`
+  projected-core construction, with benchmark-visible
+  `randomized_native_sketch = TRUE` and
+  `randomized_projection_kind = "native_direct_qt_a"` diagnostics. A fresh
+  installed 5-iteration focused quick run certifies `low_rank_sparse:140x90`,
+  trims eigencore allocation to about `342KB` versus `965KB` for certified
+  `rsvd`, and improves the speed ratio to about `1.87x`, but still misses the
+  `2x` gate; the full quick surface reports sparse at about `1.94x` and
+  `exact_low_rank_dense:120x80` red under run-to-run overhead. The benchmark
+  gate now requires the `rsvd` baseline itself to
   pass eigencore certification before speed/parity can pass, so slow-decay rows
   where `rsvd` is faster but uncertified are recorded as
   `baseline_certified = FALSE`, `speed_gate = FALSE`, and `passed = FALSE`, not
@@ -163,11 +166,11 @@ Deliver the native engine in order. Each step ships with adversarial tests
   the tiny projected-core `left_gram_eigen` helper with base `svd()` for
   `exact_low_rank_dense:120x80` was rejected: isolated core timing looked
   promising, but the full row worsened to about `1.63x` versus certified `rsvd`
-  and allocated more. Real progress for the remaining red rows still requires a
-  native sparse sketch/projection kernel or stronger adaptive planning, not just
-  Matrix-level projected-core plumbing.
+  and allocated more. Real progress for the remaining red rows still requires
+  more of the randomized path to move native, or stronger adaptive planning
+  that avoids unnecessary work in quick and slow-decay regimes.
    The broader randomized release gate remains open for slow-decay and other
-   non-exact cases and is expected to require native sketch/projection kernels
+   non-exact cases and is expected to require more native solver-control/fusion
    and/or stronger adaptive randomized planning.
 6. **Generalized SPD LOBPCG** for dense, sparse, and matrix-free operators.
    This is the primary scalable V1 path for `A x = lambda B x`, especially

@@ -1232,6 +1232,7 @@ benchmark_randomized_rsvd_case <- function(A, rank, methods = c("eigencore_rando
       stage_vector_form_seconds = result_stage_seconds(fit, "vector_form"),
       stage_internal_certificate_seconds = result_stage_seconds(fit, "certificate"),
       stage_refinement_seconds = result_stage_seconds(fit, "refinement"),
+      randomized_native_sketch = result_restart_logical(fit, "native_sketch"),
       randomized_core_solver = result_restart_character(fit, "core_solver"),
       randomized_projection_kind = result_restart_character(fit, "projection_kind"),
       randomized_projection_transposed = result_restart_logical(fit, "projection_transposed"),

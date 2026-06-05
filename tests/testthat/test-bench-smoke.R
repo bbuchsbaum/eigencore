@@ -575,9 +575,11 @@ test_that("randomized-rsvd benchmark rows expose projection diagnostics", {
     seed = 1603L
   )
 
+  expect_true("randomized_native_sketch" %in% names(rows))
   expect_true("randomized_projection_kind" %in% names(rows))
   expect_true("randomized_projection_transposed" %in% names(rows))
-  expect_equal(rows$randomized_projection_kind, "direct_qt_a")
+  expect_true(rows$randomized_native_sketch)
+  expect_equal(rows$randomized_projection_kind, "native_direct_qt_a")
   expect_true(rows$randomized_projection_transposed)
 })
 
