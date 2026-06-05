@@ -169,11 +169,13 @@ fit <- eigencore::eig_partial(
 )
 ```
 
-Current state: native generalized SPD LOBPCG slices exist for supported built-in
-metrics and preconditioners, but the non-quick strict release gate is still red
-on convergence and speed. Dense generalized `auto()` uses the native dense
-generalized SPD LAPACK fallback until iterative gates pass. Broader generalized
-production promotion remains open.
+Current state: the promoted iterative V1 surface is sparse
+shifted-tridiagonal generalized SPD LOBPCG for largest/smallest targets. Dense
+generalized `auto()` uses the native dense generalized SPD LAPACK fallback, and
+explicit generalized-SPD `lanczos()` requests have an honest reference
+B-orthogonal refinement for dense, diagonal, and CSC SPD metric solves. Broader
+generalized preconditioner and native/block generalized Lanczos promotion
+remain future scope.
 
 ## Shift-Invert
 

@@ -17,3 +17,4 @@ operator_scale(A, scalar, name = NULL)
 \description{
 Multiply an operator by a scalar.
 }
+\keyword{internal}

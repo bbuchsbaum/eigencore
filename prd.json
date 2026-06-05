@@ -483,18 +483,18 @@
         "orthogonality certification for U and V"
       ],
       "current_implementation_status": {
-        "status": "partial_unpromoted",
-        "implemented_path": "native Golub-Kahan staging path for dense double matrices and dgCMatrix operators; native CSC left-Gram and right-Gram certified special cases cover tiny wide/tall sparse largest-SVD rows with exact two-sided certification; unexported block-Golub-Kahan thick-restart oracle, native block Ritz extraction kernel, dense/CSC native block basis-cycle scaffolding, and retained IRLBA/LBD BPRO diagnostics exist for broader H",
-        "tiny_sparse_gram_gate_status": "warning-free installed quick H evidence is green for the promoted eigencore tall/wide sparse surface: both fixtures certify all five requested triplets and pass speed/memory",
-        "retained_h_candidate_status": "the executable --h-candidate gate targets the promoted eigencore SVD path, with retained IRLBA/BPRO and block-GK rows left as diagnostics; installed 3-iteration tall_sparse:600x90 and wide_sparse:90x600 probes certify all five requested triplets and pass speed/memory, with ratios about 1.194x and 1.223x speed and 2.392x memory versus the best certified references; retained BPRO remains diagnostic and speed/memory-red",
+        "status": "scoped_v1_gate",
+        "implemented_path": "native Golub-Kahan staging path for dense double matrices and dgCMatrix operators; bounded native CSC left-Gram and right-Gram certified special cases cover the promoted non-quick tall/wide sparse largest-SVD release rows with exact two-sided certification; unexported block-Golub-Kahan thick-restart oracle, native block Ritz extraction kernel, dense/CSC native block basis-cycle scaffolding, and retained IRLBA/LBD BPRO diagnostics exist for broader H",
+        "tiny_sparse_gram_gate_status": "installed strict non-quick H evidence is green for the promoted eigencore tall/wide sparse surface: tall_sparse 100000 x 500 and wide_sparse 500 x 100000 certify 20/20 triplets and pass speed/memory through the bounded native Gram special case; quick 600x90 fixtures are diagnostic only and not release signoff",
+        "retained_h_candidate_status": "the executable --h-candidate gate targets the promoted eigencore SVD path, with retained IRLBA/BPRO and block-GK rows left as diagnostics; installed 2026-06-05 strict non-quick tall_sparse and wide_sparse probes certify 20/20 requested triplets and pass speed/memory, with ratios 3.849574x and 9.882995x speed and 2.049985x memory versus the best certified references; retained BPRO remains diagnostic and speed/memory-red",
         "native_certificate_paths": [
           "dense SVD certificate diagnostics",
           "built-in dense, dgCMatrix, and diagonal SVD operator certificate diagnostics"
         ],
         "not_yet_satisfied": [
-          "thick restart / continuation without adaptive full reruns",
-          "block-native Golub-Kahan performance path",
-          "general sparse and matrix-free SVD speed gates outside the narrow certified Gram/right-normal production surface"
+          "general sparse and matrix-free thick-restarted SVD speed gates outside the narrow certified Gram production surface",
+          "fully promoted block-native Golub-Kahan/IRLBA/BPRO performance path",
+          "thick restart / continuation without adaptive full reruns for broader sparse regimes"
         ],
         "planner_policy": "Use an honest native prototype label for the current path; keep matrix-free SVD on the reference path until the native callback/operator ABI is broadened."
       }

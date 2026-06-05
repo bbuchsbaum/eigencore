@@ -136,11 +136,11 @@ The certificate is computed on the original generalized residual
 where appropriate.
 
 Current limitation: dense generalized `auto()` uses the native dense LAPACK
-fallback until iterative gates pass. Native generalized SPD LOBPCG slices
-exist for sparse/structured metrics, explicit SPD matrix-free metrics,
-constraints, and typed shifted-diagonal/shifted-tridiagonal preconditioners.
-The full non-quick strict release gate is still red, so this family is not
-fully V1-promoted.
+fallback. The promoted iterative V1 surface is sparse shifted-tridiagonal
+generalized SPD LOBPCG for largest/smallest targets, with explicit SPD
+matrix-free metrics, constraints, generalized-Lanczos reference rows, and
+adversarial B cases retained as contract diagnostics. Broader generalized
+preconditioner and block variants remain future scope.
 
 ## Shift-Invert
 

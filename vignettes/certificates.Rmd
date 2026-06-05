@@ -7,11 +7,45 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-```{r, include = FALSE}
+```{r setup-opts, include = FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
-  comment = "#>"
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 7,
+  fig.height = 4.1,
+  fig.align = "center",
+  out.width = "92%",
+  dpi = 100
 )
+```
+
+```{r helpers, include = FALSE}
+ec_blue <- "#2166ac"; ec_red <- "#b2182b"; ec_tol <- "#ef8a62"; ec_grey <- "grey78"
+
+# Per-pair backward error as a stem/dot plot, against the tolerance line.
+# Converged pairs are blue, failed pairs red.
+plot_backward_error <- function(cert, main = NULL, tol = cert$tolerance,
+                                ylim = NULL) {
+  be <- pmax(cert$backward_error, .Machine$double.eps)
+  k  <- length(be)
+  col_pt <- ifelse(cert$converged, ec_blue, ec_red)
+  if (is.null(ylim)) {
+    rng  <- range(c(be, tol))
+    ylim <- c(rng[1] / 6, rng[2] * 6)
+  }
+  op <- par(mar = c(4, 4.6, if (is.null(main)) 1 else 2.4, 1)); on.exit(par(op))
+  plot(seq_len(k), be, log = "y", type = "n", xlim = c(0.5, k + 0.5),
+       ylim = ylim, xaxt = "n", bty = "n", main = main,
+       xlab = "returned pair", ylab = "backward error (log scale)")
+  axis(1, at = seq_len(k))
+  segments(seq_len(k), ylim[1], seq_len(k), be, col = col_pt, lwd = 2)
+  points(seq_len(k), be, pch = 19, cex = 1.3, col = col_pt)
+  abline(h = tol, col = ec_tol, lty = 2, lwd = 2)
+  text(k + 0.45, tol, sprintf("tol = %.0e", tol), col = ec_tol,
+       pos = 3, cex = 0.85, xpd = NA)
+}
 ```
 
 Every result returned by eigencore carries a **certificate** — a small object
@@ -24,12 +58,11 @@ measure, and what to do when one of them fails.
 
 ```{r setup}
 library(eigencore)
-suppressPackageStartupMessages(library(Matrix))
 ```
 
 ## Anatomy of a certificate
 
-```{r}
+```{r anatomy}
 set.seed(1)
 n <- 200
 A <- crossprod(matrix(rnorm(n * n), n, n)) / n + diag(n)
@@ -72,6 +105,14 @@ The fields, in order:
 - **`failed_indices`** — which pairs failed. Empty when `passed = TRUE`.
 - **`notes`** — free-form provenance text, used to explain unusual states.
 
+The `max_*` fields are summaries. The certificate also keeps the underlying
+*per-pair* vectors (`cert$backward_error`, `cert$converged`), so you can see at
+a glance whether the whole basis cleared the bar or just barely missed:
+
+```{r anatomy-bars, echo = FALSE, fig.cap = "Per-pair backward error for the five returned eigenpairs. The `max_backward_error` field is simply the height of the tallest stem; `passed` is TRUE because every stem clears the tolerance line.", fig.alt = "Stem plot of backward error for five eigenpairs on a log scale, all falling well below the dashed tolerance line."}
+plot_backward_error(cert)
+```
+
 ## Three things a certificate measures
 
 ### 1. Residual
@@ -111,21 +152,87 @@ eigenvalues will silently get returned as duplicates.
 
 ## Reading common certificate states
 
+The single most useful habit is to picture the per-pair backward error against
+the tolerance line. A passing certificate is "all stems below the line"; a
+failing one is "at least one stem above it." Here are the same ten eigenpairs
+of `A`, computed two ways:
+
+```{r pass-vs-fail-fits}
+# Largest eigenvalues are well separated -> easy, converges fast.
+fit_pass <- eig_partial(A, k = 10, target = largest())
+
+# Smallest eigenvalues are densely clustered near 1 -> a tight maxit
+# budget leaves them short of tolerance.
+fit_fail <- eig_partial(A, k = 10, target = smallest(), maxit = 15)
+
+c(largest_passed  = fit_pass$certificate$passed,
+  smallest_passed = fit_fail$certificate$passed)
+```
+
+```{r pass-vs-fail, echo = FALSE, fig.width = 9, fig.height = 4, fig.cap = "Same matrix, same k, two targets. Left: the ten largest eigenpairs all clear the tolerance (blue, passed). Right: the ten smallest stall above it under a tight iteration budget (red, failed).", fig.alt = "Two side-by-side stem plots of per-pair backward error. Left panel shows ten blue points below the tolerance line; right panel shows ten red points above the tolerance line."}
+op <- par(mfrow = c(1, 2))
+ylim <- c(1e-16, 1e-1)
+plot_backward_error(fit_pass$certificate, main = "largest(): passed", ylim = ylim)
+plot_backward_error(fit_fail$certificate, main = "smallest(), maxit = 15: failed", ylim = ylim)
+par(op)
+```
+
 ### Clean: every box ticked
 
-```{r}
-set.seed(1)
-n <- 200
-A <- crossprod(matrix(rnorm(n * n), n, n)) / n + diag(n)
-fit <- eig_partial(A, k = 5, target = largest())
-fit$certificate$passed
-fit$certificate$norm_bound_type
-fit$certificate$scale_is_estimate
+```{r clean}
+fit_pass$certificate$passed
+fit_pass$certificate$norm_bound_type
+fit_pass$certificate$scale_is_estimate
 ```
 
 This is the easy case. Every residual is below tolerance, orthogonality is
 near machine precision, and the norm bound used to scale the backward error
 is the *exact* Frobenius norm — no stochastic component.
+
+### Failed: residual too large
+
+The right-hand panel above is a genuine failure. The smallest eigenvalues of
+`A` sit in a dense cluster just above 1, so they need many more iterations than
+the well-separated largest ones. With `maxit = 15` the solver runs out of
+budget before any pair converges, and the verdict flips. The `failed_indices`
+slot tells you which Ritz pairs missed:
+
+```{r failed}
+fit_fail$certificate$passed
+fit_fail$certificate$failed_indices
+fit_fail$certificate$max_backward_error
+```
+
+You do not have to guess how far off it was, or whether it was inching toward
+convergence. The solver records a `convergence_history`; plotting the worst
+backward error per restart shows the failed run plateauing above the line while
+a generous budget drives it underneath.
+
+```{r convergence-fits}
+fit_ok <- eig_partial(A, k = 10, target = smallest(), maxit = 40)
+fit_ok$certificate$passed
+```
+
+```{r convergence, echo = FALSE, fig.cap = "Worst backward error per restart for the ten smallest eigenpairs. A tight budget (red) stalls above the tolerance; a generous one (blue) drives the error under the line and the certificate passes.", fig.alt = "Line plot on a log scale of backward error versus restart number. The red maxit-15 curve plateaus above the tolerance line; the blue maxit-40 curve descends below it."}
+h_fail <- diagnostics(fit_fail)$convergence_history
+h_ok   <- diagnostics(fit_ok)$convergence_history
+tol <- fit_fail$certificate$tolerance
+yl  <- range(c(h_fail$max_backward_error, h_ok$max_backward_error, tol))
+op <- par(mar = c(4, 4.6, 1, 1)); on.exit(par(op))
+plot(h_fail$restart, h_fail$max_backward_error, log = "y", type = "l",
+     lwd = 2, col = ec_red, bty = "n", ylim = yl,
+     xlab = "restart", ylab = "max backward error (log scale)")
+lines(h_ok$restart, h_ok$max_backward_error, lwd = 2, col = ec_blue)
+abline(h = tol, col = ec_tol, lty = 2, lwd = 2)
+legend("right", c("maxit = 15 (failed)", "maxit = 40 (passed)", "tolerance"),
+       col = c(ec_red, ec_blue, ec_tol), lwd = 2, lty = c(1, 1, 2),
+       bty = "n", cex = 0.9, inset = 0.02)
+```
+
+What to do: increase `maxit`, raise `tol`, or — when you suspect a clustered
+spectrum — request a larger `k` (so the cluster is fully covered by the
+returned basis) and slice afterwards. Here, lifting `maxit` from 15 to 40 is
+enough.
 
 ### Withheld: stochastic norm in the denominator
 
@@ -135,18 +242,16 @@ Because the *denominator* of the backward-error ratio is then a sample, not a
 deterministic upper bound, eigencore *withholds* `passed` even if every
 sampled residual ratio is below `tol`:
 
-```{r}
+```{r withheld}
 set.seed(2)
-n <- 200
-A_dense <- crossprod(matrix(rnorm(n * n), n, n)) / n + diag(n)
 op <- linear_operator(
   dim = c(n, n),
   apply = function(X, alpha = 1, beta = 0, Y = NULL) {
-    Z <- alpha * (A_dense %*% X)
+    Z <- alpha * (A %*% X)
     if (is.null(Y) || beta == 0) Z else Z + beta * Y
   },
   apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) {
-    Z <- alpha * (A_dense %*% X)
+    Z <- alpha * (A %*% X)
     if (is.null(Y) || beta == 0) Z else Z + beta * Y
   },
   structure = hermitian(),
@@ -159,37 +264,14 @@ fit_mf$certificate$passed
 fit_mf$certificate$notes
 ```
 
-Here the operator is matrix-free with respect to its norm: eigencore does
-not have a clean Frobenius bound for it without paying for a full second
-pass over the matrix, so it falls back to a Hutchinson stochastic estimate.
-Because the *denominator* of the backward-error ratio is now a sample, not
-a deterministic upper bound, eigencore *withholds* `passed` even if every
-sampled residual ratio is below `tol`. The honest output is "all evidence
-is consistent with convergence, but the certificate was not produced by an
-exact bound."
+eigencore does not have a clean Frobenius bound for this operator without
+paying for a full second pass over the matrix, so it falls back to a Hutchinson
+stochastic estimate. The honest output is "all evidence is consistent with
+convergence, but the certificate was not produced by an exact bound."
 
 What to do: if you need a hard `passed = TRUE`, switch to a problem class
 where eigencore can carry exact norm metadata (built-in dense / `dgCMatrix`
 / `ddiMatrix` operators), or refine with a deterministic verification pass.
-
-### Failed: residual too large
-
-When iterations hit `maxit` before converging, the certificate's verdict
-flips. The `failed_indices` slot tells you which Ritz pairs missed:
-
-```{r}
-# Force a budget that's too tight for the requested k.
-set.seed(3)
-A <- crossprod(matrix(rnorm(150 * 150), 150, 150)) / 150 + diag(150)
-fit_short <- eig_partial(A, k = 10, target = largest(), maxit = 12)
-fit_short$certificate$passed
-fit_short$certificate$failed_indices
-fit_short$certificate$max_backward_error
-```
-
-What to do: increase `maxit`, raise `tol`, or — when you suspect a clustered
-spectrum — request a larger `k` (so the cluster is fully covered by the
-returned basis) and slice afterwards.
 
 ### Generalized SPD: B-orthogonality matters
 
@@ -198,10 +280,8 @@ For `A v = lambda B v`, the certificate's orthogonality field is in the
 both the residual contract and B-orthogonality of the returned vectors —
 which is what downstream linear-algebra code typically needs.
 
-```{r}
+```{r generalized}
 set.seed(4)
-n <- 200
-A <- crossprod(matrix(rnorm(n * n), n, n)) / n + diag(n)
 B <- diag(seq(1, 5, length.out = n))
 fit_gen <- eig_partial(A, k = 5, target = largest(), B = B,
                        method = lobpcg(maxit = 200))
@@ -222,7 +302,7 @@ residuals, backward errors, or an orthogonality measure. The eigencore
 shim (`eigencore::eigs_sym()`) returns the same RSpectra-shaped list with
 two added fields:
 
-```{r}
+```{r rspectra}
 res <- eigs_sym(A, k = 5, which = "LA")
 names(res)
 res$certificate

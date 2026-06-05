@@ -40,6 +40,13 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
         certify = certify, allow_dense_fallback = allow_dense_fallback)
 }
 
+#' Solve a planned eigenproblem.
+#'
+#' S3 method that runs the planned solver for an eigenproblem built by
+#' [eigen_problem()]. Most users call [eig_partial()], which constructs the
+#' problem and dispatches here; call `solve()` directly when you want to build
+#' a problem once and reuse or inspect it. Returns a certified partial
+#' eigendecomposition.
 #' @export
 solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
                                           maxit = NULL, vectors = TRUE,
@@ -79,6 +86,13 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
   solve_eigen_dense_oracle(a, k, tol, vectors, certify, allow_dense_fallback, plan)
 }
 
+#' Solve a planned SVD problem.
+#'
+#' S3 method that runs the planned solver for an SVD problem built by
+#' [svd_problem()]. Most users call [svd_partial()], which constructs the
+#' problem and dispatches here; call `solve()` directly when you want to build
+#' a problem once and reuse or inspect it. Returns a certified partial
+#' singular-value decomposition.
 #' @export
 solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
                                         vectors = c("both", "left", "right", "none"),

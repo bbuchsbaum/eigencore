@@ -492,8 +492,8 @@ test_that("V1 completion audit maps the active goal to stop-rule evidence", {
     "Production SVD and randomized SVD",
     "Generalized SPD, shift-invert, and nonsymmetric surfaces",
     "Sanitizer / valgrind-style evidence",
-    "Current decision: **not V1 ready**",
-    "Do not mark V1 complete until",
+    "Current decision: **scoped V1 ready with final validation and mote closure**",
+    "Mark V1 complete only after",
     "benchmarks/RELEASES.md",
     "mote board"
   )
@@ -522,13 +522,13 @@ test_that("V1 documentation scope audit names required doc surfaces", {
     "docs/native-block-lanczos.md",
     "docs/hegelsvd_svd_acceleration.md",
     "tridiagonal generalized-with-diagonal-B native labels",
-    "Blocking Documentation Gaps",
+    "Documentation Boundaries",
     "Stop Rule"
   )
   for (needle in required) {
     expect_true(any(grepl(needle, lines, fixed = TRUE)), info = needle)
   }
-  expect_true(any(grepl("not a release signoff", lines, fixed = TRUE)))
+  expect_true(any(grepl("documentation-scope companion", lines, fixed = TRUE)))
 })
 
 test_that("known limitations match current shift-invert boundary", {

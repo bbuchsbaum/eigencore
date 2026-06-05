@@ -39,8 +39,8 @@ fit
 #>   target: largest
 #>   restart:thick_restart(in_native_loop)
 #>   locked: 5
-#>   max residual: 9.243915e-11
-#>   max backward error: 2.551309e-12
+#>   max residual: 1.67046e-07
+#>   max backward error: 4.546939e-09
 #>   max orthogonality loss: 1.776357e-15
 #>   norm bound: frobenius_exact+identity_exact
 #>   scale estimated: FALSE
@@ -59,8 +59,8 @@ fit$certificate
 #>   type: residual_backward_error
 #>   norm bound: frobenius_exact+identity_exact
 #>   scale estimated: FALSE
-#>   max residual: 9.243915e-11
-#>   max backward error: 2.551309e-12
+#>   max residual: 1.67046e-07
+#>   max backward error: 4.546939e-09
 #>   max orthogonality loss: 1.776357e-15
 #>   orthogonality tolerance: 1.490116e-08
 #>   orthogonality required: TRUE
@@ -68,6 +68,11 @@ fit$certificate
 
 The certificate is the differentiator — eigencore tells you whether the
 numbers are trustworthy, not just what they are.
+
+A partial decomposition is a certified *slice* of the spectrum: you
+compute the part you need and leave the rest untouched.
+
+<img src="man/figures/README-spectrum-1.png" alt="The five largest eigenvalues highlighted in blue against the full 200-point spectrum of A in grey." width="100%" />
 
 ## RSpectra-compatible drop-in
 
@@ -88,7 +93,7 @@ res$certificate
 #>   scale estimated: FALSE
 #>   max residual: 4.542481e-08
 #>   max backward error: 1.236449e-09
-#>   max orthogonality loss: 4.662937e-15
+#>   max orthogonality loss: 1.290817e-15
 #>   orthogonality tolerance: 1.490116e-08
 #>   orthogonality required: TRUE
 ```
@@ -106,19 +111,23 @@ svd_fit
 #> Partial SVD
 #>   requested rank: 5
 #>   converged rank: 5
-#>   method: native dense LAPACK SVD fallback
+#>   method: native certified Gram SVD special case
 #>   target: largest
-#>   max residual: 7.106007e-14
-#>   max backward error: 4.985624e-16
-#>   max orthogonality loss: 2.331468e-15
+#>   max residual: 1.22125e-15
+#>   max backward error: 8.568377e-18
+#>   max orthogonality loss: 5.551115e-16
 #>   norm bound: frobenius_exact
 #>   scale estimated: FALSE
 #>   certificate: passed
 ```
 
-eigencore’s SVD path uses a true Golub–Kahan bidiagonalization rather
-than the default normal-equation approach, so singular vectors come back
-with honest backward-error bounds even on rank-deficient inputs.
+The `method` field reports which path ran. eigencore takes a fast
+certified Gram special case when it can prove the result to tolerance,
+and falls back to a Golub–Kahan bidiagonalization when the Gram route
+can’t be certified. Either way the certificate covers *both* singular
+relations, `||A v - sigma u||` and `||A^T u - sigma v||`, so the
+triplets come back with honest backward-error bounds — eigencore never
+takes a shortcut it can’t certify.
 
 ## What makes eigencore different
 
@@ -128,10 +137,15 @@ with honest backward-error bounds even on rank-deficient inputs.
   (`frobenius_exact`, `frobenius_hutchinson_estimate`, …) so you know
   how the certificate was computed.
 - **Planner honesty.** The `method` field on every result identifies the
-  path that actually ran — `native_lanczos_csc`,
-  `reference Hermitian Lanczos (prototype/oracle fallback)`,
-  `native dense LAPACK SVD fallback`, etc. Sparse inputs do not silently
-  densify; reference oracles are never dressed as production paths.
+  path that actually ran —
+  `native scalar thick-restart Hermitian Lanczos`,
+  `native certified Gram SVD special case`,
+  `native dense LAPACK SVD fallback`, or, when a problem class has no
+  production kernel yet,
+  `reference Hermitian Lanczos (prototype/oracle fallback)`. Sparse
+  inputs do not silently densify; reference oracles are never dressed as
+  production paths. Call `plan_solver()` to see the chosen path *before*
+  you solve.
 - **Block-native engine.** Operators apply to dense blocks through a
   frozen C++17 ABI. Dense, CSC, diagonal, scaled, centered, and composed
   operators go through native kernels without R-level iteration in the
@@ -142,21 +156,26 @@ with honest backward-error bounds even on rank-deficient inputs.
   inspects the resulting structure and routes accordingly.
 
 Run `vignette("eigencore", package = "eigencore")` for a guided tour of
-operators, problems, plans, and certificates.
+operators, problems, plans, and certificates, and
+`vignette("certificates", package = "eigencore")` for the deep dive on
+reading the numerical evidence — including what to do when a check
+fails.
 
 ## Status
 
-**eigencore is experimental.** The public surface is settling but not
-yet locked. The V1 native engine ships scalar Hermitian Lanczos plus
-explicit and diagnostic block Hermitian Lanczos, LOBPCG (standard and
-generalized SPD prototype), Golub–Kahan SVD, dense LAPACK fallbacks,
-reference randomized SVD, dense standard/generalized shift-invert,
-sparse diagonal/symmetric-tridiagonal standard shift-invert, and tridiagonal
-generalized shift-invert with diagonal `B`. General sparse SVD,
-fully native randomized SVD control, general sparse shift-invert, full restarted
-nonsymmetric Arnoldi, and the final release-hardening gates remain open.
-See [`plan_v1.md`](plan_v1.md) and the docs under
-`docs/` for the engineering roadmap and current limitations. Start with
+**eigencore is experimental.** The public surface is settling but now
+has a scoped V1 release surface with fresh local gate evidence. The V1
+native engine ships scalar Hermitian Lanczos plus explicit and
+diagnostic block Hermitian Lanczos, native structured-tridiagonal
+Hermitian defaults, scoped sparse generalized LOBPCG, certified
+tall/wide sparse SVD special cases, scoped randomized SVD acceleration,
+dense LAPACK fallbacks, dense/structured shift-invert, and
+dense/sparse-CSC nonsymmetric Arnoldi compatibility. Broader general
+sparse and matrix-free SVD, fully native randomized solver control,
+general sparse native LU, matrix-free native Arnoldi restart, and
+native/block generalized Lanczos remain future scope. See
+[`plan_v1.md`](plan_v1.md) and the docs under `docs/` for the
+engineering roadmap and current limitations. Start with
 [`docs/method-selection-and-workflows.md`](docs/method-selection-and-workflows.md)
 for the current API workflow map and
 [`docs/v1-benchmark-manifest.md`](docs/v1-benchmark-manifest.md) for the

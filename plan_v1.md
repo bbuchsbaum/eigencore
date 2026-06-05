@@ -609,8 +609,9 @@ The project is now past the original skeleton/prototype phase. The architecture
 and correctness machinery are credible: operator/problem/plan/result/certificate
 boundaries exist, planner labels are mostly honest, sparse non-densification is
 guarded, native dense/CSC/diagonal kernels exist, and the test bank catches
-certificate and planner regressions. The codebase is still not V1-disruptive
-because the PRD's performance promise is not yet defensible.
+certificate and planner regressions. The codebase is now a scoped V1 release
+candidate: promoted surfaces have fresh evidence, while broader solver families
+remain future scope rather than hidden release claims.
 
 Working status against the sequenced milestones:
 
@@ -624,13 +625,13 @@ Working status against the sequenced milestones:
 | F | largely done for current paths | Native ortho and certificate kernels exist, but not every future solver path is fully native-certificate-backed. |
 | G0 | done | Native scalar Hermitian staging path exists and certifies on dense/CSC cases. |
 | G1 | green for structured tridiagonal default | The promoted default for symmetric tridiagonal sparse/diagonal Hermitian sources now uses the native selected tridiagonal LAPACK solver and tridiagonal residual certificate. Installed strict `path_laplacian:1000` evidence from 2026-06-05 certifies `20/20` and passes speed, memory, and PRIMME parity. Native block Hermitian Lanczos remains explicit/diagnostic rather than promoted. |
-| H | green for promoted tall/wide sparse gate | The executable `--h-candidate` gate targets the promoted `eigencore` SVD path again, with retained BPRO and block-GK rows kept as diagnostics. The tall-sparse production row avoids materializing the right Gram by using the bounded native `implicit_normal_lanczos` right-normal path and exact original-coordinate certificate diagnostics; the wide-sparse row remains on the certified native left-Gram special case. A warning-free installed 2026-06-05 3-iteration quick probe on `tall_sparse:600x90` and `wide_sparse:90x600` certified all five requested triplets and passed speed/memory (`1.194x` / `2.392x` tall, `1.223x` / `2.392x` wide versus the best certified references). Retained BPRO remains benchmark-visible but red, and broader sparse/matrix-free SVD remains a documented limitation rather than this H gate's promoted surface. |
+| H | green for promoted non-quick tall/wide sparse gate | The executable `--h-candidate` gate targets the promoted `eigencore` SVD path again, with retained BPRO and block-GK rows kept as diagnostics. Fresh installed 2026-06-05 strict non-quick evidence certifies `20/20` triplets on `tall_sparse` (`100000 x 500`) and `wide_sparse` (`500 x 100000`), uses the bounded native Gram special case with `native_gram_eigensolver = "lapack_dsyevr"` and `materialized_gram = TRUE`, and passes speed/memory (`3.849574x` / `2.049985x` tall, `9.882995x` / `2.049985x` wide) versus the best certified references. The quick `600x90` fixture is diagnostic only after a strict rerun proved too noisy for final signoff. Retained BPRO remains benchmark-visible but red, and broader sparse/matrix-free SVD remains a documented limitation rather than this H gate's promoted surface. |
 | I | scoped V1 gate green | Randomized SVD remains public reference-control code, but dense/CSC native fused sketch and projection kernels are active. The strict non-quick `exact_low_rank_dense:2000x500` release row passes against certified `rsvd` at about `3.1x`; quick and uncertified-baseline rows remain diagnostics. |
 | J | green for promoted sparse shifted-tridiagonal gate | Dense generalized `auto()` remains demoted to the native dense LAPACK fallback rather than an iterative LOBPCG promotion. The promoted native generalized SPD LOBPCG surface is the sparse shifted-tridiagonal path for largest and smallest targets, with explicit constraints, matrix-free `B`, and adversarial B cases retained as contract diagnostics. Installed 2026-06-05 non-quick strict evidence at `n = 1000`, `k = 10` certifies `10/10` for both sparse-smallest and sparse-largest without sparse densification, with native B-orthogonal kernels and shifted-tridiagonal preconditioner provenance. The saved full gate reports about `1.56x` / `1.67x` speed and `8.8x` / `25.0x` memory versus dense base for smallest/largest, and all native, generalized-Lanczos-reference, and adversarial-B contract rows pass. |
 | K | green for scoped reference refinement | Explicit generalized-SPD `lanczos()` requests route to an honest reference B-orthogonal Lanczos refinement when `B` has a dense, diagonal, or CSC SPD solve. Fresh 2026-06-05 saved and focused installed evidence certifies the diagonal and sparse-CSC K rows, passes the label/generalized/reference/orthogonality/certificate gates, preserves B-orthogonality, avoids sparse densification, and agrees with native generalized LOBPCG certificates. Native/block production Lanczos is future scope beyond the scoped K gate. |
 | L | scoped V1 gate green | Dense standard, dense generalized-SPD, diagonal standard, sparse symmetric-tridiagonal standard, and sparse/diagonal tridiagonal generalized shift-invert have native factorized Lanczos hot loops and original-problem certification. Fresh installed 2026-06-05 `bench-shift-invert.R --iterations=1 --strict --save` evidence passes all eight native/reference contract rows, including sparse-LU and user-solve boundaries. General sparse standard, general sparse/diagonal-metric generalized SPD, and user-supplied solve shift-invert remain honest reference paths rather than native production claims. |
 | M | done for path-Laplacian release surface | Native shifted-tridiagonal standard Hermitian LOBPCG passes the non-quick strict preconditioned gate on path Laplacians `n = 200, 1000, 2000`, `k = 5`; broader non-Laplacian preconditioned Hermitian policy remains future scope. |
-| N | started as release hardening | V1 audit, benchmark manifest, completion audit, RSpectra migration, method/workflow selection, known-limitations docs, doc scope audit, and reusable native smoke artifact exist. CRAN/sanitizer/valgrind signoff and final release benchmark reports remain ahead. |
+| N | green pending final handoff command reruns | V1 audit, benchmark manifest, completion audit, RSpectra migration, method/workflow selection, known-boundaries docs, doc scope audit, README/vignette refresh, reusable native smoke artifact, and curated release evidence exist. Final release hardening is the validation rerun plus mote closure, not an unresolved solver gate. |
 
 PRD truth check:
 
@@ -695,7 +696,7 @@ PRD truth check:
   plan gate to concrete evidence, commands, and remaining blockers.
   `docs/v1-benchmark-manifest.md` maps benchmark surfaces to installed-package
   commands, saved artifacts, and current red/green status. These are
-  release-hardening artifacts, not release signoff. Migration-facing docs now
+  release-hardening artifacts for the scoped V1 release surface. Migration-facing docs now
   include `docs/rspectra-migration.md`,
   `docs/method-selection-and-workflows.md`, and `docs/known-limitations.md`,
   and `docs/v1-doc-scope-audit.md`, which document the current shim behavior,
@@ -719,22 +720,21 @@ PRD truth check:
 
 Primary attack surfaces, in order:
 
-1. **H production SVD.** Replace staging/Gram-special-case dependence with a
-   native thick-restarted Golub-Kahan path that wins sparse SVD time-to-certified
-   answer against RSpectra/`irlba` on the PRD benchmark subset. Current block-GK
-   comparators show retained native restart workspace is the next real
-   algorithmic surface; thinner R-level restarts trade speed for memory but do
-   not close the gate. The H benchmark rows now expose attempted subspaces,
-   restart start width, warm-start count, certified attempt, final-attempt work,
-   and total orthogonalization work; future retained-restart patches must move
+1. **H production SVD.** The scoped V1 H gate is closed for the promoted
+   non-quick tall/wide sparse surface: installed strict evidence certifies
+   `20/20` triplets on `tall_sparse` (`100000 x 500`) and `wide_sparse`
+   (`500 x 100000`), passes speed/memory against certified references, and uses
+   an explicitly bounded native Gram special case. The quick `600x90` fixture
+   remains a diagnostic smoke/noise surface, not release signoff. Broader
+   general sparse and matrix-free SVD still need a native thick-restarted
+   Golub-Kahan/IRLBA/BPRO path that wins time-to-certified-answer against
+   RSpectra/`irlba` on the PRD benchmark subset. Current block-GK comparators
+   show retained native restart workspace is the next real algorithmic surface;
+   thinner R-level restarts trade speed for memory but do not close the broader
+   future gate. The H benchmark rows now expose attempted subspaces, restart
+   start width, warm-start count, certified attempt, final-attempt work, and
+   total orthogonalization work; future retained-restart patches must move
    those fields in the right direction, not just lower wall-clock noise. The
-   executable H candidate gate now uses the promoted `eigencore` SVD path, not
-   the older retained block-GK or retained BPRO diagnostic rows. Fresh installed
-   quick evidence certifies the tall/wide H fixtures and passes both speed and
-   memory after the tall row's bounded right-normal implicit Lanczos path plus
-   small-rank native certificate diagnostics. This closes the promoted H
-   tall/wide sparse gate; broader sparse/matrix-free SVD remains a documented
-   limitation and future native retained-restart surface. The
    cached Ritz-start comparators reuse exact `A V` for retained vectors; the
    random-tail variant confirms that prefix caching alone is not enough while
    restarts are still rebuilt from R, so the bridge remains a proper native
@@ -855,9 +855,9 @@ Primary attack surfaces, in order:
    RSpectra plus eigencore certification while allocating about `29kB` versus
    the reference's roughly `79kB`. This is the first H-shaped row where
    eigencore reaches certified-reference parity range while allocating
-   materially less memory, but it still does not satisfy the current
-   `1.1x` SVD release gate; H promotion therefore remains blocked on a genuine
-   restarted normal/LBD engine rather than wrapper overhead.
+   materially less memory, but at that point it still did not satisfy the
+   `1.1x` SVD release gate; the later non-quick tall/wide gate supersedes this
+   quick-fixture blocker for scoped V1 signoff.
    A follow-up native right-Gram CSC path now covers the tall sparse
    Gram-special-case mirror image. On the installed quick H sparse fixtures,
    the right-Gram path cuts the tall sparse row to roughly `0.38ms` and `29kB`,
@@ -887,11 +887,11 @@ Primary attack surfaces, in order:
    back to Golub-Kahan. That trims direct tall-path overhead versus the
    R-assembled `solve(svd_problem())` route, but default tiny Gram rows on
    `tall_sparse:600x90` and `wide_sparse:90x600` still certify, pass memory,
-   and miss speed (`0.40x` tall, `0.63x` wide in current 3-iteration installed
-   quick probes). Treat Track A as a bounded diagnostic/special-case path, not
-   V1 release signoff. H remains blocked on production native
-   thick-restarted Golub-Kahan/IRLBA/BPRO for sparse and matrix-free SVD
-   problems.
+   and miss speed (`0.40x` tall, `0.63x` wide in those 3-iteration installed
+   quick probes). Treat Track A quick fixtures as bounded diagnostics, not V1
+   release signoff. The later non-quick tall/wide gate closes scoped H, while
+   production native thick-restarted Golub-Kahan/IRLBA/BPRO for broader sparse
+   and matrix-free SVD remains future scope.
    For non-Gram sparse problems, `auto()` no
    longer promotes the retained block-GK candidate by default; retained restart
    is opt-in behind `eigencore.promote_retained_golub_kahan` until its

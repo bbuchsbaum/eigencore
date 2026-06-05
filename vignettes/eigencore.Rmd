@@ -7,11 +7,58 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-```{r, include = FALSE}
+```{r setup-opts, include = FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
-  comment = "#>"
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 7,
+  fig.height = 4.1,
+  fig.align = "center",
+  out.width = "92%",
+  dpi = 100
 )
+```
+
+```{r helpers, include = FALSE}
+# Shared palette + two small base-graphics helpers used throughout the
+# vignette. Kept out of the reader's view: the reader sees the API call and
+# the picture, never the plotting boilerplate.
+ec_blue <- "#2166ac"; ec_red <- "#b2182b"; ec_tol <- "#ef8a62"; ec_grey <- "grey78"
+
+# Per-pair backward error as a stem/dot plot, against the tolerance line.
+plot_backward_error <- function(cert, main = NULL, tol = cert$tolerance) {
+  be <- pmax(cert$backward_error, .Machine$double.eps)
+  k  <- length(be)
+  col_pt <- ifelse(cert$converged, ec_blue, ec_red)
+  rng  <- range(c(be, tol))
+  ylim <- c(rng[1] / 6, rng[2] * 6)
+  op <- par(mar = c(4, 4.6, if (is.null(main)) 1 else 2.4, 1)); on.exit(par(op))
+  plot(seq_len(k), be, log = "y", type = "n", xlim = c(0.5, k + 0.5),
+       ylim = ylim, xaxt = "n", bty = "n", main = main,
+       xlab = "returned pair", ylab = "backward error (log scale)")
+  axis(1, at = seq_len(k))
+  segments(seq_len(k), ylim[1], seq_len(k), be, col = col_pt, lwd = 2)
+  points(seq_len(k), be, pch = 19, cex = 1.3, col = col_pt)
+  abline(h = tol, col = ec_tol, lty = 2, lwd = 2)
+  text(k + 0.45, tol, sprintf("tol = %.0e", tol), col = ec_tol,
+       pos = 3, cex = 0.85, xpd = NA)
+}
+
+# A computed slice (blue) drawn on top of the full dense spectrum (grey).
+plot_spectrum <- function(all_vals, computed, ylab = "value", main = NULL) {
+  s <- sort(all_vals, decreasing = TRUE)
+  k <- length(computed)
+  op <- par(mar = c(4, 4.6, if (is.null(main)) 1 else 2.4, 1)); on.exit(par(op))
+  plot(seq_along(s), s, pch = 19, cex = 0.4, col = ec_grey, bty = "n",
+       xlab = "rank (largest to smallest)", ylab = ylab, main = main)
+  points(seq_len(k), sort(computed, decreasing = TRUE),
+         pch = 19, cex = 1.2, col = ec_blue)
+  legend("topright", c("full spectrum (dense reference)", "computed by eigencore"),
+         pch = 19, pt.cex = c(0.7, 1.2), col = c(ec_grey, ec_blue),
+         bty = "n", cex = 0.9)
+}
 ```
 
 eigencore turns spectral computation into a five-step workflow:
@@ -29,14 +76,13 @@ from existing code.
 
 ```{r setup}
 library(eigencore)
-suppressPackageStartupMessages(library(Matrix))
 ```
 
 ## 1. Standard Hermitian eigenproblem
 
 Build a small symmetric matrix and ask for the five largest eigenvalues.
 
-```{r}
+```{r make-A}
 set.seed(1)
 n <- 200
 A <- crossprod(matrix(rnorm(n * n), n, n)) / n + diag(n)
@@ -45,7 +91,7 @@ A <- crossprod(matrix(rnorm(n * n), n, n)) / n + diag(n)
 eigencore wraps the matrix in a *block-native operator* the moment you hand it
 to a problem constructor. You can do this explicitly:
 
-```{r}
+```{r as-operator}
 Aop <- as_operator(A)
 Aop
 ```
@@ -55,7 +101,7 @@ the underlying storage has a native kernel (in this case dense double — yes).
 
 ### Build the problem and inspect the plan
 
-```{r}
+```{r plan}
 P    <- eigen_problem(A, structure = hermitian(), target = largest())
 plan <- plan_solver(P, k = 5)
 plan
@@ -66,12 +112,12 @@ silent dispatch.
 
 ### Solve and read the certificate
 
-```{r}
+```{r solve}
 fit <- solve(P, k = 5)
 fit
 ```
 
-```{r}
+```{r certificate}
 fit$certificate
 ```
 
@@ -82,18 +128,40 @@ A passing certificate means: every requested pair has
 - backward error below `tol`,
 - inter-vector orthogonality loss below the orthogonality tolerance.
 
-If any pair fails, the certificate's `failed_indices` slot tells you which.
+The certificate is not one number — it is one verdict *per returned pair*. Plot
+the per-pair backward error and the tolerance becomes a line you can see every
+pair clearing.
 
-```{r}
+```{r cert-bars, echo = FALSE, fig.cap = "Per-pair backward error for the five returned eigenpairs. Every pair sits well below the dashed tolerance line, so the overall certificate passes.", fig.alt = "Stem plot of backward error for five eigenpairs on a log scale; all five points fall far below the dashed tolerance line at 1e-8."}
+plot_backward_error(fit$certificate)
+```
+
+If any pair were above the line, the certificate's `failed_indices` slot would
+name it. Here the worst pair clears the tolerance by orders of magnitude.
+
+```{r values}
 fit$values
 ```
+
+These five values are a *certified slice* of a 200-dimensional spectrum.
+Plotting them against the full dense spectrum shows exactly which part of the
+problem you paid to compute.
+
+```{r spectrum, echo = FALSE, fig.cap = "The five largest eigenvalues (blue) located within the full spectrum of A (grey). eigencore computes only the requested slice, then certifies it.", fig.alt = "Scatter plot of all 200 eigenvalues sorted from largest to smallest in grey, with the five largest highlighted in blue at the top-left."}
+all_vals <- eigen(A, symmetric = TRUE, only.values = TRUE)$values
+plot_spectrum(all_vals, fit$values, ylab = "eigenvalue")
+```
+
+With `n = 200` we asked for 5 of 200 pairs. In a production problem with
+`n = 1e6`, computing the full spectrum is impossible — the *partial* result is
+the only result, which is exactly why a certificate matters.
 
 ## 2. Generalized SPD eigenproblem (`A v = lambda B v`)
 
 Pass a metric `B` to `eigen_problem()` (or to `eig_partial()` via the `B`
 argument).
 
-```{r}
+```{r generalized}
 B <- diag(seq(1, 5, length.out = n))
 fit_gen <- eig_partial(A, k = 5, target = largest(), B = B,
                        method = lobpcg(maxit = 200))
@@ -101,22 +169,31 @@ fit_gen
 ```
 
 The certificate's residual is `||A v - lambda B v|| / (||A|| + |lambda| ||B||)`,
-and orthogonality is measured in the `B`-inner product where appropriate.
+and orthogonality is measured in the `B`-inner product where appropriate. The
+`norm_bound_type` now reports a bound for both `A` and `B`.
 
 ## 3. Partial SVD
 
 For rectangular problems use `svd_partial()`:
 
-```{r}
+```{r svd}
 M <- matrix(rnorm(400 * 50), 400, 50)
 svd_fit <- svd_partial(M, rank = 5, target = largest())
 svd_fit
 ```
 
-The reported `method` again identifies the path — for very small or
-near-square problems eigencore may use a dense LAPACK SVD fallback rather than
-running its iterative Golub–Kahan kernel; either way the certificate covers
-both `||A v - sigma u||` and `||A^T u - sigma v||`.
+The same mental model applies to singular values: you compute the leading few
+and leave the tail untouched.
+
+```{r svd-scree, echo = FALSE, fig.cap = "The five leading singular values (blue) computed by eigencore, shown against the full singular-value spectrum of M (grey).", fig.alt = "Scatter plot of all 50 singular values of M sorted descending in grey, with the top five highlighted in blue."}
+all_sv <- svd(M, nu = 0, nv = 0)$d
+plot_spectrum(all_sv, svd_fit$d, ylab = "singular value")
+```
+
+The reported `method` identifies the path — for very small or near-square
+problems eigencore may use a dense LAPACK SVD fallback rather than running its
+iterative Golub–Kahan kernel. Either way the certificate covers both
+`||A v - sigma u||` and `||A^T u - sigma v||`.
 
 ## 4. RSpectra-compatible workflow
 
@@ -124,12 +201,12 @@ If your existing code uses `RSpectra::eigs_sym()`, you can call eigencore in
 the same shape — the return list extends RSpectra's by adding `certificate`
 and `diagnostics`:
 
-```{r}
+```{r rspectra}
 res <- eigs_sym(A, k = 5, which = "LA")
 str(res, max.level = 1)
 ```
 
-```{r}
+```{r rspectra-cert}
 res$certificate
 ```
 
@@ -139,6 +216,8 @@ and `"BE"`.
 
 ## Where to go next
 
+- `vignette("certificates")` is the deep dive on reading the numerical
+  evidence — what each field means and what to do when a check fails.
 - The package reference, organised by topic, lives in the
   [reference index](../reference/index.html).
 - `?certificate` documents the certificate fields in detail.

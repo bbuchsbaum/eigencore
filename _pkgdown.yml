@@ -88,6 +88,7 @@ reference:
   desc: Preconditioner factories for iterative solvers.
   contents:
   - shifted_cholesky_preconditioner
+  - shifted_diagonal_preconditioner
   - shifted_tridiagonal_preconditioner
 
 - title: Spaces and structure tags

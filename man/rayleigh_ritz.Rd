@@ -21,3 +21,4 @@ rayleigh_ritz(A, Q, B = NULL, target = largest(), symmetric = TRUE)
 \description{
 Rayleigh-Ritz projection in a trial basis.
 }
+\keyword{internal}

@@ -19,3 +19,4 @@ b_orthogonalize(X, B, against = NULL, tol = sqrt(.Machine$double.eps))
 \description{
 Orthogonalize columns in the B-inner product.
 }
+\keyword{internal}

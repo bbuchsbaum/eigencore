@@ -17,3 +17,4 @@ mgs2(X, against = NULL, tol = sqrt(.Machine$double.eps))
 \description{
 Modified Gram-Schmidt with two passes.
 }
+\keyword{internal}
