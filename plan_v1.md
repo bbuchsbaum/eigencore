@@ -143,22 +143,24 @@ Deliver the native engine in order. Each step ships with adversarial tests
    reconstructing right singular vectors as `B' u / sigma` and preserving the
    existing exact residual certificate. On the installed large exact-low-rank
    dense row this keeps the gate green at roughly `3.08x` versus certified
-  `rsvd` while trimming allocation from about `23.0MB` to `22.3MB`; a fresh
-  installed `--iterations=1` rerun of `exact_low_rank_dense:2000x500` remains
-  green at roughly `2.97x` versus certified `rsvd`. Quick
-  exact-low-rank and sparse rows also improve modestly but remain below the
-  global `2x` speed threshold because fixed R/benchmark overhead dominates at
-  those sizes. The sparse CSC randomized path now also has native CSC
-  sketch/projection kernels for `A Omega`, `A' Q`, and direct `Q' A`
-  projected-core construction, with benchmark-visible
+   `rsvd` while trimming allocation from about `23.0MB` to `22.3MB`; after the
+   dense native sketch/projection slice, a fresh installed `--iterations=1`
+   rerun of `exact_low_rank_dense:2000x500` remains green at roughly `3.15x`
+   versus certified `rsvd`. Quick
+  exact-low-rank and sparse rows also improve modestly but remain sensitive to
+  fixed R/benchmark overhead at those sizes. The dense and sparse CSC
+  randomized paths now have native sketch/projection kernels for `A Omega`,
+  `A' Q`, and direct `Q' A` projected-core construction, with benchmark-visible
   `randomized_native_sketch = TRUE` and
-  `randomized_projection_kind = "native_direct_qt_a"` diagnostics. A fresh
-  installed 5-iteration focused quick run certifies `low_rank_sparse:140x90`,
-  trims eigencore allocation to about `342KB` versus `965KB` for certified
-  `rsvd`, and improves the speed ratio to about `1.87x`, but still misses the
-  `2x` gate; the full quick surface reports sparse at about `1.94x` and
-  `exact_low_rank_dense:120x80` red under run-to-run overhead. The benchmark
-  gate now requires the `rsvd` baseline itself to
+  `randomized_projection_kind = "native_direct_qt_a"` diagnostics for both
+  dense and CSC eigencore rows. A fresh installed 5-iteration quick run keeps
+  `exact_low_rank_dense:120x80` close but red at about `1.93x`, while
+  `low_rank_sparse:140x90` now certifies and passes the randomized `2x` speed
+  gate in the full quick surface at about `2.01x` (`1.87x` in the focused
+  sparse rerun) with about `342KB` allocation versus `965KB` for certified
+  `rsvd`. The installed non-quick `exact_low_rank_dense:2000x500` row remains
+  green at about `3.15x`. The benchmark gate now requires the `rsvd` baseline
+  itself to
   pass eigencore certification before speed/parity can pass, so slow-decay rows
   where `rsvd` is faster but uncertified are recorded as
   `baseline_certified = FALSE`, `speed_gate = FALSE`, and `passed = FALSE`, not

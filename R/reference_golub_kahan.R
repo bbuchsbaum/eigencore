@@ -2451,16 +2451,28 @@ certify_randomized_svd_projection <- function(op, apply_pair, core, small_u,
 randomized_svd_apply_pair <- function(op) {
   source <- source_or_null(op) %||% op$metadata$matrix %||% NULL
   if (is.matrix(source) && is.double(source)) {
+    dense_randomized_apply <- function(X, transpose = FALSE) {
+      .Call(
+        "eigencore_dense_randomized_apply",
+        source,
+        X,
+        as.logical(transpose),
+        PACKAGE = "eigencore"
+      )
+    }
     return(list(
       kind = "dense_direct",
-      native_sketch = FALSE,
-      apply = function(X) source %*% X,
-      apply_adjoint = function(X) crossprod(source, X),
-      project_kind = "direct_qt_a",
+      native_sketch = TRUE,
+      apply = function(X) dense_randomized_apply(X, transpose = FALSE),
+      apply_adjoint = function(X) dense_randomized_apply(X, transpose = TRUE),
+      project_kind = "native_direct_qt_a",
       project = function(Q) {
-        out <- crossprod(Q, source)
-        attr(out, "transposed") <- TRUE
-        out
+        .Call(
+          "eigencore_dense_randomized_project_transposed",
+          source,
+          Q,
+          PACKAGE = "eigencore"
+        )
       }
     ))
   }

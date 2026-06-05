@@ -558,16 +558,25 @@ test_that("randomized-rsvd gate enforces accuracy and speed versus rsvd", {
   expect_match(uncertified_ref$note, "rsvd baseline did not satisfy")
 })
 
-test_that("randomized-rsvd benchmark rows expose projection diagnostics", {
+test_that("randomized-rsvd benchmark rows expose native projection diagnostics", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
 
   helper_path <- benchmark_file("_helpers.R")
   source(helper_path)
 
+  dense <- nearly_low_rank_svd_matrix(40L, 24L, rank = 5L, noise = 0, seed = 1601L)
+  dense_rows <- benchmark_randomized_rsvd_case(
+    dense,
+    rank = 3L,
+    methods = "eigencore_randomized",
+    iterations = 1L,
+    seed = 1601L
+  )
+
   set.seed(1603)
   A <- Matrix::rsparsematrix(140L, 12L, density = 0.12) %*%
     Matrix::rsparsematrix(12L, 90L, density = 0.12)
-  rows <- benchmark_randomized_rsvd_case(
+  sparse_rows <- benchmark_randomized_rsvd_case(
     A,
     rank = 8L,
     methods = "eigencore_randomized",
@@ -575,12 +584,14 @@ test_that("randomized-rsvd benchmark rows expose projection diagnostics", {
     seed = 1603L
   )
 
-  expect_true("randomized_native_sketch" %in% names(rows))
-  expect_true("randomized_projection_kind" %in% names(rows))
-  expect_true("randomized_projection_transposed" %in% names(rows))
-  expect_true(rows$randomized_native_sketch)
-  expect_equal(rows$randomized_projection_kind, "native_direct_qt_a")
-  expect_true(rows$randomized_projection_transposed)
+  for (rows in list(dense_rows, sparse_rows)) {
+    expect_true("randomized_native_sketch" %in% names(rows))
+    expect_true("randomized_projection_kind" %in% names(rows))
+    expect_true("randomized_projection_transposed" %in% names(rows))
+    expect_true(rows$randomized_native_sketch)
+    expect_equal(rows$randomized_projection_kind, "native_direct_qt_a")
+    expect_true(rows$randomized_projection_transposed)
+  }
 })
 
 test_that("SVD surface H candidate preset selects retained native SVD subject", {

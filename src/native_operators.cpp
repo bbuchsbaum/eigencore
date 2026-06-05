@@ -528,6 +528,84 @@ extern "C" SEXP eigencore_dense_block_apply(SEXP A_, SEXP X_, SEXP alpha_,
   UNPROTECT(1);
   return out_;
 }
+
+extern "C" SEXP eigencore_dense_randomized_apply(SEXP A_, SEXP X_,
+                                                 SEXP transpose_) {
+  if (!isReal(A_) || !isReal(X_) || !isLogical(transpose_)) {
+    error("invalid dense randomized apply inputs");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimX = getAttrib(X_, R_DimSymbol);
+  if (dimA == R_NilValue || dimX == R_NilValue) {
+    error("A and X must be matrices");
+  }
+
+  const int m = INTEGER(dimA)[0];
+  const int n = INTEGER(dimA)[1];
+  const int xr = INTEGER(dimX)[0];
+  const int xc = INTEGER(dimX)[1];
+  const bool transpose = LOGICAL(transpose_)[0];
+  const int out_rows = transpose ? n : m;
+  const int inner = transpose ? m : n;
+  if (xr != inner) {
+    error("non-conformable X for dense randomized apply");
+  }
+
+  SEXP out_ = PROTECT(allocMatrix(REALSXP, out_rows, xc));
+  DenseColumnMajorOperator impl = {m, n, REAL(A_)};
+  const int status = eigencore_dense_apply(
+    &impl,
+    transpose ? EIGENCORE_TRANSPOSE_ADJOINT : EIGENCORE_TRANSPOSE_NONE,
+    xc,
+    REAL(X_),
+    xr,
+    1.0,
+    0.0,
+    REAL(out_),
+    out_rows,
+    nullptr
+  );
+  if (status != 0) {
+    eigencore_apply_status_error("dense randomized apply", status);
+  }
+
+  UNPROTECT(1);
+  return out_;
+}
+
+extern "C" SEXP eigencore_dense_randomized_project_transposed(SEXP A_,
+                                                              SEXP Q_) {
+  if (!isReal(A_) || !isReal(Q_)) {
+    error("invalid dense randomized projection inputs");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimQ = getAttrib(Q_, R_DimSymbol);
+  if (dimA == R_NilValue || dimQ == R_NilValue) {
+    error("A and Q must be matrices");
+  }
+
+  const int m = INTEGER(dimA)[0];
+  const int n = INTEGER(dimA)[1];
+  const int qr = INTEGER(dimQ)[0];
+  const int qcols = INTEGER(dimQ)[1];
+  if (qr != m) {
+    error("non-conformable Q for dense randomized projection");
+  }
+
+  SEXP out_ = PROTECT(allocMatrix(REALSXP, qcols, n));
+  const char trans_q = 'T';
+  const char trans_a = 'N';
+  const double alpha = 1.0;
+  const double beta = 0.0;
+  F77_CALL(dgemm)(&trans_q, &trans_a, &qcols, &n, &m,
+                  &alpha, REAL(Q_), &m, REAL(A_), &m,
+                  &beta, REAL(out_), &qcols FCONE FCONE);
+  SEXP transposed_ = PROTECT(ScalarLogical(TRUE));
+  setAttrib(out_, install("transposed"), transposed_);
+  UNPROTECT(2);
+  return out_;
+}
+
 extern "C" SEXP eigencore_csc_block_apply(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                           SEXP X_, SEXP alpha_, SEXP beta_,
                                           SEXP Y_, SEXP transpose_) {
