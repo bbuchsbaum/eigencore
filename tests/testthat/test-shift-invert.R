@@ -35,8 +35,10 @@ test_that("shift-invert returns interior eigenvalues nearest sigma on dense Herm
 test_that("shift-invert handles a sparse CSC source via factorized solve", {
   set.seed(7)
   vals <- seq(1, 30)
-  A_csc <- methods::as(symmetric_with_spectrum(vals, seed = 7),
-                       "CsparseMatrix")
+  A_csc <- methods::as(
+    Matrix::Matrix(symmetric_with_spectrum(vals, seed = 7), sparse = TRUE),
+    "CsparseMatrix"
+  )
 
   fit <- eig_partial(A_csc, k = 4L, target = nearest(15.5),
                      method = shift_invert(sigma = 15.5))

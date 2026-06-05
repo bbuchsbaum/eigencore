@@ -194,8 +194,10 @@ use native factorized Lanczos hot loops and certify in original coordinates.
 Sparse diagonal/symmetric-tridiagonal standard paths and tridiagonal
 generalized paths with diagonal `B` are also native. General sparse standard
 shift-invert and general sparse or diagonal-metric generalized shift-invert
-remain honest reference-labelled paths. User-supplied solve
-functions are still treated as reference boundary code.
+remain honest reference-labelled paths with cache provenance rather than native
+production claims. User-supplied solve functions are treated as reference
+boundary code with external-cache provenance. This is the scoped V1 boundary;
+native general sparse LU ownership is future scope.
 
 ## Planner Labels To Watch
 

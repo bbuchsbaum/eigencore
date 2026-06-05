@@ -565,24 +565,29 @@
         "residuals computed in original problem, not transformed problem only"
       ],
       "current_implementation_status": {
-        "status": "in_progress",
-        "implemented_path": "reference Hermitian Lanczos shift-invert via base::solve / Matrix::solve factorization for dense double, dgCMatrix, and dsCMatrix sources, plus a user-supplied solve operator for matrix-free A; eigenvalues returned in original coordinates with full operator-side certification.",
+        "status": "scoped_v1_gate",
+        "implemented_path": "native factorized Lanczos shift-invert for dense standard Hermitian, dense generalized SPD, diagonal standard, sparse symmetric-tridiagonal standard, and sparse/diagonal tridiagonal generalized SPD cases; honest reference-labelled sparse-LU and user-solve boundaries remain for general sparse and matrix-free solves. All paths return eigenvalues in original coordinates with operator-side certification.",
         "honest_planner_labels": [
-          "reference Hermitian Lanczos shift-invert (dense LU)",
+          "native dense Hermitian shift-invert (factorized Lanczos)",
+          "native dense generalized SPD shift-invert (factorized Lanczos)",
+          "native tridiagonal Hermitian shift-invert (factorized Lanczos)",
+          "native tridiagonal generalized SPD shift-invert (factorized Lanczos)",
           "reference Hermitian Lanczos shift-invert (sparse LU)",
+          "reference generalized SPD Lanczos shift-invert (sparse LU)",
           "reference Hermitian Lanczos shift-invert (user solve)"
         ],
         "guards": [
-          "near-singular shifted operator detected via rcond and rejected with an actionable error",
+          "near-singular shifted operator detected via dense LU or native tridiagonal pivot diagnostics and rejected with an actionable error",
+          "general sparse reference rows expose sparse LU pivot-ratio diagnostics without dense rcond",
           "zero-magnitude inverted eigenvalue detected and rejected with an actionable error",
-          "generalized SPD shift-invert (B != NULL) rejected at plan time with a roadmap note"
+          "unsupported sparse or matrix-free generalized metrics reject instead of densifying silently"
         ],
         "not_yet_satisfied": [
-          "native shift-invert hot loop (factorization cache and apply driven from C++)",
-          "generalized SPD shift-invert (A - sigma B)^(-1) B x",
-          "compatibility with the `nearest()` target on native Lanczos without going through the reference path"
+          "native general sparse LU factorization/apply ownership beyond the current sparse-LU reference boundary",
+          "native user-supplied solve ownership beyond the current external-cache reference boundary"
         ],
-        "planner_policy": "All shift-invert paths are honestly labelled as `reference Hermitian Lanczos shift-invert (...)` until a native hot loop lands. Generalized cases fail loudly at plan time."
+        "validated_regime": "installed 2026-06-05 strict saved shift-invert benchmark passes all eight native/reference contract rows: dense standard, dense generalized, sparse tridiagonal, diagonal standard, sparse tridiagonal generalized, sparse general reference, sparse/diagonal generalized reference, and matrix-free user-solve reference",
+        "planner_policy": "Use native labels only for dense and diagonal/tridiagonal factorized Lanczos regimes. General sparse and user-solve shift-invert remain explicitly reference-labelled with cache/factorization provenance and no silent sparse densification."
       }
     }
   },

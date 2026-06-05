@@ -554,8 +554,10 @@ Hermitian benchmark scripts enforce certification only, while non-quick
   structure, and `B` changes invalidate reuse.
   Milestone L's "smallest/interior works on at least one real Laplacian"
   exit criterion is satisfied by `tests/testthat/test-shift-invert.R` (1D
-  Laplacian, smallest 4 eigenvalues). General sparse standard shift-invert and
-  general sparse generalized SPD native promotion remain open for V1 promotion.
+  Laplacian, smallest 4 eigenvalues). Fresh installed 2026-06-05 strict
+  shift-invert evidence covers all current native labels and the sparse/user
+  solve reference boundaries; general sparse native LU ownership is future
+  scope, not a scoped V1 gate blocker.
 - dense and sparse CSC nonsymmetric auto paths with supported
   real/imaginary/magnitude targets now use a native Arnoldi cycle with native
   projected Ritz extraction and exact right-residual certification. The
@@ -622,7 +624,7 @@ Working status against the sequenced milestones:
 | I | scoped V1 gate green | Randomized SVD remains public reference-control code, but dense/CSC native fused sketch and projection kernels are active. The strict non-quick `exact_low_rank_dense:2000x500` release row passes against certified `rsvd` at about `3.1x`; quick and uncertified-baseline rows remain diagnostics. |
 | J | green for promoted sparse shifted-tridiagonal gate | Dense generalized `auto()` remains demoted to the native dense LAPACK fallback rather than an iterative LOBPCG promotion. The promoted native generalized SPD LOBPCG surface is the sparse shifted-tridiagonal path for largest and smallest targets, with explicit constraints, matrix-free `B`, and adversarial B cases retained as contract diagnostics. Installed 2026-06-05 non-quick strict evidence at `n = 1000`, `k = 10` certifies `10/10` for both sparse-smallest and sparse-largest without sparse densification, with native B-orthogonal kernels and shifted-tridiagonal preconditioner provenance. The saved full gate reports about `1.56x` / `1.67x` speed and `8.8x` / `25.0x` memory versus dense base for smallest/largest, and all native, generalized-Lanczos-reference, and adversarial-B contract rows pass. |
 | K | partial reference | Explicit generalized-SPD `lanczos()` requests now route to an honest reference B-orthogonal Lanczos refinement when `B` has a dense, diagonal, or CSC SPD solve. It passes focused adversarial B agreement with LOBPCG certificates, preserves B-orthogonality, and has a focused installed benchmark contract row, but native/block production promotion remains open. |
-| L | partial native | Dense standard, dense generalized-SPD, diagonal standard, sparse symmetric-tridiagonal standard, and sparse/diagonal tridiagonal generalized shift-invert now have native factorized Lanczos hot loops and original-problem certification; general sparse standard, general sparse/diagonal-metric generalized SPD, and user-supplied solve shift-invert remain on honest reference paths with focused installed benchmark contracts for sparse-LU or external-cache provenance and certificate honesty. |
+| L | scoped V1 gate green | Dense standard, dense generalized-SPD, diagonal standard, sparse symmetric-tridiagonal standard, and sparse/diagonal tridiagonal generalized shift-invert have native factorized Lanczos hot loops and original-problem certification. Fresh installed 2026-06-05 `bench-shift-invert.R --iterations=1 --strict --save` evidence passes all eight native/reference contract rows, including sparse-LU and user-solve boundaries. General sparse standard, general sparse/diagonal-metric generalized SPD, and user-supplied solve shift-invert remain honest reference paths rather than native production claims. |
 | M | done for path-Laplacian release surface | Native shifted-tridiagonal standard Hermitian LOBPCG passes the non-quick strict preconditioned gate on path Laplacians `n = 200, 1000, 2000`, `k = 5`; broader non-Laplacian preconditioned Hermitian policy remains future scope. |
 | N | started as release hardening | V1 audit, benchmark manifest, completion audit, RSpectra migration, method/workflow selection, known-limitations docs, doc scope audit, and reusable native smoke artifact exist. CRAN/sanitizer/valgrind signoff and final release benchmark reports remain ahead. |
 
@@ -1095,14 +1097,15 @@ Primary attack surfaces, in order:
    metric solves. Remaining work is native/block execution, broader sparse and
    matrix-free solve ownership, and release benchmark evidence before it can be
    considered a production alternate.
-4. **L native shift-invert.** Extend the dense plus diagonal/tridiagonal native
-   shift-invert slices to general sparse standard and general sparse/diagonal
-   generalized cases without silent densification, and make factorization
-   reuse/cache ownership explicit enough for planner promotion beyond the
-   currently native factorizations. The current reference sparse-LU boundary is
-   now benchmarked explicitly, including original-coordinate convergence and
-   estimated-scale certificate honesty. The user-supplied solve boundary is
-   also benchmarked as nonnative external-cache evidence with exact-scale
+4. **L shift-invert follow-through.** Keep the scoped native shift-invert gate
+   green for dense, diagonal, sparse tridiagonal, dense generalized, and
+   tridiagonal/diagonal generalized cases, and keep general sparse plus
+   user-solve boundaries honestly reference-labelled with explicit cache
+   provenance. General sparse native LU ownership is future scope beyond the
+   scoped V1 gate. The current reference sparse-LU boundary is benchmarked
+   explicitly, including original-coordinate convergence and estimated-scale
+   certificate honesty. The user-supplied solve boundary is also benchmarked
+   as nonnative external-cache evidence with exact-scale
    certification, not as native factorization ownership.
 5. **Operator fusion.** Native centered/scaled/composed operators now cover the
    explicit dense/CSC surfaces, including sparse centering via a low-rank

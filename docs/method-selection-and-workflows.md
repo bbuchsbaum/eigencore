@@ -247,7 +247,7 @@ V1 requires those cases to remain explicitly labelled.
 | General eigen | `eigs(A, k, which)` or `eigen_problem(..., general())` | You need `LR/SR/LI/SI` target semantics; expect dense oracle until Arnoldi lands. |
 | Partial SVD | `svd_partial(X, rank)` | `golub_kahan()` for explicit GK, `randomized()` for the reference randomized prototype. |
 | Generalized SPD | `eig_partial(A, k, B = B, method = lobpcg())` | You need original generalized residual certification. |
-| Interior/shifted eigen | `eig_partial(..., method = shift_invert(sigma))` | Dense standard/generalized, sparse diagonal/symmetric-tridiagonal standard, and tridiagonal generalized cases with diagonal `B` can use native shift-invert; general sparse remains open. |
+| Interior/shifted eigen | `eig_partial(..., method = shift_invert(sigma))` | Dense standard/generalized, sparse diagonal/symmetric-tridiagonal standard, and tridiagonal generalized cases with diagonal `B` use native shift-invert; general sparse remains reference-labelled with cache provenance. |
 | Structured transforms | `as_operator()`, `center()`, `scale_cols()`, `crossprod_operator()` | You need planner-visible operator provenance without silent sparse densification. |
 
 See `docs/rspectra-migration.md`, `docs/known-limitations.md`, and

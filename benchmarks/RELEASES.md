@@ -565,8 +565,8 @@ they are machine-dependent.
 - Shift-invert factorization-cache keys now include the problem structure and
   standard/generalized `B` boundary in addition to the operator fingerprint and
   sigma. This closes the cache invalidation contract for structure changes
-  while the shift-invert path remains honestly labelled as reference until the
-  native hot loop lands.
+  across the native dense/tridiagonal paths and the honest reference
+  sparse-LU/user-solve boundaries.
 - Hermitian shift-invert now has native factorized Lanczos hot loops for
   dense standard, dense generalized-SPD, diagonal standard, sparse
   symmetric-tridiagonal standard, and sparse/diagonal tridiagonal generalized
@@ -582,22 +582,27 @@ they are machine-dependent.
   `sqrt(B) solve(A - sigma B, sqrt(B) y)`. These paths
   recover `lambda = sigma + 1 / mu` and certify residuals on the original
   problem. General sparse, general sparse diagonal-metric generalized, and
-  user-solve shift-invert paths remain honestly reference-labelled until
-  broader native non-densifying factorization ownership lands; the user-solve
-  benchmark boundary records its external cache provenance explicitly.
+  user-solve shift-invert paths remain honestly reference-labelled; the scoped
+  V1 gate treats broader native non-densifying LU ownership as future scope,
+  and the user-solve benchmark boundary records its external cache provenance
+  explicitly.
 - Shift-invert now has a release-hardening benchmark surface at
   `inst/benchmarks/bench-shift-invert.R`. It reports method labels,
   native/reference factorization-cache provenance, original-coordinate
   certificate status, and contract rows for dense standard, dense generalized
   SPD, diagonal standard, sparse tridiagonal standard, and sparse/diagonal
-  tridiagonal-generalized cases. A fresh
-  installed non-quick `--iterations=1 --save` pass certified all requested
-  rows (`6/6`) and passed the contract gate after the generalized tridiagonal
-  promotion: dense standard used `dense_lu_native`, dense generalized used
-  `dense_lu_generalized_native`, diagonal and sparse tridiagonal standard used
-  `tridiagonal_thomas_native`, and sparse/diagonal tridiagonal generalized used
-  `tridiagonal_thomas_generalized_native`. L remains partial because general
-  sparse native shift-invert is still not implemented.
+  tridiagonal-generalized cases, plus reference contract rows for general
+  sparse LU and matrix-free user-solve boundaries. A fresh installed 2026-06-05
+  non-quick `--iterations=1 --strict --save` pass certified all native rows
+  (`6/6`) and passed all eight contract rows: dense standard used
+  `dense_lu_native`, dense generalized used `dense_lu_generalized_native`,
+  diagonal and sparse tridiagonal standard used `tridiagonal_thomas_native`,
+  sparse/diagonal tridiagonal generalized used
+  `tridiagonal_thomas_generalized_native`, general sparse rows retained
+  `Matrix::lu` sparse-LU provenance with estimated-scale certificate honesty,
+  and the matrix-free row retained `user_solve` external-cache provenance.
+  This closes the scoped V1 L gate while leaving general sparse native LU as
+  future scope.
 - Dense nonsymmetric eigen oracle results received right-residual
   certificates even when LAPACK returned complex eigenpairs. This was the
   compatibility bridge before dense explicit nonsymmetric paths moved onto the
