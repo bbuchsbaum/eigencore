@@ -109,6 +109,71 @@ test_that("matrix-free stochastic norm estimates withhold passed certificates", 
   expect_match(cert$notes, "stochastic norm estimate")
 })
 
+test_that("stochastic norm estimates never produce passed certificates across certificate entry points", {
+  direct <- eigencore:::new_certificate(
+    tol = 1e-8,
+    residuals = c(0, 0),
+    backward_error = c(0, 0),
+    orthogonality = 0,
+    converged = c(TRUE, TRUE),
+    scale = c(1, 1),
+    scale_is_estimate = TRUE
+  )
+  expect_true(all(direct$converged))
+  expect_true(direct$scale_is_estimate)
+  expect_false(direct$passed)
+  expect_match(direct$notes, "stochastic norm estimate")
+
+  vals <- c(4, 2, 1)
+  op <- linear_operator(
+    dim = c(3, 3),
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      out <- alpha * (vals * X)
+      if (!is.null(Y) && beta != 0) out <- out + beta * Y
+      out
+    },
+    apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) {
+      out <- alpha * (vals * X)
+      if (!is.null(Y) && beta != 0) out <- out + beta * Y
+      out
+    }
+  )
+  s <- svd(diag(vals), nu = 2, nv = 2)
+  svd_cert <- eigencore:::certify_svd_operator(op, s$d[1:2], s$u[, 1:2], s$v[, 1:2])
+  expect_true(all(svd_cert$converged))
+  expect_equal(svd_cert$norm_bound_type, "frobenius_hutchinson_estimate")
+  expect_true(svd_cert$scale_is_estimate)
+  expect_false(svd_cert$passed)
+  expect_match(svd_cert$notes, "stochastic norm estimate")
+
+  Bop <- linear_operator(
+    dim = c(3, 3),
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      out <- alpha * X
+      if (!is.null(Y) && beta != 0) out <- out + beta * Y
+      out
+    },
+    apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) {
+      out <- alpha * X
+      if (!is.null(Y) && beta != 0) out <- out + beta * Y
+      out
+    },
+    structure = hermitian()
+  )
+  residual_cert <- eigencore:::certify_eigen_operator_residuals(
+    as_operator(diag(vals)),
+    vals[1:2],
+    diag(3)[, 1:2],
+    residuals = c(0, 0),
+    Bop = Bop
+  )
+  expect_true(all(residual_cert$converged))
+  expect_equal(residual_cert$norm_bound_type, "frobenius_exact+frobenius_hutchinson_estimate")
+  expect_true(residual_cert$scale_is_estimate)
+  expect_false(residual_cert$passed)
+  expect_match(residual_cert$notes, "stochastic norm estimate")
+})
+
 test_that("native column norms preserve certificate residual formulas", {
   set.seed(20)
   X <- matrix(rnorm(35), nrow = 7)
@@ -126,6 +191,25 @@ test_that("native column norms preserve certificate residual formulas", {
     eigencore:::certify_eigen(A, values, perturbed)$residuals -
       sqrt(colSums(residual_matrix^2))
   )), 1e-12)
+})
+
+test_that("general dense eigen certificate supports complex right eigenpairs", {
+  A <- rbind(c(0, -2), c(2, 0))
+  eig <- eigen(A)
+  cert <- eigencore:::certify_dense_general_eigen(
+    A,
+    eig$values,
+    eig$vectors,
+    tol = 1e-10
+  )
+
+  expect_true(cert$passed)
+  expect_equal(cert$certificate_type, "right_residual_backward_error")
+  expect_false(cert$orthogonality_required)
+  expect_equal(
+    eigencore:::col_norms(matrix(1 + 1i, nrow = 2, ncol = 1)),
+    2
+  )
 })
 
 test_that("native dense eigen residuals match direct standard and generalized formulas", {

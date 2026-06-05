@@ -94,6 +94,17 @@ test_that("native generalized SPD fallback produces B-orthonormal vectors", {
   expect_lt(max(abs(A %*% vectors(fit) - B %*% vectors(fit) %*% diag(values(fit)))), 1e-8)
 })
 
+test_that("auto keeps dense partial generalized SPD on dense fallback until LOBPCG gates pass", {
+  n <- 180L
+  A <- diag(seq_len(n))
+  B <- diag(seq(1, 2, length.out = n))
+  fit <- eig_partial(A, B = B, k = 8, target = smallest())
+
+  expect_equal(fit$plan$method, "native dense generalized SPD LAPACK fallback")
+  expect_equal(fit$method, "native dense generalized SPD LAPACK fallback")
+  expect_true(certificate(fit)$passed)
+})
+
 test_that("native generalized SPD LOBPCG supports dense SPD problems", {
   A <- diag(c(1, 4, 9, 16, 25))
   B <- diag(c(1, 2, 3, 4, 5))
@@ -236,15 +247,17 @@ test_that("randomized SVD path returns honest certified results on low-rank inpu
   expect_false(fit$restart$native)
 })
 
-test_that("shift_invert dense reference path returns certified original eigenpairs", {
+test_that("shift_invert dense native path returns certified original eigenpairs", {
   A <- diag(c(1, 3, 7))
   fit <- eig_partial(A, k = 1, target = nearest(2.8), method = shift_invert(2.8))
 
   expect_equal(values(fit), 3, tolerance = 1e-8)
   expect_true(certificate(fit)$passed)
   expect_equal(fit$transform$kind, "shift_invert")
-  expect_equal(fit$transform$label_kind, "dense_qr")
-  expect_match(fit$warnings, "reference Hermitian Lanczos shift-invert")
+  expect_equal(fit$transform$label_kind, "dense_lu_native")
+  expect_equal(fit$method, eigencore:::native_dense_shift_invert_label())
+  expect_true(fit$restart$native)
+  expect_identical(fit$warnings, character())
 })
 
 test_that("dense fallback is memory-budgeted", {
@@ -273,16 +286,16 @@ test_that("solver paths refuse implicit sparse densification", {
     dims = c(3, 3)
   )
 
-  expect_error(
-    eig_partial(A, k = 1),
-    "Refusing to densify sparse A"
-  )
+  sparse_fit <- eig_partial(A, k = 1, seed = 12, allow_dense_fallback = "never")
+  expect_equal(sparse_fit$plan$method, eigencore:::native_arnoldi_label())
+  expect_true(sparse_fit$restart$native)
 
-  explicit_fit <- eig_partial(A, k = 1, allow_dense_fallback = "always")
-  expect_equal(explicit_fit$plan$method, "dense LAPACK general eigen oracle (prototype fallback)")
+  explicit_fit <- eig_partial(A, k = 1, seed = 12, allow_dense_fallback = "always")
+  expect_equal(explicit_fit$plan$method, eigencore:::native_arnoldi_label())
 
   fit <- eig_partial(as.matrix(A), k = 1)
-  expect_equal(fit$plan$method, "dense LAPACK general eigen oracle (prototype fallback)")
+  expect_equal(fit$plan$method, eigencore:::native_arnoldi_label())
+  expect_true(fit$restart$native)
 })
 
 test_that("RSpectra-compatible shims expose core fields", {
@@ -332,6 +345,19 @@ test_that("prototype Lanczos solves matrix-free Hermitian operators", {
   expect_true(certificate(fit)$passed)
   expect_equal(fit$nconv, 2)
   expect_equal(fit$method, "reference Hermitian Lanczos (prototype/oracle fallback)")
+})
+
+test_that("reference Lanczos uses shared scalar subspace validation", {
+  op <- as_operator(diag(c(4, 3, 2, 1)))
+
+  expect_error(
+    eigencore:::reference_lanczos_hermitian(op, k = 2L, maxit = 1L),
+    "maxit/max_subspace must be at least k"
+  )
+  expect_error(
+    eigencore:::reference_lanczos_hermitian(op, k = 2L, maxit = NA_integer_),
+    "maxit must be a positive integer"
+  )
 })
 
 test_that("auto uses Lanczos for matrix-free Hermitian operators", {
@@ -755,6 +781,19 @@ test_that("prototype Golub-Kahan solves matrix-free rectangular SVD", {
   expect_true(certificate(fit)$passed)
   expect_equal(fit$nconv, 2)
   expect_equal(fit$method, "prototype Golub-Kahan")
+})
+
+test_that("reference Golub-Kahan uses shared scalar subspace validation", {
+  op <- as_operator(rbind(diag(c(4, 3, 2, 1)), matrix(0, 2, 4)))
+
+  expect_error(
+    eigencore:::reference_golub_kahan_svd(op, rank = 2L, maxit = 1L),
+    "maxit/max_subspace must be at least rank"
+  )
+  expect_error(
+    eigencore:::reference_golub_kahan_svd(op, rank = 2L, maxit = NA_integer_),
+    "maxit must be a positive integer"
+  )
 })
 
 test_that("auto uses Golub-Kahan for matrix-free SVD", {

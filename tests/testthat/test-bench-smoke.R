@@ -1,11 +1,24 @@
+benchmark_file <- function(...) {
+  installed <- system.file("benchmarks", ..., package = "eigencore")
+  if (nzchar(installed)) {
+    return(installed)
+  }
+  test_path("../../inst/benchmarks", ...)
+}
+
+validation_file <- function(...) {
+  installed <- system.file("validation", ..., package = "eigencore")
+  if (nzchar(installed)) {
+    return(installed)
+  }
+  test_path("../../inst/validation", ...)
+}
+
 test_that("benchmark harness produces certificate-inclusive rows", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
   skip_if_not_installed("bench")
 
-  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
-  if (!nzchar(helper_path)) {
-    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
-  }
+  helper_path <- benchmark_file("_helpers.R")
   source(helper_path)
 
   A <- path_laplacian(30)
@@ -72,7 +85,25 @@ test_that("benchmark harness produces certificate-inclusive rows", {
     "irlba_lbd_retained_matvecs",
     "irlba_lbd_total_matvecs",
     "irlba_lbd_retained_native_fallback_reason",
+    "irlba_lbd_restart_state_kind",
+    "irlba_lbd_recurrence_available",
+    "irlba_lbd_augmented_recurrence",
+    "irlba_lbd_retained_seed_strategy",
+    "irlba_lbd_retained_from_scout",
+    "irlba_lbd_retained_padding",
+    "irlba_lbd_retained_fixed_work_attempts",
     "irlba_lbd_scout_matvecs", "irlba_lbd_scout_certificate_passed",
+    "irlba_lbd_normal_scout_attempted", "irlba_lbd_normal_scout_steps",
+    "irlba_lbd_normal_scout_chosen_steps", "irlba_lbd_normal_scout_count",
+    "irlba_lbd_normal_scout_side", "irlba_lbd_normal_scout_materialized",
+    "irlba_lbd_normal_scout_certificate_trusted",
+    "irlba_lbd_normal_scout_matvecs",
+    "irlba_lbd_normal_scout_operator_matvecs",
+    "irlba_lbd_normal_scout_iterations",
+    "irlba_lbd_normal_scout_accounted_seconds",
+    "irlba_lbd_normal_scout_polish_matvecs",
+    "irlba_lbd_normal_scout_polish_iterations",
+    "irlba_lbd_normal_scout_polish_accounted_seconds",
     "final_attempt_matvecs", "final_attempt_ortho_passes", "total_ortho_passes",
     "fallback_attempted", "fallback_used", "fallback_method",
     "gram_max_backward_error", "fallback_max_backward_error"
@@ -99,10 +130,7 @@ test_that("benchmark timing resets seed for each measured iteration", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
   skip_if_not_installed("bench")
 
-  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
-  if (!nzchar(helper_path)) {
-    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
-  }
+  helper_path <- benchmark_file("_helpers.R")
   source(helper_path)
 
   set.seed(410)
@@ -112,14 +140,31 @@ test_that("benchmark timing resets seed for each measured iteration", {
   expect_equal(timed$value, expected)
 })
 
+test_that("native validation smoke script is available for sanitizer runs", {
+  script <- validation_file("native-smoke.R")
+  expect_true(file.exists(script))
+  lines <- readLines(script, warn = FALSE)
+  required <- c(
+    "eigencore native smoke passed",
+    "dense Hermitian eigen",
+    "sparse CSC Hermitian Lanczos",
+    "dense generalized SPD LOBPCG",
+    "dense SVD",
+    "sparse CSC SVD",
+    "dense shift-invert",
+    "native tridiagonal shift-invert",
+    "--load-all"
+  )
+  for (needle in required) {
+    expect_true(any(grepl(needle, lines, fixed = TRUE)), info = needle)
+  }
+})
+
 test_that("generalized LOBPCG benchmark exposes native B-orthogonal diagnostics", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
   skip_if_not_installed("bench")
 
-  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
-  if (!nzchar(helper_path)) {
-    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
-  }
+  helper_path <- benchmark_file("_helpers.R")
   source(helper_path)
 
   pair <- generalized_spd_pair(40, sparse = TRUE, seed = 421)
@@ -153,18 +198,31 @@ test_that("generalized LOBPCG benchmark exposes native B-orthogonal diagnostics"
 })
 
 test_that("generalized LOBPCG release script gates native contract rows", {
-  script <- test_path("../../inst/benchmarks/bench-generalized-lobpcg.R")
+  script <- benchmark_file("bench-generalized-lobpcg.R")
   expect_true(file.exists(script))
   lines <- readLines(script, warn = FALSE)
+  expect_true(any(grepl("eigencore_auto", lines, fixed = TRUE)))
+  expect_true(any(grepl("eigencore_lanczos_reference", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_shifted_diagonal", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_shifted_tridiagonal", lines, fixed = TRUE)))
+  expect_true(any(grepl("generalized_lobpcg_tridiagonal_shift", lines, fixed = TRUE)))
+  expect_true(any(grepl("as.numeric(n)", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_constrained", lines, fixed = TRUE)))
   expect_true(any(grepl("generalized_lobpcg_native_contract", lines, fixed = TRUE)))
+  expect_true(any(grepl("generalized_lanczos_reference_contract", lines, fixed = TRUE)))
+  expect_true(any(grepl("generalized-lanczos-reference-contracts", lines, fixed = TRUE)))
   expect_true(any(grepl("generalized_lobpcg_adversarial_b_specs", lines, fixed = TRUE)))
   expect_true(any(grepl("generalized_lobpcg_adversarial_b_contract", lines, fixed = TRUE)))
+  expect_true(any(grepl("filter_benchmark_cases(case_specs, args$cases)", lines, fixed = TRUE)))
+  expect_true(any(grepl("message_benchmark_case(\"bench-generalized-lobpcg\"", lines, fixed = TRUE)))
+  expect_true(any(grepl("args$methods", lines, fixed = TRUE)))
+  expect_true(any(grepl("args$subject", lines, fixed = TRUE)))
   expect_true(any(grepl("preconditioner_gate", lines, fixed = TRUE)))
   expect_true(any(grepl("constraint_gate", lines, fixed = TRUE)))
+  expect_true(any(grepl("metric_solve_label", lines, fixed = TRUE)))
   expect_true(any(grepl("ill_conditioned_diagonal_b", lines, fixed = TRUE)))
+  expect_true(any(grepl("diagonal_generalized_lanczos_ref_smallest", lines, fixed = TRUE)))
+  expect_true(any(grepl("sparse_csc_generalized_lanczos_ref_smallest", lines, fixed = TRUE)))
   expect_true(any(grepl("explicit_spd_matrix_free_b", lines, fixed = TRUE)))
   expect_true(any(grepl("expected_orthogonalization", lines, fixed = TRUE)))
 })
@@ -172,10 +230,7 @@ test_that("generalized LOBPCG release script gates native contract rows", {
 test_that("benchmark argument parser keeps dense diagnostics opt-in", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
 
-  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
-  if (!nzchar(helper_path)) {
-    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
-  }
+  helper_path <- benchmark_file("_helpers.R")
   source(helper_path)
 
   expect_false(benchmark_args(character())$include_dense)
@@ -198,9 +253,52 @@ test_that("benchmark argument parser keeps dense diagnostics opt-in", {
   expect_error(benchmark_args("--iterations=0"), "positive integer")
 })
 
+test_that("benchmark case filtering supports stable ids and names", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+
+  helper_path <- benchmark_file("_helpers.R")
+  source(helper_path)
+
+  cases <- list(
+    list(case = "path_laplacian", n = 1000L, k = 20L),
+    list(case = "path_laplacian", n = 10000L, k = 20L),
+    list(case = "dense_hermitian", n = 200L, k = 20L)
+  )
+
+  expect_equal(benchmark_case_id(cases[[2L]]), "path_laplacian:10000")
+  by_id <- filter_benchmark_cases(cases, "path_laplacian:10000")
+  expect_length(by_id, 1L)
+  expect_equal(by_id[[1L]]$n, 10000L)
+
+  svd_case <- list(case = "tall_sparse", id = "tall_sparse:600x90", rank = 5L)
+  expect_equal(benchmark_case_id(svd_case), "tall_sparse:600x90")
+  by_svd_id <- filter_benchmark_cases(list(svd_case), "tall_sparse:600x90")
+  expect_length(by_svd_id, 1L)
+
+  generalized_case <- list(
+    case = "sparse_generalized_path_smallest",
+    n = 80L,
+    k = 3L,
+    methods = c("eigencore", "eigencore_shifted_diagonal", "base")
+  )
+  expect_equal(
+    benchmark_case_id(generalized_case),
+    "sparse_generalized_path_smallest:80"
+  )
+
+  by_name <- filter_benchmark_cases(cases, "path_laplacian")
+  expect_length(by_name, 2L)
+
+  expect_error(
+    filter_benchmark_cases(cases, "missing"),
+    "Available cases: path_laplacian:1000, path_laplacian:10000, dense_hermitian:200",
+    fixed = TRUE
+  )
+})
+
 test_that("SVD surface benchmark script is available", {
-  script <- test_path("../../inst/benchmarks/bench-svd-surface.R")
-  helper <- test_path("../../inst/benchmarks/_helpers.R")
+  script <- benchmark_file("bench-svd-surface.R")
+  helper <- benchmark_file("_helpers.R")
   expect_true(file.exists(script))
   expect_true(file.exists(helper))
   lines <- c(readLines(script, warn = FALSE), readLines(helper, warn = FALSE))
@@ -220,6 +318,9 @@ test_that("SVD surface benchmark script is available", {
   expect_true(any(grepl("svd_surface_gate_subject", lines, fixed = TRUE)))
   expect_true(any(grepl("svd_surface_default_methods", lines, fixed = TRUE)))
   expect_true(any(grepl("args$cases", lines, fixed = TRUE)))
+  expect_true(any(grepl("filter_benchmark_cases(cases, args$cases)", lines, fixed = TRUE)))
+  expect_true(any(grepl("message_benchmark_case(\"bench-svd-surface\"", lines, fixed = TRUE)))
+  expect_true(any(grepl("tall_sparse:600x90", lines, fixed = TRUE)))
   expect_true(any(grepl("rank_deficient_sparse", lines, fixed = TRUE)))
   expect_true(any(grepl("clustered_dense", lines, fixed = TRUE)))
   expect_true(any(grepl("slow_decay_dense", lines, fixed = TRUE)))
@@ -227,23 +328,163 @@ test_that("SVD surface benchmark script is available", {
 })
 
 test_that("randomized-rsvd benchmark script is available", {
-  script <- test_path("../../inst/benchmarks/bench-randomized-rsvd.R")
+  script <- benchmark_file("bench-randomized-rsvd.R")
+  helper <- benchmark_file("_helpers.R")
   expect_true(file.exists(script))
-  lines <- readLines(script, warn = FALSE)
+  expect_true(file.exists(helper))
+  lines <- c(readLines(script, warn = FALSE), readLines(helper, warn = FALSE))
   expect_true(any(grepl("benchmark_randomized_rsvd_case", lines, fixed = TRUE)))
   expect_true(any(grepl("evaluate_randomized_rsvd_gate", lines, fixed = TRUE)))
   expect_true(any(grepl("randomized_rsvd_benchmark_cases", lines, fixed = TRUE)))
+  expect_true(any(grepl("filter_benchmark_cases(cases, args$cases)", lines, fixed = TRUE)))
+  expect_true(any(grepl("message_benchmark_case(\"bench-randomized-rsvd\"", lines, fixed = TRUE)))
+  expect_true(any(grepl("exact_low_rank_dense:120x80", lines, fixed = TRUE)))
+  expect_true(any(grepl("slow_decay_dense:2000x500", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_randomized", lines, fixed = TRUE)))
   expect_true(any(grepl("rsvd", lines, fixed = TRUE)))
+})
+
+test_that("shift-invert benchmark script is available", {
+  script <- benchmark_file("bench-shift-invert.R")
+  helper <- benchmark_file("_helpers.R")
+  expect_true(file.exists(script))
+  expect_true(file.exists(helper))
+  lines <- c(readLines(script, warn = FALSE), readLines(helper, warn = FALSE))
+  expect_true(any(grepl("shift_invert_cases", lines, fixed = TRUE)))
+  expect_true(any(grepl("filter_benchmark_cases(shift_invert_cases(args$quick), args$cases)", lines, fixed = TRUE)))
+  expect_true(any(grepl("message_benchmark_case(\"bench-shift-invert\"", lines, fixed = TRUE)))
+  expect_true(any(grepl("dense_lu_native", lines, fixed = TRUE)))
+  expect_true(any(grepl("dense_lu_generalized_native", lines, fixed = TRUE)))
+  expect_true(any(grepl("tridiagonal_thomas_native", lines, fixed = TRUE)))
+  expect_true(any(grepl("tridiagonal_thomas_generalized_native", lines, fixed = TRUE)))
+  expect_true(any(grepl("diagonal_standard_native", lines, fixed = TRUE)))
+  expect_true(any(grepl("sparse_tridiagonal_generalized_native", lines, fixed = TRUE)))
+  expect_true(any(grepl("sparse_general_reference", lines, fixed = TRUE)))
+  expect_true(any(grepl("sparse_general_diagonal_b_reference", lines, fixed = TRUE)))
+  expect_true(any(grepl("matrix_free_user_solve_reference", lines, fixed = TRUE)))
+  expect_true(any(grepl("shift_invert_matrix_free_user_solve", lines, fixed = TRUE)))
+  expect_true(any(grepl("estimated_converged", lines, fixed = TRUE)))
+  expect_true(any(grepl("user_solve", lines, fixed = TRUE)))
+  expect_true(any(grepl("Matrix::lu", lines, fixed = TRUE)))
+  expect_true(any(grepl("shift_invert_contract", lines, fixed = TRUE)))
+})
+
+test_that("nonsymmetric benchmark script is available", {
+  script <- benchmark_file("bench-nonsymmetric.R")
+  helper <- benchmark_file("_helpers.R")
+  expect_true(file.exists(script))
+  expect_true(file.exists(helper))
+  lines <- c(readLines(script, warn = FALSE), readLines(helper, warn = FALSE))
+  expect_true(any(grepl("nonsymmetric_cases", lines, fixed = TRUE)))
+  expect_true(any(grepl("filter_benchmark_cases(nonsymmetric_cases(args$quick), args$cases)", lines, fixed = TRUE)))
+  expect_true(any(grepl("message_benchmark_case(\"bench-nonsymmetric\"", lines, fixed = TRUE)))
+  expect_true(any(grepl("dense LAPACK general eigen oracle", lines, fixed = TRUE)))
+  expect_true(any(grepl("native Arnoldi cycle", lines, fixed = TRUE)))
+  expect_true(any(grepl("native Ritz extraction", lines, fixed = TRUE)))
+  expect_true(any(grepl("reference Arnoldi (prototype/oracle fallback)", lines, fixed = TRUE)))
+  expect_true(any(grepl("right_residual_backward_error", lines, fixed = TRUE)))
+  expect_true(any(grepl("arnoldi_native", lines, fixed = TRUE)))
+  expect_true(any(grepl("restart_count", lines, fixed = TRUE)))
+  expect_true(any(grepl("max_restarts", lines, fixed = TRUE)))
+  expect_true(any(grepl("restart_gate", lines, fixed = TRUE)))
+  expect_true(any(grepl("stage_arnoldi_cycle_seconds", lines, fixed = TRUE)))
+  expect_true(any(grepl("stage_ritz_extraction_seconds", lines, fixed = TRUE)))
+  expect_true(any(grepl("ritz_extraction_native", lines, fixed = TRUE)))
+  expect_true(any(grepl("dense_native_arnoldi_lm", lines, fixed = TRUE)))
+  expect_true(any(grepl("dense_eigs_native_arnoldi_li", lines, fixed = TRUE)))
+  expect_true(any(grepl("sparse_native_arnoldi_lr", lines, fixed = TRUE)))
+  expect_true(any(grepl("sparse_native_arnoldi_li", lines, fixed = TRUE)))
+  expect_true(any(grepl("nonsymmetric_contract", lines, fixed = TRUE)))
+})
+
+test_that("V1 benchmark manifest names release benchmark surfaces", {
+  manifest <- test_path("../../docs/v1-benchmark-manifest.md")
+  skip_if_not(file.exists(manifest), "source docs are not available in installed-package checks")
+  expect_true(file.exists(manifest))
+  lines <- readLines(manifest, warn = FALSE)
+  required <- c(
+    "bench-native-hermitian-gate.R",
+    "bench-hermitian-sparse.R",
+    "bench-svd-surface.R",
+    "bench-randomized-rsvd.R",
+    "bench-generalized-lobpcg.R",
+    "bench-lobpcg-preconditioned.R",
+    "bench-shift-invert.R",
+    "bench-nonsymmetric.R",
+    "R CMD check --no-manual"
+  )
+  for (needle in required) {
+    expect_true(any(grepl(needle, lines, fixed = TRUE)), info = needle)
+  }
+  expect_true(any(grepl("not a release signoff", lines, fixed = TRUE)))
+})
+
+test_that("V1 completion audit maps the active goal to stop-rule evidence", {
+  audit <- test_path("../../docs/v1-completion-audit.md")
+  skip_if_not(file.exists(audit), "source docs are not available in installed-package checks")
+  lines <- readLines(audit, warn = FALSE)
+  required <- c(
+    "Package checks remain clean",
+    "Public solver paths either run native engine code or carry honest",
+    "Production SVD and randomized SVD",
+    "Generalized SPD, shift-invert, and nonsymmetric surfaces",
+    "Sanitizer / valgrind-style evidence",
+    "Current decision: **not V1 ready**",
+    "Do not mark V1 complete until",
+    "benchmarks/RELEASES.md",
+    "mote board"
+  )
+  for (needle in required) {
+    expect_true(any(grepl(needle, lines, fixed = TRUE)), info = needle)
+  }
+})
+
+test_that("V1 documentation scope audit names required doc surfaces", {
+  audit <- test_path("../../docs/v1-doc-scope-audit.md")
+  skip_if_not(file.exists(audit), "source docs are not available in installed-package checks")
+  lines <- readLines(audit, warn = FALSE)
+  required <- c(
+    "README.md",
+    "README.Rmd",
+    "vignettes/eigencore.Rmd",
+    "vignettes/certificates.Rmd",
+    "docs/rspectra-migration.md",
+    "docs/known-limitations.md",
+    "docs/method-selection-and-workflows.md",
+    "docs/v1-readiness-audit.md",
+    "docs/v1-benchmark-manifest.md",
+    "benchmarks/RELEASES.md",
+    "docs/native-lobpcg.md",
+    "docs/native-generalized-spd-lobpcg.md",
+    "docs/native-block-lanczos.md",
+    "docs/hegelsvd_svd_acceleration.md",
+    "tridiagonal generalized-with-diagonal-B native labels",
+    "Blocking Documentation Gaps",
+    "Stop Rule"
+  )
+  for (needle in required) {
+    expect_true(any(grepl(needle, lines, fixed = TRUE)), info = needle)
+  }
+  expect_true(any(grepl("not a release signoff", lines, fixed = TRUE)))
+})
+
+test_that("known limitations match current shift-invert boundary", {
+  limits <- test_path("../../docs/known-limitations.md")
+  skip_if_not(file.exists(limits), "source docs are not available in installed-package checks")
+  lines <- readLines(limits, warn = FALSE)
+  required <- c(
+    "Dense standard, dense generalized SPD, diagonal standard, sparse symmetric-tridiagonal standard, and sparse/diagonal tridiagonal generalized paths are native",
+    "general sparse standard and general sparse/diagonal generalized remain reference-labelled"
+  )
+  for (needle in required) {
+    expect_true(any(grepl(needle, lines, fixed = TRUE)), info = needle)
+  }
 })
 
 test_that("randomized-rsvd gate enforces accuracy and speed versus rsvd", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
 
-  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
-  if (!nzchar(helper_path)) {
-    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
-  }
+  helper_path <- benchmark_file("_helpers.R")
   source(helper_path)
 
   rows <- data.frame(
@@ -276,17 +517,15 @@ test_that("randomized-rsvd gate enforces accuracy and speed versus rsvd", {
   uncertified_ref <- evaluate_randomized_rsvd_gate(rows, requested = 4L)
   expect_false(uncertified_ref$baseline_certified)
   expect_equal(uncertified_ref$baseline_nconv, 4L)
+  expect_false(uncertified_ref$speed_gate)
+  expect_false(uncertified_ref$passed)
   expect_match(uncertified_ref$note, "rsvd baseline did not satisfy")
 })
 
 test_that("SVD surface H candidate preset selects retained native SVD subject", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
 
-  helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
-  if (!nzchar(helper_path)) {
-    helper_path <- test_path("../../inst/benchmarks/_helpers.R")
-  }
-  source(helper_path)
+  source(benchmark_file("_helpers.R"))
 
   args <- benchmark_args("--h-candidate")
   methods <- svd_surface_default_methods(args)
@@ -294,6 +533,7 @@ test_that("SVD surface H candidate preset selects retained native SVD subject", 
   expect_true("eigencore_golub_kahan_one_sided" %in% methods)
   expect_true("eigencore_irlba_lbd_one_sided" %in% methods)
   expect_true("eigencore_irlba_lbd_retained_native" %in% methods)
+  expect_true("eigencore_irlba_lbd_normal_scout" %in% methods)
   expect_true("eigencore_golub_kahan_projected" %in% methods)
   expect_true("eigencore_implicit_normal_lanczos" %in% methods)
   expect_true("eigencore_gram_dsyevx" %in% methods)
@@ -312,6 +552,7 @@ test_that("SVD surface H candidate preset selects retained native SVD subject", 
   expect_true("eigencore_golub_kahan_one_sided" %in% svd_internal_methods())
   expect_true("eigencore_irlba_lbd_one_sided" %in% svd_internal_methods())
   expect_true("eigencore_irlba_lbd_retained_native" %in% svd_internal_methods())
+  expect_true("eigencore_irlba_lbd_normal_scout" %in% svd_internal_methods())
 
   default_methods <- svd_surface_default_methods(benchmark_args(character()))
   expect_false("eigencore_block_golub_kahan_retained" %in% default_methods)
@@ -332,6 +573,23 @@ test_that("SVD surface H candidate preset selects retained native SVD subject", 
   expect_equal(
     svd_surface_gate_subject(args, methods),
     "eigencore_golub_kahan_projected"
+  )
+
+  requested <- c("eigencore_irlba_lbd_retained_native", "eigencore_golub_kahan")
+  expect_equal(bench_methods("svd", requested), requested)
+  expect_error(
+    bench_methods("svd", c("eigencore", "definitely_missing_svd_method")),
+    "Requested SVD benchmark method"
+  )
+  expect_error(
+    benchmark_svd_case(
+      tall_skinny_sparse(20, 8, density = 0.1, seed = 323),
+      rank = 2,
+      methods = "definitely_missing_svd_method",
+      iterations = 1,
+      seed = 323
+    ),
+    "Requested SVD benchmark method"
   )
 })
 
@@ -1002,7 +1260,41 @@ test_that("G1 RSpectra reference uses robust large-sparse controls", {
   expect_equal(large$maxitr, 20000L)
 })
 
-test_that("auto planner promotes only benchmark-proven block regimes", {
+test_that("auto planner keeps sparse block promotion diagnostic-only by default", {
+  mid <- Matrix::bandSparse(
+    1000L,
+    k = c(-1, 0, 1),
+    diagonals = list(rep(-1, 999L), c(1, rep(2, 998L), 1), rep(-1, 999L))
+  )
+  mid_plan <- plan_solver(eigen_problem(mid, target = smallest()), k = 20L)
+  expect_equal(mid_plan$method, "native scalar thick-restart Hermitian Lanczos")
+  expect_equal(mid_plan$controls$block, 1L)
+
+  large <- Matrix::sparseMatrix(
+    i = 1:5000,
+    j = 1:5000,
+    x = 1,
+    dims = c(5000L, 5000L)
+  )
+  large_plan <- plan_solver(eigen_problem(large, target = smallest()), k = 20L)
+  expect_equal(large_plan$method, "native scalar thick-restart Hermitian Lanczos")
+  expect_equal(large_plan$controls$block, 1L)
+
+  small_k <- plan_solver(eigen_problem(mid, target = smallest()), k = 5L)
+  expect_equal(small_k$method, "native scalar thick-restart Hermitian Lanczos")
+  expect_equal(small_k$controls$block, 1L)
+
+  dense <- diag(as.numeric(seq(200L, 1L)))
+  dense_plan <- plan_solver(eigen_problem(dense, target = largest()), k = 20L)
+  expect_equal(dense_plan$method, "native block Hermitian Lanczos (thick restart, locking)")
+  expect_equal(dense_plan$controls$block, 2L)
+  expect_equal(dense_plan$controls$max_subspace, 200L)
+})
+
+test_that("sparse block auto promotion remains available as diagnostic opt-in", {
+  old <- options(eigencore.promote_sparse_block_lanczos = TRUE)
+  on.exit(options(old), add = TRUE)
+
   mid <- Matrix::bandSparse(
     1000L,
     k = c(-1, 0, 1),
@@ -1023,16 +1315,6 @@ test_that("auto planner promotes only benchmark-proven block regimes", {
   expect_equal(large_plan$method, "native block Hermitian Lanczos (thick restart, locking)")
   expect_equal(large_plan$controls$block, 4L)
   expect_equal(large_plan$controls$max_subspace, 320L)
-
-  small_k <- plan_solver(eigen_problem(mid, target = smallest()), k = 5L)
-  expect_equal(small_k$method, "native scalar thick-restart Hermitian Lanczos")
-  expect_equal(small_k$controls$block, 1L)
-
-  dense <- diag(as.numeric(seq(200L, 1L)))
-  dense_plan <- plan_solver(eigen_problem(dense, target = largest()), k = 20L)
-  expect_equal(dense_plan$method, "native block Hermitian Lanczos (thick restart, locking)")
-  expect_equal(dense_plan$controls$block, 2L)
-  expect_equal(dense_plan$controls$max_subspace, 200L)
 })
 
 test_that("native Hermitian gate separates RSpectra threshold from PRIMME parity", {

@@ -28,8 +28,10 @@ if (args$include_dense) {
     seed = 1800L
   )))
 }
+cases <- filter_benchmark_cases(cases, args$cases)
 
 results <- lapply(cases, function(case) {
+  message_benchmark_case("bench-hermitian-sparse", case)
   subject <- if (args$block_candidate) "eigencore_block_candidate" else "eigencore"
   methods <- unique(c(subject, "eigencore", "RSpectra", "PRIMME"))
   out <- benchmark_eigen_case(

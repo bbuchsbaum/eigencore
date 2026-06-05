@@ -143,12 +143,25 @@ Deliver the native engine in order. Each step ships with adversarial tests
    reconstructing right singular vectors as `B' u / sigma` and preserving the
    existing exact residual certificate. On the installed large exact-low-rank
    dense row this keeps the gate green at roughly `3.08x` versus certified
-   `rsvd` while trimming allocation from about `23.0MB` to `22.3MB`; quick
-   exact-low-rank and sparse rows also improve modestly but remain below the
-   global `2x` speed threshold because fixed R/benchmark overhead dominates at
-   those sizes. The benchmark gate now records whether the `rsvd` baseline
-   itself passed eigencore certification, so slow-decay rows where `rsvd` is
-   faster but uncertified are not confused with certified-reference losses.
+  `rsvd` while trimming allocation from about `23.0MB` to `22.3MB`; a fresh
+  installed `--iterations=1` rerun of `exact_low_rank_dense:2000x500` remains
+  green at roughly `2.97x` versus certified `rsvd`. Quick
+  exact-low-rank and sparse rows also improve modestly but remain below the
+  global `2x` speed threshold because fixed R/benchmark overhead dominates at
+  those sizes; fresh installed quick sparse evidence certifies
+  `low_rank_sparse:140x90` but remains red at about `1.87x` versus certified
+  `rsvd`. The benchmark gate now requires the `rsvd` baseline itself to
+  pass eigencore certification before speed/parity can pass, so slow-decay rows
+  where `rsvd` is faster but uncertified are recorded as
+  `baseline_certified = FALSE`, `speed_gate = FALSE`, and `passed = FALSE`, not
+  promoted as parity wins. A follow-up source-loaded quick experiment replacing
+  the tiny projected-core `left_gram_eigen` helper with base `svd()` for
+  `exact_low_rank_dense:120x80` was rejected: isolated core timing looked
+  promising, but the full row worsened to about `1.63x` versus certified `rsvd`
+  and allocated more. A direct CSC projected-core experiment (`Q' A` instead of
+  `t(A' Q)`) was also rejected after the sparse quick row worsened to about
+  `0.71x`; real progress here requires a native sparse sketch/projection
+  kernel or stronger adaptive planning, not a Matrix-level projection swap.
    The broader randomized release gate remains open for slow-decay and other
    non-exact cases and is expected to require native sketch/projection kernels
    and/or stronger adaptive randomized planning.
@@ -162,7 +175,11 @@ Deliver the native engine in order. Each step ships with adversarial tests
    `docs/native-generalized-spd-lobpcg.md`.
 7. **Generalized SPD B-orthogonal block Lanczos** as an alternate/refinement
    path after LOBPCG. Cholesky paths treat `B` as an operator or factorization
-   cache; never invert `R` explicitly.
+   cache; never invert `R` explicitly. The current first slice is an honest
+   reference scalar B-orthogonal Lanczos refinement for explicit
+   `method = lanczos()` generalized-SPD requests with dense, diagonal, or CSC
+   SPD metrics; it certifies in original generalized coordinates but is not a
+   native production block implementation.
 8. **Shift-invert** with user-supplied solve / factorization-cache
    operator. Fails loud if no solve is provided; never silently dense.
 9. **Standard symmetric LOBPCG refinements** for graph Laplacians and
@@ -185,11 +202,10 @@ As of the current native Hermitian and certificate work, eigencore has:
 - a certified `native scalar thick-restart Hermitian Lanczos` path for dense
   double matrices and `dgCMatrix` operators, with native locking metadata and
   sparse non-densification;
-- a promoted `native block Hermitian Lanczos (thick restart, locking)` path for
-  dense double matrices and `dgCMatrix` operators in benchmark-proven regimes,
-  with native block operator application, thick restart, native locking
-  metadata, adaptive block/subspace controls, and scalar fallback for small `k`
-  or unproven regimes;
+- a `native block Hermitian Lanczos (thick restart, locking)` implementation
+  for explicit block requests, dense full-subspace cases, and diagnostic sparse
+  opt-in runs; sparse `auto()` promotion is disabled until the non-quick G1
+  gate is green again;
 - a certified native Golub-Kahan staging path for dense double and `dgCMatrix`
   SVD, with adaptive subspace growth metadata.
 - an internal reference LOBPCG spike showing that a shifted sparse solve
@@ -215,10 +231,12 @@ The Hermitian path supports native targets `largest`, `smallest`,
 `nearest()` route away from the native path with an honest planner label.
 
 Milestone G is now split cleanly: G0 was the scalar-native staging path, and G1
-is the promoted block-native Hermitian path for benchmark-proven regimes. The
-quick `k = 5` smoke gates remain diagnostic rather than release gates; in
-`--quick --strict` mode the Hermitian benchmark scripts enforce certification
-only, while non-quick `--strict` enforces the speed/memory/parity release gate:
+is the block-native Hermitian path that can be promoted only in
+benchmark-proven regimes. Fresh installed non-quick evidence is red, so sparse
+block `auto()` promotion is disabled by default. The quick `k = 5` smoke gates
+remain diagnostic rather than release gates; in `--quick --strict` mode the
+Hermitian benchmark scripts enforce certification only, while non-quick
+`--strict` enforces the speed/memory/parity release gate:
 
 - sparse Hermitian path Laplacian `n = 200, k = 5`: eigencore certifies all
   requested pairs with the scalar-native path and the tuned default
@@ -230,11 +248,11 @@ only, while non-quick `--strict` enforces the speed/memory/parity release gate:
   dense double and `dgCMatrix` inputs, and explicit
   `lanczos(block > 1, max_subspace < n)` can certify the quick path-Laplacian
   case. The benchmark harness now reports a subject gate for
-  `eigencore_block_candidate`. The promoted auto policy keeps scalar Lanczos for
-  small `k`, uses `block = 2` for `k >= 16` medium sparse rows and small dense
-  full-subspace regression rows, and uses `block = 4` with at least `16*k`
-  restart space for large sparse `k >= 16` rows, with a four-vector capped Ritz
-  pad. The block path now
+  `eigencore_block_candidate`. The current auto policy keeps sparse Lanczos
+  scalar by default; sparse block auto-selection is diagnostic opt-in through
+  `options(eigencore.promote_sparse_block_lanczos = TRUE)`. Dense
+  full-subspace regression rows may still use block selection. The block path
+  now
   forms block-recurrence residuals before reorthogonalization, maintains a
   structured projected problem instead of recomputing the full projection at
   each restart, uses allocation-free CholQR2 block acceptance when rank permits,
@@ -488,20 +506,66 @@ only, while non-quick `--strict` enforces the speed/memory/parity release gate:
   workspace dominate wall time and allocation. This narrows the production
   requirement: implement retained-subspace restart in native code, not more
   from-scratch adaptive cycles.
-- shift-invert via `shift_invert(sigma)` is now wired through a reference
-  Hermitian Lanczos path on the inverted operator, with three honest planner
-  labels: `reference Hermitian Lanczos shift-invert (dense LU)` for dense
-  double sources, `reference Hermitian Lanczos shift-invert (sparse LU)` for
-  `dgCMatrix`/`dsCMatrix` sources, and `reference Hermitian Lanczos
+- shift-invert via `shift_invert(sigma)` now has native Hermitian
+  factorized-Lanczos paths for dense standard, dense generalized-SPD,
+  diagonal/sparse symmetric-tridiagonal standard, and tridiagonal
+  generalized-SPD problems with diagonal `B`.
+  The standard label, `native dense Hermitian shift-invert (factorized
+  Lanczos)`, factors `A - sigma I` with LAPACK `dgetrf`, applies shifted
+  solves inside the native scalar Lanczos recurrence with `dgetrs`, recovers
+  `lambda = sigma + 1 / mu`, and certifies residuals on the original
+  eigenproblem. The dense generalized-SPD label, `native dense generalized SPD
+  shift-invert (factorized Lanczos)`, factors dense `B` with LAPACK `dpotrf`,
+  factors `A - sigma B` with `dgetrf`, applies
+  `R solve(A - sigma B, R' y)` in the native recurrence, recovers original
+  generalized eigenvectors with `x = R^{-1} y`, and certifies
+  `A x - lambda B x`. The tridiagonal label, `native tridiagonal
+  Hermitian shift-invert (factorized Lanczos)`, extracts diagonal or
+  symmetric-tridiagonal `A - sigma I`, factors it once with a native Thomas
+  recurrence, applies shifted solves inside native scalar Lanczos, and
+  certifies the original operator residuals. The generalized tridiagonal label,
+  `native tridiagonal generalized SPD shift-invert (factorized Lanczos)`,
+  factors tridiagonal `A - sigma B` once with the same Thomas recurrence,
+  applies `sqrt(B) solve(A - sigma B, sqrt(B) y)` inside native scalar Lanczos,
+  recovers original generalized eigenvectors with `x = y / sqrt(B)`, and
+  certifies `A x - lambda B x`. General sparse standard shift-invert and
+  user-solve matrix-free shift-invert still use honest reference labels:
+  `reference Hermitian Lanczos shift-invert (sparse LU)` for
+  non-tridiagonal `dgCMatrix`/`dsCMatrix` sources and `reference Hermitian Lanczos
   shift-invert (user solve)` for matrix-free `A` with a user-supplied solve
-  function. Eigenvalues are returned in original coordinates with full
-  operator-side certification; near-singular shifted operators and zero-
-  magnitude inverted eigenvalues are rejected with actionable errors;
-  generalized SPD shift-invert is rejected at plan time with a roadmap note.
+  function. Generalized SPD shift-invert keeps honest reference labels for
+  dense `A` with diagonal `B`, non-tridiagonal sparse `A` with diagonal `B`,
+  and user-managed shifted solves, and rejects unsupported sparse or
+  matrix-free metrics instead of densifying them silently. Eigenvalues are
+  returned in original
+  coordinates with full operator-side certification; near-singular shifted
+  operators and zero-magnitude inverted eigenvalues are rejected with
+  actionable errors.
+  Factorization-cache keys now include the shifted operator fingerprint, sigma,
+  structure, and standard/generalized `B` boundary so operator, shift,
+  structure, and `B` changes invalidate reuse.
   Milestone L's "smallest/interior works on at least one real Laplacian"
   exit criterion is satisfied by `tests/testthat/test-shift-invert.R` (1D
-  Laplacian, smallest 4 eigenvalues). The native shift-invert hot loop and
-  generalized SPD shift-invert remain open for V1 promotion.
+  Laplacian, smallest 4 eigenvalues). General sparse standard shift-invert and
+  general sparse generalized SPD native promotion remain open for V1 promotion.
+- dense and sparse CSC nonsymmetric auto paths with supported
+  real/imaginary/magnitude targets now use a native Arnoldi cycle with native
+  projected Ritz extraction and exact right-residual certification. The
+  dense explicit compatibility default uses the full dense subspace, while the
+  sparse CSC default uses a larger bounded subspace (`min(n, max(k + 8, 9k))`) after the
+  installed non-quick `sparse_native_arnoldi_lr:80` row showed that the old
+  `2k + 4` budget did not certify. Native Arnoldi plans now also carry
+  a restart budget, and restart loops retain the best attempt by certificate
+  pass state, convergence count, and backward error. Benchmark rows expose
+  native-cycle versus native-Ritz timing and `ritz_extraction_native`, so the
+  current compatibility boundary is measurable rather than implicit. Matrix-free
+  real-spectrum nonsymmetric auto paths still use an honest
+  `reference Arnoldi (prototype/oracle fallback)` route instead of dense
+  materialization. This covers non-normal real-spectrum cases plus sparse CSC
+  complex conjugate pairs under largest-real/imaginary/magnitude target
+  taxonomy; dense and sparse CSC `eigs(..., which = "LI")` now use native
+  Arnoldi compatibility. Production-grade fully native restarted Arnoldi
+  remains open.
 - a property-based test grid now runs under `NOT_CRAN=true` covering Hermitian
   and SVD certificate residual contracts across 5 spectrum patterns
   (`uniform`, `clustered`, `exponential`, `geometric`, `two_cluster`),
@@ -539,22 +603,73 @@ Working status against the sequenced milestones:
 | Milestone | Status | Notes |
 |---|---|---|
 | A | mostly done | Public/reference/native layering is established; reference fallbacks must remain honestly labeled. |
-| B | mostly done | Dense, CSC, diagonal, adjoint, and explicit built-in scaling preserve native block-apply provenance; composed/centered native fusion remains incomplete. |
+| B | done for explicit built-ins | Dense, CSC, diagonal, adjoint, explicit scaling, explicit sum/compose/crossprod, dense centering, and CSC centering preserve native block-apply provenance without sparse densification; matrix-free centering remains an honest callback-boundary policy, not a native built-in kernel. |
 | C | substantially done | Adversarial, property, oracle, and benchmark-smoke tests are in place and expanding. |
 | D | mostly done | Typed certificates and target taxonomy are implemented enough for current paths. |
 | E | mostly done | Dense fallback is memory-budgeted; sparse densification is rejected in production paths. |
 | F | largely done for current paths | Native ortho and certificate kernels exist, but not every future solver path is fully native-certificate-backed. |
 | G0 | done | Native scalar Hermitian staging path exists and certifies on dense/CSC cases. |
-| G1 | done | Promoted native block Hermitian Lanczos runs by default in benchmark-proven regimes; strict Hermitian sparse and dense regression gates pass against certified RSpectra/PRIMME references. |
-| H | partially promoted | Tiny sparse Gram Track A is green under the lowered `1.1x` certified-RSpectra speed target and passes the memory gate on the 90-by-600 rank-5 fixture; native Golub-Kahan exists as a staging path; block-GK restart comparators now include cached Ritz-vector `A V` paths, compact native fit extraction, restart-efficiency diagnostics, and a first native retained-restart candidate that constructs Ritz-plus-random restarts inside C. Production thick-restart SVD / IRLBA / BPRO for general sparse and matrix-free cases remains open. |
+| G1 | red / demoted for sparse auto | Native block Hermitian Lanczos exists and remains explicit/diagnostic, but fresh installed `path_laplacian:1000` evidence failed speed and PRIMME parity under sparse block auto. Sparse `auto()` now stays on scalar Lanczos unless the diagnostic sparse-block promotion option is explicitly enabled. The append-only projected-matrix update removes the largest scalar hotspot, but post-fix scalar and block-candidate rows still miss release speed/parity gates. |
+| H | red / unpromoted | Fresh installed tiny sparse Gram rows certify and pass memory, but miss the release speed gate. The native Gram fast-result path now covers both wide/left-Gram and tall/right-Gram CSC special cases and trims R assembly overhead, but current 3-iteration quick probes still show red speed (`0.40x` tall, `0.63x` wide); native Golub-Kahan exists as a staging path; block-GK restart comparators now include cached Ritz-vector `A V` paths, compact native fit extraction, restart-efficiency diagnostics, a first native retained-restart candidate, and a normal-scout IRLBA diagnostic that certifies only after final one-sided LBD polish but is slower/higher-allocation on `wide_sparse:90x600`. Production thick-restart SVD / IRLBA / BPRO for sparse and matrix-free cases remains open. |
 | I | prototype | Randomized SVD has reference implementation, normalizers, and certified refinement; native approximate engine remains open. |
-| J | partial | Native generalized SPD LOBPCG slices exist for built-in `B`, explicitly SPD matrix-free `B`, dense constraints, and typed shifted-diagonal / shifted-tridiagonal preconditioners; strict benchmark rows now gate bare, shifted-diagonal, shifted-tridiagonal sparse-smallest, constrained, and adversarial B native-contract diagnostics; the adversarial B bank covers largest/smallest ill-conditioned diagonal, sparse CSC, and explicitly SPD matrix-free B without dense fallback; broader generalized preconditioning and promotion remain open. |
-| K | not complete | B-orthogonal block Lanczos is still a later generalized-SPD refinement path. |
-| L | reference-complete, native-open | Shift-invert works through honest reference paths; native hot loop/factorization-cache production path remains open. |
-| M | partial | Standard Hermitian LOBPCG and tridiagonal preconditioner staging are useful but not final release surfaces. |
-| N | not started as release hardening | CRAN/sanitizer/valgrind, docs, migration guide, and release benchmark reports remain ahead. |
+| J | partial | Dense generalized `auto()` is demoted to the native dense LAPACK fallback until iterative gates pass. Native generalized SPD LOBPCG slices still exist for explicit/sparse/structured paths, explicitly SPD matrix-free `B`, constraints, and typed shifted-diagonal / shifted-tridiagonal preconditioners. Fresh focused non-quick evidence shows the sparse-smallest shifted-tridiagonal row certifies and passes speed/memory; current installed sparse-largest shifted-tridiagonal evidence uses a non-densifying largest-target shift, certifies, and passes memory but remains performance-red on speed, so sparse-largest and broader generalized production gates remain open. |
+| K | partial reference | Explicit generalized-SPD `lanczos()` requests now route to an honest reference B-orthogonal Lanczos refinement when `B` has a dense, diagonal, or CSC SPD solve. It passes focused adversarial B agreement with LOBPCG certificates, preserves B-orthogonality, and has a focused installed benchmark contract row, but native/block production promotion remains open. |
+| L | partial native | Dense standard, dense generalized-SPD, diagonal standard, sparse symmetric-tridiagonal standard, and sparse/diagonal tridiagonal generalized shift-invert now have native factorized Lanczos hot loops and original-problem certification; general sparse standard, general sparse/diagonal-metric generalized SPD, and user-supplied solve shift-invert remain on honest reference paths with focused installed benchmark contracts for sparse-LU or external-cache provenance and certificate honesty. |
+| M | done for path-Laplacian release surface | Native shifted-tridiagonal standard Hermitian LOBPCG passes the non-quick strict preconditioned gate on path Laplacians `n = 200, 1000, 2000`, `k = 5`; broader non-Laplacian preconditioned Hermitian policy remains future scope. |
+| N | started as release hardening | V1 audit, benchmark manifest, completion audit, RSpectra migration, method/workflow selection, known-limitations docs, doc scope audit, and reusable native smoke artifact exist. CRAN/sanitizer/valgrind signoff and final release benchmark reports remain ahead. |
 
 PRD truth check:
+
+- **Native source modularity:** complete for the current native solver surface.
+  The former monolith has been split into focused C++ translation units.
+  Standalone LAPACK/scalar wrappers live in `src/small_dense.cpp`: full and
+  selected symmetric eigensolves, dense symmetry checking, generalized-SPD dense
+  eigensolve, dense SVD, tridiagonal eigensolve, bidiagonal SVD, and the small
+  tridiagonal solve helper. The shared native helper layer now lives in
+  `src/eigencore_common.h`, covering stage/history structs, timing helpers,
+  LP64 index checks, apply-status errors, and compact basis-combination. The
+  native Arnoldi cycle wrappers and projected-Ritz extraction wrapper now live
+  in `src/arnoldi.cpp`, the dense symmetric Rayleigh-Ritz projection wrapper
+  and compiled scalar/block Golub-Kahan Ritz implementations now live in
+  `src/projection.cpp`, and the registered native orthogonalization wrappers plus private
+  basis-workspace helper now live in `src/orthogonalization.cpp`. The native
+  operator structs and built-in dense, CSC, diagonal, R-callback, and
+  factorized shift-invert apply functions now live in
+  `src/native_operators.h` and `src/native_operators.cpp`; the R-facing
+  native operator block-apply/check wrappers also live in
+  `src/native_operators.cpp`. Dense/R-facing certificate wrappers and
+  built-in native-operator certificate wrappers now live in
+  `src/certificates.cpp`; `src/certificates.h` exposes the internal cached-
+  `A v` SVD certificate helper used by retained SVD. The native LOBPCG run
+  helper, standard, generalized, matrix-free-B, and shifted-tridiagonal LOBPCG
+  wrappers now live in `src/lobpcg.cpp`. Scalar native Lanczos, shift-invert
+  Lanczos, and scalar Golub-Kahan staging wrappers now live in
+  `src/scalar_krylov.cpp`, with `src/scalar_krylov.h` exposing the internal
+  Golub-Kahan run helper used by retained SVD callers. The block Golub-Kahan
+  basis builders and their dense/CSC registered wrappers now live in
+  `src/block_golub_kahan_basis.cpp`, with
+  `src/block_golub_kahan_basis.h` exposing the internal basis builder used by
+  retained SVD callers. The block Golub-Kahan fit/retained-cycle wrappers and
+  one-sided retained IRLBA/LBD wrappers now live in `src/retained_svd.cpp`.
+  The block/thick-restart Lanczos helpers and registered dense/CSC wrappers now
+  live in `src/block_lanczos.cpp`.
+  The CSC left/right Gram SVD special-case kernels and fast-result wrappers
+  now live in `src/gram_svd.cpp`.
+  The `.Call` registration table and `R_init_eigencore()` now live in
+  `src/init.cpp`, keeping registration centralized while removing it from the
+  former solver monolith. The obsolete `src/dense_block_apply.cpp`
+  compatibility stub has been removed.
+  Native LOBPCG wrappers now share one internal allocate/run/pack helper after
+  entry-point-specific validation, reducing duplicated wrapper code while
+  preserving the existing `.Call` surface. Future native solvers should land in
+  dedicated translation units rather than recreating a shared solver monolith.
+
+- **Reference-solver maintainability:** improving but not complete. Block
+  Hermitian subspace iteration and block Golub-Kahan now share restart-control,
+  basis-acceptance, lock-count, keep-count, and history helpers in
+  `R/reference_block_solver_skeleton.R`; scalar reference Lanczos and scalar
+  Golub-Kahan now share the same scalar maxit/subspace validation helper, but
+  still have independent recurrence loops and Ritz extraction.
 
 - **Trustworthy/certified results:** strong and improving. Certificates are now
   the central design surface, not a debug add-on.
@@ -562,10 +677,24 @@ PRD truth check:
   is the first benchmark-backed win, but RSpectra and/or `irlba` still beat
   eigencore on important SVD and unpromoted regimes, even when eigencore
   certifies more tightly.
+- **V1 audit surface:** `docs/v1-readiness-audit.md` now maps each PRD and
+  plan gate to concrete evidence, commands, and remaining blockers.
+  `docs/v1-benchmark-manifest.md` maps benchmark surfaces to installed-package
+  commands, saved artifacts, and current red/green status. These are
+  release-hardening artifacts, not release signoff. Migration-facing docs now
+  include `docs/rspectra-migration.md`,
+  `docs/method-selection-and-workflows.md`, and `docs/known-limitations.md`,
+  and `docs/v1-doc-scope-audit.md`, which document the current shim behavior,
+  API workflow choices, documentation coverage, and incomplete solver families
+  without promoting reference or prototype paths. `docs/v1-completion-audit.md`
+  is the final stop-rule checklist before any V1 completion claim.
 - **Block-native engine:** partially true. Built-in block operators and block
-  Hermitian solver loops exist for promoted regimes, but V1 still needs the
-  same native block discipline across SVD, generalized SPD, and operator-fusion
-  paths.
+  Hermitian solver loops exist for promoted regimes. Explicit operator fusion
+  now covers dense/CSC scaling, sums, compositions, crossproducts, dense
+  centering, and CSC centering via a native low-rank correction wrapper that
+  avoids materializing the centered dense matrix. V1 still needs the same
+  native block discipline across SVD, generalized SPD, and matrix-free
+  operator-fusion paths.
 - **Default SVD not normal equations:** directionally true, but the final V1
   answer must be native thick-restarted Golub-Kahan. The Gram path is an
   explicit, inspectable, bounded special case, not the default SVD doctrine.
@@ -716,22 +845,31 @@ Primary attack surfaces, in order:
    near parity at roughly `1.02x` speed and `2.7x` memory. This confirms the
    remaining H blocker is algorithmic, not R result assembly: `vendor/RSpectra`
    uses Spectra's symmetric Krylov solver on the implicit normal operator with
-   a small `ncv`, whereas eigencore's promoted tiny path still pays the selected
+   a small `ncv`, whereas eigencore's bounded tiny path still pays the selected
    dense `dsyevr` cost for exact Gram diagonalization.
-   The current H-shaped wide sparse Gram gate is now green under the lowered
-   `1.1x` SVD speed target after two implementation changes: `V = A' U Sigma^-1`
-   is formed through a column-contiguous native CSC pass without a separate
-   memset/scale phase, and the materialized-Gram diagnostic/certificate path
-   fuses `G U`, residual, and orthogonality calculations instead of making
-   separate tiny BLAS calls. `svd_partial()` also tries the deterministic native
-   Gram fast path before touching the RNG seed, avoiding irrelevant seed setup
-   on this path. Installed repeated gate evidence on the 90-by-600 rank-5
-   fixture shows eigencore at roughly `0.319ms` to `0.324ms` versus certified
-   RSpectra at roughly `0.354ms` to `0.362ms`, with speed ratios from about
-   `1.106x` to `1.122x`, memory ratio about `2.7x`, and max backward error
-   about `1.1e-16`. This promotes the tiny sparse Gram Track A surface. It does
-   not close the broader PRD H requirement for production native
-   thick-restarted Golub-Kahan/IRLBA/BPRO on general sparse and matrix-free SVD
+   The current H-shaped wide sparse Gram path has useful historical narrow
+   evidence under the lowered `1.1x` SVD speed target after two implementation
+   changes: `V = A' U Sigma^-1` is formed through a column-contiguous native CSC
+   pass without a separate memset/scale phase, and the materialized-Gram
+   diagnostic/certificate path fuses `G U`, residual, and orthogonality
+   calculations instead of making separate tiny BLAS calls. `svd_partial()` also
+   tries the deterministic native Gram fast path before touching the RNG seed,
+   avoiding irrelevant seed setup on this path. Older repeated gate evidence on
+   the 90-by-600 rank-5 fixture showed eigencore at roughly `0.319ms` to
+   `0.324ms` versus certified RSpectra at roughly `0.354ms` to `0.362ms`, with
+   speed ratios from about `1.106x` to `1.122x`, memory ratio about `2.7x`, and
+   max backward error about `1.1e-16`. Fresh installed 2026-05-17 probes on the
+   current SVD surface do not reproduce that release-green outcome. The native
+   CSC Gram fast-result path now covers both the wide/left-Gram and
+   tall/right-Gram special cases and skips R result/certificate assembly when
+   the Gram certificate already passes; failed Gram certificates still fall
+   back to Golub-Kahan. That trims direct tall-path overhead versus the
+   R-assembled `solve(svd_problem())` route, but default tiny Gram rows on
+   `tall_sparse:600x90` and `wide_sparse:90x600` still certify, pass memory,
+   and miss speed (`0.40x` tall, `0.63x` wide in current 3-iteration installed
+   quick probes). Treat Track A as a bounded diagnostic/special-case path, not
+   V1 release signoff. H remains blocked on production native
+   thick-restarted Golub-Kahan/IRLBA/BPRO for sparse and matrix-free SVD
    problems.
    For non-Gram sparse problems, `auto()` no
    longer promotes the retained block-GK candidate by default; retained restart
@@ -777,12 +915,32 @@ Primary attack surfaces, in order:
    `eigencore_irlba_lbd_retained_native` plus retained-native diagnostics
    (`irlba_lbd_retained_native_attempted`,
    `irlba_lbd_retained_matvecs`,
-   `irlba_lbd_retained_native_fallback_reason`, and scout matvecs). On the
-   current H-shaped rank-5 sparse probe it certifies only after fallback:
-   retained native uses about `48` matvecs after a `24`-matvec scout, then the
-   certified adaptive fallback still uses `90` matvecs. That makes the row
+   `irlba_lbd_retained_native_fallback_reason`, scout matvecs, and explicit
+   retained-state fields such as `irlba_lbd_restart_state_kind`,
+   `irlba_lbd_recurrence_available`, and
+   `irlba_lbd_augmented_recurrence`). On the
+   measurement side, explicit SVD benchmark method requests now fail loudly if
+   the loaded eigencore namespace cannot run them, so H probes cannot silently
+   drop the retained IRLBA/LBD candidate when a stale installed package is on
+   the library path. On the current H-shaped rank-5 sparse probe it certifies
+   only after fallback:
+   the current capped retained row uses `24` retained-native matvecs after a
+   `24`-matvec scout, then the certified adaptive fallback still uses `90`
+   matvecs. It reports `restart_state_kind = "ritz_subspace_only"` and
+   `irlba_lbd_recurrence_available = FALSE`, so the benchmark surface now
+   distinguishes fixed-work retained seeding from a true augmented recurrence.
+   That makes the row
    useful for measuring retained-restart work, but not a promotion candidate
    until the native retained attempt certifies directly.
+   A separate normal-scout diagnostic, `eigencore_irlba_lbd_normal_scout`,
+   runs bounded matrix-free normal scouts at 8/12/16/20 steps and uses the
+   selected scout only as a warm start for certified one-sided LBD polish. The
+   row records scout side, steps, matvecs, operator matvecs, polish cost, and
+   `irlba_lbd_normal_scout_certificate_trusted = FALSE` so the normal scout
+   cannot masquerade as the certificate. On the H-shaped `wide_sparse:90x600`
+   probe it certifies after final SVD polish but is much slower and
+   higher-allocation than direct one-sided GK and RSpectra, so it is rejection
+   evidence for this shortcut rather than a promotion route.
    A narrow wrapper fix now keeps this retained path honest on tall CSC inputs
    as well as wide CSC inputs: the non-transposed orientation pulls the native
    `dgCMatrix` from operator metadata instead of looking only for a dense
@@ -797,7 +955,10 @@ Primary attack surfaces, in order:
    `fit$matvecs` includes scout + retained-native + fallback operator calls,
    while `irlba_lbd_fallback_matvecs`, `irlba_lbd_retained_matvecs`, and
    `irlba_lbd_total_matvecs` expose the breakdown. This prevents the diagnostic
-   retained row from under-reporting time-to-certified-answer work.
+   retained row from under-reporting time-to-certified-answer work. The H
+   benchmark retained-IRLBA candidate now caps this ritz-subspace-only scaffold
+   at one retained native attempt before fallback, avoiding repeated fixed-work
+   seeded attempts until a true augmented recurrence is implemented.
    Retained fallback orientation is now covered explicitly: when a wide
    operator is run internally on `A^T`, the one-sided fallback also transposes
    and must warm-start from the active right vector, while the full two-sided
@@ -818,17 +979,36 @@ Primary attack surfaces, in order:
    projected work directly rather than assuming partial locking will appear on
    the release benchmark surface.
 2. **J generalized SPD LOBPCG promotion.** Broaden generalized
-   preconditioning beyond the typed shifted-diagonal and certified
-   shifted-tridiagonal sparse-smallest case, keep the benchmark
-   B-orthogonality/native-path diagnostics green, keep the adversarial B
-   benchmark contract green, and promote the native path only after sparse
-   no-densification gates and the remaining production checks pass.
-3. **L native shift-invert.** Move from reference inverted-operator Lanczos to
-   factorization-aware native transforms with cached solves and original
-   problem residual certification.
-4. **Operator fusion.** Native centered/scaled/composed operators are needed
-   for matrix-free PCA/SVD and for keeping the mathematical API elegant without
-   paying R callback overhead.
+   preconditioning beyond the typed shifted-diagonal, the certified
+   shifted-tridiagonal sparse-smallest case, and the now-certified but
+   performance-red-on-speed sparse-largest shifted-tridiagonal row with its
+   non-densifying largest-target shift policy, keep dense
+   generalized `auto()` on the dense LAPACK fallback until iterative gates are
+   green, keep the
+   benchmark B-orthogonality/native-path diagnostics green, keep the
+   adversarial B benchmark contract green, and promote the native path only
+   after sparse no-densification gates and the remaining production checks
+   pass.
+3. **K generalized SPD Lanczos refinement.** The explicit reference scalar
+   path now covers solvable dense/diagonal/CSC SPD metrics and has focused
+   installed benchmark-contract evidence for both diagonal and sparse-CSC
+   metric solves. Remaining work is native/block execution, broader sparse and
+   matrix-free solve ownership, and release benchmark evidence before it can be
+   considered a production alternate.
+4. **L native shift-invert.** Extend the dense plus diagonal/tridiagonal native
+   shift-invert slices to general sparse standard and general sparse/diagonal
+   generalized cases without silent densification, and make factorization
+   reuse/cache ownership explicit enough for planner promotion beyond the
+   currently native factorizations. The current reference sparse-LU boundary is
+   now benchmarked explicitly, including original-coordinate convergence and
+   estimated-scale certificate honesty. The user-supplied solve boundary is
+   also benchmarked as nonnative external-cache evidence with exact-scale
+   certification, not as native factorization ownership.
+5. **Operator fusion.** Native centered/scaled/composed operators now cover the
+   explicit dense/CSC surfaces, including sparse centering via a low-rank
+   correction kernel. Matrix-free centered PCA/SVD still needs an honest
+   callback/native-boundary policy before it can be promoted as no-overhead
+   fusion.
 5. **Release hardening.** Keep benchmark claims tied to reproducible
    `bench::mark()` scripts; do not weaken the PRD's "faster and unambiguously
    better" bar to fit current results.
@@ -853,9 +1033,10 @@ just a label change. The implementation must satisfy these extra constraints:
   scale used by `eigen_backward_scale()`. A shortcut such as
   `tol * max(abs(theta), 1)` is acceptable only as a development diagnostic, not
   as the production lock criterion.
-- The former `native block Hermitian Lanczos thick-restart candidate` counted
+- The former `native block Hermitian Lanczos thick-restart candidate` counts
   as promoted G1 only after the adversarial bank and RSpectra/PRIMME benchmark
-  gates passed with the default `eigencore` path.
+  gates pass with the default `eigencore` path. Fresh installed evidence is
+  red, so sparse block promotion is currently diagnostic-only.
 - Correctness comparisons for iterative paths use residuals scaled by the
   certificate denominator, e.g. `max(tol * scale, 100 * eps * scale)`, and use
   subspace-distance assertions for clustered or repeated eigenvalues rather than
@@ -963,9 +1144,12 @@ striking distance of the RSpectra/PRIMME gate before any planner promotion.
 
 - Promote `auto()` to the block path only in regimes that pass the benchmark
   gate. Initial policy should be conservative: `k >= 4`, native dense/CSC
-  source, supported target, and a size threshold proven by the gate. Keep
-  scalar thick restart for small `k`, small `n`, unsupported block regimes, and
-  explicit `lanczos(block = 1)`.
+  source, supported target, and a size threshold proven by the gate. Sparse
+  `dgCMatrix` block promotion is currently gated behind
+  `options(eigencore.promote_sparse_block_lanczos = TRUE)` for diagnostics
+  after the red `path_laplacian:1000` installed rerun. Keep scalar thick
+  restart for small `k`, small `n`, unsupported block regimes, and explicit
+  `lanczos(block = 1)`.
 - Update the planner label to the production string only after G1.1-G1.3 pass:
   `native block Hermitian Lanczos (thick restart, locking)`.
 - Ensure `solve.eigencore_eigen_problem()` consumes `plan$controls` exactly:

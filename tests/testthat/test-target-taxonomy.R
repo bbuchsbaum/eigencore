@@ -39,3 +39,46 @@ test_that("eigs_sym SM selects smallest-magnitude, not smallest-algebraic", {
   fit <- eigs_sym(A, k = 2, which = "SM")
   expect_equal(sort(abs(fit$values)), c(0.01, 0.1), tolerance = 1e-10)
 })
+
+test_that("dense eigs LI routes nonsymmetric complex pairs through native Arnoldi", {
+  A <- rbind(
+    c(0, -1, 0),
+    c(1, 0, 0),
+    c(0, 0, 0.5)
+  )
+
+  fit <- eigs(A, k = 2, which = "LI", tol = 1e-10)
+
+  expect_equal(fit$values, c(1i, 0.5), tolerance = 1e-10)
+  expect_true(is.complex(fit$vectors))
+  expect_equal(fit$certificate$certificate_type, "right_residual_backward_error")
+  expect_false(fit$certificate$orthogonality_required)
+  expect_true(fit$certificate$passed)
+  expect_equal(
+    fit$diagnostics$method,
+    eigencore:::native_arnoldi_label()
+  )
+  expect_true(fit$diagnostics$restart$native)
+  expect_true(fit$diagnostics$restart$ritz_extraction_native)
+  expect_match(fit$diagnostics$warnings, "right residuals certified")
+})
+
+test_that("sparse eigs LI routes through native Arnoldi compatibility path", {
+  A <- Matrix::bdiag(
+    matrix(c(0, -2, 2, 0), 2, 2, byrow = TRUE),
+    matrix(c(0, -1, 1, 0), 2, 2, byrow = TRUE),
+    Matrix::Diagonal(2, c(0.5, 0.25))
+  )
+  A <- methods::as(A, "dgCMatrix")
+
+  fit <- eigs(A, k = 2L, which = "LI", tol = 1e-10)
+
+  expect_equal(Im(fit$values), c(2, 1), tolerance = 1e-8)
+  expect_true(is.complex(fit$vectors))
+  expect_equal(fit$diagnostics$method, eigencore:::native_arnoldi_label())
+  expect_true(fit$diagnostics$restart$native)
+  expect_true(fit$diagnostics$restart$ritz_extraction_native)
+  expect_equal(fit$certificate$certificate_type, "right_residual_backward_error")
+  expect_false(fit$certificate$orthogonality_required)
+  expect_true(fit$certificate$passed)
+})

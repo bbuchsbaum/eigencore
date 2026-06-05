@@ -7,11 +7,16 @@
 ^plan_v1[.]md$
 ^inst/benchmarks/results$
 ^AGENTS[.]md$
+^CLAUDE[.]md$
+^plan_v2_streaming_svd[.]md$
 ^repomix-output[.]txt$
 ^eigencore[.]Rcheck$
 ^eigencore_.*[.]tar[.]gz$
 ^[.][.]Rcheck$
 ^[.]omc$
+^[.]mote$
+^[.]claude$
+^[.]rcmdcheck_result[.]rds$
 ^[.]github$
 ^README[.]Rmd$
 ^_pkgdown[.]yml$

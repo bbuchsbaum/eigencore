@@ -84,6 +84,38 @@ test_that("built-in scaling fuses to native-backed operators without densifying 
   expect_true(check_adjoint(sparse_col, seed = 32)$passed)
 })
 
+test_that("built-in sums and compositions fuse to native explicit operators", {
+  dense_a <- matrix(rnorm(12), nrow = 3)
+  dense_b <- matrix(rnorm(12), nrow = 4)
+  sparse_a <- Matrix::rsparsematrix(5, 4, density = 0.35)
+  sparse_b <- Matrix::rsparsematrix(4, 3, density = 0.35)
+  sparse_c <- Matrix::rsparsematrix(5, 4, density = 0.25)
+  X_dense <- matrix(rnorm(6), nrow = 3)
+  X_sparse <- matrix(rnorm(6), nrow = 3)
+  X_sum <- matrix(rnorm(8), nrow = 4)
+
+  dense_comp <- compose(as_operator(dense_a), as_operator(dense_b))
+  sparse_comp <- compose(as_operator(sparse_a), as_operator(sparse_b))
+  sparse_sum <- eigencore:::operator_sum(as_operator(sparse_a), as_operator(sparse_c))
+
+  expect_true(dense_comp$metadata$native)
+  expect_true(sparse_comp$metadata$native)
+  expect_true(sparse_sum$metadata$native)
+  expect_equal(dense_comp$metadata$fused, "compose")
+  expect_equal(sparse_comp$metadata$fused, "compose")
+  expect_equal(sparse_sum$metadata$fused, "sum")
+  expect_s4_class(sparse_comp$metadata$matrix, "dgCMatrix")
+  expect_s4_class(sparse_sum$metadata$matrix, "dgCMatrix")
+  expect_null(eigencore:::source_or_null(sparse_comp))
+  expect_null(eigencore:::source_or_null(sparse_sum))
+
+  expect_equal(dense_comp$apply(X_dense), dense_a %*% dense_b %*% X_dense)
+  expect_equal(sparse_comp$apply(X_sparse), as.matrix((sparse_a %*% sparse_b) %*% X_sparse))
+  expect_equal(sparse_sum$apply(X_sum), as.matrix((sparse_a + sparse_c) %*% X_sum))
+  expect_true(check_adjoint(sparse_comp, seed = 33)$passed)
+  expect_true(check_adjoint(sparse_sum, seed = 34)$passed)
+})
+
 test_that("column centering matches dense centered matrix", {
   A <- matrix(1:12, nrow = 3)
   X <- matrix(rnorm(8), nrow = 4)
@@ -91,6 +123,8 @@ test_that("column centering matches dense centered matrix", {
   op <- center(A, columns = TRUE)
 
   expect_equal(op$apply(X), centered %*% X)
+  expect_true(op$metadata$native)
+  expect_equal(op$metadata$fused, "center")
 
   Y <- matrix(rnorm(6), nrow = 3)
   expect_equal(op$apply_adjoint(Y), t(centered) %*% Y)
@@ -104,5 +138,57 @@ test_that("row centering matches dense centered matrix", {
   op <- center(A, rows = TRUE, columns = FALSE)
 
   expect_equal(op$apply(X), centered %*% X)
+  expect_true(op$metadata$native)
+  expect_equal(op$metadata$fused, "center")
   expect_true(check_adjoint(op, seed = 6)$passed)
+})
+
+test_that("sparse centering uses native low-rank correction without densifying", {
+  A <- Matrix::rsparsematrix(7, 5, density = 0.35)
+  X <- matrix(rnorm(15), nrow = 5)
+  Y <- matrix(rnorm(21), nrow = 7)
+  Z <- matrix(rnorm(21), nrow = 7)
+
+  op <- center(A, rows = TRUE, columns = TRUE)
+  expected <- sweep(sweep(as.matrix(A), 2L, Matrix::colMeans(A), `-`),
+                    1L, Matrix::rowMeans(A), `-`)
+
+  expect_true(op$metadata$native)
+  expect_equal(op$metadata$fused, "center")
+  expect_equal(op$metadata$storage, "centered_dgCMatrix")
+  expect_true(op$metadata$low_rank_correction)
+  expect_s4_class(op$metadata$base_matrix, "dgCMatrix")
+  expect_null(op$metadata$matrix)
+  expect_null(eigencore:::source_or_null(op))
+  expect_false(eigencore:::has_native_kernel(op))
+
+  expect_equal(op$apply(X), expected %*% X)
+  expect_equal(op$apply(X, alpha = 1.5, beta = -0.25, Y = Y),
+               1.5 * expected %*% X - 0.25 * Y)
+  expect_equal(op$apply_adjoint(Z), t(expected) %*% Z)
+  expect_true(check_adjoint(op, seed = 37)$passed)
+})
+
+test_that("crossprod fuses native explicit dense and sparse operators", {
+  dense <- matrix(rnorm(20), nrow = 5)
+  sparse <- Matrix::rsparsematrix(6, 4, density = 0.35)
+  X <- matrix(rnorm(12), nrow = 4)
+
+  dense_cp <- crossprod_operator(dense)
+  sparse_cp <- crossprod_operator(sparse)
+
+  expect_true(dense_cp$metadata$native)
+  expect_true(sparse_cp$metadata$native)
+  expect_equal(dense_cp$metadata$fused, "crossprod")
+  expect_equal(sparse_cp$metadata$fused, "crossprod")
+  expect_true(dense_cp$metadata$materialized_crossprod)
+  expect_true(sparse_cp$metadata$materialized_crossprod)
+  expect_s4_class(sparse_cp$metadata$matrix, "dgCMatrix")
+  expect_equal(dense_cp$structure$kind, "hermitian")
+  expect_equal(sparse_cp$structure$kind, "hermitian")
+
+  expect_equal(dense_cp$apply(X), crossprod(dense) %*% X)
+  expect_equal(sparse_cp$apply(X), as.matrix(Matrix::crossprod(sparse) %*% X))
+  expect_true(check_adjoint(dense_cp, seed = 35)$passed)
+  expect_true(check_adjoint(sparse_cp, seed = 36)$passed)
 })

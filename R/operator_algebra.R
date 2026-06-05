@@ -20,6 +20,10 @@ compose <- function(A, B, name = NULL) {
   } else {
     NULL
   }
+  fused <- native_compose_operator_or_null(A, B, name = name)
+  if (!is.null(fused)) {
+    return(fused)
+  }
 
   linear_operator(
     dim = c(A$dim[1L], B$dim[2L]),
@@ -65,6 +69,10 @@ operator_sum <- function(..., name = NULL) {
   source <- Reduce(function(a, b) {
     if (is_dense_double_matrix(a) && is_dense_double_matrix(b)) a + b else NULL
   }, lapply(ops, source_or_null))
+  fused <- native_sum_operator_or_null(ops, name = name)
+  if (!is.null(fused)) {
+    return(fused)
+  }
 
   linear_operator(
     dim = ops[[1L]]$dim,
@@ -207,6 +215,7 @@ center <- function(A, rows = FALSE, columns = TRUE, row_means = NULL,
                    col_means = NULL, name = NULL) {
   A <- as_operator(A)
   source <- source_or_null(A)
+  matrix_source <- A$metadata$matrix %||% NULL
   # NN-3: matrix-free centering must stay matrix-free when the underlying
   # source is sparse. Treat a non-dense source as if no source were
   # available so col_means/row_means must be supplied explicitly rather
@@ -217,16 +226,22 @@ center <- function(A, rows = FALSE, columns = TRUE, row_means = NULL,
     source <- NULL
   }
   if (is.null(col_means) && isTRUE(columns)) {
-    if (is.null(source)) {
+    if (is_dense_double_matrix(source)) {
+      col_means <- colMeans(source)
+    } else if (inherits(matrix_source, "Matrix")) {
+      col_means <- Matrix::colMeans(matrix_source)
+    } else {
       stop("col_means must be supplied for matrix-free column centering.", call. = FALSE)
     }
-    col_means <- colMeans(source)
   }
   if (is.null(row_means) && isTRUE(rows)) {
-    if (is.null(source)) {
+    if (is_dense_double_matrix(source)) {
+      row_means <- rowMeans(source)
+    } else if (inherits(matrix_source, "Matrix")) {
+      row_means <- Matrix::rowMeans(matrix_source)
+    } else {
       stop("row_means must be supplied for matrix-free row centering.", call. = FALSE)
     }
-    row_means <- rowMeans(source)
   }
 
   if (isTRUE(columns) && length(col_means) != A$dim[2L]) {
@@ -242,6 +257,33 @@ center <- function(A, rows = FALSE, columns = TRUE, row_means = NULL,
   }
   if (!is.null(centered_source) && isTRUE(rows)) {
     centered_source <- sweep(centered_source, 1L, row_means, `-`)
+  }
+  if (is_dense_double_matrix(centered_source)) {
+    fused <- as_operator(centered_source)
+    fused$name <- name %||% paste0("center(", A$name, ")")
+    fused$metadata <- modifyList(
+      fused$metadata,
+      list(
+        parent = A,
+        fused = "center",
+        rows = rows,
+        columns = columns,
+        row_means = row_means,
+        col_means = col_means
+      )
+    )
+    return(fused)
+  }
+  fused <- native_centered_sparse_operator_or_null(
+    A,
+    rows = rows,
+    columns = columns,
+    row_means = row_means,
+    col_means = col_means,
+    name = name
+  )
+  if (!is.null(fused)) {
+    return(fused)
   }
 
   linear_operator(
@@ -285,6 +327,37 @@ center <- function(A, rows = FALSE, columns = TRUE, row_means = NULL,
   )
 }
 
+#' @keywords internal
+csc_centered_block_apply <- function(A, X, alpha = 1, beta = 0, Y = NULL,
+                                     transpose = FALSE, rows = FALSE,
+                                     columns = TRUE, row_means = NULL,
+                                     col_means = NULL) {
+  X <- as.matrix(X)
+  if (is.null(Y)) {
+    out_nrow <- if (transpose) ncol(A) else nrow(A)
+    Y <- matrix(0, out_nrow, ncol(X))
+  } else {
+    Y <- as.matrix(Y)
+  }
+  .Call(
+    "eigencore_csc_centered_block_apply",
+    methods::slot(A, "i"),
+    methods::slot(A, "p"),
+    methods::slot(A, "x"),
+    methods::slot(A, "Dim"),
+    as.numeric(row_means %||% numeric()),
+    as.numeric(col_means %||% numeric()),
+    isTRUE(rows),
+    isTRUE(columns),
+    X,
+    as.numeric(alpha),
+    as.numeric(beta),
+    Y,
+    isTRUE(transpose),
+    PACKAGE = "eigencore"
+  )
+}
+
 #' Mark an operator as symmetric/Hermitian.
 symmetric_operator <- function(A, validate = TRUE, tol = 1e-10) {
   A <- as_operator(A)
@@ -304,6 +377,10 @@ crossprod_operator <- function(A, name = NULL) {
   A <- as_operator(A)
   if (is.null(A$apply_adjoint)) {
     stop("Operator does not define apply_adjoint().", call. = FALSE)
+  }
+  fused <- native_crossprod_operator_or_null(A, name = name)
+  if (!is.null(fused)) {
+    return(fused)
   }
   linear_operator(
     dim = c(A$dim[2L], A$dim[2L]),
@@ -471,5 +548,174 @@ native_scaled_operator_or_null <- function(A, weights, axis, name = NULL) {
   if (!is.null(storage)) {
     op$metadata$storage <- storage
   }
+  op
+}
+
+#' @keywords internal
+native_sum_operator_or_null <- function(ops, name = NULL) {
+  if (!all(vapply(ops, function(op) isTRUE(op$metadata$native), logical(1)))) {
+    return(NULL)
+  }
+  dense_sources <- lapply(ops, source_or_null)
+  if (all(vapply(dense_sources, is_dense_double_matrix, logical(1)))) {
+    summed <- Reduce(`+`, dense_sources)
+    op <- native_explicit_operator_or_null(
+      summed,
+      name = name %||% "operator_sum",
+      fused = "sum",
+      metadata = list(terms = ops)
+    )
+    if (!is.null(op)) {
+      return(op)
+    }
+  }
+
+  matrices <- lapply(ops, function(op) op$metadata$matrix %||% NULL)
+  if (!all(vapply(matrices, inherits, logical(1), what = "Matrix"))) {
+    return(NULL)
+  }
+  summed <- Reduce(`+`, matrices)
+  native_explicit_operator_or_null(
+    summed,
+    name = name %||% "operator_sum",
+    fused = "sum",
+    metadata = list(terms = ops)
+  )
+}
+
+#' @keywords internal
+native_compose_operator_or_null <- function(A, B, name = NULL) {
+  if (!isTRUE(A$metadata$native) || !isTRUE(B$metadata$native)) {
+    return(NULL)
+  }
+  left_source <- source_or_null(A)
+  right_source <- source_or_null(B)
+  if (is_dense_double_matrix(left_source) && is_dense_double_matrix(right_source)) {
+    composed <- left_source %*% right_source
+    return(native_explicit_operator_or_null(
+      composed,
+      name = name %||% paste0("compose(", A$name, ",", B$name, ")"),
+      fused = "compose",
+      metadata = list(left = A, right = B)
+    ))
+  }
+
+  left_matrix <- A$metadata$matrix
+  right_matrix <- B$metadata$matrix
+  if (!inherits(left_matrix, "Matrix") || !inherits(right_matrix, "Matrix")) {
+    return(NULL)
+  }
+  composed <- left_matrix %*% right_matrix
+  native_explicit_operator_or_null(
+    composed,
+    name = name %||% paste0("compose(", A$name, ",", B$name, ")"),
+    fused = "compose",
+    metadata = list(left = A, right = B)
+  )
+}
+
+#' @keywords internal
+native_crossprod_operator_or_null <- function(A, name = NULL) {
+  if (!isTRUE(A$metadata$native)) {
+    return(NULL)
+  }
+  source <- source_or_null(A)
+  if (is_dense_double_matrix(source)) {
+    cp <- crossprod(source)
+    op <- native_explicit_operator_or_null(
+      cp,
+      name = name %||% paste0("crossprod(", A$name, ")"),
+      fused = "crossprod",
+      metadata = list(parent = A, materialized_crossprod = TRUE)
+    )
+    if (!is.null(op)) {
+      op$structure <- hermitian()
+    }
+    return(op)
+  }
+
+  matrix <- A$metadata$matrix
+  if (!inherits(matrix, "Matrix")) {
+    return(NULL)
+  }
+  cp <- Matrix::crossprod(matrix)
+  op <- native_explicit_operator_or_null(
+    cp,
+    name = name %||% paste0("crossprod(", A$name, ")"),
+    fused = "crossprod",
+    metadata = list(parent = A, materialized_crossprod = TRUE)
+  )
+  if (!is.null(op)) {
+    op$structure <- hermitian()
+  }
+  op
+}
+
+#' @keywords internal
+native_centered_sparse_operator_or_null <- function(A, rows, columns,
+                                                   row_means = NULL,
+                                                   col_means = NULL,
+                                                   name = NULL) {
+  if (!isTRUE(A$metadata$native)) {
+    return(NULL)
+  }
+  matrix <- A$metadata$matrix %||% NULL
+  if (!inherits(matrix, "dgCMatrix")) {
+    return(NULL)
+  }
+  row_means <- if (isTRUE(rows)) as.numeric(row_means) else numeric()
+  col_means <- if (isTRUE(columns)) as.numeric(col_means) else numeric()
+  linear_operator(
+    dim = A$dim,
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      csc_centered_block_apply(
+        matrix, X, alpha = alpha, beta = beta, Y = Y,
+        transpose = FALSE, rows = rows, columns = columns,
+        row_means = row_means, col_means = col_means
+      )
+    },
+    apply_adjoint = if (!is.null(A$apply_adjoint)) {
+      function(X, alpha = 1, beta = 0, Y = NULL) {
+        csc_centered_block_apply(
+          matrix, X, alpha = alpha, beta = beta, Y = Y,
+          transpose = TRUE, rows = rows, columns = columns,
+          row_means = row_means, col_means = col_means
+        )
+      }
+    } else {
+      NULL
+    },
+    dtype = A$dtype,
+    structure = general(),
+    name = name %||% paste0("center(", A$name, ")"),
+    metadata = list(
+      parent = A,
+      base_matrix = matrix,
+      fused = "center",
+      rows = rows,
+      columns = columns,
+      row_means = row_means,
+      col_means = col_means,
+      native = TRUE,
+      storage = "centered_dgCMatrix",
+      low_rank_correction = TRUE
+    )
+  )
+}
+
+#' @keywords internal
+native_explicit_operator_or_null <- function(x, name, fused, metadata = list()) {
+  if (is_dense_double_matrix(x)) {
+    op <- as_operator(x)
+  } else if (inherits(x, "ddiMatrix") || inherits(x, "dgCMatrix")) {
+    op <- as_operator(x)
+  } else if (inherits(x, "sparseMatrix")) {
+    x <- methods::as(methods::as(x, "generalMatrix"), "dgCMatrix")
+    op <- as_operator(x)
+  } else {
+    return(NULL)
+  }
+  op$name <- name
+  op$metadata <- modifyList(op$metadata, c(list(fused = fused), metadata))
   op
 }

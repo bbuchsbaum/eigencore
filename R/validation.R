@@ -190,6 +190,7 @@ available_svd_methods <- function() {
     "eigencore_golub_kahan_one_sided",
     "eigencore_irlba_lbd_one_sided",
     "eigencore_irlba_lbd_retained_native",
+    "eigencore_irlba_lbd_normal_scout",
     "eigencore_golub_kahan_projected",
     "eigencore_implicit_normal_lanczos",
     "eigencore_gram_dsyevx",
@@ -426,6 +427,223 @@ run_irlba_lbd_one_sided_method <- function(A, rank, tol, seed = NULL) {
 }
 
 #' @keywords internal
+irlba_lbd_normal_scout_operator <- function(A) {
+  op <- as_operator(A)
+  dims <- op$dim
+  if (is.null(op$apply_adjoint)) {
+    stop("normal-scout IRLBA/LBD requires an adjoint operator.", call. = FALSE)
+  }
+  if (dims[[1L]] < dims[[2L]]) {
+    apply_normal <- function(X, alpha = 1, beta = 0, Y = NULL) {
+      AX <- apply_adjoint_operator(op, X)
+      apply_operator(op, AX, alpha = alpha, beta = beta, Y = Y)
+    }
+    side <- "left"
+    dim <- dims[[1L]]
+  } else {
+    apply_normal <- function(X, alpha = 1, beta = 0, Y = NULL) {
+      AX <- apply_operator(op, X)
+      apply_adjoint_operator(op, AX, alpha = alpha, beta = beta, Y = Y)
+    }
+    side <- "right"
+    dim <- dims[[2L]]
+  }
+  list(
+    op = linear_operator(
+      dim = c(dim, dim),
+      apply = apply_normal,
+      apply_adjoint = apply_normal,
+      structure = hermitian(),
+      name = paste0("normal_scout_", side, "(", op$name, ")"),
+      metadata = list(
+        parent = op,
+        normal_scout = TRUE,
+        normal_scout_side = side,
+        materialized_normal = FALSE
+      )
+    ),
+    side = side,
+    internal_transposed = dims[[1L]] < dims[[2L]]
+  )
+}
+
+#' @keywords internal
+irlba_lbd_normal_scout_start <- function(A, rank, tol, steps, seed = NULL) {
+  normal <- irlba_lbd_normal_scout_operator(A)
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
+  steps <- as.integer(steps)
+  if (length(steps) != 1L || is.na(steps) || steps < rank + 1L) {
+    stop("normal-scout steps must be at least rank + 1.", call. = FALSE)
+  }
+  fit <- eig_partial(
+    normal$op,
+    k = rank,
+    target = largest(),
+    method = lanczos(max_subspace = steps, max_restarts = 0L),
+    tol = max(tol, 1e-6),
+    vectors = TRUE,
+    seed = seed,
+    certify = FALSE,
+    allow_dense_fallback = "never"
+  )
+  if (is.null(fit$vectors) || ncol(fit$vectors) < 1L) {
+    stop("normal-scout Lanczos did not return a start vector.", call. = FALSE)
+  }
+  start <- as.numeric(fit$vectors[, 1L])
+  start_norm <- sqrt(sum(start^2))
+  if (!is.finite(start_norm) || start_norm <= 100 * .Machine$double.eps) {
+    stop("normal-scout start vector has zero norm.", call. = FALSE)
+  }
+  list(
+    start = start / start_norm,
+    fit = fit,
+    side = normal$side,
+    internal_transposed = normal$internal_transposed,
+    steps = steps
+  )
+}
+
+#' @keywords internal
+run_irlba_lbd_normal_scout_method <- function(A, rank, tol, seed = NULL,
+                                              scout_steps = c(8L, 12L, 16L, 20L)) {
+  limit <- min(as_operator(A)$dim)
+  rank <- as.integer(rank)
+  scout_steps <- sort(unique(as.integer(scout_steps)))
+  scout_steps <- scout_steps[is.finite(scout_steps)]
+  scout_steps <- scout_steps[scout_steps >= rank + 1L & scout_steps <= limit]
+  if (!length(scout_steps)) {
+    scout_steps <- min(limit, rank + 1L)
+  }
+
+  scouts <- lapply(seq_along(scout_steps), function(i) {
+    steps <- scout_steps[[i]]
+    tryCatch(
+      irlba_lbd_normal_scout_start(
+        A,
+        rank = rank,
+        tol = tol,
+        steps = steps,
+        seed = (seed %||% 1L) + i - 1L
+      ),
+      error = function(e) {
+        structure(
+          list(error = conditionMessage(e), steps = steps),
+          class = "eigencore_irlba_lbd_normal_scout_error"
+        )
+      }
+    )
+  })
+  ok <- which(!vapply(scouts, inherits, logical(1), "eigencore_irlba_lbd_normal_scout_error"))
+  if (!length(ok)) {
+    stop("normal-scout IRLBA/LBD could not produce a start vector.", call. = FALSE)
+  }
+  chosen <- tail(ok, 1L)[[1L]]
+  scout <- scouts[[chosen]]
+
+  if (!is.null(seed)) {
+    set.seed(seed + 101L)
+  }
+  polished <- native_golub_kahan_svd(
+    A,
+    rank = rank,
+    target = largest(),
+    tol = tol,
+    vectors = "both",
+    reorthogonalize = FALSE,
+    internal_start = scout$start
+  )
+
+  scout_rows <- lapply(seq_along(scouts), function(i) {
+    item <- scouts[[i]]
+    if (inherits(item, "eigencore_irlba_lbd_normal_scout_error")) {
+      return(data.frame(
+        attempt = i,
+        max_subspace = item$steps,
+        iterations = NA_integer_,
+        matvecs = NA_integer_,
+        accounted_seconds = NA_real_,
+        warm_started = FALSE,
+        certificate_passed = FALSE,
+        max_backward_error = NA_real_,
+        max_residual = NA_real_,
+        scout_error = item$error,
+        stringsAsFactors = FALSE
+      ))
+    }
+    data.frame(
+      attempt = i,
+      max_subspace = item$steps,
+      iterations = item$fit$iterations,
+      matvecs = item$fit$matvecs,
+      accounted_seconds = sum(item$fit$stage_seconds %||% NA_real_, na.rm = TRUE),
+      warm_started = FALSE,
+      certificate_passed = FALSE,
+      max_backward_error = item$fit$certificate$max_backward_error %||% NA_real_,
+      max_residual = item$fit$certificate$max_residual %||% NA_real_,
+      scout_error = NA_character_,
+      stringsAsFactors = FALSE
+    )
+  })
+  scout_history <- do.call(rbind, scout_rows)
+  polish_row <- data.frame(
+    attempt = nrow(scout_history) + 1L,
+    max_subspace = polished$restart$final_max_subspace %||%
+      polished$restart$max_subspace %||% polished$iterations,
+    iterations = polished$iterations,
+    matvecs = polished$matvecs,
+    accounted_seconds = sum(polished$stage_seconds %||% NA_real_, na.rm = TRUE),
+    warm_started = TRUE,
+    certificate_passed = isTRUE(polished$certificate$passed),
+    max_backward_error = polished$certificate$max_backward_error,
+    max_residual = polished$certificate$max_residual,
+    scout_error = NA_character_,
+    stringsAsFactors = FALSE
+  )
+  history <- rbind(scout_history, polish_row)
+  scout_matvecs <- sum(scout_history$matvecs, na.rm = TRUE)
+  polish_matvecs <- polished$matvecs %||% 0L
+
+  polished$restart$irlba_lbd_policy <-
+    "implicit normal scout warm-start with certified one-sided LBD polish"
+  polished$restart$irlba_lbd_normal_scout_attempted <- TRUE
+  polished$restart$irlba_lbd_normal_scout_steps <- paste(scout_steps, collapse = ",")
+  polished$restart$irlba_lbd_normal_scout_chosen_steps <- scout$steps
+  polished$restart$irlba_lbd_normal_scout_count <- nrow(scout_history)
+  polished$restart$irlba_lbd_normal_scout_side <- scout$side
+  polished$restart$irlba_lbd_normal_scout_materialized <- FALSE
+  polished$restart$irlba_lbd_normal_scout_certificate_trusted <- FALSE
+  polished$restart$irlba_lbd_normal_scout_matvecs <- scout_matvecs
+  polished$restart$irlba_lbd_normal_scout_operator_matvecs <- 2L * scout_matvecs
+  polished$restart$irlba_lbd_normal_scout_iterations <-
+    sum(scout_history$iterations, na.rm = TRUE)
+  polished$restart$irlba_lbd_normal_scout_accounted_seconds <-
+    sum(scout_history$accounted_seconds, na.rm = TRUE)
+  polished$restart$irlba_lbd_normal_scout_polish_matvecs <- polish_matvecs
+  polished$restart$irlba_lbd_normal_scout_polish_iterations <- polished$iterations
+  polished$restart$irlba_lbd_normal_scout_polish_accounted_seconds <-
+    polish_row$accounted_seconds[[1L]]
+  polished$restart$irlba_lbd_fallback_attempted <- TRUE
+  polished$restart$irlba_lbd_fallback_used <- TRUE
+  polished$restart$irlba_lbd_fallback_method <- "adaptive one-sided Golub-Kahan polish"
+  polished$restart$irlba_lbd_fallback_warm_started <- TRUE
+  polished$restart$irlba_lbd_fallback_matvecs <- polish_matvecs
+  polished$restart$irlba_lbd_fallback_iterations <- polished$iterations
+  polished$restart$irlba_lbd_fallback_accounted_seconds <-
+    polish_row$accounted_seconds[[1L]]
+  polished$restart$irlba_lbd_scout_matvec_overhead_fraction <-
+    scout_matvecs / max(1L, scout_matvecs + polish_matvecs)
+  polished$restart$fallback_attempted <- TRUE
+  polished$restart$fallback_used <- FALSE
+  polished$restart$fallback_method <- NA_character_
+  polished$restart$attempt_history <- history
+  polished$restart$attempted_subspaces <- history$max_subspace
+  polished$restart$certified_attempt <- if (isTRUE(polished$certificate$passed)) nrow(history) else NA_integer_
+  polished
+}
+
+#' @keywords internal
 run_svd_method <- function(method, A, rank, tol, seed = NULL) {
   switch(
     method,
@@ -458,11 +676,17 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
         target = largest(),
         work = max(rank + 7L, 2L * rank + 1L),
         retained = min(max(rank, rank + 2L), max(rank + 6L, 2L * rank)),
-        max_restarts = 1L,
+        max_restarts = 0L,
         tol = tol,
         vectors = "both"
       )
     },
+    eigencore_irlba_lbd_normal_scout = run_irlba_lbd_normal_scout_method(
+      A,
+      rank = rank,
+      tol = tol,
+      seed = seed
+    ),
     eigencore_golub_kahan_projected = {
       old_options <- options(eigencore.golub_kahan_projected_stop = TRUE)
       on.exit(options(old_options), add = TRUE)

@@ -26,33 +26,22 @@ reference_block_subspace_iteration_thick_restart_hermitian <- function(op, k, ta
   }
 
   n <- op$dim[1L]
-  k <- as.integer(k)
-  if (length(k) != 1L || is.na(k) || k < 1L) {
-    stop("k must be a positive integer.", call. = FALSE)
-  }
-  block <- if (is.null(block)) {
-    2L
-  } else {
-    as.integer(block)
-  }
-  if (length(block) != 1L || is.na(block) || block < 1L) {
-    stop("block must be a positive integer.", call. = FALSE)
-  }
-  max_restarts <- as.integer(max_restarts)
-  if (length(max_restarts) != 1L || is.na(max_restarts) || max_restarts < 0L) {
-    stop("max_restarts must be a non-negative integer.", call. = FALSE)
-  }
-  if (is.null(max_subspace)) {
-    max_subspace <- default_block_lanczos_max_subspace(k, block)
-  }
-  max_subspace <- min(n, as.integer(max_subspace))
-  if (length(max_subspace) != 1L || is.na(max_subspace) || max_subspace < k) {
-    stop("max_subspace must be at least k.", call. = FALSE)
-  }
-  pad <- if (is.null(pad)) min(k, max(block, 5L)) else as.integer(pad)
-  if (length(pad) != 1L || is.na(pad) || pad < 0L) {
-    stop("pad must be a non-negative integer.", call. = FALSE)
-  }
+  controls <- reference_block_restart_controls(
+    requested = k,
+    requested_name = "k",
+    limit = n,
+    block = block,
+    default_block = 2L,
+    max_subspace = max_subspace,
+    default_max_subspace = default_block_lanczos_max_subspace,
+    max_restarts = max_restarts,
+    pad = pad
+  )
+  k <- controls$requested
+  block <- controls$block
+  max_subspace <- controls$max_subspace
+  max_restarts <- controls$max_restarts
+  pad <- controls$pad
 
   q_lock <- matrix(0, n, 0L)
   locked_values <- numeric()
@@ -64,17 +53,9 @@ reference_block_subspace_iteration_thick_restart_hermitian <- function(op, k, ta
   locking_events <- 0L
   history <- list()
 
-  accepted <- reference_block_accept(
-    matrix(stats::rnorm(n * block), nrow = n, ncol = block),
-    q_lock,
-    matrix(0, n, 0L),
-    max_cols = max_subspace
-  )
+  accepted <- reference_block_initial_basis(n, block, q_lock, max_subspace)
   V <- accepted$Q
   ortho_passes <- ortho_passes + accepted$ortho_passes
-  if (ncol(V) == 0L) {
-    V <- diag(1, n, min(block, n))
-  }
   AV <- apply_operator(op, V)
   matvecs <- matvecs + 1L
 
@@ -101,19 +82,13 @@ reference_block_subspace_iteration_thick_restart_hermitian <- function(op, k, ta
 
     rr <- reference_block_lanczos_rr(op, V, AV, target = target, tol = tol)
     remaining <- k - length(locked_values)
-    take <- min(length(rr$values), max(remaining + pad, remaining))
+    take <- reference_block_take_count(length(rr$values), remaining, pad)
     if (take < 1L) {
       break
     }
     rr <- reference_block_lanczos_slice(rr, seq_len(take))
 
-    lock_now <- 0L
-    for (i in seq_len(min(remaining, length(rr$values)))) {
-      if (!isTRUE(rr$certificate$converged[[i]])) {
-        break
-      }
-      lock_now <- lock_now + 1L
-    }
+    lock_now <- reference_block_lock_count(rr$certificate$converged, remaining)
     if (lock_now > 0L) {
       locked_values <- c(locked_values, rr$values[seq_len(lock_now)])
       locked_vectors <- cbind(locked_vectors, rr$vectors[, seq_len(lock_now), drop = FALSE])
@@ -122,18 +97,14 @@ reference_block_subspace_iteration_thick_restart_hermitian <- function(op, k, ta
       locking_events <- locking_events + 1L
     }
 
-    history[[length(history) + 1L]] <- data.frame(
-      restart = restart,
-      iteration = iterations,
-      n_locked = length(locked_values),
-      max_residual = rr$certificate$max_residual
+    history[[length(history) + 1L]] <- reference_block_history_frame(
+      restart,
+      iterations,
+      length(locked_values),
+      rr$certificate
     )
 
-    unlocked_idx <- if (lock_now < length(rr$values)) {
-      seq.int(lock_now + 1L, length(rr$values))
-    } else {
-      integer()
-    }
+    unlocked_idx <- reference_block_unlocked_indices(lock_now, length(rr$values))
     last_candidates <- reference_block_lanczos_slice(rr, unlocked_idx)
     if (length(locked_values) >= k || restart == max_restarts) {
       restarts_used <- restart
@@ -141,7 +112,13 @@ reference_block_subspace_iteration_thick_restart_hermitian <- function(op, k, ta
     }
 
     k_remaining <- k - length(locked_values)
-    k_keep <- min(length(unlocked_idx), max(k_remaining + pad, k_remaining), max_subspace - block)
+    k_keep <- reference_block_keep_count(
+      length(unlocked_idx),
+      k_remaining,
+      pad,
+      max_subspace,
+      block
+    )
     if (k_keep > 0L) {
       keep_idx <- seq_len(k_keep)
       V <- last_candidates$vectors[, keep_idx, drop = FALSE]
@@ -238,26 +215,6 @@ reference_block_subspace_iteration_thick_restart_hermitian <- function(op, k, ta
 #' Lanczos recurrence; new callers must use the honestly-named function.
 reference_block_lanczos_thick_restart_hermitian <-
   reference_block_subspace_iteration_thick_restart_hermitian
-
-#' @keywords internal
-reference_block_accept <- function(X, Q_lock, V, max_cols,
-                                   tol = sqrt(.Machine$double.eps)) {
-  if (max_cols <= 0L || ncol(X) == 0L) {
-    return(list(Q = matrix(0, nrow(X), 0L), ortho_passes = 0L))
-  }
-  against <- cbind(Q_lock, V)
-  Y <- if (ncol(against) > 0L) {
-    reorthogonalize_against(X, against, passes = 2L)
-  } else {
-    X
-  }
-  decomp <- native_mgs2(Y, tol = tol)
-  Q <- decomp$Q
-  if (ncol(Q) > max_cols) {
-    Q <- Q[, seq_len(max_cols), drop = FALSE]
-  }
-  list(Q = Q, ortho_passes = 2L)
-}
 
 #' @keywords internal
 reference_block_lanczos_rr <- function(op, V, AV, target, tol) {

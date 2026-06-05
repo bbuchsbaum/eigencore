@@ -4,13 +4,18 @@
 \alias{lobpcg}
 \title{LOBPCG method descriptor.}
 \usage{
-lobpcg(maxit = 200L, preconditioner = NULL)
+lobpcg(maxit = 200L, preconditioner = NULL, constraints = NULL)
 }
 \arguments{
 \item{maxit}{Maximum LOBPCG iterations.}
 
 \item{preconditioner}{Optional function taking a residual block and
 returning a preconditioned block with the same dimensions.}
+
+\item{constraints}{Optional matrix whose columns span a subspace to deflate.
+Iterates are kept orthogonal to this subspace in the Euclidean or
+generalized \code{B} inner product. Native constrained LOBPCG is not promoted
+yet; constrained problems use the honest reference path.}
 }
 \value{
 An \code{eigencore_method} descriptor selecting LOBPCG. Built-in

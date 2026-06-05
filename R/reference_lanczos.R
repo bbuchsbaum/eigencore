@@ -23,14 +23,15 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
   }
 
   n <- op$dim[1L]
-  if (is.null(maxit)) {
-    maxit <- min(n, max(20L, 4L * k + 20L))
-  } else {
-    maxit <- min(n, as.integer(maxit))
-  }
-  if (maxit < k) {
-    stop("maxit/max_subspace must be at least k.", call. = FALSE)
-  }
+  controls <- reference_scalar_subspace_controls(
+    requested = k,
+    requested_name = "k",
+    limit = n,
+    maxit = maxit,
+    default_maxit = function(k) max(20L, 4L * k + 20L)
+  )
+  k <- controls$requested
+  maxit <- controls$maxit
 
   Q <- matrix(0, n, maxit)
   alpha <- numeric(maxit)

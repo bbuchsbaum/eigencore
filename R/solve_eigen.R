@@ -112,7 +112,19 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
     if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$max_restarts else NULL
   method_block <- controls$block %||%
     if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$block else 1L
-  iter <- if (plan_dispatches_native_lanczos(plan)) {
+  generalized_path <- identical(plan$method, generalized_lanczos_label())
+  iter <- if (generalized_path) {
+    reference_generalized_lanczos_hermitian(
+      a$A,
+      a$metric,
+      k = k,
+      target = a$target,
+      tol = tol,
+      maxit = maxit %||% method_maxit,
+      vectors = vectors,
+      reorthogonalize = method_reorth
+    )
+  } else if (plan_dispatches_native_lanczos(plan)) {
     if (method_block > 1L) {
       native_block_lanczos_hermitian(
         a$A,
@@ -147,7 +159,16 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
     )
   }
 
-  warning_msg <- if (plan_dispatches_native_lanczos(plan)) {
+  warning_msg <- if (generalized_path) {
+    if (!isTRUE(iter$certificate$passed)) {
+      paste0(
+        plan$method, " exhausted its current subspace before all ",
+        k, " requested generalized pairs converged"
+      )
+    } else {
+      "using reference generalized SPD B-orthogonal Lanczos refinement; native generalized Lanczos hot loop not yet implemented"
+    }
+  } else if (plan_dispatches_native_lanczos(plan)) {
     if (!isTRUE(iter$certificate$passed)) {
       paste0(
         plan$method, " exhausted its current budget and did not converge all ",
@@ -188,6 +209,8 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
       ortho_passes = iter$ortho_passes %||% iter$restart$ortho_passes %||% NA_integer_,
       locking_events = iter$locking_events %||% iter$restart$locking_events %||% NA_integer_,
       block = iter$block %||% iter$restart$block %||% NA_integer_,
+      generalized = isTRUE(iter$generalized),
+      metric_solve = iter$metric_solve %||% NULL,
       operator_allocations = iter$operator_allocations %||%
         iter$restart$operator_allocations %||%
         if (identical(iter$restart$kind, "block_full_subspace_dense_lapack")) 0 else NA_real_,
@@ -198,6 +221,57 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
       convergence_history = iter$convergence_history %||% NULL,
       restart = iter$restart %||% NULL,
       locked = iter$locked %||% which(iter$certificate$converged)
+    )
+  )
+}
+
+#' @keywords internal
+solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan) {
+  controls <- plan$controls %||% list()
+  native_path <- identical(plan$method, native_arnoldi_label())
+  default_maxit <- if (native_path) {
+    native_arnoldi_default_max_subspace(a$A$dim[[1L]], k)
+  } else {
+    max(k + 8L, 2L * k + 4L)
+  }
+  method_maxit <- maxit %||% controls$max_subspace %||% default_maxit
+  method_max_restarts <- controls$max_restarts %||% 0L
+  arnoldi_solver <- if (native_path) native_arnoldi_general else reference_arnoldi_general
+  iter <- arnoldi_solver(
+    a$A,
+    k = k,
+    target = a$target,
+    tol = tol,
+    maxit = method_maxit,
+    max_restarts = method_max_restarts,
+    vectors = vectors
+  )
+  warning_msg <- if (native_path && isTRUE(iter$certificate$passed)) {
+    "using native Arnoldi cycle with native Ritz extraction; right residuals certified"
+  } else if (native_path) {
+    "using native Arnoldi cycle with native Ritz extraction; result did not pass certificate"
+  } else if (isTRUE(iter$certificate$passed)) {
+    "using R-level reference Arnoldi prototype; native nonsymmetric Arnoldi not yet implemented"
+  } else {
+    "using R-level reference Arnoldi prototype; result did not pass certificate"
+  }
+  make_eigen_result(
+    values = iter$values,
+    vectors = iter$vectors,
+    certificate = iter$certificate,
+    iter = iter,
+    requested = k,
+    method_label = plan$method,
+    target_label_value = target_label(a$target),
+    plan = plan,
+    warnings = warning_msg,
+    extras = list(
+      residuals = iter$certificate$residuals,
+      backward_error = iter$certificate$backward_error,
+      orthogonality = iter$certificate$orthogonality,
+      restarts = iter$restart$restart_count,
+      restart = iter$restart,
+      locked = which(iter$certificate$converged)
     )
   )
 }
@@ -253,14 +327,10 @@ solve_eigen_dense_oracle <- function(a, k, tol, vectors, certify,
   vals <- eig$values[idx]
   vecs <- if (vectors && !is.null(eig$vectors)) eig$vectors[, idx, drop = FALSE] else NULL
 
-  # The SPD certification gate only certifies real eigenpairs. Non-Hermitian
-  # general eigenproblems can return complex eigenpairs from base::eigen(),
-  # which certify_eigen has no documented contract for. Skip certification
-  # with an explicit note rather than silently passing complex inputs through.
-  complex_eigenpairs <- is.complex(vals) ||
-    (is.complex(eig$values) && any(abs(Im(vals)) > 0)) ||
-    (!is.null(vecs) && is.complex(vecs))
-  cert <- if (certify && !is.null(vecs) && !complex_eigenpairs) {
+  general_dense <- is.null(B) && !identical(a$structure$kind, "hermitian")
+  cert <- if (certify && !is.null(vecs) && isTRUE(general_dense)) {
+    certify_dense_general_eigen(A, vals, vecs, tol = tol)
+  } else if (certify && !is.null(vecs)) {
     certify_eigen(
       A,
       vals,
@@ -269,15 +339,6 @@ solve_eigen_dense_oracle <- function(a, k, tol, vectors, certify,
       tol = tol,
       require_orthogonality = identical(a$structure$kind, "hermitian") || !is.null(B)
     )
-  } else if (complex_eigenpairs) {
-    empty_certificate(
-      tol,
-      note = paste0(
-        "general dense eigen oracle returned complex eigenpairs; ",
-        "the SPD certification gate has no complex contract. ",
-        "Inspect $values/$vectors directly."
-      )
-    )
   } else {
     empty_certificate(tol, note = "vectors not returned; residual certificate not computed")
   }
@@ -285,8 +346,8 @@ solve_eigen_dense_oracle <- function(a, k, tol, vectors, certify,
   warnings_msg <- if (identical(plan$method, "native dense generalized SPD LAPACK fallback")) {
     "using native dense generalized SPD LAPACK fallback; iterative engine not yet implemented"
   } else if (identical(plan$method, "dense LAPACK general eigen oracle (prototype fallback)")) {
-    if (complex_eigenpairs) {
-      "using dense general eigen oracle prototype; LAPACK returned complex eigenpairs which are not yet certified"
+    if (isTRUE(certify) && !is.null(vecs)) {
+      "using dense general eigen oracle prototype (non-Hermitian); right residuals certified"
     } else {
       "using dense general eigen oracle prototype (non-Hermitian)"
     }

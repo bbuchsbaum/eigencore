@@ -41,8 +41,12 @@ failure_rows <- function(case, target, methods, requested, message) {
     preconditioner_kind = NA_character_,
     preconditioner_native = NA,
     preconditioner_calls = NA_integer_,
+    metric_solve_kind = NA_character_,
+    metric_solve_label = NA_character_,
+    metric_solves = NA_integer_,
     seed = NA_integer_,
     pkg_version = as.character(utils::packageVersion("eigencore")),
+    solver_label = NA_character_,
     error = message,
     stringsAsFactors = FALSE
   )
@@ -62,6 +66,18 @@ with_case <- function(case, target, methods, requested, expr) {
   })
 }
 
+generalized_lobpcg_tridiagonal_shift <- function(A, target) {
+  kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
+  if (!identical(kind, "largest")) {
+    return(1e-3)
+  }
+  n <- nrow(A)
+  if (!is.finite(n) || n < 1L) {
+    return(1e-3)
+  }
+  max(1e-3, as.numeric(n))
+}
+
 benchmark_generalized_lobpcg_case <- function(A, B, k, target = smallest(),
                                               methods = c("eigencore", "base"),
                                               iterations = 3L, tol = 1e-8,
@@ -71,7 +87,9 @@ benchmark_generalized_lobpcg_case <- function(A, B, k, target = smallest(),
   methods <- intersect(
     methods,
     c(
+      "eigencore_auto",
       "eigencore",
+      "eigencore_lanczos_reference",
       "eigencore_shifted_diagonal",
       "eigencore_shifted_tridiagonal",
       "eigencore_constrained",
@@ -82,13 +100,32 @@ benchmark_generalized_lobpcg_case <- function(A, B, k, target = smallest(),
   B_cert <- B_dense %||% as.matrix(B)
   rows <- lapply(methods, function(method) {
     timed <- run_timed({
-      if (identical(method, "eigencore")) {
+      if (identical(method, "eigencore_auto")) {
+        eig_partial(
+          A,
+          B = B,
+          k = k,
+          target = target,
+          tol = tol,
+          allow_dense_fallback = "auto"
+        )
+      } else if (identical(method, "eigencore")) {
         eig_partial(
           A,
           B = B,
           k = k,
           target = target,
           method = lobpcg(maxit = maxit),
+          tol = tol,
+          allow_dense_fallback = "never"
+        )
+      } else if (identical(method, "eigencore_lanczos_reference")) {
+        eig_partial(
+          A,
+          B = B,
+          k = k,
+          target = target,
+          method = lanczos(max_subspace = max(maxit, k)),
           tol = tol,
           allow_dense_fallback = "never"
         )
@@ -104,7 +141,10 @@ benchmark_generalized_lobpcg_case <- function(A, B, k, target = smallest(),
           allow_dense_fallback = "never"
         )
       } else if (identical(method, "eigencore_shifted_tridiagonal")) {
-        preconditioner <- shifted_tridiagonal_preconditioner(A, shift = 1e-3)
+        preconditioner <- shifted_tridiagonal_preconditioner(
+          A,
+          shift = generalized_lobpcg_tridiagonal_shift(A, target)
+        )
         eig_partial(
           A,
           B = B,
@@ -171,8 +211,28 @@ benchmark_generalized_lobpcg_case <- function(A, B, k, target = smallest(),
       preconditioner_kind = result_preconditioner_field(timed$value, "kind"),
       preconditioner_native = result_preconditioner_field(timed$value, "native"),
       preconditioner_calls = result_preconditioner_calls(timed$value),
+      metric_solve_kind = {
+        restart <- timed$value$restart %||% list()
+        metric_solve <- restart$metric_solve %||% NA_character_
+        if (is.list(metric_solve)) {
+          metric_solve$kind %||% NA_character_
+        } else {
+          NA_character_
+        }
+      },
+      metric_solve_label = {
+        restart <- timed$value$restart %||% list()
+        metric_solve <- restart$metric_solve %||% NA_character_
+        if (is.list(metric_solve)) {
+          metric_solve$label %||% NA_character_
+        } else {
+          metric_solve
+        }
+      },
+      metric_solves = result_restart_integer(timed$value, "metric_solves"),
       seed = seed,
       pkg_version = as.character(utils::packageVersion("eigencore")),
+      solver_label = timed$value$method %||% NA_character_,
       stringsAsFactors = FALSE
     )
   })
@@ -182,10 +242,19 @@ benchmark_generalized_lobpcg_case <- function(A, B, k, target = smallest(),
 generalized_lobpcg_native_contract <- function(rows) {
   internal <- rows[rows$method %in% c(
     "eigencore",
+    "eigencore_lanczos_reference",
     "eigencore_shifted_diagonal",
     "eigencore_shifted_tridiagonal",
     "eigencore_constrained"
   ), , drop = FALSE]
+  if ("solver_label" %in% names(internal)) {
+    native_label <- eigencore:::native_generalized_lobpcg_label()
+    internal <- internal[
+      internal$solver_label == native_label,
+      ,
+      drop = FALSE
+    ]
+  }
   if (!nrow(internal)) {
     return(data.frame())
   }
@@ -222,6 +291,42 @@ generalized_lobpcg_native_contract <- function(rows) {
       preconditioner_gate = preconditioner_gate,
       constraint_gate = constraint_gate,
       passed = native_gate && preconditioner_gate && constraint_gate,
+      stringsAsFactors = FALSE
+    )
+  })
+  out <- do.call(rbind, out)
+  row.names(out) <- NULL
+  out
+}
+
+generalized_lanczos_reference_contract <- function(rows) {
+  internal <- rows[rows$method == "eigencore_lanczos_reference", , drop = FALSE]
+  if (!nrow(internal)) {
+    return(data.frame())
+  }
+  out <- lapply(seq_len(nrow(internal)), function(i) {
+    row <- internal[i, , drop = FALSE]
+    certificate_gate <- isTRUE(row$certificate_passed) && row$nconv >= row$requested
+    label_gate <- identical(row$solver_label, eigencore:::generalized_lanczos_label())
+    generalized_gate <- isTRUE(row$generalized)
+    reference_gate <- !isTRUE(row$native) &&
+      !isTRUE(row$native_kernels) &&
+      isTRUE(row$metric_solves > 0L) &&
+      isTRUE(nzchar(row$metric_solve_label))
+    orthogonality_gate <- certificate_gate &&
+      isTRUE(row$orthogonality_loss <= sqrt(.Machine$double.eps) * 10)
+    data.frame(
+      case = row$case,
+      method = row$method,
+      requested = row$requested,
+      nconv = row$nconv,
+      label_gate = label_gate,
+      generalized_gate = generalized_gate,
+      reference_gate = reference_gate,
+      orthogonality_gate = orthogonality_gate,
+      certificate_gate = certificate_gate,
+      passed = label_gate && generalized_gate && reference_gate &&
+        orthogonality_gate && certificate_gate,
       stringsAsFactors = FALSE
     )
   })
@@ -391,6 +496,7 @@ case_specs <- if (args$quick) {
       methods = c(
         "eigencore",
         "eigencore_shifted_diagonal",
+        "eigencore_shifted_tridiagonal",
         "base"
       ),
       subject = "eigencore"
@@ -403,6 +509,36 @@ case_specs <- if (args$quick) {
       A = Matrix::Diagonal(x = c(0, 1, 4, 9, 16, 25, 36, 49)),
       B = Matrix::Diagonal(x = c(1, 2, 3, 4, 5, 6, 7, 8)),
       constraints = matrix(c(1, rep(0, 7L)), ncol = 1L)
+    ),
+    list(
+      case = "diagonal_generalized_lanczos_ref_smallest",
+      n = 8L, k = 2L, target = smallest(), sparse = FALSE,
+      methods = c("eigencore_lanczos_reference", "eigencore", "base"),
+      subject = "eigencore_lanczos_reference",
+      A = Matrix::Diagonal(x = c(1, 4, 9, 16, 25, 36, 49, 64)),
+      B = Matrix::Diagonal(x = c(1, 2, 3, 4, 5, 6, 7, 8)),
+      performance_gate = FALSE
+    ),
+    list(
+      case = "sparse_csc_generalized_lanczos_ref_smallest",
+      n = 10L, k = 2L, target = smallest(), sparse = TRUE,
+      methods = c("eigencore_lanczos_reference", "eigencore", "base"),
+      subject = "eigencore_lanczos_reference",
+      A = Matrix::bandSparse(
+        10L,
+        k = c(-1, 0, 1),
+        diagonals = list(rep(-1, 9L), rep(2.5, 10L), rep(-1, 9L))
+      ),
+      B = methods::as(Matrix::bandSparse(
+        10L,
+        k = c(-1, 0, 1),
+        diagonals = list(
+          rep(-0.05, 9L),
+          seq(1.2, 2, length.out = 10L),
+          rep(-0.05, 9L)
+        )
+      ), "dgCMatrix"),
+      performance_gate = FALSE
     )
   )
 } else {
@@ -424,6 +560,7 @@ case_specs <- if (args$quick) {
       methods = c(
         "eigencore",
         "eigencore_shifted_diagonal",
+        "eigencore_shifted_tridiagonal",
         "base"
       ),
       subject = "eigencore"
@@ -431,14 +568,16 @@ case_specs <- if (args$quick) {
     list(
       case = "dense_generalized_partial_smallest",
       n = 180L, k = 8L, target = smallest(), sparse = FALSE,
-      methods = c("eigencore", "eigencore_shifted_diagonal", "base"),
-      subject = "eigencore"
+      methods = c("eigencore_auto", "base"),
+      subject = "eigencore_auto",
+      performance_gate = FALSE
     ),
     list(
       case = "dense_generalized_partial_largest",
       n = 180L, k = 8L, target = largest(), sparse = FALSE,
-      methods = c("eigencore", "eigencore_shifted_diagonal", "base"),
-      subject = "eigencore"
+      methods = c("eigencore_auto", "base"),
+      subject = "eigencore_auto",
+      performance_gate = FALSE
     ),
     list(
       case = "diagonal_generalized_constrained_largest",
@@ -448,13 +587,45 @@ case_specs <- if (args$quick) {
       A = Matrix::Diagonal(x = c(0, seq(1, 79)^2)),
       B = Matrix::Diagonal(x = seq(1, 80)),
       constraints = matrix(c(1, rep(0, 79L)), ncol = 1L)
+    ),
+    list(
+      case = "diagonal_generalized_lanczos_ref_smallest",
+      n = 80L, k = 8L, target = smallest(), sparse = FALSE,
+      methods = c("eigencore_lanczos_reference", "eigencore", "base"),
+      subject = "eigencore_lanczos_reference",
+      A = Matrix::Diagonal(x = seq_len(80L)^2),
+      B = Matrix::Diagonal(x = seq_len(80L)),
+      performance_gate = FALSE
+    ),
+    list(
+      case = "sparse_csc_generalized_lanczos_ref_smallest",
+      n = 80L, k = 8L, target = smallest(), sparse = TRUE,
+      methods = c("eigencore_lanczos_reference", "eigencore", "base"),
+      subject = "eigencore_lanczos_reference",
+      A = Matrix::bandSparse(
+        80L,
+        k = c(-1, 0, 1),
+        diagonals = list(rep(-1, 79L), rep(2.5, 80L), rep(-1, 79L))
+      ),
+      B = methods::as(Matrix::bandSparse(
+        80L,
+        k = c(-1, 0, 1),
+        diagonals = list(
+          rep(-0.05, 79L),
+          seq(1.2, 2, length.out = 80L),
+          rep(-0.05, 79L)
+        )
+      ), "dgCMatrix"),
+      performance_gate = FALSE
     )
   )
 }
 case_specs <- c(case_specs, generalized_lobpcg_adversarial_b_specs())
+case_specs <- filter_benchmark_cases(case_specs, args$cases)
 
 rows <- lapply(seq_along(case_specs), function(i) {
   spec <- case_specs[[i]]
+  message_benchmark_case("bench-generalized-lobpcg", spec)
   pair <- if (!is.null(spec$A) && !is.null(spec$B)) {
     list(A = spec$A, B = spec$B)
   } else {
@@ -466,6 +637,16 @@ rows <- lapply(seq_along(case_specs), function(i) {
     )
   }
   methods <- spec$methods %||% c("eigencore", "base")
+  if (!is.null(args$methods)) {
+    methods <- intersect(methods, args$methods)
+    if (!length(methods)) {
+      stop(
+        "--methods did not match any methods for case ",
+        benchmark_case_id(spec),
+        call. = FALSE
+      )
+    }
+  }
   case_rows <- with_case(
     spec$case,
     eigencore:::target_label(spec$target),
@@ -497,9 +678,18 @@ case_by_name <- stats::setNames(case_specs, vapply(case_specs, `[[`, character(1
 gate_rows <- lapply(split(rows, rows$case), function(case_rows) {
   requested <- unique(case_rows$requested)
   spec <- case_by_name[[unique(case_rows$case)]]
-  subject <- spec$subject %||% "eigencore"
+  subject <- args$subject %||% spec$subject %||% "eigencore"
+  if (!subject %in% unique(case_rows$method)) {
+    stop(
+      "--subject ", subject, " is not present for case ",
+      unique(case_rows$case),
+      call. = FALSE
+    )
+  }
   internal_methods <- c(
+    "eigencore_auto",
     "eigencore",
+    "eigencore_lanczos_reference",
     "eigencore_shifted_diagonal",
     "eigencore_shifted_tridiagonal",
     "eigencore_constrained"
@@ -528,6 +718,7 @@ gate_rows <- lapply(split(rows, rows$case), function(case_rows) {
 gates <- do.call(rbind, gate_rows)
 row.names(gates) <- NULL
 native_contract <- generalized_lobpcg_native_contract(rows)
+lanczos_contract <- generalized_lanczos_reference_contract(rows)
 adversarial_contract <- generalized_lobpcg_adversarial_b_contract(rows, case_specs)
 
 cat("Generalized SPD LOBPCG benchmark rows\n")
@@ -536,6 +727,8 @@ cat("\nGeneralized SPD LOBPCG gates\n")
 print(gates)
 cat("\nGeneralized SPD LOBPCG native contracts\n")
 print(native_contract)
+cat("\nGeneralized SPD B-orthogonal Lanczos reference contracts\n")
+print(lanczos_contract)
 cat("\nGeneralized SPD LOBPCG adversarial B contracts\n")
 print(adversarial_contract)
 
@@ -543,12 +736,14 @@ if (args$save) {
   message("saved rows: ", save_benchmark_result(rows, "generalized-lobpcg-rows"))
   message("saved gates: ", save_benchmark_result(gates, "generalized-lobpcg-gates"))
   message("saved native contracts: ", save_benchmark_result(native_contract, "generalized-lobpcg-native-contracts"))
+  message("saved generalized Lanczos contracts: ", save_benchmark_result(lanczos_contract, "generalized-lanczos-reference-contracts"))
   message("saved adversarial B contracts: ", save_benchmark_result(adversarial_contract, "generalized-lobpcg-adversarial-b-contracts"))
 }
 
 if (args$strict && (
   !all(gates$passed) ||
     !all(native_contract$passed) ||
+    !all(lanczos_contract$passed) ||
     !all(adversarial_contract$passed)
 )) {
   stop("Generalized SPD LOBPCG benchmark failed release gate.", call. = FALSE)

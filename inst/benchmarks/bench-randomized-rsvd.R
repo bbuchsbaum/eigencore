@@ -15,16 +15,10 @@ if (!"eigencore_randomized" %in% methods) {
 }
 
 cases <- randomized_rsvd_benchmark_cases(quick = args$quick)
-if (!is.null(args$cases)) {
-  wanted_cases <- args$cases
-  cases <- Filter(function(case) case$case %in% wanted_cases, cases)
-  missing_cases <- setdiff(wanted_cases, vapply(cases, `[[`, character(1), "case"))
-  if (length(missing_cases)) {
-    stop("Unknown randomized-rsvd benchmark case(s): ", paste(missing_cases, collapse = ", "), call. = FALSE)
-  }
-}
+cases <- filter_benchmark_cases(cases, args$cases)
 
 rows <- lapply(cases, function(case) {
+  message_benchmark_case("bench-randomized-rsvd", case)
   out <- benchmark_randomized_rsvd_case(
     case$A,
     rank = case$rank,

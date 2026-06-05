@@ -58,6 +58,59 @@ benchmark_args <- function(args = commandArgs(trailingOnly = TRUE)) {
   )
 }
 
+benchmark_case_field <- function(case, name) {
+  case[[name, exact = TRUE]]
+}
+
+benchmark_case_id <- function(case) {
+  id <- benchmark_case_field(case, "id")
+  if (!is.null(id)) {
+    return(id)
+  }
+  case_name <- benchmark_case_field(case, "case")
+  m <- benchmark_case_field(case, "m")
+  n <- benchmark_case_field(case, "n")
+  if (!is.null(m) && !is.null(n)) {
+    return(paste0(case_name, ":", m, "x", n))
+  }
+  if (is.null(n)) {
+    case_name
+  } else {
+    paste0(case_name, ":", n)
+  }
+}
+
+filter_benchmark_cases <- function(cases, selected = NULL) {
+  if (is.null(selected) || !length(selected)) {
+    return(cases)
+  }
+  ids <- vapply(cases, benchmark_case_id, character(1))
+  names <- vapply(cases, benchmark_case_field, character(1), name = "case")
+  keep <- ids %in% selected | names %in% selected
+  if (!any(keep)) {
+    stop(
+      "--cases did not match any benchmark cases. Available cases: ",
+      paste(ids, collapse = ", "),
+      call. = FALSE
+    )
+  }
+  cases[keep]
+}
+
+message_benchmark_case <- function(label, case) {
+  requested <- case$k %||% case$rank %||% NA_integer_
+  requested_name <- if (!is.na(requested)) {
+    if (!is.null(case$rank)) " rank=" else " k="
+  } else {
+    " requested="
+  }
+  message(
+    "[", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "] ",
+    label, ": ", benchmark_case_id(case), requested_name, requested
+  )
+  flush.console()
+}
+
 svd_surface_default_methods <- function(args) {
   methods <- c(
     "eigencore",
@@ -78,6 +131,7 @@ svd_surface_default_methods <- function(args) {
       "eigencore_golub_kahan_one_sided",
       "eigencore_irlba_lbd_one_sided",
       "eigencore_irlba_lbd_retained_native",
+      "eigencore_irlba_lbd_normal_scout",
       "eigencore_golub_kahan_projected",
       "eigencore_implicit_normal_lanczos",
       "eigencore_gram_dsyevx",
@@ -125,6 +179,7 @@ svd_internal_methods <- function() {
     "eigencore_golub_kahan_one_sided",
     "eigencore_irlba_lbd_one_sided",
     "eigencore_irlba_lbd_retained_native",
+    "eigencore_irlba_lbd_normal_scout",
     "eigencore_golub_kahan_projected",
     "eigencore_implicit_normal_lanczos",
     "eigencore_gram_dsyevx",
@@ -202,18 +257,21 @@ randomized_rsvd_benchmark_cases <- function(quick = FALSE) {
     return(list(
       list(
         case = "exact_low_rank_dense",
+        id = "exact_low_rank_dense:120x80",
         A = nearly_low_rank_svd_matrix(120L, 80L, rank = 8L, noise = 0, seed = 1601L),
         rank = 6L,
         seed = 1601L
       ),
       list(
         case = "slow_decay_dense",
+        id = "slow_decay_dense:140x90",
         A = slow_decay_svd_matrix(140L, 90L, decay = 0.25, seed = 1602L),
         rank = 8L,
         seed = 1602L
       ),
       list(
         case = "low_rank_sparse",
+        id = "low_rank_sparse:140x90",
         A = {
           set.seed(1603L)
           Matrix::rsparsematrix(140L, 12L, density = 0.12) %*%
@@ -227,18 +285,21 @@ randomized_rsvd_benchmark_cases <- function(quick = FALSE) {
   list(
     list(
       case = "exact_low_rank_dense",
+      id = "exact_low_rank_dense:2000x500",
       A = nearly_low_rank_svd_matrix(2000L, 500L, rank = 60L, noise = 0, seed = 1701L),
       rank = 50L,
       seed = 1701L
     ),
     list(
       case = "nearly_low_rank_dense",
+      id = "nearly_low_rank_dense:2000x500",
       A = nearly_low_rank_svd_matrix(2000L, 500L, rank = 80L, noise = 1e-3, seed = 1702L),
       rank = 50L,
       seed = 1702L
     ),
     list(
       case = "slow_decay_dense",
+      id = "slow_decay_dense:2000x500",
       A = slow_decay_svd_matrix(2000L, 500L, decay = 0.25, seed = 1703L),
       rank = 50L,
       seed = 1703L
@@ -332,7 +393,22 @@ bench_methods <- function(kind, requested = NULL) {
   } else {
     eigencore:::available_svd_methods()
   }
-  if (!is.null(requested)) intersect(requested, methods) else methods
+  if (is.null(requested)) {
+    return(methods)
+  }
+  missing <- setdiff(requested, methods)
+  if (length(missing)) {
+    label <- if (identical(kind, "eigen")) "eigen" else "SVD"
+    stop(
+      "Requested ", label, " benchmark method(s) unavailable in the loaded ",
+      "eigencore namespace: ", paste(missing, collapse = ", "), ". ",
+      "Available methods: ", paste(methods, collapse = ", "), ". ",
+      "If this is a source checkout benchmark, reinstall eigencore or run the ",
+      "script under pkgload::load_all().",
+      call. = FALSE
+    )
+  }
+  requested
 }
 
 run_timed <- function(expr, iterations = 3L, seed = NULL) {
@@ -1205,7 +1281,7 @@ evaluate_randomized_rsvd_gate <- function(rows, subject = "eigencore_randomized"
   accuracy_gate <- isTRUE(sv_ratio <= accuracy_multiplier) &&
     (is.na(left_ratio) || isTRUE(left_ratio <= accuracy_multiplier)) &&
     (is.na(right_ratio) || isTRUE(right_ratio <= accuracy_multiplier))
-  speed_gate <- isTRUE(speed_ratio >= speed_ratio_required)
+  speed_gate <- baseline_certified && isTRUE(speed_ratio >= speed_ratio_required)
   data.frame(
     subject = subject,
     baseline = baseline,
@@ -1220,7 +1296,7 @@ evaluate_randomized_rsvd_gate <- function(rows, subject = "eigencore_randomized"
     right_subspace_error_ratio_vs_rsvd = right_ratio,
     speed_gate = speed_gate,
     accuracy_gate = accuracy_gate,
-    passed = subject_certified && speed_gate && accuracy_gate,
+    passed = subject_certified && baseline_certified && speed_gate && accuracy_gate,
     note = if (!baseline_certified) {
       "rsvd baseline did not satisfy eigencore certificate"
     } else {
@@ -1355,10 +1431,52 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
         result_restart_integer(fit, "irlba_lbd_total_matvecs"),
       irlba_lbd_retained_native_fallback_reason =
         result_restart_character(fit, "irlba_lbd_retained_native_fallback_reason"),
+      irlba_lbd_restart_state_kind =
+        result_restart_character(fit, "irlba_lbd_restart_state_kind"),
+      irlba_lbd_recurrence_available =
+        result_restart_logical(fit, "irlba_lbd_recurrence_available"),
+      irlba_lbd_augmented_recurrence =
+        result_restart_logical(fit, "irlba_lbd_augmented_recurrence"),
+      irlba_lbd_retained_seed_strategy =
+        result_restart_character(fit, "irlba_lbd_retained_seed_strategy"),
+      irlba_lbd_retained_from_scout =
+        result_restart_integer(fit, "irlba_lbd_retained_from_scout"),
+      irlba_lbd_retained_padding =
+        result_restart_integer(fit, "irlba_lbd_retained_padding"),
+      irlba_lbd_retained_fixed_work_attempts =
+        result_restart_integer(fit, "irlba_lbd_retained_fixed_work_attempts"),
       irlba_lbd_scout_matvecs =
         result_restart_integer(fit, "irlba_lbd_scout_matvecs"),
       irlba_lbd_scout_certificate_passed =
         result_restart_logical(fit, "irlba_lbd_scout_certificate_passed"),
+      irlba_lbd_normal_scout_attempted =
+        result_restart_logical(fit, "irlba_lbd_normal_scout_attempted"),
+      irlba_lbd_normal_scout_steps =
+        result_restart_character(fit, "irlba_lbd_normal_scout_steps"),
+      irlba_lbd_normal_scout_chosen_steps =
+        result_restart_integer(fit, "irlba_lbd_normal_scout_chosen_steps"),
+      irlba_lbd_normal_scout_count =
+        result_restart_integer(fit, "irlba_lbd_normal_scout_count"),
+      irlba_lbd_normal_scout_side =
+        result_restart_character(fit, "irlba_lbd_normal_scout_side"),
+      irlba_lbd_normal_scout_materialized =
+        result_restart_logical(fit, "irlba_lbd_normal_scout_materialized"),
+      irlba_lbd_normal_scout_certificate_trusted =
+        result_restart_logical(fit, "irlba_lbd_normal_scout_certificate_trusted"),
+      irlba_lbd_normal_scout_matvecs =
+        result_restart_integer(fit, "irlba_lbd_normal_scout_matvecs"),
+      irlba_lbd_normal_scout_operator_matvecs =
+        result_restart_integer(fit, "irlba_lbd_normal_scout_operator_matvecs"),
+      irlba_lbd_normal_scout_iterations =
+        result_restart_integer(fit, "irlba_lbd_normal_scout_iterations"),
+      irlba_lbd_normal_scout_accounted_seconds =
+        result_restart_numeric(fit, "irlba_lbd_normal_scout_accounted_seconds"),
+      irlba_lbd_normal_scout_polish_matvecs =
+        result_restart_integer(fit, "irlba_lbd_normal_scout_polish_matvecs"),
+      irlba_lbd_normal_scout_polish_iterations =
+        result_restart_integer(fit, "irlba_lbd_normal_scout_polish_iterations"),
+      irlba_lbd_normal_scout_polish_accounted_seconds =
+        result_restart_numeric(fit, "irlba_lbd_normal_scout_polish_accounted_seconds"),
       certified_attempt = result_certified_attempt(fit),
       final_attempt_matvecs = result_restart_integer(fit, "final_attempt_matvecs"),
       final_attempt_ortho_passes = result_restart_integer(fit, "final_attempt_ortho_passes"),

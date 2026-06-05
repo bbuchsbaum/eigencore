@@ -66,6 +66,9 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
   if (plan_dispatches_lanczos(plan)) {
     return(solve_eigen_lanczos(a, k, method, tol, maxit, vectors, certify, plan))
   }
+  if (plan_dispatches_arnoldi(plan)) {
+    return(solve_eigen_arnoldi(a, k, method, tol, maxit, vectors, certify, plan))
+  }
   if (identical(plan$method, "native dense Hermitian LAPACK fallback")) {
     return(solve_eigen_native_dense_hermitian(a, k, tol, vectors, certify,
                                               allow_dense_fallback, plan))
@@ -158,9 +161,16 @@ plan_dispatches_lanczos <- function(plan) {
     "native scalar thick-restart Hermitian Lanczos",
     "native block Hermitian Lanczos thick-restart candidate",
     "native block Hermitian Lanczos (thick restart, locking)",
+    generalized_lanczos_label(),
     "reference Hermitian Lanczos (target unsupported by native path)",
     "reference Hermitian Lanczos (prototype/oracle fallback)"
   )
+}
+
+#' @keywords internal
+plan_dispatches_arnoldi <- function(plan) {
+  identical(plan$method, reference_arnoldi_label()) ||
+    identical(plan$method, native_arnoldi_label())
 }
 
 #' @keywords internal
@@ -179,11 +189,15 @@ plan_dispatches_golub_kahan <- function(plan) {
 
 #' @keywords internal
 should_use_lanczos <- function(problem, method, k = NULL) {
-  if (!is.null(problem$metric)) {
-    return(FALSE)
-  }
   if (!identical(problem$structure$kind, "hermitian")) {
     return(FALSE)
+  }
+  if (!is.null(problem$metric)) {
+    return(
+      inherits(method, "eigencore_method") &&
+        identical(method$kind, "lanczos") &&
+        generalized_lanczos_supported(problem$A, problem$metric, target = problem$target)
+    )
   }
   if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) {
     return(TRUE)

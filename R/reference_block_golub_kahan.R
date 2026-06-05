@@ -15,38 +15,28 @@ reference_block_golub_kahan_thick_restart_svd <- function(op, rank, target = lar
   m <- op$dim[[1L]]
   n <- op$dim[[2L]]
   limit <- min(m, n)
-  rank <- as.integer(rank)
-  if (length(rank) != 1L || is.na(rank) || rank < 1L) {
-    stop("rank must be a positive integer.", call. = FALSE)
-  }
-  rank <- min(rank, limit)
-
-  block <- if (is.null(block)) {
-    min(8L, max(2L, as.integer(ceiling(rank / 4))))
-  } else {
-    as.integer(block)
-  }
-  if (length(block) != 1L || is.na(block) || block < 1L) {
-    stop("block must be a positive integer.", call. = FALSE)
-  }
-  block <- min(block, limit)
-
-  if (is.null(max_subspace)) {
-    max_subspace <- max(3L * rank + 20L, 6L * block + 20L)
-  }
-  max_subspace <- min(n, as.integer(max_subspace))
-  if (length(max_subspace) != 1L || is.na(max_subspace) || max_subspace < rank) {
-    stop("max_subspace must be at least rank.", call. = FALSE)
-  }
-
-  max_restarts <- as.integer(max_restarts)
-  if (length(max_restarts) != 1L || is.na(max_restarts) || max_restarts < 0L) {
-    stop("max_restarts must be a non-negative integer.", call. = FALSE)
-  }
-  pad <- if (is.null(pad)) min(rank, max(block, 5L)) else as.integer(pad)
-  if (length(pad) != 1L || is.na(pad) || pad < 0L) {
-    stop("pad must be a non-negative integer.", call. = FALSE)
-  }
+  controls <- reference_block_restart_controls(
+    requested = rank,
+    requested_name = "rank",
+    limit = limit,
+    block = block,
+    default_block = function(requested) {
+      min(8L, max(2L, as.integer(ceiling(requested / 4))))
+    },
+    max_subspace = max_subspace,
+    default_max_subspace = function(requested, block) {
+      max(3L * requested + 20L, 6L * block + 20L)
+    },
+    max_restarts = max_restarts,
+    pad = pad,
+    clamp_requested = TRUE,
+    clamp_block = TRUE
+  )
+  rank <- controls$requested
+  block <- controls$block
+  max_subspace <- controls$max_subspace
+  max_restarts <- controls$max_restarts
+  pad <- controls$pad
 
   qv_lock <- matrix(0, n, 0L)
   qu_lock <- matrix(0, m, 0L)
@@ -61,17 +51,9 @@ reference_block_golub_kahan_thick_restart_svd <- function(op, rank, target = lar
   locking_events <- 0L
   history <- list()
 
-  accepted <- reference_block_accept(
-    matrix(stats::rnorm(n * block), nrow = n, ncol = block),
-    qv_lock,
-    matrix(0, n, 0L),
-    max_cols = max_subspace
-  )
-  ortho_passes <- ortho_passes + accepted$ortho_passes
+  accepted <- reference_block_initial_basis(n, block, qv_lock, max_subspace)
   V <- accepted$Q
-  if (ncol(V) == 0L) {
-    V <- diag(1, n, min(block, n))
-  }
+  ortho_passes <- ortho_passes + accepted$ortho_passes
   AV <- apply_operator(op, V)
   matvecs <- matvecs + 1L
   U_basis <- matrix(0, m, 0L)
@@ -117,19 +99,13 @@ reference_block_golub_kahan_thick_restart_svd <- function(op, rank, target = lar
     matvecs <- matvecs + rr$matvecs
     adjoint_matvecs <- adjoint_matvecs + rr$adjoint_matvecs
     remaining <- rank - length(locked_d)
-    take <- min(length(rr$d), max(remaining + pad, remaining))
+    take <- reference_block_take_count(length(rr$d), remaining, pad)
     if (take < 1L) {
       break
     }
     rr <- reference_block_golub_kahan_slice(rr, seq_len(take))
 
-    lock_now <- 0L
-    for (i in seq_len(min(remaining, length(rr$d)))) {
-      if (!isTRUE(rr$certificate$converged[[i]])) {
-        break
-      }
-      lock_now <- lock_now + 1L
-    }
+    lock_now <- reference_block_lock_count(rr$certificate$converged, remaining)
     if (lock_now > 0L) {
       locked_d <- c(locked_d, rr$d[seq_len(lock_now)])
       locked_u <- cbind(locked_u, rr$u[, seq_len(lock_now), drop = FALSE])
@@ -140,19 +116,14 @@ reference_block_golub_kahan_thick_restart_svd <- function(op, rank, target = lar
       locking_events <- locking_events + 1L
     }
 
-    history[[length(history) + 1L]] <- data.frame(
-      restart = restart,
-      iteration = iterations,
-      n_locked = length(locked_d),
-      max_residual = rr$certificate$max_residual,
-      max_backward_error = rr$certificate$max_backward_error
+    history[[length(history) + 1L]] <- reference_block_history_frame(
+      restart,
+      iterations,
+      length(locked_d),
+      rr$certificate
     )
 
-    unlocked_idx <- if (lock_now < length(rr$d)) {
-      seq.int(lock_now + 1L, length(rr$d))
-    } else {
-      integer()
-    }
+    unlocked_idx <- reference_block_unlocked_indices(lock_now, length(rr$d))
     last_candidates <- reference_block_golub_kahan_slice(rr, unlocked_idx)
     if (length(locked_d) >= rank || restart == max_restarts) {
       restarts_used <- restart
@@ -160,7 +131,13 @@ reference_block_golub_kahan_thick_restart_svd <- function(op, rank, target = lar
     }
 
     remaining <- rank - length(locked_d)
-    k_keep <- min(length(unlocked_idx), max(remaining + pad, remaining), max_subspace - block)
+    k_keep <- reference_block_keep_count(
+      length(unlocked_idx),
+      remaining,
+      pad,
+      max_subspace,
+      block
+    )
     if (k_keep > 0L) {
       keep_idx <- seq_len(k_keep)
       V <- last_candidates$v[, keep_idx, drop = FALSE]

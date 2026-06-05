@@ -91,6 +91,21 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
     }
   }
   if (dims[1L] >= dims[2L]) {
+    if (identical(vectors, "both") && isTRUE(certify) && identical(target_kind, "largest")) {
+      fast_native <- .Call(
+        "eigencore_csc_right_gram_svd_fast_result",
+        methods::slot(A, "i"),
+        methods::slot(A, "p"),
+        methods::slot(A, "x"),
+        methods::slot(A, "Dim"),
+        as.integer(rank),
+        as.numeric(tol),
+        PACKAGE = "eigencore"
+      )
+      if (!is.null(fast_native)) {
+        return(fast_native)
+      }
+    }
     native <- .Call(
       "eigencore_csc_right_gram_svd",
       methods::slot(A, "i"),

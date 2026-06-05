@@ -33,6 +33,7 @@ test_that("planner labels for SVD paths match the kernel that actually runs", {
   expect_identical(fit_csc$restart$kind, "gram_svd_special_case")
   expect_identical(fit_csc$plan$controls$gram_side, "right")
   expect_identical(fit_csc$plan$controls$gram_dimension, 30L)
+  expect_true(isTRUE(fit_csc$fastpath_native_result))
   expect_true(fit_csc$plan$controls$certified_in_original_coordinates)
   expect_true(fit_csc$restart$certified_in_original_coordinates)
   expect_certificate_clean(fit_csc)
@@ -76,6 +77,7 @@ test_that("tall-skinny sparse SVD certifies its top triplets", {
   expect_identical(fit$restart$kind, "gram_svd_special_case")
   expect_identical(fit$restart$gram_side, "right")
   expect_identical(fit$restart$native_gram_kernel, "csc_right_gram")
+  expect_true(isTRUE(fit$fastpath_native_result))
   expect_identical(fit$restart$native_gram_eigensolver, "lapack_dsyevr")
   expect_false(fit$restart$normal_operator_implicit)
   expect_true(fit$restart$materialized_gram)
@@ -363,6 +365,12 @@ test_that("retained IRLBA LBD native core certifies or falls back honestly", {
   expect_true(fit$restart$retained_restart)
   expect_true(fit$restart$native_attempt_certification)
   expect_equal(fit$restart$retained_restart_abi_version, 1L)
+  expect_identical(fit$restart$irlba_lbd_restart_state_kind, "ritz_subspace_only")
+  expect_false(fit$restart$irlba_lbd_recurrence_available)
+  expect_false(fit$restart$irlba_lbd_augmented_recurrence)
+  expect_identical(fit$restart$irlba_lbd_retained_seed_strategy, "ritz_subspace_seeded_fixed_work")
+  expect_equal(fit$restart$irlba_lbd_retained_from_scout, 5L)
+  expect_equal(fit$restart$irlba_lbd_retained_padding, 2L)
   expect_identical(fit$restart$internal_orientation, "transposed_wide_operator")
   expect_true(fit$restart$internal_transposed)
   if (isTRUE(fit$restart$fallback_used)) {
@@ -375,6 +383,73 @@ test_that("retained IRLBA LBD native core certifies or falls back honestly", {
     expect_equal(fit$restart$irlba_lbd_total_matvecs, fit$matvecs)
     expect_false(fit$restart$irlba_lbd_scout_certificate_passed)
   }
+  expect_certificate_clean(fit)
+})
+
+test_that("retained IRLBA benchmark candidate avoids repeated fixed-work native scouts", {
+  set.seed(702)
+  wide <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))
+  fit <- eigencore:::run_svd_method(
+    "eigencore_irlba_lbd_retained_native",
+    wide,
+    rank = 5L,
+    tol = 1e-8,
+    seed = 702L
+  )
+
+  expect_true(fit$certificate$passed)
+  expect_true(fit$restart$irlba_lbd_retained_native_attempted)
+  expect_true(fit$restart$fallback_attempted)
+  expect_true(fit$restart$fallback_used)
+  expect_identical(fit$restart$irlba_lbd_restart_state_kind, "ritz_subspace_only")
+  expect_false(fit$restart$irlba_lbd_recurrence_available)
+  expect_false(fit$restart$irlba_lbd_augmented_recurrence)
+  expect_equal(fit$restart$irlba_lbd_retained_fixed_work_attempts, 1L)
+  expect_equal(fit$restart$irlba_lbd_scout_matvecs, 24L)
+  expect_equal(fit$restart$irlba_lbd_retained_matvecs, 24L)
+  expect_equal(
+    fit$matvecs,
+    fit$restart$irlba_lbd_scout_matvecs +
+      fit$restart$irlba_lbd_retained_matvecs +
+      fit$restart$irlba_lbd_fallback_matvecs
+  )
+  expect_equal(fit$restart$irlba_lbd_total_matvecs, fit$matvecs)
+  expect_certificate_clean(fit)
+})
+
+test_that("normal-scout IRLBA benchmark candidate only trusts final SVD certificate", {
+  set.seed(702)
+  wide <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))
+  fit <- eigencore:::run_svd_method(
+    "eigencore_irlba_lbd_normal_scout",
+    wide,
+    rank = 5L,
+    tol = 1e-8,
+    seed = 702L
+  )
+
+  expect_true(fit$certificate$passed)
+  expect_true(fit$restart$irlba_lbd_normal_scout_attempted)
+  expect_equal(fit$restart$irlba_lbd_normal_scout_steps, "8,12,16,20")
+  expect_equal(fit$restart$irlba_lbd_normal_scout_chosen_steps, 20L)
+  expect_equal(fit$restart$irlba_lbd_normal_scout_count, 4L)
+  expect_equal(fit$restart$irlba_lbd_normal_scout_side, "left")
+  expect_false(fit$restart$irlba_lbd_normal_scout_materialized)
+  expect_false(fit$restart$irlba_lbd_normal_scout_certificate_trusted)
+  expect_true(fit$restart$irlba_lbd_fallback_warm_started)
+  expect_gt(fit$restart$irlba_lbd_normal_scout_matvecs, 0L)
+  expect_equal(
+    fit$restart$irlba_lbd_normal_scout_operator_matvecs,
+    2L * fit$restart$irlba_lbd_normal_scout_matvecs
+  )
+  expect_equal(
+    tail(fit$restart$attempt_history$certificate_passed, 1L),
+    TRUE
+  )
+  expect_true(all(!head(
+    fit$restart$attempt_history$certificate_passed,
+    fit$restart$irlba_lbd_normal_scout_count
+  )))
   expect_certificate_clean(fit)
 })
 

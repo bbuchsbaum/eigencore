@@ -5,6 +5,7 @@ certificate <- function(x, ...) {
 
 #' Extract diagnostics.
 diagnostics <- function(x, ...) {
+  restart <- if (is.list(x$restart)) x$restart else NULL
   list(
     residuals = x$residuals,
     backward_error = x$backward_error,
@@ -14,9 +15,9 @@ diagnostics <- function(x, ...) {
     matvecs = x$matvecs,
     preconditioner_calls = x$preconditioner_calls,
     convergence_history = x$convergence_history,
-    restart = x$restart,
-    stage_seconds = x$stage_seconds %||% x$restart$stage_seconds %||% numeric(),
-    preconditioner = x$preconditioner %||% x$restart$preconditioner %||% NULL,
+    restart = restart,
+    stage_seconds = x$stage_seconds %||% restart$stage_seconds %||% numeric(),
+    preconditioner = x$preconditioner %||% restart$preconditioner %||% NULL,
     locked = x$locked,
     method = x$method,
     plan = x$plan,
@@ -115,6 +116,67 @@ certify_eigen_operator <- function(Aop, values, vectors, Bop = NULL, tol = 1e-8)
     scale = scale,
     norm_bound_type = paste(c(norm_A$norm_bound_type, norm_B$norm_bound_type), collapse = "+"),
     scale_is_estimate = isTRUE(norm_A$scale_is_estimate) || isTRUE(norm_B$scale_is_estimate)
+  )
+}
+
+#' @keywords internal
+certify_dense_general_eigen <- function(A, values, vectors, tol = 1e-8) {
+  A <- as.matrix(A)
+  vectors <- as.matrix(vectors)
+  values <- as.vector(values)
+  k <- length(values)
+  if (ncol(vectors) != k) {
+    stop("values and vectors must have compatible dimensions.", call. = FALSE)
+  }
+  residual_matrix <- A %*% vectors - sweep(vectors, 2L, values, `*`)
+  residuals <- col_norms(residual_matrix)
+  scale <- eigen_backward_scale(matrix_norm(A), 1, values, vectors)
+  backward <- residuals / pmax(scale, .Machine$double.eps)
+  gram <- crossprod(vectors)
+  orth <- max(abs(gram - diag(k)))
+  new_certificate(
+    tol = tol,
+    residuals = residuals,
+    backward_error = backward,
+    orthogonality = orth,
+    converged = backward <= tol,
+    scale = scale,
+    notes = "right residual certificate for dense general eigenpairs; eigenvector orthogonality is not required",
+    certificate_type = "right_residual_backward_error",
+    norm_bound_type = "frobenius_exact",
+    require_orthogonality = FALSE
+  )
+}
+
+#' @keywords internal
+certify_general_eigen_operator <- function(Aop, values, vectors, tol = 1e-8) {
+  values <- as.vector(values)
+  vectors <- as.matrix(vectors)
+  source <- source_or_null(Aop) %||% Aop$metadata$matrix %||% NULL
+  Av <- if (is.complex(vectors) && !is.null(source)) {
+    as.matrix(as.matrix(source) %*% vectors)
+  } else {
+    apply_operator(Aop, vectors)
+  }
+  residual_matrix <- Av - sweep(vectors, 2L, values, `*`)
+  residuals <- col_norms(residual_matrix)
+  norm_A <- operator_norm_for_certificate_info(Aop)
+  scale <- eigen_backward_scale(norm_A$value, 1, values, vectors)
+  backward <- residuals / pmax(scale, .Machine$double.eps)
+  gram <- crossprod(vectors)
+  orth <- max(abs(gram - diag(length(values))))
+  new_certificate(
+    tol = tol,
+    residuals = residuals,
+    backward_error = backward,
+    orthogonality = orth,
+    converged = backward <= tol,
+    scale = scale,
+    notes = "right residual certificate for general eigenpairs; eigenvector orthogonality is not required",
+    certificate_type = "right_residual_backward_error",
+    norm_bound_type = norm_A$norm_bound_type,
+    scale_is_estimate = isTRUE(norm_A$scale_is_estimate),
+    require_orthogonality = FALSE
   )
 }
 
@@ -402,6 +464,9 @@ print.eigencore_certificate <- function(x, ...) {
 
 #' @keywords internal
 col_norms <- function(x) {
+  if (is.complex(x)) {
+    return(sqrt(colSums(Mod(as.matrix(x))^2)))
+  }
   .Call("eigencore_col_norms", as.matrix(x), PACKAGE = "eigencore")
 }
 

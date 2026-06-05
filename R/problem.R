@@ -78,7 +78,12 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
                              is_dense_source, is_native_csc)
   } else if (inherits(method, "eigencore_method") && method$kind != "auto") {
     if (identical(method$kind, "lanczos")) {
-      if (!is_hermitian) {
+      if (has_metric && is_hermitian &&
+          generalized_lanczos_supported(problem$A, problem$metric, target = problem$target)) {
+        generalized_lanczos_label()
+      } else if (has_metric && is_hermitian) {
+        "reference generalized SPD LOBPCG prototype"
+      } else if (!is_hermitian) {
         "dense LAPACK eigen oracle (Lanczos requires Hermitian structure)"
       } else if (native_lanczos_supported && lanczos_block > 1L) {
         "native block Hermitian Lanczos (thick restart, locking)"
@@ -130,6 +135,15 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
     "native block Hermitian Lanczos (thick restart, locking)"
   } else if (is_hermitian && is_native_csc && native_lanczos_target_supported(problem$target)) {
     "native scalar thick-restart Hermitian Lanczos"
+  } else if (!is_hermitian && !has_metric &&
+      reference_arnoldi_target_supported(problem$target) &&
+      native_arnoldi_available(problem$A) &&
+      (is_native_csc || is_dense_source)) {
+    native_arnoldi_label()
+  } else if (!is_hermitian && !has_metric &&
+      reference_arnoldi_target_supported(problem$target) &&
+      (is_native_csc || is.null(source_or_null(problem$A)))) {
+    reference_arnoldi_label()
   } else if (is_hermitian && is_native_csc) {
     "reference Hermitian Lanczos (target unsupported by native path)"
   } else if (is_hermitian && is.null(source_or_null(problem$A))) {
@@ -161,6 +175,13 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
     "dense oracle prototype"
   }
   controls <- lanczos_plan_controls(problem, k = k, method = method, chosen = chosen)
+  if (identical(chosen, native_arnoldi_label()) ||
+      identical(chosen, reference_arnoldi_label())) {
+    controls <- arnoldi_plan_controls(problem, k = k, chosen = chosen)
+  }
+  if (identical(chosen, generalized_lanczos_label())) {
+    controls <- generalized_lanczos_plan_controls(problem, k = k, method = method)
+  }
   if (grepl("LOBPCG", chosen, fixed = TRUE)) {
     controls <- lobpcg_plan_controls(method)
   }
@@ -230,6 +251,35 @@ plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ..
     reasons = reasons,
     fallback = fallback,
     controls = controls
+  )
+}
+
+#' @keywords internal
+arnoldi_plan_controls <- function(problem, k, chosen) {
+  n <- as.integer(problem$A$dim[1L])
+  k <- as.integer(k)
+  native_path <- identical(chosen, native_arnoldi_label())
+  source_matrix <- source_or_null(problem$A)
+  dense_native_path <- native_path && is.matrix(source_matrix) && is.double(source_matrix)
+  default_restarts <- if (native_path) 5L else 0L
+  max_restarts <- getOption("eigencore.arnoldi_max_restarts", default_restarts)
+  max_restarts <- as.integer(max_restarts)
+  if (length(max_restarts) != 1L || is.na(max_restarts) || max_restarts < 0L) {
+    max_restarts <- default_restarts
+  }
+  max_subspace <- if (dense_native_path) {
+    n
+  } else if (native_path) {
+    native_arnoldi_default_max_subspace(n, k)
+  } else {
+    min(n, max(k + 8L, 2L * k + 4L))
+  }
+  list(
+    max_subspace = max_subspace,
+    max_restarts = max_restarts,
+    restart = if (native_path) "native Arnoldi cycle restart budget" else "reference Arnoldi restart budget",
+    ritz_extraction_native = native_path,
+    certification_policy = "right residual certificate on original nonsymmetric eigenproblem"
   )
 }
 
@@ -371,6 +421,12 @@ promoted_block_lanczos_controls <- function(problem, k) {
   if (is.matrix(source) && is.double(source) && n <= dense_full_n &&
       (k / n) <= dense_max_fraction) {
     return(list(block = 2L, max_subspace = n))
+  }
+  # Sparse block auto-promotion is diagnostic-only until non-quick installed G1
+  # gates are green. Explicit lanczos(block > 1) remains available.
+  promote_sparse <- isTRUE(getOption("eigencore.promote_sparse_block_lanczos", FALSE))
+  if (!promote_sparse) {
+    return(NULL)
   }
   if (identical(storage, "dgCMatrix") && n >= 5000L) {
     block <- 4L

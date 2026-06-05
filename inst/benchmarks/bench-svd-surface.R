@@ -101,34 +101,28 @@ projected_stop_comparison <- function(result) {
 
 cases <- if (args$quick) {
   list(
-    list(case = "tall_sparse", A = tall_skinny_sparse(600L, 90L, density = 0.03, seed = 701), rank = 5L),
-    list(case = "wide_sparse", A = Matrix::t(tall_skinny_sparse(600L, 90L, density = 0.03, seed = 702)), rank = 5L),
-    list(case = "rank_deficient_sparse", A = rank_deficient_sparse(160L, 50L, 4L, seed = 703), rank = 6L),
-    list(case = "clustered_dense", A = clustered_dense_svd(120L, 60L, 6L, seed = 704), rank = 6L),
-    list(case = "slow_decay_dense", A = slow_decay_svd_matrix(120L, 60L, decay = 0.35, seed = 705), rank = 6L),
-    list(case = "low_rank_sparse", A = rank_deficient_sparse(300L, 80L, 8L, density = 0.08, seed = 706), rank = 5L)
+    list(case = "tall_sparse", id = "tall_sparse:600x90", A = tall_skinny_sparse(600L, 90L, density = 0.03, seed = 701), rank = 5L),
+    list(case = "wide_sparse", id = "wide_sparse:90x600", A = Matrix::t(tall_skinny_sparse(600L, 90L, density = 0.03, seed = 702)), rank = 5L),
+    list(case = "rank_deficient_sparse", id = "rank_deficient_sparse:160x50", A = rank_deficient_sparse(160L, 50L, 4L, seed = 703), rank = 6L),
+    list(case = "clustered_dense", id = "clustered_dense:120x60", A = clustered_dense_svd(120L, 60L, 6L, seed = 704), rank = 6L),
+    list(case = "slow_decay_dense", id = "slow_decay_dense:120x60", A = slow_decay_svd_matrix(120L, 60L, decay = 0.35, seed = 705), rank = 6L),
+    list(case = "low_rank_sparse", id = "low_rank_sparse:300x80", A = rank_deficient_sparse(300L, 80L, 8L, density = 0.08, seed = 706), rank = 5L)
   )
 } else {
   list(
-    list(case = "tall_sparse", A = tall_skinny_sparse(100000L, 500L, density = 0.002, seed = 701), rank = 20L),
-    list(case = "wide_sparse", A = Matrix::t(tall_skinny_sparse(100000L, 500L, density = 0.002, seed = 702)), rank = 20L),
-    list(case = "rank_deficient_sparse", A = rank_deficient_sparse(5000L, 500L, 20L, density = 0.01, seed = 703), rank = 30L),
-    list(case = "clustered_dense", A = clustered_dense_svd(2000L, 500L, 20L, seed = 704), rank = 20L),
-    list(case = "slow_decay_dense", A = slow_decay_svd_matrix(2000L, 500L, decay = 0.35, seed = 705), rank = 20L),
-    list(case = "low_rank_sparse", A = rank_deficient_sparse(10000L, 500L, 40L, density = 0.01, seed = 706), rank = 20L)
+    list(case = "tall_sparse", id = "tall_sparse:100000x500", A = tall_skinny_sparse(100000L, 500L, density = 0.002, seed = 701), rank = 20L),
+    list(case = "wide_sparse", id = "wide_sparse:500x100000", A = Matrix::t(tall_skinny_sparse(100000L, 500L, density = 0.002, seed = 702)), rank = 20L),
+    list(case = "rank_deficient_sparse", id = "rank_deficient_sparse:5000x500", A = rank_deficient_sparse(5000L, 500L, 20L, density = 0.01, seed = 703), rank = 30L),
+    list(case = "clustered_dense", id = "clustered_dense:2000x500", A = clustered_dense_svd(2000L, 500L, 20L, seed = 704), rank = 20L),
+    list(case = "slow_decay_dense", id = "slow_decay_dense:2000x500", A = slow_decay_svd_matrix(2000L, 500L, decay = 0.35, seed = 705), rank = 20L),
+    list(case = "low_rank_sparse", id = "low_rank_sparse:10000x500", A = rank_deficient_sparse(10000L, 500L, 40L, density = 0.01, seed = 706), rank = 20L)
   )
 }
-if (!is.null(args$cases)) {
-  wanted_cases <- args$cases
-  cases <- Filter(function(case) case$case %in% wanted_cases, cases)
-  missing_cases <- setdiff(wanted_cases, vapply(cases, `[[`, character(1), "case"))
-  if (length(missing_cases)) {
-    stop("Unknown SVD benchmark case(s): ", paste(missing_cases, collapse = ", "), call. = FALSE)
-  }
-}
+cases <- filter_benchmark_cases(cases, args$cases)
 
 rows <- lapply(seq_along(cases), function(i) {
   case <- cases[[i]]
+  message_benchmark_case("bench-svd-surface", case)
   active_methods <- if (args$quick && inherits(case$A, "matrix")) {
     methods
   } else {

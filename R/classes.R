@@ -209,6 +209,7 @@ randomized <- function(oversample = 10, n_iter = 2, block = NULL,
 #' @return An `eigencore_method` descriptor selecting LOBPCG. Built-in
 #'   standard Hermitian dense/CSC operators may use a native prototype;
 #'   unsupported cases route to the reference prototype.
+#' @importFrom utils modifyList tail
 #' @export
 lobpcg <- function(maxit = 200L, preconditioner = NULL, constraints = NULL) {
   maxit <- as.integer(maxit)

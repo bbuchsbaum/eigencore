@@ -679,23 +679,15 @@ should_auto_native_generalized_lobpcg <- function(problem, k) {
   if (k >= n) {
     return(FALSE)
   }
+  source <- source_or_null(problem$A)
+  if (is.matrix(source) && is.double(source)) {
+    return(FALSE)
+  }
   storage <- problem$A$metadata$storage %||% NULL
   Bstorage <- problem$metric$metadata$storage %||% NULL
   sparse_or_structured <- isTRUE(storage %in% c("dgCMatrix", "ddiMatrix")) ||
     isTRUE(Bstorage %in% c("dgCMatrix", "ddiMatrix"))
-  if (sparse_or_structured) {
-    return(TRUE)
-  }
-  min_n <- as.integer(getOption("eigencore.generalized_lobpcg_min_n", 128L))
-  max_fraction <- as.numeric(getOption("eigencore.generalized_lobpcg_max_fraction", 0.25))
-  if (length(min_n) != 1L || is.na(min_n) || min_n < 1L) {
-    min_n <- 128L
-  }
-  if (length(max_fraction) != 1L || is.na(max_fraction) ||
-      max_fraction <= 0 || max_fraction > 1) {
-    max_fraction <- 0.25
-  }
-  n >= min_n && (k / n) <= max_fraction
+  sparse_or_structured
 }
 
 #' @keywords internal

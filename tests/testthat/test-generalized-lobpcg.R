@@ -20,6 +20,114 @@ test_that("auto promotes structured generalized SPD LOBPCG without dense fallbac
   expect_equal(crossprod(vectors(fit), as.matrix(B) %*% vectors(fit)), diag(3), tolerance = 1e-8)
 })
 
+test_that("explicit generalized Lanczos uses B-orthogonal refinement instead of standard Lanczos", {
+  A <- Matrix::Diagonal(x = c(1, 4, 9, 16, 25, 36))
+  B <- Matrix::Diagonal(x = c(1, 2, 3, 4, 5, 6))
+  fit <- eig_partial(
+    A,
+    B = B,
+    k = 2,
+    target = smallest(),
+    method = lanczos(max_subspace = 6L),
+    seed = 321,
+    tol = 1e-8,
+    allow_dense_fallback = "never"
+  )
+
+  expect_equal(fit$method, eigencore:::generalized_lanczos_label())
+  expect_equal(fit$plan$method, eigencore:::generalized_lanczos_label())
+  expect_match(fit$warnings, "B-orthogonal Lanczos refinement", fixed = TRUE)
+  expect_true(fit$generalized)
+  expect_equal(fit$restart$kind, "generalized_b_orthogonal_lanczos")
+  expect_false(fit$restart$native)
+  expect_equal(fit$restart$metric_solve, "diagonal solve for B")
+  expect_true(certificate(fit)$passed)
+  expect_equal(values(fit), c(1, 2), tolerance = 1e-8)
+  expect_equal(crossprod(vectors(fit), as.matrix(B) %*% vectors(fit)), diag(2), tolerance = 1e-8)
+
+  lobpcg_fit <- eig_partial(
+    A,
+    B = B,
+    k = 2,
+    target = smallest(),
+    method = lobpcg(maxit = 80L),
+    seed = 321,
+    tol = 1e-8,
+    allow_dense_fallback = "never"
+  )
+  expect_true(certificate(lobpcg_fit)$passed)
+  expect_equal(values(fit), values(lobpcg_fit), tolerance = 1e-8)
+})
+
+test_that("explicit generalized Lanczos supports dense SPD metric solves", {
+  A <- diag(c(2, 5, 9, 14))
+  B <- diag(c(1, 2, 3, 4))
+  fit <- eig_partial(
+    A,
+    B = B,
+    k = 2,
+    target = largest(),
+    method = lanczos(max_subspace = 4L),
+    seed = 322,
+    tol = 1e-8
+  )
+
+  expect_equal(fit$method, eigencore:::generalized_lanczos_label())
+  expect_equal(fit$restart$metric_solve, "dense Cholesky solve for B")
+  expect_true(certificate(fit)$passed)
+  expect_equal(values(fit), c(3.5, 3), tolerance = 1e-8)
+  expect_equal(crossprod(vectors(fit), B %*% vectors(fit)), diag(2), tolerance = 1e-8)
+})
+
+test_that("explicit generalized Lanczos supports sparse CSC SPD metric solves", {
+  n <- 10L
+  A <- Matrix::bandSparse(
+    n,
+    k = c(-1, 0, 1),
+    diagonals = list(rep(-1, n - 1L), rep(2.5, n), rep(-1, n - 1L))
+  )
+  B <- methods::as(Matrix::bandSparse(
+    n,
+    k = c(-1, 0, 1),
+    diagonals = list(
+      rep(-0.05, n - 1L),
+      seq(1.2, 2, length.out = n),
+      rep(-0.05, n - 1L)
+    )
+  ), "dgCMatrix")
+
+  fit <- eig_partial(
+    A,
+    B = B,
+    k = 2,
+    target = smallest(),
+    method = lanczos(max_subspace = 10L),
+    seed = 323,
+    tol = 1e-8,
+    allow_dense_fallback = "never"
+  )
+
+  expect_equal(fit$method, eigencore:::generalized_lanczos_label())
+  expect_equal(fit$restart$metric_solve, "sparse Cholesky solve for B")
+  expect_gt(fit$restart$metric_solves, 0L)
+  expect_false(fit$restart$native)
+  expect_true(certificate(fit)$passed)
+  expect_equal(crossprod(vectors(fit), as.matrix(B) %*% vectors(fit)), diag(2), tolerance = 1e-8)
+
+  lobpcg_fit <- eig_partial(
+    A,
+    B = B,
+    k = 2,
+    target = smallest(),
+    method = lobpcg(maxit = 120L),
+    seed = 323,
+    tol = 1e-8,
+    allow_dense_fallback = "never"
+  )
+  expect_true(certificate(lobpcg_fit)$passed)
+  expect_equal(values(fit), values(lobpcg_fit), tolerance = 1e-8)
+})
+
 test_that("matrix-free B remains a certified reference fallback", {
   A <- Matrix::Diagonal(x = c(1, 4, 9, 16, 25, 36))
   B <- diag(c(1, 2, 3, 4, 5, 6))
@@ -209,6 +317,35 @@ test_that("native generalized LOBPCG accepts native shifted-tridiagonal precondi
   expect_equal(fit$restart$preconditioner_kind, "shifted_tridiagonal")
   expect_gt(fit$restart$preconditioner_calls, 0L)
   expect_true(certificate(fit)$passed)
+})
+
+test_that("native shifted-tridiagonal generalized LOBPCG certifies largest sparse targets", {
+  n <- 40L
+  A <- Matrix::sparseMatrix(
+    i = c(seq_len(n), seq_len(n - 1L), seq_len(n - 1L) + 1L),
+    j = c(seq_len(n), seq_len(n - 1L) + 1L, seq_len(n - 1L)),
+    x = c(rep(2.25, n), rep(-1, 2L * (n - 1L))),
+    dims = c(n, n)
+  )
+  B <- Matrix::Diagonal(n, seq(0.5, 2, length.out = n))
+  preconditioner <- shifted_tridiagonal_preconditioner(A, shift = 4)
+  fit <- eig_partial(
+    A,
+    B = B,
+    k = 3L,
+    target = largest(),
+    method = lobpcg(maxit = 160L, preconditioner = preconditioner),
+    tol = 1e-8,
+    seed = 77,
+    allow_dense_fallback = "never"
+  )
+
+  expect_equal(fit$method, eigencore:::native_generalized_lobpcg_label())
+  expect_true(fit$restart$native)
+  expect_true(fit$restart$generalized)
+  expect_equal(fit$restart$preconditioner_kind, "shifted_tridiagonal")
+  expect_gt(fit$restart$preconditioner_calls, 0L)
+  expect_certificate_clean(fit)
 })
 
 test_that("native generalized LOBPCG accepts native shifted-diagonal preconditioners", {

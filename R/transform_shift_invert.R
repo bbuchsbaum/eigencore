@@ -1,4 +1,115 @@
 #' @keywords internal
+native_dense_shift_invert_label <- function() {
+  "native dense Hermitian shift-invert (factorized Lanczos)"
+}
+
+#' @keywords internal
+native_dense_generalized_shift_invert_label <- function() {
+  "native dense generalized SPD shift-invert (factorized Lanczos)"
+}
+
+#' @keywords internal
+native_tridiagonal_shift_invert_label <- function() {
+  "native tridiagonal Hermitian shift-invert (factorized Lanczos)"
+}
+
+#' @keywords internal
+native_tridiagonal_generalized_shift_invert_label <- function() {
+  "native tridiagonal generalized SPD shift-invert (factorized Lanczos)"
+}
+
+#' @keywords internal
+shift_invert_tridiagonal_parts <- function(A, shift = 0) {
+  if (!inherits(A, "Matrix")) {
+    return(NULL)
+  }
+  n <- nrow(A)
+  if (is.null(n) || ncol(A) != n || n < 1L) {
+    return(NULL)
+  }
+  shift <- as.numeric(shift)
+  if (length(shift) != 1L || !is.finite(shift)) {
+    return(NULL)
+  }
+
+  diag <- numeric(n)
+  lower <- numeric(max(n - 1L, 0L))
+  upper <- numeric(max(n - 1L, 0L))
+  if (inherits(A, "diagonalMatrix")) {
+    diag <- as.numeric(Matrix::diag(A))
+  } else {
+    if (!inherits(A, "CsparseMatrix")) {
+      A <- tryCatch(methods::as(A, "CsparseMatrix"), error = function(e) NULL)
+      if (is.null(A)) {
+        return(NULL)
+      }
+    }
+    i_slot <- methods::slot(A, "i") + 1L
+    p_slot <- methods::slot(A, "p")
+    x_slot <- methods::slot(A, "x")
+    for (j in seq_len(n)) {
+      start <- p_slot[[j]] + 1L
+      end <- p_slot[[j + 1L]]
+      if (start > end) {
+        next
+      }
+      for (pos in start:end) {
+        row <- i_slot[[pos]]
+        value <- x_slot[[pos]]
+        if (!is.finite(value) || abs(row - j) > 1L) {
+          return(NULL)
+        }
+        if (row == j) {
+          diag[j] <- diag[j] + value
+        } else if (row == j + 1L) {
+          lower[j] <- lower[j] + value
+        } else if (row == j - 1L) {
+          upper[j - 1L] <- upper[j - 1L] + value
+        }
+      }
+    }
+  }
+  if (any(!is.finite(diag)) || any(!is.finite(lower)) || any(!is.finite(upper))) {
+    return(NULL)
+  }
+  if (n > 1L && !isTRUE(all.equal(lower, upper, tolerance = 1e-12))) {
+    return(NULL)
+  }
+  list(lower = lower, diag = diag + shift, upper = upper)
+}
+
+#' @keywords internal
+shift_invert_is_native_tridiagonal <- function(problem) {
+  A <- problem$A$metadata$matrix %||% source_or_null(problem$A)
+  (inherits(A, "CsparseMatrix") || inherits(A, "diagonalMatrix")) &&
+    !is.null(shift_invert_tridiagonal_parts(A, shift = 0))
+}
+
+#' @keywords internal
+shift_invert_diagonal_metric_values <- function(Bop) {
+  if (is.null(Bop)) {
+    return(NULL)
+  }
+  Bstorage <- Bop$metadata$storage %||% NULL
+  if (!identical(Bstorage, "ddiMatrix")) {
+    return(NULL)
+  }
+  B <- Bop$metadata$matrix
+  values <- if (identical(methods::slot(B, "diag"), "U")) {
+    rep(1, Bop$dim[1L])
+  } else {
+    methods::slot(B, "x")
+  }
+  values <- as.numeric(values)
+  if (length(values) != Bop$dim[1L] ||
+      any(!is.finite(values)) ||
+      any(values <= 0)) {
+    return(NULL)
+  }
+  values
+}
+
+#' @keywords internal
 shift_invert_plan_label <- function(problem, has_metric, is_hermitian,
                                     is_dense_source, is_native_csc) {
   user_solve <- problem$transform$solve
@@ -6,17 +117,41 @@ shift_invert_plan_label <- function(problem, has_metric, is_hermitian,
     return("shift-invert requested (only Hermitian shift-invert is implemented)")
   }
   if (has_metric) {
-    return("shift-invert requested (generalized SPD shift-invert is on the V1 roadmap)")
+    Bstorage <- problem$metric$metadata$storage %||% NULL
+    Bsource <- source_or_null(problem$metric)
+    dense_metric <- is.matrix(Bsource) && is.double(Bsource)
+    diagonal_metric <- identical(Bstorage, "ddiMatrix")
+    if (!is.null(user_solve)) {
+      return("reference generalized SPD Lanczos shift-invert (user solve)")
+    }
+    if (is_dense_source && dense_metric) {
+      return(native_dense_generalized_shift_invert_label())
+    }
+    if (is_dense_source && diagonal_metric) {
+      return("reference generalized SPD Lanczos shift-invert (dense QR)")
+    }
+    if (diagonal_metric && shift_invert_is_native_tridiagonal(problem)) {
+      return(native_tridiagonal_generalized_shift_invert_label())
+    }
+    csc_available <- inherits(problem$A$metadata$matrix, "CsparseMatrix")
+    if ((is_native_csc || csc_available) && diagonal_metric) {
+      return("reference generalized SPD Lanczos shift-invert (sparse LU)")
+    }
+    return("shift-invert requested (generalized SPD shift-invert requires dense A/B or sparse A with diagonal B)")
   }
   if (!is.null(user_solve)) {
     return("reference Hermitian Lanczos shift-invert (user solve)")
   }
   csc_available <- inherits(problem$A$metadata$matrix, "CsparseMatrix")
-  if (is_native_csc || csc_available) {
+  diagonal_available <- inherits(problem$A$metadata$matrix, "diagonalMatrix")
+  if (is_native_csc || csc_available || diagonal_available) {
+    if (shift_invert_is_native_tridiagonal(problem)) {
+      return(native_tridiagonal_shift_invert_label())
+    }
     return("reference Hermitian Lanczos shift-invert (sparse LU)")
   }
   if (is_dense_source) {
-    return("reference Hermitian Lanczos shift-invert (dense QR)")
+    return(native_dense_shift_invert_label())
   }
   "shift-invert requested (provide method$solve for matrix-free A)"
 }
@@ -109,6 +244,7 @@ shift_invert_operator_fingerprint <- function(op) {
 
 #' @keywords internal
 shift_invert_factorization_cache_key <- function(Aop, sigma, Bop = NULL) {
+  Aop <- as_operator(Aop)
   sigma <- as.numeric(sigma)
   if (length(sigma) != 1L || !is.finite(sigma)) {
     stop("shift-invert cache key requires a single finite sigma.", call. = FALSE)
@@ -116,8 +252,10 @@ shift_invert_factorization_cache_key <- function(Aop, sigma, Bop = NULL) {
   key <- list(
     transform = "shift_invert",
     sigma = sigma,
+    structure = Aop$structure$kind %||% NA_character_,
     A = shift_invert_operator_fingerprint(Aop),
-    B = if (is.null(Bop)) NULL else shift_invert_operator_fingerprint(Bop)
+    B = if (is.null(Bop)) NULL else shift_invert_operator_fingerprint(Bop),
+    standard_problem = is.null(Bop)
   )
   class(key) <- "eigencore_shift_invert_cache_key"
   key
@@ -145,8 +283,11 @@ shift_invert_factorization_cache_merge <- function(cache_info, label_kind,
 }
 
 #' @keywords internal
-shift_invert_solver_dense <- function(A, sigma) {
-  M <- A - sigma * diag(nrow(A))
+shift_invert_solver_dense <- function(A, sigma, B = NULL) {
+  if (is.null(B)) {
+    B <- diag(nrow(A))
+  }
+  M <- A - sigma * B
   cond <- tryCatch(base::rcond(M), error = function(e) NA_real_)
   if (!is.finite(cond) || cond <= sqrt(.Machine$double.eps)) {
     stop(
@@ -197,9 +338,12 @@ shift_invert_solver_dense <- function(A, sigma) {
 }
 
 #' @keywords internal
-shift_invert_solver_csc <- function(A, sigma) {
+shift_invert_solver_csc <- function(A, sigma, B = NULL) {
   n <- nrow(A)
-  M <- methods::as(A - sigma * Matrix::Diagonal(n), "CsparseMatrix")
+  if (is.null(B)) {
+    B <- Matrix::Diagonal(n)
+  }
+  M <- methods::as(A - sigma * B, "CsparseMatrix")
   factor <- tryCatch(
     Matrix::lu(M),
     error = function(e) {
@@ -259,32 +403,84 @@ shift_invert_solver_csc <- function(A, sigma) {
 }
 
 #' @keywords internal
+shift_invert_metric_factor <- function(Bop) {
+  Bop <- as_operator(Bop)
+  if (!identical(Bop$structure$kind, "hermitian")) {
+    stop("generalized shift_invert() requires a Hermitian metric B.", call. = FALSE)
+  }
+  if (!generalized_spd_metric_known(Bop)) {
+    stop("generalized shift_invert() requires known positive definite B.", call. = FALSE)
+  }
+  Bsource <- source_or_null(Bop)
+  Bstorage <- Bop$metadata$storage %||% NULL
+  if (is.matrix(Bsource) && is.double(Bsource)) {
+    B <- (Bsource + t(Bsource)) / 2
+    R <- chol(B)
+    return(list(
+      kind = "dense",
+      matrix_dense = B,
+      to_rhs = function(X) crossprod(R, X),
+      from_solution = function(X) R %*% X,
+      to_original = function(Y) backsolve(R, Y),
+      factorization = "base::chol(B)"
+    ))
+  }
+  if (identical(Bstorage, "ddiMatrix")) {
+    B <- Bop$metadata$matrix
+    values <- if (identical(methods::slot(B, "diag"), "U")) {
+      rep(1, Bop$dim[1L])
+    } else {
+      methods::slot(B, "x")
+    }
+    if (length(values) != Bop$dim[1L] ||
+        any(!is.finite(values)) ||
+        any(values <= 0)) {
+      stop("generalized shift_invert() requires positive finite diagonal B.", call. = FALSE)
+    }
+    sqrt_values <- sqrt(values)
+    return(list(
+      kind = "diagonal",
+      matrix_dense = diag(values),
+      matrix_sparse = Matrix::Diagonal(x = values),
+      to_rhs = function(X) sqrt_values * X,
+      from_solution = function(X) sqrt_values * X,
+      to_original = function(Y) Y / sqrt_values,
+      factorization = "diagonal sqrt(B)"
+    ))
+  }
+  stop(
+    "generalized shift_invert() supports dense B or diagonal B only; ",
+    "unsupported metric operators are rejected to avoid silent densification.",
+    call. = FALSE
+  )
+}
+
+#' @keywords internal
 prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL) {
   Aop <- problem$A
   Bop <- problem$metric
   n <- Aop$dim[1L]
   cache_info <- shift_invert_factorization_cache_info(Aop, sigma, Bop = Bop)
 
-  if (!is.null(Bop)) {
-    stop(
-      "shift_invert() currently supports standard Hermitian eigenproblems (B = NULL). ",
-      "Generalized SPD shift-invert is on the V1 roadmap (plan_v1.md milestone L).",
-      call. = FALSE
-    )
-  }
-
   if (!identical(problem$structure$kind, "hermitian")) {
     stop("shift_invert() currently requires a Hermitian eigenproblem.", call. = FALSE)
   }
+
+  metric_factor <- if (is.null(Bop)) NULL else shift_invert_metric_factor(Bop)
 
   # User-supplied solve operator for matrix-free A
   if (!is.null(user_solve)) {
     if (!is.function(user_solve)) {
       stop("shift_invert(solve = ...) must be a function.", call. = FALSE)
     }
+    solve_fn <- if (is.null(metric_factor)) {
+      user_solve
+    } else {
+      function(X) metric_factor$from_solution(user_solve(metric_factor$to_rhs(X)))
+    }
     op <- linear_operator(
       dim = c(n, n),
-      apply = shift_invert_apply_factory(user_solve),
+      apply = shift_invert_apply_factory(solve_fn),
       apply_adjoint = NULL,
       structure = hermitian(),
       name = "shift_invert_user_solve",
@@ -299,7 +495,9 @@ prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL) {
             condition_estimate = NA_real_,
             condition_estimate_type = "user_supplied",
             near_singular = NA,
-            external_cache = TRUE
+            external_cache = TRUE,
+            generalized = !is.null(Bop),
+            metric_factorization = metric_factor$factorization %||% NA_character_
           )
         )
       )
@@ -308,7 +506,12 @@ prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL) {
     return(list(
       operator = op,
       label_kind = "user_solve",
-      factorization_cache = cache
+      factorization_cache = cache,
+      recover_vectors = if (is.null(metric_factor)) {
+        function(Y) Y
+      } else {
+        metric_factor$to_original
+      }
     ))
   }
 
@@ -324,40 +527,621 @@ prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL) {
   }
 
   prep <- if (is.matrix(source_A) && is.double(source_A)) {
-    shift_invert_solver_dense(source_A, sigma)
-  } else if (!is.null(csc_A)) {
-    shift_invert_solver_csc(methods::as(csc_A, "generalMatrix"), sigma)
-  } else if (inherits(source_A, "CsparseMatrix") || inherits(source_A, "dgCMatrix")) {
-    shift_invert_solver_csc(source_A, sigma)
+    shift_invert_solver_dense(
+      source_A,
+      sigma,
+      B = metric_factor$matrix_dense %||% NULL
+    )
+  } else if (!is.null(csc_A) && (is.null(metric_factor) || identical(metric_factor$kind, "diagonal"))) {
+    shift_invert_solver_csc(
+      methods::as(csc_A, "generalMatrix"),
+      sigma,
+      B = metric_factor$matrix_sparse %||% NULL
+    )
+  } else if ((inherits(source_A, "CsparseMatrix") || inherits(source_A, "dgCMatrix")) &&
+      (is.null(metric_factor) || identical(metric_factor$kind, "diagonal"))) {
+    shift_invert_solver_csc(
+      source_A,
+      sigma,
+      B = metric_factor$matrix_sparse %||% NULL
+    )
   } else {
     stop(
-      "shift_invert() supports dense double matrices and dgCMatrix/dsCMatrix sources, ",
-      "or a user-supplied solve operator.",
+      if (is.null(Bop)) {
+        "shift_invert() supports dense double matrices and dgCMatrix/dsCMatrix sources, or a user-supplied solve operator."
+      } else {
+        "generalized shift_invert() supports dense A/B or sparse A with diagonal B; unsupported combinations are rejected to avoid silent densification."
+      },
       call. = FALSE
     )
   }
 
+  solve_fn <- if (is.null(metric_factor)) {
+    prep$solve_fn
+  } else {
+    function(X) metric_factor$from_solution(prep$solve_fn(metric_factor$to_rhs(X)))
+  }
+  label_kind <- if (is.null(metric_factor)) prep$label else paste0(prep$label, "_generalized")
+
   op <- linear_operator(
     dim = c(n, n),
-    apply = shift_invert_apply_factory(prep$solve_fn),
+    apply = shift_invert_apply_factory(solve_fn),
     apply_adjoint = NULL,
     structure = hermitian(),
-    name = paste0("shift_invert_", prep$label),
+    name = paste0("shift_invert_", label_kind),
     metadata = list(
       native = FALSE,
       factorization_cache = shift_invert_factorization_cache_merge(
         cache_info,
-        prep$label,
-        prep$cache
+        label_kind,
+        modifyList(
+          prep$cache,
+          list(
+            generalized = !is.null(Bop),
+            metric_factorization = metric_factor$factorization %||% NA_character_
+          )
+        )
       )
     )
   )
   cache <- op$metadata$factorization_cache
   list(
     operator = op,
-    label_kind = prep$label,
-    factorization_cache = cache
+    label_kind = label_kind,
+    factorization_cache = cache,
+    recover_vectors = if (is.null(metric_factor)) {
+      function(Y) Y
+    } else {
+      metric_factor$to_original
+    }
   )
+}
+
+#' @keywords internal
+native_dense_shift_invert_lanczos <- function(problem, k, sigma, tol, maxit,
+                                              vectors, certify, plan) {
+  Aop <- problem$A
+  source_A <- source_or_null(Aop)
+  if (!(is.matrix(source_A) && is.double(source_A))) {
+    stop("native dense shift-invert requires a dense double source.", call. = FALSE)
+  }
+  if (!is.null(problem$metric)) {
+    stop("native dense shift-invert currently supports standard eigenproblems only.", call. = FALSE)
+  }
+
+  n <- Aop$dim[1L]
+  effective_maxit <- maxit %||% min(n, max(20L, 4L * as.integer(k) + 20L))
+  start <- stats::rnorm(n)
+  native <- .Call(
+    "eigencore_shift_invert_lanczos_dense",
+    source_A,
+    as.numeric(sigma),
+    as.integer(effective_maxit),
+    as.numeric(start),
+    as.integer(k),
+    as.integer(lanczos_target_kind(largest_magnitude())),
+    as.numeric(tol),
+    PACKAGE = "eigencore"
+  )
+
+  iterations <- as.integer(native$iterations)
+  alpha <- native$alpha[seq_len(iterations)]
+  beta <- native$beta[seq_len(iterations)]
+  eig <- native_tridiagonal_eigen(alpha, beta)
+  idx <- order_indices(eig$values, largest_magnitude())
+  idx <- idx[seq_len(min(as.integer(k), length(idx)))]
+  mu <- eig$values[idx]
+  if (any(abs(mu) < .Machine$double.eps)) {
+    stop(
+      "native shift_invert(sigma = ", sigma, ") produced a zero-magnitude ",
+      "eigenvalue of the inverted operator; sigma is too close to a true ",
+      "eigenvalue. Perturb sigma or use a tighter tolerance.",
+      call. = FALSE
+    )
+  }
+
+  vec <- native$Q[, seq_len(iterations), drop = FALSE] %*%
+    eig$vectors[, idx, drop = FALSE]
+  lambda <- sigma + 1 / mu
+  ord <- order_indices(lambda, problem$target)
+  if (length(ord) > k) ord <- ord[seq_len(k)]
+  lambda <- lambda[ord]
+  vec <- vec[, ord, drop = FALSE]
+
+  cert <- if (isTRUE(certify) && ncol(vec) > 0L) {
+    certify_eigen_operator(Aop, lambda, vec, tol = tol)
+  } else {
+    empty_certificate(
+      tol,
+      note = if (!isTRUE(certify)) {
+        "native shift-invert: certification disabled by caller"
+      } else {
+        "native shift-invert: no eigenpairs returned; residual certificate not computed"
+      }
+    )
+  }
+
+  cache_info <- shift_invert_factorization_cache_info(
+    Aop,
+    sigma,
+    label_kind = "dense_lu_native"
+  )
+  cache <- shift_invert_factorization_cache_merge(
+    cache_info,
+    "dense_lu_native",
+    modifyList(
+      native$factorization_cache,
+      list(
+        native = TRUE,
+        condition_estimate_type = "dense_lu_pivot_ratio",
+        near_singular = FALSE,
+        external_cache = FALSE,
+        generalized = FALSE,
+        metric_factorization = NA_character_
+      )
+    )
+  )
+
+  result <- list(
+    values = lambda,
+    vectors = if (isTRUE(vectors)) vec else NULL,
+    residuals = cert$residuals,
+    backward_error = cert$backward_error,
+    orthogonality = cert$orthogonality,
+    nconv = sum(cert$converged),
+    requested = k,
+    iterations = iterations,
+    matvecs = as.integer(native$matvecs),
+    method = plan$method,
+    target = target_label(problem$target),
+    plan = plan,
+    certificate = cert,
+    sigma = sigma,
+    transform = list(
+      kind = "shift_invert",
+      sigma = sigma,
+      label_kind = "dense_lu_native",
+      factorization_cache = cache,
+      certification = list(
+        problem = "original",
+        residual_formula = "A * x - lambda * x",
+        transformed_residuals_used = FALSE
+      )
+    ),
+    warnings = character(),
+    restart = list(
+      kind = "native_dense_shift_invert_lanczos",
+      native = TRUE,
+      factorization_native = TRUE,
+      factorization = cache$factorization,
+      max_subspace = effective_maxit,
+      transformed_operator_target = "largest_magnitude",
+      eigenvalue_recovery = "lambda = sigma + 1 / mu",
+      history_nconv = native$history_nconv,
+      history_max_residual = native$history_max_residual
+    )
+  )
+  class(result) <- "eigencore_eigen_result"
+  result
+}
+
+#' @keywords internal
+native_tridiagonal_shift_invert_lanczos <- function(problem, k, sigma, tol,
+                                                    maxit, vectors, certify,
+                                                    plan) {
+  Aop <- problem$A
+  if (!is.null(problem$metric)) {
+    stop("native tridiagonal shift-invert supports standard eigenproblems only.", call. = FALSE)
+  }
+  A <- Aop$metadata$matrix %||% source_or_null(Aop)
+  if (!(inherits(A, "CsparseMatrix") || inherits(A, "diagonalMatrix"))) {
+    stop("native tridiagonal shift-invert requires a CSC sparse or diagonal source.", call. = FALSE)
+  }
+  parts <- shift_invert_tridiagonal_parts(A, shift = -as.numeric(sigma))
+  if (is.null(parts)) {
+    stop("native tridiagonal shift-invert requires a symmetric tridiagonal CSC source.", call. = FALSE)
+  }
+
+  n <- Aop$dim[1L]
+  effective_maxit <- maxit %||% min(n, max(20L, 4L * as.integer(k) + 20L))
+  start <- stats::rnorm(n)
+  native <- .Call(
+    "eigencore_shift_invert_lanczos_tridiagonal",
+    as.numeric(parts$lower),
+    as.numeric(parts$diag),
+    as.numeric(parts$upper),
+    as.integer(effective_maxit),
+    as.numeric(start),
+    as.integer(k),
+    as.integer(lanczos_target_kind(largest_magnitude())),
+    as.numeric(tol),
+    PACKAGE = "eigencore"
+  )
+
+  iterations <- as.integer(native$iterations)
+  alpha <- native$alpha[seq_len(iterations)]
+  beta <- native$beta[seq_len(iterations)]
+  eig <- native_tridiagonal_eigen(alpha, beta)
+  idx <- order_indices(eig$values, largest_magnitude())
+  idx <- idx[seq_len(min(as.integer(k), length(idx)))]
+  mu <- eig$values[idx]
+  if (any(abs(mu) < .Machine$double.eps)) {
+    stop(
+      "native tridiagonal shift_invert(sigma = ", sigma, ") produced a zero-magnitude ",
+      "eigenvalue of the inverted operator; sigma is too close to a true ",
+      "eigenvalue. Perturb sigma or use a tighter tolerance.",
+      call. = FALSE
+    )
+  }
+
+  vec <- native$Q[, seq_len(iterations), drop = FALSE] %*%
+    eig$vectors[, idx, drop = FALSE]
+  lambda <- sigma + 1 / mu
+  ord <- order_indices(lambda, problem$target)
+  if (length(ord) > k) ord <- ord[seq_len(k)]
+  lambda <- lambda[ord]
+  vec <- vec[, ord, drop = FALSE]
+
+  cert <- if (isTRUE(certify) && ncol(vec) > 0L) {
+    certify_eigen_operator(Aop, lambda, vec, tol = tol)
+  } else {
+    empty_certificate(
+      tol,
+      note = if (!isTRUE(certify)) {
+        "native tridiagonal shift-invert: certification disabled by caller"
+      } else {
+        "native tridiagonal shift-invert: no eigenpairs returned; residual certificate not computed"
+      }
+    )
+  }
+
+  cache_info <- shift_invert_factorization_cache_info(
+    Aop,
+    sigma,
+    label_kind = "tridiagonal_thomas_native"
+  )
+  cache <- shift_invert_factorization_cache_merge(
+    cache_info,
+    "tridiagonal_thomas_native",
+    modifyList(
+      native$factorization_cache,
+      list(
+        native = TRUE,
+        condition_estimate_type = "tridiagonal_thomas_pivot_ratio",
+        near_singular = FALSE,
+        external_cache = FALSE,
+        generalized = FALSE,
+        metric_factorization = NA_character_
+      )
+    )
+  )
+
+  result <- list(
+    values = lambda,
+    vectors = if (isTRUE(vectors)) vec else NULL,
+    residuals = cert$residuals,
+    backward_error = cert$backward_error,
+    orthogonality = cert$orthogonality,
+    nconv = sum(cert$converged),
+    requested = k,
+    iterations = iterations,
+    matvecs = as.integer(native$matvecs),
+    method = plan$method,
+    target = target_label(problem$target),
+    plan = plan,
+    certificate = cert,
+    sigma = sigma,
+    transform = list(
+      kind = "shift_invert",
+      sigma = sigma,
+      label_kind = "tridiagonal_thomas_native",
+      factorization_cache = cache,
+      certification = list(
+        problem = "original",
+        residual_formula = "A * x - lambda * x",
+        transformed_residuals_used = FALSE
+      )
+    ),
+    warnings = character(),
+    restart = list(
+      kind = "native_tridiagonal_shift_invert_lanczos",
+      native = TRUE,
+      factorization_native = TRUE,
+      factorization = cache$factorization,
+      max_subspace = effective_maxit,
+      transformed_operator_target = "largest_magnitude",
+      eigenvalue_recovery = "lambda = sigma + 1 / mu",
+      history_nconv = native$history_nconv,
+      history_max_residual = native$history_max_residual
+    )
+  )
+  class(result) <- "eigencore_eigen_result"
+  result
+}
+
+#' @keywords internal
+native_tridiagonal_generalized_shift_invert_lanczos <- function(problem, k,
+                                                               sigma, tol,
+                                                               maxit, vectors,
+                                                               certify, plan) {
+  Aop <- problem$A
+  Bop <- problem$metric
+  if (is.null(Bop)) {
+    stop("native generalized tridiagonal shift-invert requires a metric B.", call. = FALSE)
+  }
+  A <- Aop$metadata$matrix %||% source_or_null(Aop)
+  if (!(inherits(A, "CsparseMatrix") || inherits(A, "diagonalMatrix"))) {
+    stop("native generalized tridiagonal shift-invert requires a CSC sparse or diagonal A source.", call. = FALSE)
+  }
+  metric_values <- shift_invert_diagonal_metric_values(Bop)
+  if (is.null(metric_values)) {
+    stop("native generalized tridiagonal shift-invert requires positive diagonal B.", call. = FALSE)
+  }
+  if (length(metric_values) != Aop$dim[1L]) {
+    stop("native generalized tridiagonal shift-invert requires conformable diagonal B.", call. = FALSE)
+  }
+  parts <- shift_invert_tridiagonal_parts(A, shift = 0)
+  if (is.null(parts)) {
+    stop("native generalized tridiagonal shift-invert requires a symmetric tridiagonal CSC source.", call. = FALSE)
+  }
+  shifted_diag <- parts$diag - as.numeric(sigma) * metric_values
+  sqrt_metric <- sqrt(metric_values)
+
+  n <- Aop$dim[1L]
+  effective_maxit <- maxit %||% min(n, max(20L, 4L * as.integer(k) + 20L))
+  start <- stats::rnorm(n)
+  native <- .Call(
+    "eigencore_shift_invert_lanczos_tridiagonal_generalized",
+    as.numeric(parts$lower),
+    as.numeric(shifted_diag),
+    as.numeric(parts$upper),
+    as.numeric(sqrt_metric),
+    as.integer(effective_maxit),
+    as.numeric(start),
+    as.integer(k),
+    as.integer(lanczos_target_kind(largest_magnitude())),
+    as.numeric(tol),
+    PACKAGE = "eigencore"
+  )
+
+  iterations <- as.integer(native$iterations)
+  alpha <- native$alpha[seq_len(iterations)]
+  beta <- native$beta[seq_len(iterations)]
+  eig <- native_tridiagonal_eigen(alpha, beta)
+  idx <- order_indices(eig$values, largest_magnitude())
+  idx <- idx[seq_len(min(as.integer(k), length(idx)))]
+  mu <- eig$values[idx]
+  if (any(abs(mu) < .Machine$double.eps)) {
+    stop(
+      "native generalized tridiagonal shift_invert(sigma = ", sigma, ") produced a zero-magnitude ",
+      "eigenvalue of the inverted operator; sigma is too close to a true ",
+      "eigenvalue. Perturb sigma or use a tighter tolerance.",
+      call. = FALSE
+    )
+  }
+
+  vec_transformed <- native$Q[, seq_len(iterations), drop = FALSE] %*%
+    eig$vectors[, idx, drop = FALSE]
+  vec <- vec_transformed / sqrt_metric
+  lambda <- sigma + 1 / mu
+  ord <- order_indices(lambda, problem$target)
+  if (length(ord) > k) ord <- ord[seq_len(k)]
+  lambda <- lambda[ord]
+  vec <- vec[, ord, drop = FALSE]
+
+  cert <- if (isTRUE(certify) && ncol(vec) > 0L) {
+    certify_eigen_operator(Aop, lambda, vec, Bop = Bop, tol = tol)
+  } else {
+    empty_certificate(
+      tol,
+      note = if (!isTRUE(certify)) {
+        "native generalized tridiagonal shift-invert: certification disabled by caller"
+      } else {
+        "native generalized tridiagonal shift-invert: no eigenpairs returned; residual certificate not computed"
+      }
+    )
+  }
+
+  cache_info <- shift_invert_factorization_cache_info(
+    Aop,
+    sigma,
+    Bop = Bop,
+    label_kind = "tridiagonal_thomas_generalized_native"
+  )
+  cache <- shift_invert_factorization_cache_merge(
+    cache_info,
+    "tridiagonal_thomas_generalized_native",
+    modifyList(
+      native$factorization_cache,
+      list(
+        native = TRUE,
+        condition_estimate_type = "tridiagonal_thomas_pivot_ratio",
+        near_singular = FALSE,
+        external_cache = FALSE,
+        generalized = TRUE,
+        metric_factorization = "diagonal sqrt(B)"
+      )
+    )
+  )
+
+  result <- list(
+    values = lambda,
+    vectors = if (isTRUE(vectors)) vec else NULL,
+    residuals = cert$residuals,
+    backward_error = cert$backward_error,
+    orthogonality = cert$orthogonality,
+    nconv = sum(cert$converged),
+    requested = k,
+    iterations = iterations,
+    matvecs = as.integer(native$matvecs),
+    method = plan$method,
+    target = target_label(problem$target),
+    plan = plan,
+    certificate = cert,
+    sigma = sigma,
+    transform = list(
+      kind = "shift_invert",
+      sigma = sigma,
+      label_kind = "tridiagonal_thomas_generalized_native",
+      factorization_cache = cache,
+      certification = list(
+        problem = "original",
+        residual_formula = "A * x - lambda * B * x",
+        transformed_residuals_used = FALSE
+      )
+    ),
+    warnings = character(),
+    restart = list(
+      kind = "native_tridiagonal_generalized_shift_invert_lanczos",
+      native = TRUE,
+      generalized = TRUE,
+      factorization_native = TRUE,
+      factorization = cache$factorization,
+      max_subspace = effective_maxit,
+      transformed_operator_target = "largest_magnitude",
+      eigenvalue_recovery = "lambda = sigma + 1 / mu",
+      history_nconv = native$history_nconv,
+      history_max_residual = native$history_max_residual
+    )
+  )
+  class(result) <- "eigencore_eigen_result"
+  result
+}
+
+#' @keywords internal
+native_dense_generalized_shift_invert_lanczos <- function(problem, k, sigma,
+                                                         tol, maxit, vectors,
+                                                         certify, plan) {
+  Aop <- problem$A
+  Bop <- problem$metric
+  source_A <- source_or_null(Aop)
+  source_B <- source_or_null(Bop)
+  if (!(is.matrix(source_A) && is.double(source_A))) {
+    stop("native dense generalized shift-invert requires a dense double A source.", call. = FALSE)
+  }
+  if (!(is.matrix(source_B) && is.double(source_B))) {
+    stop("native dense generalized shift-invert requires a dense double B source.", call. = FALSE)
+  }
+
+  n <- Aop$dim[1L]
+  effective_maxit <- maxit %||% min(n, max(20L, 4L * as.integer(k) + 20L))
+  start <- stats::rnorm(n)
+  native <- .Call(
+    "eigencore_shift_invert_lanczos_dense_generalized",
+    source_A,
+    source_B,
+    as.numeric(sigma),
+    as.integer(effective_maxit),
+    as.numeric(start),
+    as.integer(k),
+    as.integer(lanczos_target_kind(largest_magnitude())),
+    as.numeric(tol),
+    PACKAGE = "eigencore"
+  )
+
+  iterations <- as.integer(native$iterations)
+  alpha <- native$alpha[seq_len(iterations)]
+  beta <- native$beta[seq_len(iterations)]
+  eig <- native_tridiagonal_eigen(alpha, beta)
+  idx <- order_indices(eig$values, largest_magnitude())
+  idx <- idx[seq_len(min(as.integer(k), length(idx)))]
+  mu <- eig$values[idx]
+  if (any(abs(mu) < .Machine$double.eps)) {
+    stop(
+      "native generalized shift_invert(sigma = ", sigma, ") produced a zero-magnitude ",
+      "eigenvalue of the inverted operator; sigma is too close to a true ",
+      "eigenvalue. Perturb sigma or use a tighter tolerance.",
+      call. = FALSE
+    )
+  }
+
+  vec_transformed <- native$Q[, seq_len(iterations), drop = FALSE] %*%
+    eig$vectors[, idx, drop = FALSE]
+  vec <- backsolve(native$chol_factor, vec_transformed)
+  lambda <- sigma + 1 / mu
+  ord <- order_indices(lambda, problem$target)
+  if (length(ord) > k) ord <- ord[seq_len(k)]
+  lambda <- lambda[ord]
+  vec <- vec[, ord, drop = FALSE]
+
+  cert <- if (isTRUE(certify) && ncol(vec) > 0L) {
+    certify_eigen_operator(Aop, lambda, vec, Bop = Bop, tol = tol)
+  } else {
+    empty_certificate(
+      tol,
+      note = if (!isTRUE(certify)) {
+        "native generalized shift-invert: certification disabled by caller"
+      } else {
+        "native generalized shift-invert: no eigenpairs returned; residual certificate not computed"
+      }
+    )
+  }
+
+  cache_info <- shift_invert_factorization_cache_info(
+    Aop,
+    sigma,
+    Bop = Bop,
+    label_kind = "dense_lu_generalized_native"
+  )
+  cache <- shift_invert_factorization_cache_merge(
+    cache_info,
+    "dense_lu_generalized_native",
+    modifyList(
+      native$factorization_cache,
+      list(
+        native = TRUE,
+        condition_estimate_type = "dense_lu_pivot_ratio",
+        near_singular = FALSE,
+        external_cache = FALSE,
+        generalized = TRUE,
+        metric_factorization = native$factorization_cache$metric_factorization %||%
+          "LAPACK dpotrf(B)"
+      )
+    )
+  )
+
+  result <- list(
+    values = lambda,
+    vectors = if (isTRUE(vectors)) vec else NULL,
+    residuals = cert$residuals,
+    backward_error = cert$backward_error,
+    orthogonality = cert$orthogonality,
+    nconv = sum(cert$converged),
+    requested = k,
+    iterations = iterations,
+    matvecs = as.integer(native$matvecs),
+    method = plan$method,
+    target = target_label(problem$target),
+    plan = plan,
+    certificate = cert,
+    sigma = sigma,
+    transform = list(
+      kind = "shift_invert",
+      sigma = sigma,
+      label_kind = "dense_lu_generalized_native",
+      factorization_cache = cache,
+      certification = list(
+        problem = "original",
+        residual_formula = "A * x - lambda * B * x",
+        transformed_residuals_used = FALSE
+      )
+    ),
+    warnings = character(),
+    restart = list(
+      kind = "native_dense_generalized_shift_invert_lanczos",
+      native = TRUE,
+      generalized = TRUE,
+      factorization_native = TRUE,
+      factorization = cache$factorization,
+      max_subspace = effective_maxit,
+      transformed_operator_target = "largest_magnitude",
+      eigenvalue_recovery = "lambda = sigma + 1 / mu",
+      history_nconv = native$history_nconv,
+      history_max_residual = native$history_max_residual
+    )
+  )
+  class(result) <- "eigencore_eigen_result"
+  result
 }
 
 #' @keywords internal
@@ -373,6 +1157,39 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
       "supply shift_invert(solve = ...) for a user-managed factorization cache.",
       call. = FALSE
     )
+  }
+
+  if (identical(plan$method, native_dense_shift_invert_label()) &&
+      is.null(problem$metric) &&
+      is.null(method$solve)) {
+    return(native_dense_shift_invert_lanczos(
+      problem, k = k, sigma = sigma, tol = tol, maxit = maxit,
+      vectors = vectors, certify = certify, plan = plan
+    ))
+  }
+  if (identical(plan$method, native_tridiagonal_shift_invert_label()) &&
+      is.null(problem$metric) &&
+      is.null(method$solve)) {
+    return(native_tridiagonal_shift_invert_lanczos(
+      problem, k = k, sigma = sigma, tol = tol, maxit = maxit,
+      vectors = vectors, certify = certify, plan = plan
+    ))
+  }
+  if (identical(plan$method, native_tridiagonal_generalized_shift_invert_label()) &&
+      !is.null(problem$metric) &&
+      is.null(method$solve)) {
+    return(native_tridiagonal_generalized_shift_invert_lanczos(
+      problem, k = k, sigma = sigma, tol = tol, maxit = maxit,
+      vectors = vectors, certify = certify, plan = plan
+    ))
+  }
+  if (identical(plan$method, native_dense_generalized_shift_invert_label()) &&
+      !is.null(problem$metric) &&
+      is.null(method$solve)) {
+    return(native_dense_generalized_shift_invert_lanczos(
+      problem, k = k, sigma = sigma, tol = tol, maxit = maxit,
+      vectors = vectors, certify = certify, plan = plan
+    ))
   }
 
   prep <- prepare_shift_invert_operator(problem, sigma, user_solve = method$solve)
@@ -404,14 +1221,15 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
   lambda <- sigma + 1 / mu
 
   Aop <- problem$A
+  Bop <- problem$metric
 
   ord <- order_indices(lambda, problem$target)
   if (length(ord) > k) ord <- ord[seq_len(k)]
   lambda <- lambda[ord]
-  vec <- vec[, ord, drop = FALSE]
+  vec <- prep$recover_vectors(vec[, ord, drop = FALSE])
 
   cert <- if (isTRUE(certify) && !is.null(vec) && ncol(vec) > 0L) {
-    certify_eigen_operator(Aop, lambda, vec, tol = tol)
+    certify_eigen_operator(Aop, lambda, vec, Bop = Bop, tol = tol)
   } else {
     empty_certificate(
       tol,
@@ -445,7 +1263,11 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
       factorization_cache = prep$factorization_cache,
       certification = list(
         problem = "original",
-        residual_formula = "A * x - lambda * x",
+        residual_formula = if (is.null(Bop)) {
+          "A * x - lambda * x"
+        } else {
+          "A * x - lambda * B * x"
+        },
         transformed_residuals_used = FALSE
       )
     ),

@@ -1,5 +1,7 @@
 useDynLib(eigencore, .registration = TRUE)
 importFrom(methods, is)
+importFrom(utils, modifyList)
+importFrom(utils, tail)
 export(adjoint)
 export(as_operator)
 export(auto)

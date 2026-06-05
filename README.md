@@ -147,11 +147,20 @@ operators, problems, plans, and certificates.
 ## Status
 
 **eigencore is experimental.** The public surface is settling but not
-yet locked. The V1 native engine ships scalar and block Hermitian
-Lanczos, LOBPCG (standard and generalized SPD prototype), Golub–Kahan
-SVD, and dense LAPACK fallbacks; randomized SVD and `shift_invert()` are
-scoped for V1 but not yet wired. See [`plan_v1.md`](plan_v1.md) for the
-engineering roadmap.
+yet locked. The V1 native engine ships scalar Hermitian Lanczos plus
+explicit and diagnostic block Hermitian Lanczos, LOBPCG (standard and
+generalized SPD prototype), Golub–Kahan SVD, dense LAPACK fallbacks,
+reference randomized SVD, dense standard/generalized shift-invert,
+sparse diagonal/symmetric-tridiagonal standard shift-invert, and tridiagonal
+generalized shift-invert with diagonal `B`. General sparse SVD,
+native randomized SVD, general sparse shift-invert, full restarted
+nonsymmetric Arnoldi, and the final release-hardening gates remain open.
+See [`plan_v1.md`](plan_v1.md) and the docs under
+`docs/` for the engineering roadmap and current limitations. Start with
+[`docs/method-selection-and-workflows.md`](docs/method-selection-and-workflows.md)
+for the current API workflow map and
+[`docs/v1-benchmark-manifest.md`](docs/v1-benchmark-manifest.md) for the
+benchmark gate inventory.
 
 ## License
 

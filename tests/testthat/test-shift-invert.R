@@ -8,7 +8,7 @@ test_that("shift-invert returns interior eigenvalues nearest sigma on dense Herm
                      method = shift_invert(sigma = 2))
 
   expect_identical(fit$method,
-                   "reference Hermitian Lanczos shift-invert (dense QR)")
+                   eigencore:::native_dense_shift_invert_label())
   expected <- vals[order(abs(vals - 2))][1:3]
   expect_equal(sort(fit$values), sort(expected), tolerance = 1e-7)
   expect_certificate_clean(fit)
@@ -18,6 +18,12 @@ test_that("shift-invert returns interior eigenvalues nearest sigma on dense Herm
   expect_equal(fit$certificate$backward_error, direct$backward_error,
                tolerance = 1e-12)
   expect_identical(fit$transform$kind, "shift_invert")
+  expect_identical(fit$transform$label_kind, "dense_lu_native")
+  expect_true(fit$transform$factorization_cache$native)
+  expect_identical(fit$transform$factorization_cache$factorization,
+                   "LAPACK dgetrf/dgetrs")
+  expect_identical(fit$restart$kind, "native_dense_shift_invert_lanczos")
+  expect_true(fit$restart$native)
   expect_identical(fit$transform$certification$problem, "original")
   expect_false(fit$transform$certification$transformed_residuals_used)
   expect_true(fit$plan$controls$certified_in_original_coordinates)
@@ -54,6 +60,58 @@ test_that("shift-invert handles a sparse CSC source via factorized solve", {
   expect_false(isTRUE(cache$near_singular))
 })
 
+test_that("shift-invert uses native tridiagonal factorized Lanczos for sparse CSC paths", {
+  n <- 50L
+  A_csc <- Matrix::bandSparse(
+    n,
+    k = c(-1, 0, 1),
+    diagonals = list(rep(-1, n - 1L), c(1, rep(2, n - 2L), 1), rep(-1, n - 1L))
+  )
+  sigma <- 0.01
+
+  fit <- eig_partial(A_csc, k = 3L, target = nearest(sigma),
+                     method = shift_invert(sigma = sigma), tol = 1e-8,
+                     allow_dense_fallback = "never")
+  expected <- eigen(as.matrix(A_csc), symmetric = TRUE, only.values = TRUE)$values
+  expected <- expected[order(abs(expected - sigma))][1:3]
+
+  expect_identical(fit$method,
+                   eigencore:::native_tridiagonal_shift_invert_label())
+  expect_equal(sort(fit$values), sort(expected), tolerance = 1e-7)
+  expect_certificate_clean(fit)
+  expect_identical(fit$transform$label_kind, "tridiagonal_thomas_native")
+  cache <- fit$transform$factorization_cache
+  expect_true(cache$native)
+  expect_equal(cache$factorization, "native tridiagonal Thomas")
+  expect_equal(cache$condition_estimate_type, "tridiagonal_thomas_pivot_ratio")
+  expect_true(is.finite(cache$condition_estimate))
+  expect_gt(cache$condition_estimate, 0)
+  expect_identical(fit$restart$kind, "native_tridiagonal_shift_invert_lanczos")
+  expect_true(fit$restart$native)
+  expect_true(fit$restart$factorization_native)
+  expect_identical(fit$transform$certification$problem, "original")
+  expect_false(fit$transform$certification$transformed_residuals_used)
+})
+
+test_that("shift-invert uses native tridiagonal factorized Lanczos for diagonal sources", {
+  A <- Matrix::Diagonal(x = c(1, 2, 4, 8, 16, 32))
+  sigma <- 7
+
+  fit <- eig_partial(A, k = 2L, target = nearest(sigma),
+                     method = shift_invert(sigma = sigma), tol = 1e-10,
+                     allow_dense_fallback = "never")
+
+  expect_identical(fit$method,
+                   eigencore:::native_tridiagonal_shift_invert_label())
+  expect_equal(sort(fit$values), c(4, 8), tolerance = 1e-10)
+  expect_certificate_clean(fit)
+  expect_identical(fit$transform$label_kind, "tridiagonal_thomas_native")
+  expect_true(fit$transform$factorization_cache$native)
+  expect_identical(fit$restart$kind, "native_tridiagonal_shift_invert_lanczos")
+  expect_true(fit$restart$native)
+  expect_true(fit$restart$factorization_native)
+})
+
 test_that("shift-invert accepts a user-supplied solve operator", {
   set.seed(11)
   n <- 15L
@@ -83,15 +141,127 @@ test_that("shift-invert refuses ignored public factorization handles", {
   )
 })
 
-test_that("generalized shift-invert is rejected at plan time with a roadmap note", {
+test_that("generalized shift-invert certifies original generalized residuals on dense SPD problems", {
   set.seed(9)
   n <- 10L
   A <- symmetric_with_spectrum(seq(1, n), seed = 9)
   B <- diag(seq(1, 2, length.out = n))
+  sigma <- 3.2
+
+  fit <- eig_partial(A, B = B, k = 2L, target = nearest(sigma),
+                     method = shift_invert(sigma = sigma), tol = 1e-9)
+  oracle <- eigencore:::dense_generalized_spd_eigen(A, B)
+  expected <- oracle$values[order(abs(oracle$values - sigma))][1:2]
+
+  expect_identical(
+    fit$method,
+    eigencore:::native_dense_generalized_shift_invert_label()
+  )
+  expect_equal(sort(fit$values), sort(expected), tolerance = 1e-7)
+  expect_certificate_clean(fit)
+  direct <- eigencore:::certify_eigen_operator(
+    as_operator(A), fit$values, fit$vectors, Bop = as_operator(B), tol = 1e-9
+  )
+  expect_equal(fit$certificate$residuals, direct$residuals, tolerance = 1e-12)
+  expect_equal(fit$certificate$backward_error, direct$backward_error,
+               tolerance = 1e-12)
+  expect_equal(crossprod(fit$vectors, B %*% fit$vectors), diag(2),
+               tolerance = 1e-8)
+  expect_identical(fit$transform$certification$problem, "original")
+  expect_identical(fit$transform$certification$residual_formula,
+                   "A * x - lambda * B * x")
+  expect_false(fit$transform$certification$transformed_residuals_used)
+  expect_true(fit$plan$controls$certified_in_original_coordinates)
+  expect_equal(fit$transform$factorization_cache$label_kind,
+               "dense_lu_generalized_native")
+  expect_true(fit$transform$factorization_cache$native)
+  expect_true(fit$transform$factorization_cache$generalized)
+  expect_equal(fit$transform$factorization_cache$metric_factorization,
+               "LAPACK dpotrf(B)")
+  expect_identical(fit$restart$kind,
+                   "native_dense_generalized_shift_invert_lanczos")
+  expect_true(fit$restart$native)
+  expect_true(fit$restart$generalized)
+})
+
+test_that("generalized shift-invert handles sparse A with diagonal B without densifying B", {
+  n <- 30L
+  A <- Matrix::bandSparse(
+    n,
+    k = c(-1, 0, 1),
+    diagonals = list(rep(-1, n - 1), rep(2.5, n), rep(-1, n - 1))
+  )
+  B <- Matrix::Diagonal(x = seq(1, 2, length.out = n))
+  oracle <- eigencore:::dense_generalized_spd_eigen(as.matrix(A), as.matrix(B))
+  sigma <- sort(oracle$values)[4L] + 0.01
+
+  fit <- eig_partial(A, B = B, k = 3L, target = nearest(sigma),
+                     method = shift_invert(sigma = sigma), tol = 1e-8,
+                     allow_dense_fallback = "never")
+  expected <- oracle$values[order(abs(oracle$values - sigma))][1:3]
+
+  expect_identical(
+    fit$method,
+    eigencore:::native_tridiagonal_generalized_shift_invert_label()
+  )
+  expect_equal(sort(fit$values), sort(expected), tolerance = 1e-6)
+  expect_certificate_clean(fit)
+  expect_equal(crossprod(fit$vectors, as.matrix(B) %*% fit$vectors), diag(3),
+               tolerance = 1e-8)
+  expect_equal(fit$transform$factorization_cache$label_kind,
+               "tridiagonal_thomas_generalized_native")
+  expect_true(fit$transform$factorization_cache$native)
+  expect_equal(fit$transform$factorization_cache$factorization,
+               "native tridiagonal Thomas + diagonal sqrt(B)")
+  expect_equal(fit$transform$factorization_cache$metric_factorization,
+               "diagonal sqrt(B)")
+  expect_identical(fit$restart$kind,
+                   "native_tridiagonal_generalized_shift_invert_lanczos")
+  expect_true(fit$restart$native)
+  expect_true(fit$restart$generalized)
+  expect_true(fit$restart$factorization_native)
+})
+
+test_that("generalized shift-invert keeps non-tridiagonal sparse A reference-labelled", {
+  set.seed(10)
+  A <- methods::as(symmetric_with_spectrum(seq(1, 12), seed = 10), "CsparseMatrix")
+  B <- Matrix::Diagonal(x = seq(1.1, 1.8, length.out = 12L))
+  oracle <- eigencore:::dense_generalized_spd_eigen(as.matrix(A), as.matrix(B))
+  sigma <- oracle$values[[5L]] + 0.02
+
+  fit <- eig_partial(A, B = B, k = 2L, target = nearest(sigma),
+                     method = shift_invert(sigma = sigma), tol = 1e-8,
+                     allow_dense_fallback = "never")
+  expected <- oracle$values[order(abs(oracle$values - sigma))][1:2]
+
+  expect_identical(
+    fit$method,
+    "reference generalized SPD Lanczos shift-invert (sparse LU)"
+  )
+  expect_equal(sort(fit$values), sort(expected), tolerance = 1e-6)
+  expect_equal(fit$transform$factorization_cache$label_kind,
+               "sparse_lu_generalized")
+  expect_false(isTRUE(fit$transform$factorization_cache$native))
+})
+
+test_that("generalized shift-invert rejects unsupported sparse B without densifying", {
+  n <- 8L
+  A <- Matrix::Diagonal(x = seq_len(n) + 1)
+  B <- methods::as(Matrix::bandSparse(
+    n,
+    k = c(-1, 0, 1),
+    diagonals = list(
+      rep(-0.05, n - 1L),
+      rep(1.5, n),
+      rep(-0.05, n - 1L)
+    )
+  ), "dgCMatrix")
+
   expect_error(
     eig_partial(A, B = B, k = 2L, target = nearest(3),
-                method = shift_invert(sigma = 3)),
-    "[Gg]eneralized SPD shift-invert"
+                method = shift_invert(sigma = 3),
+                allow_dense_fallback = "never"),
+    "dense B or diagonal B|avoid silent densification"
   )
 })
 
@@ -103,7 +273,7 @@ test_that("planner emits an honest shift-invert label for the chosen path", {
                         transform = shift_invert(sigma = 5))
   plan <- plan_solver(P, k = 3, method = shift_invert(sigma = 5))
   expect_identical(plan$method,
-                   "reference Hermitian Lanczos shift-invert (dense QR)")
+                   eigencore:::native_dense_shift_invert_label())
   expect_true(plan$controls$certified_in_original_coordinates)
   expect_identical(plan$controls$eigenvalue_recovery,
                    "lambda = sigma + 1 / mu")
@@ -141,6 +311,16 @@ test_that("shift-invert factorization cache keys invalidate on A, sigma, and B c
       as_operator(A), 0.25, as_operator(B_changed)
     )
   ))
+  expect_true(key$standard_problem)
+  expect_null(key$B)
+  expect_identical(key$structure, "hermitian")
+
+  general_op <- as_operator(A)
+  general_op$structure <- general()
+  expect_false(identical(
+    key,
+    eigencore:::shift_invert_factorization_cache_key(general_op, 0.25)
+  ))
 })
 
 test_that("shift-invert result exposes factorization-cache provenance", {
@@ -153,12 +333,12 @@ test_that("shift-invert result exposes factorization-cache provenance", {
 
   expect_s3_class(cache$key, "eigencore_shift_invert_cache_key")
   expect_equal(cache$key$sigma, 4.2)
-  expect_equal(cache$label_kind, "dense_qr")
-  expect_equal(cache$factorization, "base::qr(LAPACK=TRUE)")
+  expect_equal(cache$label_kind, "dense_lu_native")
+  expect_equal(cache$factorization, "LAPACK dgetrf/dgetrs")
   expect_true(cache$factorization_cached)
-  expect_equal(cache$condition_estimate_type, "dense_rcond")
+  expect_equal(cache$condition_estimate_type, "dense_lu_pivot_ratio")
   expect_true(is.finite(cache$condition_estimate))
-  expect_false(cache$native)
+  expect_true(cache$native)
   expect_true(cache$reusable_within_operator)
   expect_false(cache$external_cache)
 })
@@ -187,7 +367,10 @@ test_that("shift-invert recovers smallest eigenvalues of a 1D Laplacian", {
                      method = shift_invert(sigma = 0.01))
   oracle <- sort(eigen(as.matrix(L), symmetric = TRUE)$values)[1:4]
   expect_identical(fit$method,
-                   "reference Hermitian Lanczos shift-invert (sparse LU)")
+                   eigencore:::native_tridiagonal_shift_invert_label())
   expect_equal(sort(fit$values), sort(oracle), tolerance = 1e-6)
-  expect_true(all(fit$certificate$converged))
+  expect_certificate_clean(fit)
+  expect_identical(fit$transform$label_kind, "tridiagonal_thomas_native")
+  expect_true(fit$restart$native)
+  expect_true(fit$restart$factorization_native)
 })

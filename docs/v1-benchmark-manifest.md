@@ -1,0 +1,61 @@
+# V1 Benchmark Manifest
+
+Date: 2026-05-17
+
+This manifest is the runnable benchmark inventory for the V1 readiness audit.
+It is not a release signoff. A row is release-grade only when it was run from
+a clean installed package, saved its result artifacts, and passed the strict
+gate for the promoted solver family.
+
+The companion documentation scope audit is
+`docs/v1-doc-scope-audit.md`. That audit maps user-facing docs, migration
+docs, design notes, and release evidence to V1 requirements; it does not relax
+the benchmark stop rule below.
+
+The companion completion audit is `docs/v1-completion-audit.md`. It is the
+single checklist to consult before any V1 completion claim.
+
+Use an installed package path for release evidence, for example:
+
+```sh
+R CMD INSTALL --library=/tmp/eigencore-bench-lib .
+R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/<script>.R ...
+```
+
+## Release Surfaces
+
+| Surface | Script | Primary command | Saved artifacts | Current status |
+|---|---|---|---|---|
+| G1 Hermitian native gate | `inst/benchmarks/bench-native-hermitian-gate.R` | `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-native-hermitian-gate.R --strict --save --cases=path_laplacian:1000` | `*-native-hermitian-gate-rows.rds`, `*-native-hermitian-gate-summary.rds` | Red. Fresh installed `path_laplacian:1000` certifies `20/20`, but scalar default still fails speed, memory, and PRIMME parity after the projected-matrix update. |
+| G1 sparse Hermitian coverage | `inst/benchmarks/bench-hermitian-sparse.R` | `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-hermitian-sparse.R --strict --save --cases=<case:id>` | `*-hermitian-sparse-rows.rds`, `*-hermitian-sparse-summary.rds` | Diagnostic. Used with case filtering for sparse Hermitian reruns; current sparse block auto-promotion is disabled except diagnostic opt-in. |
+| H production SVD | `inst/benchmarks/bench-svd-surface.R` | Default tiny-Gram checks: `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-svd-surface.R --quick --iterations=1 --save --cases=tall_sparse:600x90 --subject=eigencore --methods=eigencore,RSpectra,irlba,rsvd` and `--cases=wide_sparse:90x600`; retained candidate check: add `--h-candidate` for `tall_sparse:600x90`; retained IRLBA diagnostic: source-loaded `bench-svd-surface.R --quick --iterations=1 --cases=wide_sparse:90x600 --methods=eigencore_irlba_lbd_retained_native,RSpectra --subject=eigencore_irlba_lbd_retained_native`; normal-scout diagnostic: source-loaded `bench-svd-surface.R --quick --iterations=1 --cases=wide_sparse:90x600 --methods=eigencore_irlba_lbd_normal_scout,eigencore_golub_kahan_one_sided,RSpectra --subject=eigencore_irlba_lbd_normal_scout`. | `*-svd-surface-rows.rds`, `*-svd-surface-gates.rds`, `*-svd-surface-memory.rds` | Red. Fresh installed quick default tiny-Gram rows certify and pass memory but miss speed. After adding the native right-Gram fast-result path, a 3-iteration installed probe still reports `0.40x` tall and `0.63x` wide versus the best certified reference. Direct tall-path comparison shows the fast result trims R assembly overhead (`svd_partial()` about `604us` versus `solve(svd_problem())` about `692us`), but this is not an H promotion. Retained block-GK also certifies tall but fails speed and memory. The retained IRLBA diagnostic now exposes `irlba_lbd_restart_state_kind = ritz_subspace_only`, `irlba_lbd_recurrence_available = FALSE`, and `irlba_lbd_augmented_recurrence = FALSE`; a source-loaded wide probe still certifies only after adaptive fallback (`24` scout + `24` retained + `90` fallback matvecs), so true augmented recurrence remains open. The normal-scout IRLBA diagnostic runs 8/12/16/20 matrix-free normal scouts and certifies only after one-sided LBD polish, but the H-shaped wide row is slower and higher-allocation than direct one-sided GK and RSpectra, so it is retained only as a rejection/diagnostic surface. |
+| I randomized SVD | `inst/benchmarks/bench-randomized-rsvd.R` | `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-randomized-rsvd.R --iterations=1 --save --cases=exact_low_rank_dense:2000x500`; quick diagnostics: `--quick --iterations=1 --save --cases=exact_low_rank_dense:120x80,slow_decay_dense:140x90,low_rank_sparse:140x90` | `*-randomized-rsvd-rows.rds`, `*-randomized-rsvd-gates.rds` | Mixed. Fresh installed non-quick exact-low-rank row is green at `2.97x` versus certified `rsvd`; quick exact-low-rank certifies but is below the global `2x` gate at `1.85x`; quick low-rank sparse certifies and beats certified `rsvd` but remains below gate at `1.87x`; slow-decay now explicitly cannot pass parity when the `rsvd` baseline fails eigencore certification (`baseline_certified = FALSE`, `passed = FALSE`). I is not fully promoted. |
+| J generalized SPD LOBPCG | `inst/benchmarks/bench-generalized-lobpcg.R` | Native sparse-smallest slice: `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-generalized-lobpcg.R --iterations=1 --save --cases=sparse_generalized_path_smallest:500 --methods=eigencore_shifted_tridiagonal,base --subject=eigencore_shifted_tridiagonal --strict`; sparse-largest diagnostic: `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-generalized-lobpcg.R --iterations=1 --cases=sparse_generalized_path_largest --methods=eigencore_shifted_tridiagonal,base --subject=eigencore_shifted_tridiagonal`; dense auto fallback boundary: `--cases=dense_generalized_partial_smallest:180,dense_generalized_partial_largest:180 --methods=eigencore_auto,base --strict` | `*-generalized-lobpcg-rows.rds`, `*-generalized-lobpcg-gates.rds`, `*-generalized-lobpcg-native-contracts.rds`, `*-generalized-lobpcg-adversarial-b-contracts.rds` | Partial. Fresh installed focused evidence on 2026-05-17 shows dense generalized `auto()` certifies through the native dense LAPACK fallback, and the sparse-smallest shifted-tridiagonal native LOBPCG row certifies `10/10` with a `1.04x` speed ratio and `2.79x` memory ratio versus dense base. Current installed sparse-largest shifted-tridiagonal evidence uses a non-densifying largest-target shift policy, certifies `10/10`, and passes memory (`2.75x` versus dense base), but remains speed-red (`0.49x` versus dense base, `163` iterations). J remains open because sparse-largest and broader generalized LOBPCG production gates are still red. |
+| K generalized SPD B-orthogonal Lanczos | `inst/benchmarks/bench-generalized-lobpcg.R` focused K rows plus focused tests | Installed diagonal probe: `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-generalized-lobpcg.R --quick --strict --iterations=1 --cases=diagonal_generalized_lanczos_ref_smallest --methods=eigencore_lanczos_reference,eigencore,base --subject=eigencore_lanczos_reference`; installed sparse-CSC probe: same command with `--cases=sparse_csc_generalized_lanczos_ref_smallest`; source test: `Rscript -e 'pkgload::load_all("."); testthat::test_file("tests/testthat/test-generalized-lobpcg.R", reporter="summary")'` | `*-generalized-lanczos-reference-contracts.rds` when saved with the broader generalized benchmark script | Partial reference with installed benchmark evidence. Explicit generalized-SPD `lanczos()` requests now have an honest reference scalar B-orthogonal refinement for dense, diagonal, and CSC SPD metric solves; focused tests and installed K rows cover B-orthogonality, original-coordinate certification, LOBPCG agreement, planner label, diagonal and sparse-Cholesky metric-solve provenance, and no dense fallback for the diagonal/CSC cases. No native/block production benchmark gate exists yet. |
+| M standard preconditioned LOBPCG | `inst/benchmarks/bench-lobpcg-preconditioned.R` | `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-lobpcg-preconditioned.R --strict --save` | `*-lobpcg-preconditioned-rows.rds`, `*-lobpcg-preconditioned-gates.rds` | Green for the path-Laplacian release surface. Native shifted-tridiagonal rows beat certified references on `n = 200, 1000, 2000`, `k = 5`. Broader non-Laplacian policy is future scope. |
+| L shift-invert contract | `inst/benchmarks/bench-shift-invert.R` | Native label surface: `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-shift-invert.R --iterations=1 --save`; quick full label surface: `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-shift-invert.R --quick --strict --iterations=1 --save`; user-solve boundary: `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-shift-invert.R --quick --strict --iterations=1 --cases=matrix_free_user_solve_reference` | `20260517-shift-invert-rows.rds`, `20260517-shift-invert-contracts.rds` | Green for current labels. Fresh installed non-quick strict evidence on 2026-05-17 certifies dense standard, dense generalized, diagonal standard, sparse symmetric-tridiagonal standard, and sparse/diagonal tridiagonal-generalized native rows in original coordinates; the generalized tridiagonal row uses `tridiagonal_thomas_generalized_native`. A fresh installed quick strict saved run also covers general sparse standard and sparse/diagonal generalized reference rows: both converge with estimated-scale certificates that correctly do not mark `passed`, retain sparse-LU cache provenance, and remain nonnative. The installed quick strict `matrix_free_user_solve_reference` row certifies in original coordinates with exact scale metadata, records `factorization = user_solve`, `external_cache = TRUE`, and `label_kind = user_solve`, and remains nonnative/reference-labelled. L remains partial because general sparse native shift-invert is not implemented. |
+| Nonsymmetric compatibility | `inst/benchmarks/bench-nonsymmetric.R` | `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-nonsymmetric.R --iterations=1 --save --strict`; quick strict smoke: `--quick --strict --iterations=1` | `20260517-nonsymmetric-rows.rds`, `20260517-nonsymmetric-contracts.rds` | Green for current compatibility labels. Dense nonsymmetric and dense `eigs(..., which = "LI")` rows now certify right residuals through the same native Arnoldi-cycle plus native-Ritz compatibility label as sparse real- and imaginary-target rows. Installed non-quick strict evidence on 2026-05-17 certifies `dense_native_arnoldi_lm`, `dense_native_arnoldi_li`, `dense_eigs_native_arnoldi_li`, `sparse_native_arnoldi_lr`, and `sparse_native_arnoldi_li`, all with `native_arnoldi_label = TRUE`, `ritz_extraction_native = TRUE`, and exact right-residual certificates. Dense rows use full dense subspace compatibility; sparse CSC rows keep the bounded subspace/restart policy. Matrix-free Arnoldi remains reference-labelled and production-grade fully native restarted Arnoldi remains open. |
+
+## Diagnostic And Baseline Surfaces
+
+| Surface | Script | Purpose |
+|---|---|---|
+| Block Hermitian prototype | `inst/benchmarks/bench-block-hermitian-prototype.R` | Development diagnostics for block Hermitian variants before promotion. |
+| G1 candidate baseline | `inst/benchmarks/bench-g1-candidate-baseline.R` | Rebuilds `inst/benchmarks/baselines/g1_candidate_pre.csv` for before/after G1 candidate comparisons. |
+| Performance baseline | `inst/benchmarks/bench-performance-baseline.R` | Broad comparative smoke across eigen, SVD, and generalized cases; not a strict release gate. |
+| SVD tall-skinny | `inst/benchmarks/bench-svd-tallskinny.R` | Focused SVD development surface retained for historical tall-skinny diagnostics. |
+| Tiny Gram eigensolvers | `inst/benchmarks/bench-tiny-gram-eigensolvers.R` | Tracks tiny dense Gram solve choices used by bounded SVD special cases. |
+| Reference suite | `benchmarks/reference_suite.R` | Legacy reference comparisons; use the explicit `inst/benchmarks` release surfaces for V1 gate evidence. |
+
+## Stop Rule
+
+Do not use this manifest to close V1 by itself. V1 benchmark signoff still
+requires:
+
+1. Every promoted solver family to pass its strict installed-package gate.
+2. Red rows above to be fixed, demoted, or explicitly scoped out by a PRD
+   revision.
+3. Saved artifacts from the final runs to be listed in `benchmarks/RELEASES.md`
+   with the command that produced them.
+4. A fresh `R CMD build` and `R CMD check --no-manual` after the final
+   benchmark/doc updates.

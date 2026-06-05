@@ -11,14 +11,15 @@ reference_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   m <- op$dim[1L]
   n <- op$dim[2L]
   limit <- min(m, n)
-  if (is.null(maxit)) {
-    maxit <- min(limit, max(20L, 4L * rank + 20L))
-  } else {
-    maxit <- min(limit, as.integer(maxit))
-  }
-  if (maxit < rank) {
-    stop("maxit/max_subspace must be at least rank.", call. = FALSE)
-  }
+  controls <- reference_scalar_subspace_controls(
+    requested = rank,
+    requested_name = "rank",
+    limit = limit,
+    maxit = maxit,
+    default_maxit = function(rank) max(20L, 4L * rank + 20L)
+  )
+  rank <- controls$requested
+  maxit <- controls$maxit
 
   U <- matrix(0, m, maxit)
   V <- matrix(0, n, maxit)
@@ -431,6 +432,13 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
     final$restart$retained_restart_native <- FALSE
     final$restart$retained_restart_abi_version <- abi$version
     final$restart$native_attempt_certification <- FALSE
+    final$restart$irlba_lbd_restart_state_kind <- "scout_certified_no_restart"
+    final$restart$irlba_lbd_recurrence_available <- FALSE
+    final$restart$irlba_lbd_augmented_recurrence <- FALSE
+    final$restart$irlba_lbd_retained_seed_strategy <- NA_character_
+    final$restart$irlba_lbd_retained_from_scout <- rank
+    final$restart$irlba_lbd_retained_padding <- 0L
+    final$restart$irlba_lbd_retained_fixed_work_attempts <- 0L
     final$restart$work <- abi$work
     final$restart$retained <- abi$retained
     final$restart$internal_orientation <- abi$internal_orientation
@@ -470,6 +478,8 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
     cols = abi$retained,
     tol = tol
   )
+  retained_from_scout <- min(ncol(small$v), ncol(small$u), abi$retained)
+  retained_padding <- abi$retained - retained_from_scout
   alpha <- numeric(abi$work)
   beta <- numeric(abi$work)
   random_tails <- matrix(
@@ -595,7 +605,7 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
   scout_matvecs <- small$matvecs %||% 0L
   scout_iterations <- small$iterations %||% 0L
   retained_matvecs <- if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
-    native$matvecs %||% 0L
+      native$matvecs %||% 0L
   } else {
     0L
   }
@@ -621,6 +631,18 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
   fallback$restart$retained_restart_native <- !inherits(native, "eigencore_irlba_lbd_native_error")
   fallback$restart$retained_restart_abi_version <- abi$version
   fallback$restart$native_attempt_certification <- !inherits(native, "eigencore_irlba_lbd_native_error")
+  fallback$restart$irlba_lbd_restart_state_kind <- "ritz_subspace_only"
+  fallback$restart$irlba_lbd_recurrence_available <- FALSE
+  fallback$restart$irlba_lbd_augmented_recurrence <- FALSE
+  fallback$restart$irlba_lbd_retained_seed_strategy <- "ritz_subspace_seeded_fixed_work"
+  fallback$restart$irlba_lbd_retained_from_scout <- retained_from_scout
+  fallback$restart$irlba_lbd_retained_padding <- retained_padding
+  fallback$restart$irlba_lbd_retained_fixed_work_attempts <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      nrow(native$attempt_history)
+    } else {
+      0L
+    }
   fallback$restart$work <- abi$work
   fallback$restart$retained <- abi$retained
   fallback$restart$internal_orientation <- abi$internal_orientation
@@ -745,6 +767,13 @@ native_irlba_lbd_restart_diagnostics <- function(abi, native, small, final,
     reorthogonalize_u = as.logical(native$reorthogonalize_u),
     reorthogonalize_v = as.logical(native$reorthogonalize_v),
     reorthogonalization_passes = native$reorthogonalization_passes,
+    irlba_lbd_restart_state_kind = "ritz_subspace_only",
+    irlba_lbd_recurrence_available = FALSE,
+    irlba_lbd_augmented_recurrence = FALSE,
+    irlba_lbd_retained_seed_strategy = "ritz_subspace_seeded_fixed_work",
+    irlba_lbd_retained_from_scout = min(ncol(small$v), ncol(small$u), abi$retained),
+    irlba_lbd_retained_padding = abi$retained - min(ncol(small$v), ncol(small$u), abi$retained),
+    irlba_lbd_retained_fixed_work_attempts = nrow(native$attempt_history),
     internal_orientation = abi$internal_orientation,
     internal_transposed = abi$internal_transposed,
     scout_matvecs = small$matvecs,
