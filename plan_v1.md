@@ -967,14 +967,14 @@ Primary attack surfaces, in order:
    budget, using the same Frobenius scale as the public SVD certificate and
    recording `certificate_passed`, `max_backward_error`, and `max_residual` in
    attempt history. This keeps the full 8-cycle budget for hard cases but can
-   return the first exact-certified late chunk: on the current source-loaded
-   `wide_sparse:90x600` H surface seed, retained BPRO/native rows stop after
-   `35` tail steps / `41` augmented basis columns / `2` small projected SVDs
-   with `83` retained-native matvecs, instead of the previous fixed `40` tail
-   steps / `46` columns / `8` small SVDs / `92` retained matvecs. A direct
-   seed-702 probe certifies even earlier at `30` tail steps and `72` retained
-   matvecs, while the larger `200x2000` sparse-wide fixture checks `30`, `35`,
-   and `40` tail steps and preserves the full-budget certified result. The
+   return the first exact-certified late chunk: the first adaptive slice moved
+   the H-shaped retained rows from the previous fixed `40` tail steps / `46`
+   columns / `8` small SVDs / `92` retained matvecs down to chunk-level stops
+   such as `35` tail steps / `41` columns / `2` small SVDs / `83` retained
+   matvecs. A direct seed-702 probe certifies even earlier at `30` tail steps
+   and `72` retained matvecs, while the larger `200x2000` sparse-wide fixture
+   checks `30`, `35`, and `40` tail steps and preserves the full-budget
+   certified result. The
    retained IRLBA/LBD native result now carries cached-`A V` certificate
    diagnostics across the C/R boundary, and the R wrapper builds the standard
    certificate from that payload instead of recomputing the active certificate.
@@ -987,12 +987,14 @@ Primary attack surfaces, in order:
    with certificate phase time around `3.5us`, while still remaining red versus
    certified `RSpectra` on total time and memory. The exact certificate attempt
    history now also records `converged_count` and
-   `leading_converged_count` for retained IRLBA/LBD chunks. On a deterministic
-   H-shaped `wide_sparse:90x600` probe, the failed `30`-tail chunk reports
-   `4/5` converged and leading-converged triplets before the `35`-tail chunk
-   reaches `5/5`, giving future partial-locking/refinement work concrete
-   failed-chunk evidence instead of relying on the final certificate alone. It
-   now also exposes
+   `leading_converged_count` for retained IRLBA/LBD chunks. Those counts now
+   drive a bounded near-miss micro-check window between regular chunk
+   boundaries: on a deterministic H-shaped `wide_sparse:90x600` probe, `30`
+   and `31` tail steps report `4/5` converged and leading-converged triplets,
+   and the next exact check certifies at `32` tail steps / `38` basis columns /
+   `3` small projected SVDs / `78` retained matvecs instead of waiting for the
+   regular `35`-tail boundary. This is still H-unpromoted because total time
+   and memory remain red versus certified references. It now also exposes
    exact-certified final lock diagnostics:
    `retained_locked_count`, `irlba_lbd_soft_locked_count`,
    `irlba_lbd_hard_locked_count`,

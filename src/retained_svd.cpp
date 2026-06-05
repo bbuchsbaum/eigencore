@@ -1911,6 +1911,7 @@ static SEXP irlba_lbd_augmented_retained_projection(
   double final_cheap_residual = R_NaReal;
   int last_recorded_tail_steps = -1;
   int tail_steps_taken = 0;
+  int micro_certificate_until = -1;
 
   auto stage_timer = native_timer_now();
   int status = apply(impl, EIGENCORE_TRANSPOSE_NONE, retained_core,
@@ -2113,6 +2114,21 @@ static SEXP irlba_lbd_augmented_retained_projection(
     );
     last_recorded_tail_steps = tail_for_attempt;
 
+    if (force_certificate && !keep_candidate && certificate_passed == 0 && tail_width > 1) {
+      const int near_rank = (rank > 1) ? (rank - 1) : rank;
+      const int next_boundary =
+        tail_for_attempt + tail_width - (tail_for_attempt % tail_width);
+      const int bounded_until = next_boundary > tail_for_attempt
+        ? next_boundary - 1
+        : tail_for_attempt;
+      if (bounded_until > tail_for_attempt &&
+          (leading_converged_count >= near_rank ||
+           (R_FINITE(max_backward_error) && max_backward_error <= 10.0 * tol))) {
+        micro_certificate_until =
+          bounded_until < requested_tail_steps ? bounded_until : requested_tail_steps;
+      }
+    }
+
     if (certificate_passed == 1 || keep_candidate) {
       if (ritz_protected) {
         UNPROTECT(1);
@@ -2211,8 +2227,13 @@ static SEXP irlba_lbd_augmented_retained_projection(
     beta_prev = beta_next;
     tail_beta_history.push_back(beta_next);
     ++tail_steps_taken;
-    if (tail_width > 0 && tail_steps_taken % tail_width == 0 &&
-        tail_steps_taken >= early_certificate_tail_start) {
+    const int regular_certificate_check =
+      tail_width > 0 && tail_steps_taken % tail_width == 0 &&
+      tail_steps_taken >= early_certificate_tail_start;
+    const int micro_certificate_check =
+      micro_certificate_until >= tail_steps_taken &&
+      tail_steps_taken > last_recorded_tail_steps;
+    if (regular_certificate_check || micro_certificate_check) {
       const int eval_status = evaluate_augmented_attempt(
         tail_steps_taken,
         1,
