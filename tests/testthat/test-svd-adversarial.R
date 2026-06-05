@@ -419,6 +419,44 @@ test_that("retained IRLBA benchmark candidate avoids repeated fixed-work native 
   expect_certificate_clean(fit)
 })
 
+test_that("retained IRLBA BPRO policy certifies with monitored partial reorthogonalization", {
+  set.seed(702)
+  wide <- Matrix::t(Matrix::rsparsematrix(600L, 90L, density = 0.03))
+  full <- eigencore:::run_svd_method(
+    "eigencore_irlba_lbd_retained_native",
+    wide,
+    rank = 5L,
+    tol = 1e-8,
+    seed = 702L
+  )
+  bpro <- eigencore:::run_svd_method(
+    "eigencore_irlba_lbd_retained_bpro",
+    wide,
+    rank = 5L,
+    tol = 1e-8,
+    seed = 702L
+  )
+
+  expect_true(bpro$certificate$passed)
+  expect_false(bpro$restart$fallback_used)
+  expect_true(bpro$restart$irlba_lbd_bpro_policy)
+  expect_equal(bpro$restart$irlba_lbd_bpro_passes_per_append, 1L)
+  expect_gte(bpro$restart$irlba_lbd_bpro_monitored_appends, 32L)
+  expect_gte(bpro$restart$irlba_lbd_bpro_threshold_reorthogonalizations, 0L)
+  expect_lte(
+    bpro$restart$irlba_lbd_bpro_max_post_append_orthogonality_loss,
+    bpro$restart$irlba_lbd_bpro_monitoring_threshold
+  )
+  expect_lte(
+    bpro$restart$irlba_lbd_bpro_basis_orthogonality_loss,
+    bpro$restart$irlba_lbd_bpro_monitoring_threshold
+  )
+  expect_false(bpro$restart$irlba_lbd_bpro_escalation_recommended)
+  expect_equal(bpro$matvecs, full$matvecs)
+  expect_lt(bpro$restart$reorthogonalization_passes, full$restart$reorthogonalization_passes)
+  expect_certificate_clean(bpro)
+})
+
 test_that("retained IRLBA residual-augmented path certifies a larger sparse wide fixture", {
   set.seed(703)
   wide <- Matrix::t(Matrix::rsparsematrix(2000L, 200L, density = 0.02))

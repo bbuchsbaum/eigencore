@@ -1527,6 +1527,65 @@ static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
   return out_;
 }
 
+struct BproAppendDiagnostics {
+  double threshold;
+  int monitored_appends;
+  int threshold_reorthogonalizations;
+  double max_estimated_orthogonality_loss;
+  double max_post_append_orthogonality_loss;
+  int escalation_recommended;
+};
+
+static double vector_norm2_sqrt(const double* x, int n) {
+  long double norm2 = 0.0L;
+  for (int row = 0; row < n; ++row) {
+    norm2 += static_cast<long double>(x[row]) * x[row];
+  }
+  return sqrt(static_cast<double>(norm2));
+}
+
+static double candidate_basis_correlation_loss(const double* basis,
+                                               int n,
+                                               int cols,
+                                               const double* candidate,
+                                               double candidate_norm) {
+  if (cols <= 0) {
+    return 0.0;
+  }
+  if (!R_FINITE(candidate_norm) || candidate_norm <= 0.0) {
+    return R_PosInf;
+  }
+  double loss = 0.0;
+  for (int col = 0; col < cols; ++col) {
+    const double* q = basis + static_cast<int64_t>(col) * n;
+    double dot = 0.0;
+    for (int row = 0; row < n; ++row) {
+      dot += q[row] * candidate[row];
+    }
+    const double corr = fabs(dot) / candidate_norm;
+    if (corr > loss) {
+      loss = corr;
+    }
+  }
+  return loss;
+}
+
+static void mgs_orthogonalization_pass(double* basis,
+                                       int n,
+                                       int cols,
+                                       double* z) {
+  for (int col = 0; col < cols; ++col) {
+    const double* q = basis + static_cast<int64_t>(col) * n;
+    double dot = 0.0;
+    for (int row = 0; row < n; ++row) {
+      dot += q[row] * z[row];
+    }
+    for (int row = 0; row < n; ++row) {
+      z[row] -= dot * q[row];
+    }
+  }
+}
+
 static int append_orthonormal_column(double* basis,
                                      int n,
                                      int capacity,
@@ -1534,7 +1593,9 @@ static int append_orthonormal_column(double* basis,
                                      const double* candidate,
                                      double tol,
                                      int* orthogonalization_passes,
-                                     double* accepted_norm = nullptr) {
+                                     double* accepted_norm,
+                                     int requested_passes,
+                                     BproAppendDiagnostics* bpro) {
   if (accepted_norm != nullptr) {
     *accepted_norm = 0.0;
   }
@@ -1543,27 +1604,44 @@ static int append_orthonormal_column(double* basis,
   }
   std::vector<double> z(static_cast<size_t>(n), 0.0);
   std::memcpy(z.data(), candidate, sizeof(double) * static_cast<size_t>(n));
-  const int passes = (*cols > 0) ? 2 : 1;
+  if (requested_passes < 1) {
+    requested_passes = 1;
+  }
+  const int passes = (*cols > 0) ? requested_passes : 1;
   for (int pass = 0; pass < passes; ++pass) {
-    for (int col = 0; col < *cols; ++col) {
-      const double* q = basis + static_cast<int64_t>(col) * n;
-      double dot = 0.0;
-      for (int row = 0; row < n; ++row) {
-        dot += q[row] * z[row];
-      }
-      for (int row = 0; row < n; ++row) {
-        z[row] -= dot * q[row];
-      }
-    }
+    mgs_orthogonalization_pass(basis, n, *cols, z.data());
     if (orthogonalization_passes != nullptr && *cols > 0) {
       ++(*orthogonalization_passes);
     }
   }
-  long double norm2 = 0.0L;
-  for (int row = 0; row < n; ++row) {
-    norm2 += static_cast<long double>(z[row]) * z[row];
+  if (bpro != nullptr && *cols > 0) {
+    ++bpro->monitored_appends;
+    double monitored_norm = vector_norm2_sqrt(z.data(), n);
+    double estimated_loss = candidate_basis_correlation_loss(
+      basis, n, *cols, z.data(), monitored_norm
+    );
+    if (estimated_loss > bpro->max_estimated_orthogonality_loss) {
+      bpro->max_estimated_orthogonality_loss = estimated_loss;
+    }
+    if (!R_FINITE(estimated_loss) || estimated_loss > bpro->threshold) {
+      mgs_orthogonalization_pass(basis, n, *cols, z.data());
+      if (orthogonalization_passes != nullptr) {
+        ++(*orthogonalization_passes);
+      }
+      ++bpro->threshold_reorthogonalizations;
+      monitored_norm = vector_norm2_sqrt(z.data(), n);
+      estimated_loss = candidate_basis_correlation_loss(
+        basis, n, *cols, z.data(), monitored_norm
+      );
+    }
+    if (estimated_loss > bpro->max_post_append_orthogonality_loss) {
+      bpro->max_post_append_orthogonality_loss = estimated_loss;
+    }
+    if (!R_FINITE(estimated_loss) || estimated_loss > bpro->threshold) {
+      bpro->escalation_recommended = 1;
+    }
   }
-  const double norm = sqrt(static_cast<double>(norm2));
+  const double norm = vector_norm2_sqrt(z.data(), n);
   const double threshold = fmax(100.0 * DBL_EPSILON, tol * 1.0e-4);
   if (!R_FINITE(norm) || norm <= threshold) {
     return 0;
@@ -1586,16 +1664,34 @@ static int append_orthonormal_block(double* basis,
                                     const double* candidates,
                                     int candidate_cols,
                                     double tol,
-                                    int* orthogonalization_passes) {
+                                    int* orthogonalization_passes,
+                                    int requested_passes = 2,
+                                    BproAppendDiagnostics* bpro = nullptr) {
   int accepted = 0;
   for (int col = 0; col < candidate_cols && *cols < capacity; ++col) {
     accepted += append_orthonormal_column(
       basis, n, capacity, cols,
       candidates + static_cast<int64_t>(col) * n,
-      tol, orthogonalization_passes
+      tol, orthogonalization_passes, nullptr, requested_passes, bpro
     );
   }
   return accepted;
+}
+
+static double basis_orthogonality_loss(const double* basis, int n, int cols) {
+  if (cols <= 0) {
+    return 0.0;
+  }
+  std::vector<double> gram(static_cast<size_t>(cols) * static_cast<size_t>(cols), 0.0);
+  const char trans = 'T';
+  const char notrans = 'N';
+  const double one = 1.0;
+  const double zero = 0.0;
+  F77_CALL(dgemm)(&trans, &notrans, &cols, &cols, &n,
+                  &one, const_cast<double*>(basis), &n,
+                  const_cast<double*>(basis), &n,
+                  &zero, gram.data(), &cols FCONE FCONE);
+  return max_orthogonality_loss(gram.data(), cols);
 }
 
 static SEXP irlba_lbd_augmented_retained_projection(
@@ -1615,7 +1711,8 @@ static SEXP irlba_lbd_augmented_retained_projection(
     double tol,
     int reorthogonalize_u,
     int reorthogonalize_v,
-    double native_workspace_bytes) {
+    double native_workspace_bytes,
+    int bpro_policy) {
   const int tail_width = work - retained;
   const int retained_core = (rank < retained) ? rank : retained;
   const int requested_tail_steps = (tail_width > 0)
@@ -1641,6 +1738,17 @@ static SEXP irlba_lbd_augmented_retained_projection(
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
   int q_cols = 0;
   int orthogonalization_passes = 0;
+  const int requested_orthogonalization_passes = bpro_policy ? 1 : 2;
+  const double bpro_threshold = fmax(tol, sqrt(DBL_EPSILON));
+  BproAppendDiagnostics bpro = {
+    bpro_threshold,
+    0,
+    0,
+    0.0,
+    0.0,
+    0
+  };
+  BproAppendDiagnostics* bpro_ptr = bpro_policy ? &bpro : nullptr;
   double stage_apply_seconds = 0.0;
   double stage_recurrence_seconds = 0.0;
   double stage_reorthogonalization_seconds = 0.0;
@@ -1666,12 +1774,13 @@ static SEXP irlba_lbd_augmented_retained_projection(
 
   append_orthonormal_block(
     Q.data(), n, capacity, &q_cols, retained_right, retained_core, tol,
-    &orthogonalization_passes
+    &orthogonalization_passes, requested_orthogonalization_passes, bpro_ptr
   );
   if (q_cols < rank) {
     append_orthonormal_column(
       Q.data(), n, capacity, &q_cols, initial_start, tol,
-      &orthogonalization_passes
+      &orthogonalization_passes, nullptr, requested_orthogonalization_passes,
+      bpro_ptr
     );
   }
 
@@ -1696,14 +1805,15 @@ static SEXP irlba_lbd_augmented_retained_projection(
   const int residual_cols_before = q_cols;
   append_orthonormal_block(
     Q.data(), n, capacity, &q_cols, residual.data(), retained_core, tol,
-    &orthogonalization_passes
+    &orthogonalization_passes, requested_orthogonalization_passes, bpro_ptr
   );
   const int residual_cols = q_cols - residual_cols_before;
 
   if (q_cols == 0) {
     append_orthonormal_column(
       Q.data(), n, capacity, &q_cols, initial_start, tol,
-      &orthogonalization_passes
+      &orthogonalization_passes, nullptr, requested_orthogonalization_passes,
+      bpro_ptr
     );
   }
   if (q_cols == 0) {
@@ -1763,7 +1873,8 @@ static SEXP irlba_lbd_augmented_retained_projection(
     double beta_next = 0.0;
     append_orthonormal_column(
       Q.data(), n, capacity, &q_cols, z.data(), tol,
-      &orthogonalization_passes, &beta_next
+      &orthogonalization_passes, &beta_next, requested_orthogonalization_passes,
+      bpro_ptr
     );
     stage_reorthogonalization_seconds += native_timer_elapsed(stage_timer);
     if (q_cols == before) {
@@ -1778,6 +1889,12 @@ static SEXP irlba_lbd_augmented_retained_projection(
 
   if (q_cols < rank) {
     return R_NilValue;
+  }
+  const double augmented_basis_orthogonality_loss =
+    basis_orthogonality_loss(Q.data(), n, q_cols);
+  if (!R_FINITE(augmented_basis_orthogonality_loss) ||
+      augmented_basis_orthogonality_loss > bpro.threshold) {
+    bpro.escalation_recommended = 1;
   }
   stage_timer = native_timer_now();
   status = apply(impl, EIGENCORE_TRANSPOSE_NONE, q_cols,
@@ -1821,7 +1938,7 @@ static SEXP irlba_lbd_augmented_retained_projection(
     attempted_subspaces, attempt_iterations, attempt_matvecs, attempt_warm_started
   ));
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 24));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 33));
   const double augmented_workspace_bytes =
     static_cast<double>(sizeof(double)) *
     static_cast<double>(
@@ -1860,7 +1977,16 @@ static SEXP irlba_lbd_augmented_retained_projection(
   SET_VECTOR_ELT(out_, 21, ScalarInteger(residual_cols));
   SET_VECTOR_ELT(out_, 22, ScalarInteger(tail_steps_taken));
   SET_VECTOR_ELT(out_, 23, ScalarInteger(q_cols));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 24));
+  SET_VECTOR_ELT(out_, 24, ScalarLogical(bpro_policy ? 1 : 0));
+  SET_VECTOR_ELT(out_, 25, ScalarInteger(requested_orthogonalization_passes));
+  SET_VECTOR_ELT(out_, 26, ScalarReal(bpro.threshold));
+  SET_VECTOR_ELT(out_, 27, ScalarInteger(bpro.monitored_appends));
+  SET_VECTOR_ELT(out_, 28, ScalarInteger(bpro.threshold_reorthogonalizations));
+  SET_VECTOR_ELT(out_, 29, ScalarReal(bpro.max_estimated_orthogonality_loss));
+  SET_VECTOR_ELT(out_, 30, ScalarReal(bpro.max_post_append_orthogonality_loss));
+  SET_VECTOR_ELT(out_, 31, ScalarReal(augmented_basis_orthogonality_loss));
+  SET_VECTOR_ELT(out_, 32, ScalarLogical(bpro.escalation_recommended ? 1 : 0));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 33));
   SET_STRING_ELT(names_, 0, mkChar("d"));
   SET_STRING_ELT(names_, 1, mkChar("u"));
   SET_STRING_ELT(names_, 2, mkChar("v"));
@@ -1885,6 +2011,15 @@ static SEXP irlba_lbd_augmented_retained_projection(
   SET_STRING_ELT(names_, 21, mkChar("residual_augmented_cols"));
   SET_STRING_ELT(names_, 22, mkChar("augmented_tail_steps"));
   SET_STRING_ELT(names_, 23, mkChar("augmented_basis_cols"));
+  SET_STRING_ELT(names_, 24, mkChar("bpro_policy"));
+  SET_STRING_ELT(names_, 25, mkChar("bpro_reorthogonalization_passes_per_append"));
+  SET_STRING_ELT(names_, 26, mkChar("bpro_monitoring_threshold"));
+  SET_STRING_ELT(names_, 27, mkChar("bpro_monitored_appends"));
+  SET_STRING_ELT(names_, 28, mkChar("bpro_threshold_reorthogonalizations"));
+  SET_STRING_ELT(names_, 29, mkChar("bpro_max_estimated_orthogonality_loss"));
+  SET_STRING_ELT(names_, 30, mkChar("bpro_max_post_append_orthogonality_loss"));
+  SET_STRING_ELT(names_, 31, mkChar("bpro_augmented_basis_orthogonality_loss"));
+  SET_STRING_ELT(names_, 32, mkChar("bpro_escalation_recommended"));
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(4);
   return out_;
@@ -1932,7 +2067,7 @@ static SEXP irlba_lbd_retained_impl(ConfigureOperator configure_operator,
     augmented_impl, augmented_apply, m, n, initial_start, retained_right,
     retained_left, random_tails, work, retained, max_restarts, rank,
     target_kind, tol, reorthogonalize_u, reorthogonalize_v,
-    native_workspace_bytes
+    native_workspace_bytes, reorth_policy == 3 ? 1 : 0
   ));
   if (augmented_ != R_NilValue) {
     UNPROTECT(1);

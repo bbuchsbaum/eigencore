@@ -571,7 +571,7 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
     )
   }
 
-  fallback_reorthogonalize <- identical(reorth_policy, "full_two_sided")
+  fallback_reorthogonalize <- !identical(reorth_policy, "one_sided_small_side")
   fallback_expects_original_domain <- isTRUE(fallback_reorthogonalize)
   warm_start <- if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
     if (isTRUE(abi$internal_transposed) && isTRUE(fallback_expects_original_domain) &&
@@ -686,6 +686,63 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
       native$augmented_basis_cols %||% NA_integer_
     } else {
       NA_integer_
+    }
+  fallback$restart$irlba_lbd_bpro_policy <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      isTRUE(native$bpro_policy)
+    } else {
+      identical(reorth_policy, "bpro_two_sided")
+    }
+  fallback$restart$irlba_lbd_bpro_passes_per_append <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$bpro_reorthogonalization_passes_per_append %||% NA_integer_
+    } else {
+      NA_integer_
+    }
+  fallback$restart$irlba_lbd_bpro_monitoring_threshold <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$bpro_monitoring_threshold %||% NA_real_
+    } else {
+      NA_real_
+    }
+  fallback$restart$irlba_lbd_bpro_monitored_appends <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$bpro_monitored_appends %||% NA_integer_
+    } else {
+      NA_integer_
+    }
+  fallback$restart$irlba_lbd_bpro_threshold_reorthogonalizations <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$bpro_threshold_reorthogonalizations %||% NA_integer_
+    } else {
+      NA_integer_
+    }
+  fallback$restart$irlba_lbd_bpro_max_estimated_orthogonality_loss <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$bpro_max_estimated_orthogonality_loss %||% NA_real_
+    } else {
+      NA_real_
+    }
+  fallback$restart$irlba_lbd_bpro_max_post_append_orthogonality_loss <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$bpro_max_post_append_orthogonality_loss %||% NA_real_
+    } else {
+      NA_real_
+    }
+  fallback$restart$irlba_lbd_bpro_basis_orthogonality_loss <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$bpro_augmented_basis_orthogonality_loss %||% NA_real_
+    } else {
+      NA_real_
+    }
+  fallback$restart$irlba_lbd_bpro_escalation_recommended <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      isTRUE(native$bpro_escalation_recommended) ||
+        (!is.na(fallback$certificate$max_orthogonality_loss) &&
+          fallback$certificate$max_orthogonality_loss >
+            fallback$certificate$orthogonality_tolerance)
+    } else {
+      NA
     }
   fallback$restart$work <- abi$work
   fallback$restart$retained <- abi$retained
@@ -837,6 +894,26 @@ native_irlba_lbd_restart_diagnostics <- function(abi, native, small, final,
     irlba_lbd_residual_augmented_cols = native$residual_augmented_cols %||% NA_integer_,
     irlba_lbd_augmented_tail_steps = native$augmented_tail_steps %||% NA_integer_,
     irlba_lbd_augmented_basis_cols = native$augmented_basis_cols %||% NA_integer_,
+    irlba_lbd_bpro_policy = isTRUE(native$bpro_policy),
+    irlba_lbd_bpro_passes_per_append =
+      native$bpro_reorthogonalization_passes_per_append %||% NA_integer_,
+    irlba_lbd_bpro_monitoring_threshold =
+      native$bpro_monitoring_threshold %||% NA_real_,
+    irlba_lbd_bpro_monitored_appends =
+      native$bpro_monitored_appends %||% NA_integer_,
+    irlba_lbd_bpro_threshold_reorthogonalizations =
+      native$bpro_threshold_reorthogonalizations %||% NA_integer_,
+    irlba_lbd_bpro_max_estimated_orthogonality_loss =
+      native$bpro_max_estimated_orthogonality_loss %||% NA_real_,
+    irlba_lbd_bpro_max_post_append_orthogonality_loss =
+      native$bpro_max_post_append_orthogonality_loss %||% NA_real_,
+    irlba_lbd_bpro_basis_orthogonality_loss =
+      native$bpro_augmented_basis_orthogonality_loss %||% NA_real_,
+    irlba_lbd_bpro_escalation_recommended =
+      isTRUE(native$bpro_escalation_recommended) ||
+        (!is.na(final$certificate$max_orthogonality_loss) &&
+          final$certificate$max_orthogonality_loss >
+            final$certificate$orthogonality_tolerance),
     internal_orientation = abi$internal_orientation,
     internal_transposed = abi$internal_transposed,
     scout_matvecs = small$matvecs,

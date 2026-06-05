@@ -944,6 +944,17 @@ Primary attack surfaces, in order:
    still slower and higher-allocation than the best certified reference
    (`RSpectra`) and slower than direct one-sided GK, so this is Track B
    progress, not H promotion.
+   The first BPRO-policy slice is also benchmark-visible as
+   `eigencore_irlba_lbd_retained_bpro`: it uses a monitored one-pass default
+   for native basis appends, records online estimate and exact-basis escalation
+   diagnostics, triggers a second pass only when the threshold requires it, and
+   still accepts only the exact two-sided SVD certificate. On the same
+   source-loaded H row it certifies directly with `49` monitored appends, `4`
+   threshold-triggered second passes, `53` total retained-basis
+   reorthogonalization passes versus `98` for full retained native, exact basis
+   loss below `1e-15`, and raw retained solver time `0.00383s` versus `0.00650s`
+   in the one-iteration surface probe. It remains diagnostic because total time
+   and memory are still red versus certified `RSpectra` and direct one-sided GK.
    A separate normal-scout diagnostic, `eigencore_irlba_lbd_normal_scout`,
    runs bounded matrix-free normal scouts at 8/12/16/20 steps and uses the
    selected scout only as a warm start for certified one-sided LBD polish. The

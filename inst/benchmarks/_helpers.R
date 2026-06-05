@@ -131,6 +131,7 @@ svd_surface_default_methods <- function(args) {
       "eigencore_golub_kahan_one_sided",
       "eigencore_irlba_lbd_one_sided",
       "eigencore_irlba_lbd_retained_native",
+      "eigencore_irlba_lbd_retained_bpro",
       "eigencore_irlba_lbd_normal_scout",
       "eigencore_golub_kahan_projected",
       "eigencore_implicit_normal_lanczos",
@@ -179,6 +180,7 @@ svd_internal_methods <- function() {
     "eigencore_golub_kahan_one_sided",
     "eigencore_irlba_lbd_one_sided",
     "eigencore_irlba_lbd_retained_native",
+    "eigencore_irlba_lbd_retained_bpro",
     "eigencore_irlba_lbd_normal_scout",
     "eigencore_golub_kahan_projected",
     "eigencore_implicit_normal_lanczos",
@@ -1443,6 +1445,24 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
         result_restart_integer(fit, "irlba_lbd_augmented_tail_steps"),
       irlba_lbd_augmented_basis_cols =
         result_restart_integer(fit, "irlba_lbd_augmented_basis_cols"),
+      irlba_lbd_bpro_policy =
+        result_restart_logical(fit, "irlba_lbd_bpro_policy"),
+      irlba_lbd_bpro_passes_per_append =
+        result_restart_integer(fit, "irlba_lbd_bpro_passes_per_append"),
+      irlba_lbd_bpro_monitoring_threshold =
+        result_restart_numeric(fit, "irlba_lbd_bpro_monitoring_threshold"),
+      irlba_lbd_bpro_monitored_appends =
+        result_restart_integer(fit, "irlba_lbd_bpro_monitored_appends"),
+      irlba_lbd_bpro_threshold_reorthogonalizations =
+        result_restart_integer(fit, "irlba_lbd_bpro_threshold_reorthogonalizations"),
+      irlba_lbd_bpro_max_estimated_orthogonality_loss =
+        result_restart_numeric(fit, "irlba_lbd_bpro_max_estimated_orthogonality_loss"),
+      irlba_lbd_bpro_max_post_append_orthogonality_loss =
+        result_restart_numeric(fit, "irlba_lbd_bpro_max_post_append_orthogonality_loss"),
+      irlba_lbd_bpro_basis_orthogonality_loss =
+        result_restart_numeric(fit, "irlba_lbd_bpro_basis_orthogonality_loss"),
+      irlba_lbd_bpro_escalation_recommended =
+        result_restart_logical(fit, "irlba_lbd_bpro_escalation_recommended"),
       irlba_lbd_retained_seed_strategy =
         result_restart_character(fit, "irlba_lbd_retained_seed_strategy"),
       irlba_lbd_retained_from_scout =

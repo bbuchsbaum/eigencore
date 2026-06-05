@@ -190,6 +190,7 @@ available_svd_methods <- function() {
     "eigencore_golub_kahan_one_sided",
     "eigencore_irlba_lbd_one_sided",
     "eigencore_irlba_lbd_retained_native",
+    "eigencore_irlba_lbd_retained_bpro",
     "eigencore_irlba_lbd_normal_scout",
     "eigencore_golub_kahan_projected",
     "eigencore_implicit_normal_lanczos",
@@ -679,6 +680,20 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
         max_restarts = 7L,
         tol = tol,
         vectors = "both"
+      )
+    },
+    eigencore_irlba_lbd_retained_bpro = {
+      set.seed(seed %||% 1L)
+      native_irlba_lbd_retained_svd(
+        A,
+        rank = rank,
+        target = largest(),
+        work = max(rank + 7L, 2L * rank + 1L),
+        retained = min(max(rank, rank + 2L), max(rank + 6L, 2L * rank)),
+        max_restarts = 7L,
+        tol = tol,
+        vectors = "both",
+        reorth_policy = "bpro_two_sided"
       )
     },
     eigencore_irlba_lbd_normal_scout = run_irlba_lbd_normal_scout_method(

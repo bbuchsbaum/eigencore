@@ -91,6 +91,15 @@ test_that("benchmark harness produces certificate-inclusive rows", {
     "irlba_lbd_residual_augmented_cols",
     "irlba_lbd_augmented_tail_steps",
     "irlba_lbd_augmented_basis_cols",
+    "irlba_lbd_bpro_policy",
+    "irlba_lbd_bpro_passes_per_append",
+    "irlba_lbd_bpro_monitoring_threshold",
+    "irlba_lbd_bpro_monitored_appends",
+    "irlba_lbd_bpro_threshold_reorthogonalizations",
+    "irlba_lbd_bpro_max_estimated_orthogonality_loss",
+    "irlba_lbd_bpro_max_post_append_orthogonality_loss",
+    "irlba_lbd_bpro_basis_orthogonality_loss",
+    "irlba_lbd_bpro_escalation_recommended",
     "irlba_lbd_retained_seed_strategy",
     "irlba_lbd_retained_from_scout",
     "irlba_lbd_retained_padding",
@@ -536,6 +545,7 @@ test_that("SVD surface H candidate preset selects retained native SVD subject", 
   expect_true("eigencore_golub_kahan_one_sided" %in% methods)
   expect_true("eigencore_irlba_lbd_one_sided" %in% methods)
   expect_true("eigencore_irlba_lbd_retained_native" %in% methods)
+  expect_true("eigencore_irlba_lbd_retained_bpro" %in% methods)
   expect_true("eigencore_irlba_lbd_normal_scout" %in% methods)
   expect_true("eigencore_golub_kahan_projected" %in% methods)
   expect_true("eigencore_implicit_normal_lanczos" %in% methods)
@@ -555,6 +565,7 @@ test_that("SVD surface H candidate preset selects retained native SVD subject", 
   expect_true("eigencore_golub_kahan_one_sided" %in% svd_internal_methods())
   expect_true("eigencore_irlba_lbd_one_sided" %in% svd_internal_methods())
   expect_true("eigencore_irlba_lbd_retained_native" %in% svd_internal_methods())
+  expect_true("eigencore_irlba_lbd_retained_bpro" %in% svd_internal_methods())
   expect_true("eigencore_irlba_lbd_normal_scout" %in% svd_internal_methods())
 
   default_methods <- svd_surface_default_methods(benchmark_args(character()))

@@ -511,8 +511,13 @@ they are machine-dependent.
   exact original-coordinate SVD certificate. Source-loaded `wide_sparse:90x600`
   evidence certifies directly with `24` scout matvecs, `136` retained-native
   matvecs, one residual direction, `40` tail steps, and `46` augmented basis
-  columns. The row is faster than retained block-GK on that fixture, but still
-  slower and higher-allocation than certified `RSpectra`, so H remains
+  columns. A BPRO-policy variant uses a monitored one-pass default for native
+  basis appends, records online estimate and exact-basis escalation diagnostics,
+  triggers a second pass only when the threshold requires it (`4` of `49`
+  monitored appends on the source-loaded row), cuts retained-basis
+  reorthogonalization passes to `53` from `98`, and keeps exact SVD
+  certification green. The row is faster than retained block-GK on that fixture,
+  but still slower and higher-allocation than certified `RSpectra`, so H remains
   unpromoted.
 - Added `eigencore_irlba_lbd_normal_scout` as an H diagnostic benchmark
   method. It runs bounded matrix-free normal scouts at 8/12/16/20 steps,
