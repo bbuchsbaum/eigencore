@@ -373,10 +373,13 @@ test_that("retained IRLBA LBD native core certifies or falls back honestly", {
   expect_equal(fit$restart$irlba_lbd_retained_from_scout, 5L)
   expect_equal(fit$restart$irlba_lbd_retained_padding, 2L)
   expect_equal(fit$restart$irlba_lbd_residual_augmented_cols, 1L)
-  expect_equal(fit$restart$irlba_lbd_augmented_tail_steps, 40L)
-  expect_gte(fit$restart$irlba_lbd_augmented_basis_cols, 40L)
+  expect_equal(fit$restart$irlba_lbd_augmented_tail_steps, 35L)
+  expect_equal(fit$restart$irlba_lbd_augmented_basis_cols, 41L)
+  expect_equal(fit$restart$irlba_lbd_augmented_small_svds, 2L)
   expect_equal(fit$restart$irlba_lbd_augmented_cached_aq_cols,
                fit$restart$irlba_lbd_augmented_basis_cols)
+  expect_true("certificate_passed" %in% names(fit$restart$attempt_history))
+  expect_true(tail(fit$restart$attempt_history$certificate_passed, 1L))
   expect_true(fit$restart$irlba_lbd_augmented_reduces_from_scratch_work)
   expect_gt(fit$restart$irlba_lbd_augmented_matvec_savings, 0L)
   expect_identical(fit$restart$internal_orientation, "transposed_wide_operator")
@@ -412,15 +415,17 @@ test_that("retained IRLBA benchmark candidate avoids repeated fixed-work native 
   expect_equal(fit$restart$irlba_lbd_retained_fixed_work_attempts, 0L)
   expect_equal(fit$restart$irlba_lbd_scout_matvecs, 24L)
   expect_lt(fit$restart$irlba_lbd_retained_matvecs, 136L)
-  expect_equal(fit$restart$irlba_lbd_augmented_tail_steps, 40L)
-  expect_equal(fit$restart$irlba_lbd_augmented_basis_cols, 46L)
+  expect_equal(fit$restart$irlba_lbd_augmented_tail_steps, 30L)
+  expect_equal(fit$restart$irlba_lbd_augmented_basis_cols, 36L)
   expect_equal(fit$restart$irlba_lbd_augmented_restart_cycles, 8L)
   expect_equal(fit$restart$irlba_lbd_augmented_kept_vectors, 5L)
-  expect_equal(fit$restart$irlba_lbd_augmented_small_svds, 8L)
-  expect_equal(fit$restart$irlba_lbd_augmented_cached_aq_cols, 46L)
+  expect_equal(fit$restart$irlba_lbd_augmented_small_svds, 1L)
+  expect_equal(fit$restart$irlba_lbd_augmented_cached_aq_cols, 36L)
   expect_true(fit$restart$irlba_lbd_augmented_reduces_from_scratch_work)
   expect_gt(fit$restart$irlba_lbd_augmented_matvec_savings, 0L)
   expect_true(is.finite(fit$restart$irlba_lbd_augmented_min_cheap_residual))
+  expect_true("certificate_passed" %in% names(fit$restart$attempt_history))
+  expect_true(fit$restart$attempt_history$certificate_passed[[1L]])
   expect_equal(
     fit$matvecs,
     fit$restart$irlba_lbd_scout_matvecs +
@@ -575,7 +580,8 @@ test_that("retained IRLBA BPRO augmented restart covers clustered and slow-decay
     expect_identical(fit$restart$irlba_lbd_restart_state_kind, "residual_augmented_projection")
     expect_equal(fit$restart$irlba_lbd_augmented_restart_cycles, 8L)
     expect_equal(fit$restart$irlba_lbd_augmented_kept_vectors, 5L)
-    expect_equal(fit$restart$irlba_lbd_augmented_small_svds, 8L)
+    expect_lte(fit$restart$irlba_lbd_augmented_small_svds, 8L)
+    expect_true(any(isTRUE(fit$restart$attempt_history$certificate_passed)))
     expect_equal(
       fit$restart$irlba_lbd_augmented_cached_aq_cols,
       fit$restart$irlba_lbd_augmented_basis_cols
@@ -802,7 +808,8 @@ test_that("retained IRLBA LBD native ABI entry points are registered", {
   expect_equal(dense_out$d, c(6, 4), tolerance = 1e-10)
   expect_equal(csc_out$d, c(6, 4), tolerance = 1e-10)
   expect_true(is.data.frame(dense_out$attempt_history))
-  expect_equal(nrow(dense_out$attempt_history), 2L)
+  expect_lte(nrow(dense_out$attempt_history), 2L)
+  expect_true(any(isTRUE(dense_out$attempt_history$certificate_passed)))
   expect_equal(dense_out$restart_count, 1L)
 })
 

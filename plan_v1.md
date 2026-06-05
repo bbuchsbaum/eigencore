@@ -962,8 +962,21 @@ Primary attack surfaces, in order:
    reorthogonalization passes versus `98` for full retained native, exact basis
    loss below `1e-15`, clustered/slow-decay adversarial coverage, and raw
    retained solver time below the full retained-native diagnostic in the
-   one-iteration surface probe. It now also exposes exact-certified final lock
-   diagnostics: `retained_locked_count`, `irlba_lbd_soft_locked_count`,
+   one-iteration surface probe. The retained residual-augmented core now
+   exact-certifies late projected chunks before materializing the full tail
+   budget, using the same Frobenius scale as the public SVD certificate and
+   recording `certificate_passed`, `max_backward_error`, and `max_residual` in
+   attempt history. This keeps the full 8-cycle budget for hard cases but can
+   return the first exact-certified late chunk: on the current source-loaded
+   `wide_sparse:90x600` H surface seed, retained BPRO/native rows stop after
+   `35` tail steps / `41` augmented basis columns / `2` small projected SVDs
+   with `83` retained-native matvecs, instead of the previous fixed `40` tail
+   steps / `46` columns / `8` small SVDs / `92` retained matvecs. A direct
+   seed-702 probe certifies even earlier at `30` tail steps and `72` retained
+   matvecs, while the larger `200x2000` sparse-wide fixture checks `30`, `35`,
+   and `40` tail steps and preserves the full-budget certified result. It now
+   also exposes exact-certified final lock diagnostics:
+   `retained_locked_count`, `irlba_lbd_soft_locked_count`,
    `irlba_lbd_hard_locked_count`,
    `irlba_lbd_locked_triplets_certified`,
    `irlba_lbd_future_vectors_orthogonal_to_locks`, and

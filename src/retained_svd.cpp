@@ -28,6 +28,15 @@ static double max_orthogonality_loss(const double* gram, int k) {
   return loss;
 }
 
+static double frobenius_norm_from_values(const double* x, int64_t len) {
+  long double sum = 0.0L;
+  for (int64_t idx = 0; idx < len; ++idx) {
+    sum += static_cast<long double>(x[idx]) * x[idx];
+  }
+  const double norm = sqrt(static_cast<double>(sum));
+  return R_FINITE(norm) ? norm : R_NaN;
+}
+
 static void symmetrize_packed_square(double* A, int n) {
   for (int i = 0; i < n; ++i) {
     for (int j = i + 1; j < n; ++j) {
@@ -1489,17 +1498,34 @@ static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
                                            const std::vector<int>& iterations,
                                            const std::vector<int>& matvecs,
                                            const std::vector<int>& warm_started,
-                                           const std::vector<double>* cheap_residuals = nullptr) {
+                                           const std::vector<double>* cheap_residuals = nullptr,
+                                           const std::vector<int>* certificate_passed = nullptr,
+                                           const std::vector<double>* max_backward_error = nullptr,
+                                           const std::vector<double>* max_residual = nullptr) {
   const int rows = static_cast<int>(attempts.size());
-  const int cols = (cheap_residuals != nullptr) ? 6 : 5;
+  const bool has_cheap = cheap_residuals != nullptr;
+  const bool has_certificate =
+    certificate_passed != nullptr && max_backward_error != nullptr && max_residual != nullptr;
+  const int cols = 5 + (has_cheap ? 1 : 0) + (has_certificate ? 3 : 0);
   SEXP attempt_ = PROTECT(allocVector(INTSXP, rows));
   SEXP max_subspace_ = PROTECT(allocVector(INTSXP, rows));
   SEXP iterations_ = PROTECT(allocVector(INTSXP, rows));
   SEXP matvecs_ = PROTECT(allocVector(INTSXP, rows));
   SEXP warm_started_ = PROTECT(allocVector(LGLSXP, rows));
   SEXP cheap_residual_ = R_NilValue;
-  if (cheap_residuals != nullptr) {
+  SEXP certificate_passed_ = R_NilValue;
+  SEXP max_backward_error_ = R_NilValue;
+  SEXP max_residual_ = R_NilValue;
+  int optional_protects = 0;
+  if (has_cheap) {
     cheap_residual_ = PROTECT(allocVector(REALSXP, rows));
+    ++optional_protects;
+  }
+  if (has_certificate) {
+    certificate_passed_ = PROTECT(allocVector(LGLSXP, rows));
+    max_backward_error_ = PROTECT(allocVector(REALSXP, rows));
+    max_residual_ = PROTECT(allocVector(REALSXP, rows));
+    optional_protects += 3;
   }
   for (int row = 0; row < rows; ++row) {
     INTEGER(attempt_)[row] = row + 1;
@@ -1507,8 +1533,17 @@ static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
     INTEGER(iterations_)[row] = iterations[static_cast<size_t>(row)];
     INTEGER(matvecs_)[row] = matvecs[static_cast<size_t>(row)];
     LOGICAL(warm_started_)[row] = warm_started[static_cast<size_t>(row)] ? TRUE : FALSE;
-    if (cheap_residuals != nullptr) {
+    if (has_cheap) {
       REAL(cheap_residual_)[row] = (*cheap_residuals)[static_cast<size_t>(row)];
+    }
+    if (has_certificate) {
+      const int passed = (*certificate_passed)[static_cast<size_t>(row)];
+      LOGICAL(certificate_passed_)[row] =
+        passed < 0 ? NA_LOGICAL : (passed ? TRUE : FALSE);
+      REAL(max_backward_error_)[row] =
+        (*max_backward_error)[static_cast<size_t>(row)];
+      REAL(max_residual_)[row] =
+        (*max_residual)[static_cast<size_t>(row)];
     }
   }
 
@@ -1518,8 +1553,14 @@ static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
   SET_VECTOR_ELT(out_, 2, iterations_);
   SET_VECTOR_ELT(out_, 3, matvecs_);
   SET_VECTOR_ELT(out_, 4, warm_started_);
-  if (cheap_residuals != nullptr) {
-    SET_VECTOR_ELT(out_, 5, cheap_residual_);
+  int col = 5;
+  if (has_cheap) {
+    SET_VECTOR_ELT(out_, col++, cheap_residual_);
+  }
+  if (has_certificate) {
+    SET_VECTOR_ELT(out_, col++, certificate_passed_);
+    SET_VECTOR_ELT(out_, col++, max_backward_error_);
+    SET_VECTOR_ELT(out_, col++, max_residual_);
   }
   SEXP names_ = PROTECT(allocVector(STRSXP, cols));
   SET_STRING_ELT(names_, 0, mkChar("attempt"));
@@ -1527,8 +1568,14 @@ static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
   SET_STRING_ELT(names_, 2, mkChar("iterations"));
   SET_STRING_ELT(names_, 3, mkChar("matvecs"));
   SET_STRING_ELT(names_, 4, mkChar("warm_started"));
-  if (cheap_residuals != nullptr) {
-    SET_STRING_ELT(names_, 5, mkChar("cheap_residual"));
+  col = 5;
+  if (has_cheap) {
+    SET_STRING_ELT(names_, col++, mkChar("cheap_residual"));
+  }
+  if (has_certificate) {
+    SET_STRING_ELT(names_, col++, mkChar("certificate_passed"));
+    SET_STRING_ELT(names_, col++, mkChar("max_backward_error"));
+    SET_STRING_ELT(names_, col++, mkChar("max_residual"));
   }
   setAttrib(out_, R_NamesSymbol, names_);
   SEXP row_names_ = PROTECT(allocVector(INTSXP, 2));
@@ -1538,7 +1585,7 @@ static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
   SEXP class_ = PROTECT(allocVector(STRSXP, 1));
   SET_STRING_ELT(class_, 0, mkChar("data.frame"));
   setAttrib(out_, R_ClassSymbol, class_);
-  UNPROTECT(cheap_residuals != nullptr ? 10 : 9);
+  UNPROTECT(9 + optional_protects);
   return out_;
 }
 
@@ -1756,6 +1803,7 @@ static SEXP irlba_lbd_augmented_retained_projection(
     double tol,
     int reorthogonalize_u,
     int reorthogonalize_v,
+    double norm_A,
     double native_workspace_bytes,
     int bpro_policy) {
   const int tail_width = work - retained;
@@ -1802,6 +1850,37 @@ static SEXP irlba_lbd_augmented_retained_projection(
   int matvecs = 0;
   std::vector<double> tail_beta_history;
   tail_beta_history.reserve(static_cast<size_t>(requested_tail_steps));
+  const int chunks = max_restarts + 1;
+  int early_certificate_tail_start = requested_tail_steps - 2 * tail_width;
+  if (early_certificate_tail_start < tail_width) {
+    early_certificate_tail_start = tail_width;
+  }
+  if (early_certificate_tail_start > requested_tail_steps) {
+    early_certificate_tail_start = requested_tail_steps;
+  }
+  std::vector<int> attempted_subspaces;
+  std::vector<int> attempt_iterations;
+  std::vector<int> attempt_matvecs;
+  std::vector<int> attempt_warm_started;
+  std::vector<double> attempt_cheap_residuals;
+  std::vector<int> attempt_certificate_passed;
+  std::vector<double> attempt_max_backward_error;
+  std::vector<double> attempt_max_residual;
+  attempted_subspaces.reserve(static_cast<size_t>(chunks));
+  attempt_iterations.reserve(static_cast<size_t>(chunks));
+  attempt_matvecs.reserve(static_cast<size_t>(chunks));
+  attempt_warm_started.reserve(static_cast<size_t>(chunks));
+  attempt_cheap_residuals.reserve(static_cast<size_t>(chunks));
+  attempt_certificate_passed.reserve(static_cast<size_t>(chunks));
+  attempt_max_backward_error.reserve(static_cast<size_t>(chunks));
+  attempt_max_residual.reserve(static_cast<size_t>(chunks));
+  SEXP ritz_ = R_NilValue;
+  int ritz_protected = 0;
+  int small_svds = 0;
+  double min_cheap_residual = R_PosInf;
+  double final_cheap_residual = R_NaReal;
+  int last_recorded_tail_steps = -1;
+  int tail_steps_taken = 0;
 
   auto stage_timer = native_timer_now();
   int status = apply(impl, EIGENCORE_TRANSPOSE_NONE, retained_core,
@@ -1912,10 +1991,111 @@ static SEXP irlba_lbd_augmented_retained_projection(
     return R_NilValue;
   }
 
+  auto evaluate_augmented_attempt = [&](int tail_for_attempt,
+                                        int force_certificate,
+                                        int keep_candidate) -> int {
+    if (tail_for_attempt < 0) {
+      tail_for_attempt = 0;
+    }
+    if (tail_for_attempt > tail_steps_taken) {
+      tail_for_attempt = tail_steps_taken;
+    }
+    int subspace = retained_core + residual_cols + tail_for_attempt;
+    if (subspace > q_cols) {
+      subspace = q_cols;
+    }
+    if (subspace < rank) {
+      return 0;
+    }
+    if (tail_for_attempt == last_recorded_tail_steps && !keep_candidate) {
+      return 0;
+    }
+
+    if (q_cols > aq_cols) {
+      const int apply_status = apply_augmented_basis_columns(
+        impl, apply, m, n, Q.data(), aq_cols, q_cols, AQ.data(),
+        &stage_apply_seconds, &matvecs, &workspace
+      );
+      if (apply_status != 0) {
+        return -1;
+      }
+      aq_cols = q_cols;
+    }
+
+    attempted_subspaces.push_back(subspace);
+    attempt_iterations.push_back(tail_for_attempt);
+    attempt_matvecs.push_back(
+      2 * retained_core + residual_cols + 2 * tail_for_attempt +
+        (tail_for_attempt > 0 ? 1 : 0)
+    );
+    attempt_warm_started.push_back(attempted_subspaces.size() > 1 ? 1 : 0);
+    double cheap_residual = R_NaReal;
+    if (tail_for_attempt > 0 &&
+        tail_for_attempt <= static_cast<int>(tail_beta_history.size())) {
+      cheap_residual = tail_beta_history[static_cast<size_t>(tail_for_attempt - 1)];
+    }
+    attempt_cheap_residuals.push_back(cheap_residual);
+    if (R_FINITE(cheap_residual) && cheap_residual < min_cheap_residual) {
+      min_cheap_residual = cheap_residual;
+    }
+
+    auto attempt_timer = native_timer_now();
+    SEXP attempt_ritz_ = PROTECT(eigencore_block_golub_kahan_ritz_from_ptr(
+      Q.data(), n, AQ.data(), m, subspace, rank, target_kind
+    ));
+    stage_projected_seconds += native_timer_elapsed(attempt_timer);
+    ++small_svds;
+
+    int certificate_passed = -1;
+    double max_backward_error = R_NaReal;
+    double max_residual = R_NaReal;
+    int converged_count = 0;
+    int leading_converged_count = 0;
+    if (force_certificate) {
+      attempt_timer = native_timer_now();
+      certificate_passed = retained_cached_av_certificate_passed(
+        impl, apply, m, n, norm_A,
+        REAL(VECTOR_ELT(attempt_ritz_, 0)),
+        REAL(VECTOR_ELT(attempt_ritz_, 1)),
+        REAL(VECTOR_ELT(attempt_ritz_, 2)),
+        REAL(VECTOR_ELT(attempt_ritz_, 3)),
+        LENGTH(VECTOR_ELT(attempt_ritz_, 0)),
+        tol,
+        &max_backward_error,
+        &max_residual,
+        &converged_count,
+        &leading_converged_count
+      );
+      stage_projected_seconds += native_timer_elapsed(attempt_timer);
+      if (certificate_passed < 0) {
+        UNPROTECT(1);
+        return certificate_passed;
+      }
+      (void)converged_count;
+      (void)leading_converged_count;
+    }
+    attempt_certificate_passed.push_back(certificate_passed);
+    attempt_max_backward_error.push_back(max_backward_error);
+    attempt_max_residual.push_back(max_residual);
+    last_recorded_tail_steps = tail_for_attempt;
+
+    if (certificate_passed == 1 || keep_candidate) {
+      if (ritz_protected) {
+        UNPROTECT(1);
+      }
+      ritz_ = attempt_ritz_;
+      ritz_protected = 1;
+      final_cheap_residual = cheap_residual;
+      return certificate_passed == 1 ? 1 : 0;
+    }
+
+    UNPROTECT(1);
+    return 0;
+  };
+
   const double* seed = Q.data() + static_cast<int64_t>(q_cols - 1) * n;
   std::memcpy(z.data(), seed, sizeof(double) * static_cast<size_t>(n));
   double beta_prev = 0.0;
-  int tail_steps_taken = 0;
   for (int step = 0; step < requested_tail_steps && q_cols < capacity; ++step) {
     stage_timer = native_timer_now();
     status = apply(impl, EIGENCORE_TRANSPOSE_NONE, 1, z.data(), n,
@@ -1997,9 +2177,29 @@ static SEXP irlba_lbd_augmented_retained_projection(
     beta_prev = beta_next;
     tail_beta_history.push_back(beta_next);
     ++tail_steps_taken;
+    if (tail_width > 0 && tail_steps_taken % tail_width == 0 &&
+        tail_steps_taken >= early_certificate_tail_start) {
+      const int eval_status = evaluate_augmented_attempt(
+        tail_steps_taken,
+        1,
+        tail_steps_taken >= requested_tail_steps
+      );
+      if (eval_status < 0) {
+        if (ritz_protected) {
+          UNPROTECT(1);
+        }
+        return R_NilValue;
+      }
+      if (eval_status == 1) {
+        break;
+      }
+    }
   }
 
   if (q_cols < rank) {
+    if (ritz_protected) {
+      UNPROTECT(1);
+    }
     return R_NilValue;
   }
   if (q_cols > aq_cols) {
@@ -2008,6 +2208,9 @@ static SEXP irlba_lbd_augmented_retained_projection(
       &stage_apply_seconds, &matvecs, &workspace
     );
     if (status != 0) {
+      if (ritz_protected) {
+        UNPROTECT(1);
+      }
       return R_NilValue;
     }
     aq_cols = q_cols;
@@ -2019,62 +2222,10 @@ static SEXP irlba_lbd_augmented_retained_projection(
     bpro.escalation_recommended = 1;
   }
 
-  std::vector<int> attempted_subspaces;
-  std::vector<int> attempt_iterations;
-  std::vector<int> attempt_matvecs;
-  std::vector<int> attempt_warm_started;
-  std::vector<double> attempt_cheap_residuals;
-  const int chunks = max_restarts + 1;
-  attempted_subspaces.reserve(static_cast<size_t>(chunks));
-  attempt_iterations.reserve(static_cast<size_t>(chunks));
-  attempt_matvecs.reserve(static_cast<size_t>(chunks));
-  attempt_warm_started.reserve(static_cast<size_t>(chunks));
-  attempt_cheap_residuals.reserve(static_cast<size_t>(chunks));
-  for (int attempt = 0; attempt < chunks; ++attempt) {
-    int tail_for_attempt = tail_width * (attempt + 1);
-    if (tail_for_attempt > tail_steps_taken) {
-      tail_for_attempt = tail_steps_taken;
-    }
-    int subspace = retained_core + residual_cols + tail_for_attempt;
-    if (subspace > q_cols) {
-      subspace = q_cols;
-    }
-    attempted_subspaces.push_back(subspace);
-    attempt_iterations.push_back(tail_for_attempt);
-    attempt_matvecs.push_back(
-      2 * retained_core + residual_cols + 2 * tail_for_attempt +
-        (tail_for_attempt > 0 ? 1 : 0)
-    );
-    attempt_warm_started.push_back(attempt > 0 ? 1 : 0);
-    double cheap_residual = R_NaReal;
-    if (tail_for_attempt > 0 &&
-        tail_for_attempt <= static_cast<int>(tail_beta_history.size())) {
-      cheap_residual = tail_beta_history[static_cast<size_t>(tail_for_attempt - 1)];
-    }
-    attempt_cheap_residuals.push_back(cheap_residual);
-  }
-
-  SEXP ritz_ = R_NilValue;
-  int small_svds = 0;
-  double min_cheap_residual = R_PosInf;
-  double final_cheap_residual = R_NaReal;
-  for (int attempt = 0; attempt < chunks; ++attempt) {
-    const int subspace = attempted_subspaces[static_cast<size_t>(attempt)];
-    stage_timer = native_timer_now();
-    SEXP attempt_ritz_ = PROTECT(eigencore_block_golub_kahan_ritz_from_ptr(
-      Q.data(), n, AQ.data(), m, subspace, rank, target_kind
-    ));
-    stage_projected_seconds += native_timer_elapsed(stage_timer);
-    ++small_svds;
-    const double cheap_residual = attempt_cheap_residuals[static_cast<size_t>(attempt)];
-    if (R_FINITE(cheap_residual) && cheap_residual < min_cheap_residual) {
-      min_cheap_residual = cheap_residual;
-    }
-    if (attempt + 1 == chunks) {
-      ritz_ = attempt_ritz_;
-      final_cheap_residual = cheap_residual;
-    } else {
-      UNPROTECT(1);
+  if (!ritz_protected) {
+    const int final_status = evaluate_augmented_attempt(tail_steps_taken, 1, 1);
+    if (final_status < 0 || !ritz_protected) {
+      return R_NilValue;
     }
   }
   if (!R_FINITE(min_cheap_residual)) {
@@ -2082,7 +2233,8 @@ static SEXP irlba_lbd_augmented_retained_projection(
   }
   SEXP history_ = PROTECT(irlba_lbd_attempt_history_pack(
     attempted_subspaces, attempt_iterations, attempt_matvecs, attempt_warm_started,
-    &attempt_cheap_residuals
+    &attempt_cheap_residuals, &attempt_certificate_passed,
+    &attempt_max_backward_error, &attempt_max_residual
   ));
 
   const int from_scratch_matvecs = 2 * retained_core + 2 * tail_steps_taken + q_cols;
@@ -2208,6 +2360,7 @@ static SEXP irlba_lbd_retained_impl(ConfigureOperator configure_operator,
                                     int rank,
                                     int target_kind,
                                     double tol,
+                                    double norm_A,
                                     int reorth_policy) {
   (void) alpha;
   (void) beta;
@@ -2237,7 +2390,7 @@ static SEXP irlba_lbd_retained_impl(ConfigureOperator configure_operator,
     augmented_impl, augmented_apply, m, n, initial_start, retained_right,
     retained_left, random_tails, work, retained, max_restarts, rank,
     target_kind, tol, reorthogonalize_u, reorthogonalize_v,
-    native_workspace_bytes, bpro_policy
+    norm_A, native_workspace_bytes, bpro_policy
   ));
   if (augmented_ != R_NilValue) {
     UNPROTECT(1);
@@ -2403,12 +2556,13 @@ extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP A_, SEXP initial_start_,
     *impl = &impl_holder;
     *apply = eigencore_dense_apply;
   };
+  const double norm_A = frobenius_norm_from_values(REAL(A_), LENGTH(A_));
   return irlba_lbd_retained_impl(
     configure, INTEGER(dimA)[0], INTEGER(dimA)[1],
     REAL(initial_start_), REAL(retained_right_), REAL(retained_left_),
     REAL(alpha_), REAL(beta_), REAL(random_tails_),
     asInteger(work_), asInteger(retained_), asInteger(max_restarts_),
-    asInteger(rank_), asInteger(target_kind_), asReal(tol_),
+    asInteger(rank_), asInteger(target_kind_), asReal(tol_), norm_A,
     asInteger(reorth_policy_)
   );
 }
@@ -2442,12 +2596,13 @@ extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP i_, SEXP p_, SEXP x_,
     *impl = &impl_holder;
     *apply = eigencore_csc_apply;
   };
+  const double norm_A = frobenius_norm_from_values(REAL(x_), LENGTH(x_));
   return irlba_lbd_retained_impl(
     configure, INTEGER(dim_)[0], INTEGER(dim_)[1],
     REAL(initial_start_), REAL(retained_right_), REAL(retained_left_),
     REAL(alpha_), REAL(beta_), REAL(random_tails_),
     asInteger(work_), asInteger(retained_), asInteger(max_restarts_),
-    asInteger(rank_), asInteger(target_kind_), asReal(tol_),
+    asInteger(rank_), asInteger(target_kind_), asReal(tol_), norm_A,
     asInteger(reorth_policy_)
   );
 }
