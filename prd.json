@@ -550,7 +550,7 @@
         "not_yet_satisfied": [
           "broader generalized preconditioner policy beyond the scoped sparse shifted-tridiagonal release surface",
           "dense generalized auto promotion to iterative LOBPCG",
-          "native/block generalized B-orthogonal Lanczos alternate beyond the current reference refinement"
+          "future-scope native/block generalized B-orthogonal Lanczos alternate beyond the scoped reference refinement"
         ]
       }
     },
@@ -1086,7 +1086,8 @@
       "exit_criteria": [
         "B-orthogonal Lanczos agrees with LOBPCG certificates on shared cases",
         "sigma-targeted problems converge on validation cases"
-      ]
+      ],
+      "current_status": "Scoped V1 K gate green as an explicit honest reference refinement. Dense, diagonal, and sparse CSC SPD metric solves route through the reference generalized SPD B-orthogonal Lanczos label, certify in original generalized coordinates, preserve B-orthogonality, avoid sparse densification, and agree with native generalized LOBPCG certificates. Native/block generalized Lanczos promotion is future scope."
     },
     {
       "name": "Milestone 5",

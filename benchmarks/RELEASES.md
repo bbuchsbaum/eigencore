@@ -94,8 +94,8 @@ they are machine-dependent.
   remain solver-local.
 - Added `docs/v1-readiness-audit.md` as the release-hardening checklist that
   maps each PRD/plan gate to current evidence, verification commands, and
-  blockers. It now records that H, I, J, L, and nonsymmetric compatibility are
-  green on fresh installed evidence while K and release-hardening checks remain
+  blockers. It now records that H, I, J, K, L, and nonsymmetric compatibility
+  are green on fresh installed evidence while release-hardening checks remain
   open.
 - Added `docs/v1-benchmark-manifest.md` as the benchmark inventory for the V1
   audit. It maps each release surface to the installed-package command, saved
@@ -106,7 +106,7 @@ they are machine-dependent.
 - Added `docs/v1-completion-audit.md` as the final stop-rule checklist for the
   active V1 readiness goal. It restates the deliverables, maps each prompt
   requirement to concrete artifacts and evidence, and records the current
-  decision as not V1 ready while K, sanitizer/valgrind-style coverage, final
+  decision as not V1 ready while sanitizer/valgrind-style coverage, final
   benchmark artifacts, and final README/vignette refresh remain open.
 - Added migration-facing release-hardening docs:
   `docs/rspectra-migration.md` for the RSpectra shim contract and
@@ -246,21 +246,20 @@ they are machine-dependent.
   `reference generalized SPD B-orthogonal Lanczos refinement`; it performs
   shift-invert-free B-orthogonal Rayleigh-Ritz extraction and certifies in the
   original generalized coordinates. Focused tests cover diagonal, dense, and
-  sparse CSC SPD metrics, B-orthogonality, and agreement with generalized LOBPCG
-  certificates. This advances K from absent to partial reference coverage; it
-  is not a native/block production promotion.
+  sparse CSC SPD metrics, B-orthogonality, and agreement with generalized
+  LOBPCG certificates. This closes K as a scoped, honest reference-refinement
+  gate; native/block production Lanczos remains future scope.
 - The generalized LOBPCG benchmark harness now includes a focused
   `eigencore_lanczos_reference` method row and a
-  `generalized_lanczos_reference_contract` table. A fresh installed quick
-  strict probe:
-  `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-generalized-lobpcg.R --quick --strict --iterations=1 --cases=diagonal_generalized_lanczos_ref_smallest --methods=eigencore_lanczos_reference,eigencore,base --subject=eigencore_lanczos_reference`
-  certified the reference Lanczos row (`nconv = 2/2`), passed the K contract,
-  recorded `diagonal solve for B`, and kept the row honestly nonnative.
-  A matching installed quick strict sparse-CSC metric probe with
-  `--cases=sparse_csc_generalized_lanczos_ref_smallest` also certifies
-  `2/2`, passes the K reference contract, records
-  `sparse Cholesky solve for B`, and remains nonnative while the native LOBPCG
-  comparison row certifies.
+  `generalized_lanczos_reference_contract` table. Fresh 2026-06-05 saved
+  evidence in `20260605-generalized-lobpcg-rows.rds` certifies the diagonal
+  and sparse-CSC reference rows at `8/8`, with `diagonal solve for B` and
+  `sparse Cholesky solve for B` provenance; the saved
+  `20260605-generalized-lanczos-reference-contracts.rds` rows pass label,
+  generalized, reference, orthogonality, and certificate gates. A focused
+  installed quick strict probe with both K cases also certifies `2/2` for each
+  row and keeps the rows honestly nonnative while the native LOBPCG comparison
+  rows certify.
 - The shift-invert benchmark now covers the general sparse reference boundary
   explicitly. A fresh installed quick strict saved run covers the native rows
   plus `sparse_general_reference` and

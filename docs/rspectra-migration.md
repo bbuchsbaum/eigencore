@@ -227,8 +227,8 @@ audit contract.
    workload that depends on a native path.
 5. Add `allow_dense_fallback = "never"` to sparse memory-safety tests.
 6. Keep reference/oracle-labelled paths out of production performance claims.
-7. Revisit the migration after K and final release-hardening decisions if
-   public labels or recommended methods change.
+7. Revisit the migration after final release-hardening decisions if public
+   labels or recommended methods change.
 
 See `docs/known-limitations.md` and `docs/v1-readiness-audit.md` for the
 current release blockers. See `docs/method-selection-and-workflows.md` for the

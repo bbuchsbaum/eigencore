@@ -184,7 +184,9 @@ Deliver the native engine in order. Each step ships with adversarial tests
    reference scalar B-orthogonal Lanczos refinement for explicit
    `method = lanczos()` generalized-SPD requests with dense, diagonal, or CSC
    SPD metrics; it certifies in original generalized coordinates but is not a
-   native production block implementation.
+   native production block implementation. Fresh 2026-06-05 installed evidence
+   closes the scoped K reference-refinement gate; native/block promotion is
+   future scope.
 8. **Shift-invert** with user-supplied solve / factorization-cache
    operator. Fails loud if no solve is provided; never silently dense.
 9. **Standard symmetric LOBPCG refinements** for graph Laplacians and
@@ -240,11 +242,12 @@ The Hermitian path supports native targets `largest`, `smallest`,
 
 Milestone G is now split cleanly: G0 was the scalar-native staging path, and G1
 is the block-native Hermitian path that can be promoted only in
-benchmark-proven regimes. Fresh installed non-quick evidence is red, so sparse
-block `auto()` promotion is disabled by default. The quick `k = 5` smoke gates
-remain diagnostic rather than release gates; in `--quick --strict` mode the
-Hermitian benchmark scripts enforce certification only, while non-quick
-`--strict` enforces the speed/memory/parity release gate:
+benchmark-proven regimes. General sparse block-Lanczos `auto()` promotion still
+lacks a green non-quick gate, so it remains disabled by default while the
+structured-tridiagonal G1 default is promoted separately. The quick `k = 5`
+smoke gates remain diagnostic rather than release gates; in `--quick --strict`
+mode the Hermitian benchmark scripts enforce certification only, while
+non-quick `--strict` enforces the speed/memory/parity release gate:
 
 - sparse Hermitian path Laplacian `n = 200, k = 5`: eigencore certifies all
   requested pairs with the scalar-native path and the tuned default
@@ -624,7 +627,7 @@ Working status against the sequenced milestones:
 | H | green for promoted tall/wide sparse gate | The executable `--h-candidate` gate targets the promoted `eigencore` SVD path again, with retained BPRO and block-GK rows kept as diagnostics. The tall-sparse production row avoids materializing the right Gram by using the bounded native `implicit_normal_lanczos` right-normal path and exact original-coordinate certificate diagnostics; the wide-sparse row remains on the certified native left-Gram special case. A warning-free installed 2026-06-05 3-iteration quick probe on `tall_sparse:600x90` and `wide_sparse:90x600` certified all five requested triplets and passed speed/memory (`1.194x` / `2.392x` tall, `1.223x` / `2.392x` wide versus the best certified references). Retained BPRO remains benchmark-visible but red, and broader sparse/matrix-free SVD remains a documented limitation rather than this H gate's promoted surface. |
 | I | scoped V1 gate green | Randomized SVD remains public reference-control code, but dense/CSC native fused sketch and projection kernels are active. The strict non-quick `exact_low_rank_dense:2000x500` release row passes against certified `rsvd` at about `3.1x`; quick and uncertified-baseline rows remain diagnostics. |
 | J | green for promoted sparse shifted-tridiagonal gate | Dense generalized `auto()` remains demoted to the native dense LAPACK fallback rather than an iterative LOBPCG promotion. The promoted native generalized SPD LOBPCG surface is the sparse shifted-tridiagonal path for largest and smallest targets, with explicit constraints, matrix-free `B`, and adversarial B cases retained as contract diagnostics. Installed 2026-06-05 non-quick strict evidence at `n = 1000`, `k = 10` certifies `10/10` for both sparse-smallest and sparse-largest without sparse densification, with native B-orthogonal kernels and shifted-tridiagonal preconditioner provenance. The saved full gate reports about `1.56x` / `1.67x` speed and `8.8x` / `25.0x` memory versus dense base for smallest/largest, and all native, generalized-Lanczos-reference, and adversarial-B contract rows pass. |
-| K | partial reference | Explicit generalized-SPD `lanczos()` requests now route to an honest reference B-orthogonal Lanczos refinement when `B` has a dense, diagonal, or CSC SPD solve. It passes focused adversarial B agreement with LOBPCG certificates, preserves B-orthogonality, and has a focused installed benchmark contract row, but native/block production promotion remains open. |
+| K | green for scoped reference refinement | Explicit generalized-SPD `lanczos()` requests route to an honest reference B-orthogonal Lanczos refinement when `B` has a dense, diagonal, or CSC SPD solve. Fresh 2026-06-05 saved and focused installed evidence certifies the diagonal and sparse-CSC K rows, passes the label/generalized/reference/orthogonality/certificate gates, preserves B-orthogonality, avoids sparse densification, and agrees with native generalized LOBPCG certificates. Native/block production Lanczos is future scope beyond the scoped K gate. |
 | L | scoped V1 gate green | Dense standard, dense generalized-SPD, diagonal standard, sparse symmetric-tridiagonal standard, and sparse/diagonal tridiagonal generalized shift-invert have native factorized Lanczos hot loops and original-problem certification. Fresh installed 2026-06-05 `bench-shift-invert.R --iterations=1 --strict --save` evidence passes all eight native/reference contract rows, including sparse-LU and user-solve boundaries. General sparse standard, general sparse/diagonal-metric generalized SPD, and user-supplied solve shift-invert remain honest reference paths rather than native production claims. |
 | M | done for path-Laplacian release surface | Native shifted-tridiagonal standard Hermitian LOBPCG passes the non-quick strict preconditioned gate on path Laplacians `n = 200, 1000, 2000`, `k = 5`; broader non-Laplacian preconditioned Hermitian policy remains future scope. |
 | N | started as release hardening | V1 audit, benchmark manifest, completion audit, RSpectra migration, method/workflow selection, known-limitations docs, doc scope audit, and reusable native smoke artifact exist. CRAN/sanitizer/valgrind signoff and final release benchmark reports remain ahead. |
@@ -1093,11 +1096,11 @@ Primary attack surfaces, in order:
    after sparse no-densification gates and the remaining production checks
    pass.
 3. **K generalized SPD Lanczos refinement.** The explicit reference scalar
-   path now covers solvable dense/diagonal/CSC SPD metrics and has focused
+   path covers solvable dense/diagonal/CSC SPD metrics and has focused
    installed benchmark-contract evidence for both diagonal and sparse-CSC
-   metric solves. Remaining work is native/block execution, broader sparse and
-   matrix-free solve ownership, and release benchmark evidence before it can be
-   considered a production alternate.
+   metric solves. This closes the scoped K reference-refinement gate while
+   keeping native/block execution and broader matrix-free solve ownership as
+   future scope.
 4. **L shift-invert follow-through.** Keep the scoped native shift-invert gate
    green for dense, diagonal, sparse tridiagonal, dense generalized, and
    tridiagonal/diagonal generalized cases, and keep general sparse plus

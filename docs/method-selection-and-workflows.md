@@ -166,7 +166,8 @@ Current state:
 | Sparse or diagonal-metric generalized SPD | Native only for tridiagonal `A` with diagonal `B`; otherwise honest reference-labelled or rejected depending on support. |
 | User-supplied solve | Reference boundary path. |
 
-Sparse native factorization ownership remains a V1 blocker.
+Sparse native factorization ownership is future scope beyond the scoped V1
+shift-invert surface.
 
 ## Operator Algebra
 

@@ -25,10 +25,10 @@ final benchmark artifacts named in `docs/v1-readiness-audit.md` and
 |---|---|---|
 | Quick start and first-contact API | `README.md`, `README.Rmd`, `vignettes/eigencore.Rmd` | Covered for current public paths. Refresh after any solver promotion or public label change. |
 | Certificates and diagnostics | `vignettes/certificates.Rmd`, `docs/method-selection-and-workflows.md`, `docs/v1-readiness-audit.md` | Covered for current certificate fields and planner diagnostics. Re-audit after new certificate constructors or estimated-scale paths. |
-| RSpectra migration | `docs/rspectra-migration.md`, `docs/known-limitations.md` | Covered for current shim behavior. Revisit after K and final release-hardening decisions if public labels change. |
+| RSpectra migration | `docs/rspectra-migration.md`, `docs/known-limitations.md` | Covered for current shim behavior. Revisit after final release-hardening decisions if public labels change. |
 | Partial Hermitian eigen | `README.md`, `docs/method-selection-and-workflows.md`, `docs/native-block-lanczos.md`, `docs/v1-readiness-audit.md` | Covered with the green structured-tridiagonal G1 default and explicit block-Lanczos diagnostic caveat. |
 | Partial SVD and randomized SVD | `README.md`, `docs/method-selection-and-workflows.md`, `docs/hegelsvd_svd_acceleration.md`, `docs/v1-benchmark-manifest.md` | Covered with the green H promoted surface and scoped I release gate. Final examples must avoid broad randomized performance claims beyond the exact-low-rank release row while public randomized control remains reference-labelled. |
-| Generalized SPD and LOBPCG | `docs/method-selection-and-workflows.md`, `docs/native-generalized-spd-lobpcg.md`, `docs/native-lobpcg.md`, `docs/v1-readiness-audit.md` | Covered for current native slices; final production wording is blocked by K. |
+| Generalized SPD and LOBPCG | `docs/method-selection-and-workflows.md`, `docs/native-generalized-spd-lobpcg.md`, `docs/native-lobpcg.md`, `docs/v1-readiness-audit.md` | Covered for current native slices and the scoped K reference refinement; native/block generalized Lanczos promotion is documented as future scope. |
 | Shift-invert | `docs/method-selection-and-workflows.md`, `docs/rspectra-migration.md`, `docs/v1-readiness-audit.md`, `docs/v1-benchmark-manifest.md` | Covered for the scoped V1 surface. Dense standard/generalized, diagonal and symmetric-tridiagonal standard, and tridiagonal generalized-with-diagonal-B native labels are documented; general sparse standard and general sparse diagonal-generalized remain reference-labelled as the honest V1 boundary. |
 | Nonsymmetric eigen | `docs/method-selection-and-workflows.md`, `docs/known-limitations.md`, `docs/v1-readiness-audit.md`, `docs/v1-benchmark-manifest.md` | Covered for the scoped V1 compatibility surface. Dense and sparse CSC matrices use native Arnoldi-cycle/native-Ritz labels with restart controls; matrix-free reference Arnoldi remains documented as the honest boundary. Fully restarted matrix-free native Arnoldi is future scope. |
 | Operator algebra and no densification | `docs/method-selection-and-workflows.md`, `docs/v1-readiness-audit.md` | Covered for explicit built-ins; matrix-free centering remains callback-boundary policy. |
@@ -37,7 +37,7 @@ final benchmark artifacts named in `docs/v1-readiness-audit.md` and
 
 ## Blocking Documentation Gaps
 
-- Final README and vignette examples must be refreshed after K and final
+- Final README and vignette examples must be refreshed after final
   release-hardening decisions, because those gates can change planner labels
   and recommended methods.
 - Final benchmark reports must list saved artifacts from strict installed
