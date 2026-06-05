@@ -282,14 +282,16 @@ they are machine-dependent.
   Cases have stable ids such as `tall_sparse:600x90` and
   `tall_sparse:100000x500`, `--cases=` accepts either the stable id or the case
   name, and each selected row prints progress before entering the expensive
-  method loop. A fresh installed quick H probe:
-  `R_LIBS=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-svd-surface.R --quick --h-candidate --iterations=1 --save --cases=tall_sparse:600x90`
-  keeps H red. The gate subject `eigencore_block_golub_kahan_retained`
-  certified all five requested singular triplets but failed speed
-  (`0.0188x` versus the best certified reference) and memory (`0.0619x`).
-  The fastest certified eigencore diagnostic rows on this tiny tall sparse case
-  were Gram/implicit-normal paths around `0.00039s`, but these are bounded
-  diagnostic paths, not the general H production answer.
+  method loop. The executable H candidate gate now defaults to
+  `eigencore_irlba_lbd_retained_bpro` instead of the stale retained block-GK
+  row. A fresh installed 3-iteration probe:
+  `R_LIBS_USER=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-svd-surface.R --quick --iterations=3 --subject=eigencore_irlba_lbd_retained_bpro --methods=eigencore_irlba_lbd_retained_bpro,RSpectra,PRIMME,irlba,rsvd --cases=tall_sparse:600x90,wide_sparse:90x600`
+  keeps H red. The retained BPRO subject certified all five requested singular
+  triplets on both rows, but failed speed (`0.124x` tall, `0.196x` wide versus
+  the best certified reference) and memory (`0.168x` tall, `0.160x` wide versus
+  the best certified reference). Gram/implicit-normal paths remain faster on
+  some tiny fixtures, but they are bounded diagnostic paths, not the general H
+  production answer.
   Fresh default tiny-Gram probes further correct the previous Track A promotion
   note: `--subject=eigencore --methods=eigencore,RSpectra,irlba,rsvd` on
   `tall_sparse:600x90` and `wide_sparse:90x600` certifies all five eigencore

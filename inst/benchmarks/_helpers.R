@@ -161,7 +161,7 @@ svd_surface_default_methods <- function(args) {
 
 svd_surface_gate_subject <- function(args, methods) {
   subject <- args$subject %||% if (isTRUE(args$h_candidate)) {
-    "eigencore_block_golub_kahan_retained"
+    "eigencore_irlba_lbd_retained_bpro"
   } else {
     "eigencore"
   }

@@ -594,7 +594,7 @@ test_that("randomized-rsvd benchmark rows expose native projection diagnostics",
   }
 })
 
-test_that("SVD surface H candidate preset selects retained native SVD subject", {
+test_that("SVD surface H candidate preset selects retained IRLBA/BPRO subject", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
 
   source(benchmark_file("_helpers.R"))
@@ -618,7 +618,7 @@ test_that("SVD surface H candidate preset selects retained native SVD subject", 
   expect_false("eigencore" %in% methods)
   expect_equal(
     svd_surface_gate_subject(args, methods),
-    "eigencore_block_golub_kahan_retained"
+    "eigencore_irlba_lbd_retained_bpro"
   )
 
   expect_true("eigencore_block_golub_kahan_retained_cached" %in% svd_internal_methods())
