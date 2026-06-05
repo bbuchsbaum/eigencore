@@ -282,16 +282,17 @@ they are machine-dependent.
   Cases have stable ids such as `tall_sparse:600x90` and
   `tall_sparse:100000x500`, `--cases=` accepts either the stable id or the case
   name, and each selected row prints progress before entering the expensive
-  method loop. The executable H candidate gate now defaults to
-  `eigencore_irlba_lbd_retained_bpro` instead of the stale retained block-GK
-  row. A fresh installed 3-iteration probe:
-  `R_LIBS_USER=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-svd-surface.R --quick --iterations=3 --subject=eigencore_irlba_lbd_retained_bpro --methods=eigencore_irlba_lbd_retained_bpro,RSpectra,PRIMME,irlba,rsvd --cases=tall_sparse:600x90,wide_sparse:90x600`
-  keeps H red. The retained BPRO subject certified all five requested singular
-  triplets on both rows, but failed speed (`0.140x` tall, `0.177x` wide versus
-  the best certified reference) and memory (`0.170x` tall, `0.162x` wide versus
-  the best certified reference). Gram/implicit-normal paths remain faster on
-  some tiny fixtures, but they are bounded diagnostic paths, not the general H
-  production answer.
+  method loop. The executable H candidate gate now defaults back to the promoted
+  `eigencore` SVD path, while retained BPRO and block-GK rows remain diagnostic
+  comparators. A fresh installed 3-iteration probe:
+  `R_LIBS_USER=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-svd-surface.R --quick --iterations=3 --h-candidate --methods=eigencore,RSpectra,PRIMME,irlba,rsvd --cases=tall_sparse:600x90,wide_sparse:90x600`
+  is green for the promoted tall/wide sparse H surface. The tall row uses native
+  `implicit_normal_lanczos` on the right-normal operator without materializing
+  the Gram, and the wide row uses the certified native left-Gram special case.
+  Both rows certify all five requested singular triplets and pass speed/memory:
+  `1.194x` speed and `2.392x` memory on `tall_sparse:600x90`, `1.223x` speed
+  and `2.392x` memory on `wide_sparse:90x600`, versus the best certified
+  references. Retained BPRO remains benchmark-visible but speed/memory-red.
   Fresh default tiny-Gram probes further correct the previous Track A promotion
   note: `--subject=eigencore --methods=eigencore,RSpectra,irlba,rsvd` on
   `tall_sparse:600x90` and `wide_sparse:90x600` certifies all five eigencore
@@ -305,10 +306,13 @@ they are machine-dependent.
   return to the existing Golub-Kahan fallback. A direct installed comparison on
   `tall_sparse:600x90` shows lower overhead for `svd_partial()` fast-result
   construction (about `604us`) than the R-assembled `solve(svd_problem())`
-  route (about `692us`) with the same backward error. This does not close H:
-  fresh 3-iteration installed quick probes still report `0.40x` tall and
-  `0.63x` wide speed versus the best certified reference, while memory remains
-  green.
+  route (about `692us`) with the same backward error. The newer right-normal
+  implicit Lanczos path avoids materializing the tall right Gram, and the
+  small-rank native orthogonality diagnostic now avoids BLAS call overhead on
+  the implicit-normal branches. The warning-free installed 2026-06-05 H probe
+  certifies the production `eigencore` subject and passes both speed and memory
+  on the tall/wide quick rows (`1.194x` tall, `1.223x` wide speed; `2.392x`
+  memory on both).
 - The randomized-rsvd benchmark now uses the shared case-filter/progress
   helpers. Cases have stable ids such as `exact_low_rank_dense:120x80`,
   `slow_decay_dense:140x90`, and `exact_low_rank_dense:2000x500`, and

@@ -24,6 +24,23 @@ static double max_orthogonality_loss_gram(const double* gram, int k) {
   return loss;
 }
 
+static void small_column_crossprod_gram(const double* X, int rows, int cols,
+                                        double* gram) {
+  for (int col = 0; col < cols; ++col) {
+    const double* x_col = X + static_cast<int64_t>(col) * rows;
+    for (int row_col = 0; row_col <= col; ++row_col) {
+      const double* x_row = X + static_cast<int64_t>(row_col) * rows;
+      long double dot = 0.0L;
+      for (int row = 0; row < rows; ++row) {
+        dot += static_cast<long double>(x_row[row]) * x_col[row];
+      }
+      const double value = static_cast<double>(dot);
+      gram[row_col + static_cast<int64_t>(col) * cols] = value;
+      gram[col + static_cast<int64_t>(row_col) * cols] = value;
+    }
+  }
+}
+
 static int trl_orthogonalise_gram(const double* V_locked, int n_locked,
                                   const double* V_active, int m_active,
                                   double* z, double* tmp, int n,
@@ -148,6 +165,14 @@ static void csc_left_normal_apply_vec(const int* Ai, const int* Ap,
                                       double* tmp_n) {
   csc_transpose_apply_vec(Ai, Ap, Ax, m, n, x, tmp_n);
   csc_forward_apply_vec(Ai, Ap, Ax, m, n, tmp_n, y);
+}
+
+static void csc_right_normal_apply_vec(const int* Ai, const int* Ap,
+                                       const double* Ax, int m, int n,
+                                       const double* x, double* y,
+                                       double* tmp_m) {
+  csc_forward_apply_vec(Ai, Ap, Ax, m, n, x, tmp_m);
+  csc_transpose_apply_vec(Ai, Ap, Ax, m, n, tmp_m, y);
 }
 
 static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
@@ -308,6 +333,157 @@ static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
     return 1;
   }
   return 0;
+}
+
+static int csc_implicit_right_normal_lanczos_attempt(const int* Ai,
+                                                    const int* Ap,
+                                                    const double* Ax,
+                                                    int m,
+                                                    int n,
+                                                    int rank,
+                                                    double tol,
+                                                    double norm_A,
+                                                    double* values,
+                                                    double* V,
+                                                    int* iterations_out,
+                                                    double* max_backward_error_out) {
+  if (n < 2 || rank < 1 || rank > n) {
+    return 0;
+  }
+  int max_steps = std::max(38, 6 * rank + 8);
+  if (max_steps > n) {
+    max_steps = n;
+  }
+  if (max_steps < rank) {
+    return 0;
+  }
+
+  std::vector<double> start(static_cast<size_t>(n), 0.0);
+  for (int row = 0; row < n; ++row) {
+    const uint32_t key = static_cast<uint32_t>((row + 1) * 1103515245u) ^
+      static_cast<uint32_t>(rank * 2654435761u);
+    start[row] = (key & 1u) ? 1.0 : -1.0;
+  }
+
+  std::vector<double> Q(static_cast<size_t>(n) * static_cast<size_t>(max_steps), 0.0);
+  std::vector<double> z(static_cast<size_t>(n), 0.0);
+  std::vector<double> tmp_n(static_cast<size_t>(n), 0.0);
+  std::vector<double> tmp_m(static_cast<size_t>(m), 0.0);
+  std::vector<double> alpha(static_cast<size_t>(max_steps), 0.0);
+  std::vector<double> beta(static_cast<size_t>(max_steps), 0.0);
+  std::memcpy(Q.data(), start.data(), sizeof(double) * static_cast<size_t>(n));
+  double q_norm = trl_norm2_gram(Q.data(), n);
+  if (q_norm <= 100.0 * DBL_EPSILON) {
+    return 0;
+  }
+  for (int row = 0; row < n; ++row) {
+    Q[row] /= q_norm;
+  }
+
+  int active = 0;
+  double final_beta = 0.0;
+  for (int step = 0; step < max_steps; ++step) {
+    const double* q = Q.data() + static_cast<int64_t>(step) * n;
+    csc_right_normal_apply_vec(Ai, Ap, Ax, m, n, q, z.data(), tmp_m.data());
+
+    long double dot = 0.0L;
+    for (int row = 0; row < n; ++row) {
+      dot += static_cast<long double>(q[row]) * z[static_cast<size_t>(row)];
+    }
+    alpha[static_cast<size_t>(step)] = static_cast<double>(dot);
+
+    if (step > 0) {
+      const double* q_prev = Q.data() + static_cast<int64_t>(step - 1) * n;
+      const double b_prev = beta[static_cast<size_t>(step - 1)];
+      for (int row = 0; row < n; ++row) {
+        z[static_cast<size_t>(row)] -=
+          alpha[static_cast<size_t>(step)] * q[row] + b_prev * q_prev[row];
+      }
+    } else {
+      for (int row = 0; row < n; ++row) {
+        z[static_cast<size_t>(row)] -= alpha[static_cast<size_t>(step)] * q[row];
+      }
+    }
+
+    if ((step % 4) == 0 || step + rank >= max_steps) {
+      trl_orthogonalise_gram(nullptr, 0, Q.data(), step + 1, z.data(), tmp_n.data(), n, 1);
+    }
+    const double b = trl_norm2_gram(z.data(), n);
+    final_beta = b;
+    active = step + 1;
+    if (step + 1 >= max_steps || b <= 100.0 * DBL_EPSILON * (norm_A * norm_A + 1.0)) {
+      break;
+    }
+    beta[static_cast<size_t>(step)] = b;
+    double* q_next = Q.data() + static_cast<int64_t>(step + 1) * n;
+    const double inv_b = 1.0 / b;
+    for (int row = 0; row < n; ++row) {
+      q_next[row] = z[static_cast<size_t>(row)] * inv_b;
+    }
+  }
+  if (active < rank) {
+    return 0;
+  }
+
+  std::vector<double> T(static_cast<size_t>(active) * static_cast<size_t>(active), 0.0);
+  std::vector<double> theta(static_cast<size_t>(active), 0.0);
+  for (int col = 0; col < active; ++col) {
+    T[col + static_cast<int64_t>(col) * active] = alpha[static_cast<size_t>(col)];
+    if (col + 1 < active) {
+      const double b = beta[static_cast<size_t>(col)];
+      T[col + static_cast<int64_t>(col + 1) * active] = b;
+      T[(col + 1) + static_cast<int64_t>(col) * active] = b;
+    }
+  }
+  int lwork = trl_dsyev_query_gram(active);
+  if (lwork < 3 * active) {
+    lwork = 3 * active;
+  }
+  std::vector<double> work(static_cast<size_t>(lwork));
+  char jobz = 'V';
+  char uplo = 'U';
+  int info = 0;
+  F77_CALL(dsyev)(&jobz, &uplo, &active, T.data(), &active,
+                  theta.data(), work.data(), &lwork, &info FCONE FCONE);
+  if (info != 0) {
+    return 0;
+  }
+
+  const double scale_value_native = norm_A > DBL_EPSILON ? norm_A : DBL_EPSILON;
+  double native_max_backward = 0.0;
+  for (int out_col = 0; out_col < rank; ++out_col) {
+    const int src_col = active - 1 - out_col;
+    const double lambda_i = theta[static_cast<size_t>(src_col)] > 0.0 ?
+      theta[static_cast<size_t>(src_col)] : 0.0;
+    const double sigma = sqrt(lambda_i);
+    if (sigma <= 100.0 * DBL_EPSILON) {
+      return 0;
+    }
+    double* v_col = V + static_cast<int64_t>(out_col) * n;
+    std::fill(v_col, v_col + n, 0.0);
+    for (int basis_col = 0; basis_col < active; ++basis_col) {
+      const double coeff = T[basis_col + static_cast<int64_t>(src_col) * active];
+      const double* q_col = Q.data() + static_cast<int64_t>(basis_col) * n;
+      for (int row = 0; row < n; ++row) {
+        v_col[row] += coeff * q_col[row];
+      }
+    }
+    const double last_component =
+      T[(active - 1) + static_cast<int64_t>(src_col) * active];
+    const double backward = fabs(final_beta * last_component) /
+      (sigma * scale_value_native);
+    if (backward > native_max_backward) {
+      native_max_backward = backward;
+    }
+    values[out_col] = lambda_i;
+  }
+  if (iterations_out != nullptr) {
+    *iterations_out = active;
+  }
+  if (max_backward_error_out != nullptr) {
+    *max_backward_error_out = native_max_backward;
+  }
+  return R_FINITE(native_max_backward) ? 1 : 0;
 }
 
 static int gram_krylov_left_normal_attempt(const double* gram,
@@ -843,21 +1019,13 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   SEXP scale_ = PROTECT(allocVector(REALSXP, rank));
   SEXP orth_ = PROTECT(allocVector(REALSXP, 2));
 
-  const char trans = 'T';
-  const char notrans = 'N';
-  const double one = 1.0;
-  const double zero = 0.0;
   std::vector<double> gram_u_small(static_cast<size_t>(rank) * rank, 0.0);
   std::vector<double> gram_v_small(static_cast<size_t>(rank) * rank, 0.0);
   std::vector<double> gu;
   std::vector<double> gu_block;
   if (used_implicit_lanczos) {
-    F77_CALL(dgemm)(&trans, &notrans, &rank, &rank, &m,
-                    &one, REAL(u_), &m, REAL(u_), &m,
-                    &zero, gram_u_small.data(), &rank FCONE FCONE);
-    F77_CALL(dgemm)(&trans, &notrans, &rank, &rank, &n,
-                    &one, REAL(v_), &n, REAL(v_), &n,
-                    &zero, gram_v_small.data(), &rank FCONE FCONE);
+    small_column_crossprod_gram(REAL(u_), m, rank, gram_u_small.data());
+    small_column_crossprod_gram(REAL(v_), n, rank, gram_v_small.data());
     gu.assign(static_cast<size_t>(m), 0.0);
   } else {
     gu_block.assign(static_cast<size_t>(m) * static_cast<size_t>(rank), 0.0);
@@ -1049,93 +1217,112 @@ extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   const double norm_A = sqrt(frob2 > 0.0 ? frob2 : 0.0);
   const double scale_value = norm_A > DBL_EPSILON ? norm_A : DBL_EPSILON;
 
-  stage_timer = native_timer_now();
-  std::vector<double> gram(static_cast<size_t>(n) * static_cast<size_t>(n), 0.0);
-  std::vector<int> row_counts(static_cast<size_t>(m), 0);
-  for (int idx = 0; idx < Ap[n]; ++idx) {
-    const int row = Ai[idx];
-    if (row >= 0 && row < m) {
-      ++row_counts[static_cast<size_t>(row)];
-    }
+  std::vector<double> gram;
+  std::vector<double> values_work(static_cast<size_t>(n), 0.0);
+  SEXP v_ = PROTECT(allocMatrix(REALSXP, n, rank));
+  int used_implicit_lanczos = 0;
+  int implicit_lanczos_iterations = 0;
+  double implicit_lanczos_max_backward_error = R_PosInf;
+  const char* lapack_eigensolver = "lapack_dsyevr";
+
+  SEXP implicit_option_ = Rf_GetOption1(Rf_install("eigencore.csc_right_normal_lanczos_attempt"));
+  const int attempt_implicit_lanczos =
+    (implicit_option_ == R_NilValue) ? TRUE : (asLogical(implicit_option_) == TRUE);
+  if (attempt_implicit_lanczos && n <= 128 && rank <= 16) {
+    stage_timer = native_timer_now();
+    used_implicit_lanczos = csc_implicit_right_normal_lanczos_attempt(
+      Ai, Ap, Ax, m, n, rank, tol, norm_A, values_work.data(), REAL(v_),
+      &implicit_lanczos_iterations, &implicit_lanczos_max_backward_error
+    );
+    stage_eigensolve_seconds = native_timer_elapsed(stage_timer);
   }
-  std::vector<int> row_ptr(static_cast<size_t>(m + 1), 0);
-  for (int row = 0; row < m; ++row) {
-    row_ptr[static_cast<size_t>(row + 1)] =
-      row_ptr[static_cast<size_t>(row)] + row_counts[static_cast<size_t>(row)];
-  }
-  std::vector<int> row_next = row_ptr;
-  const int nnz = Ap[n];
-  std::vector<int> row_cols(static_cast<size_t>(nnz), 0);
-  std::vector<double> row_vals(static_cast<size_t>(nnz), 0.0);
-  for (int col = 0; col < n; ++col) {
-    for (int jj = Ap[col]; jj < Ap[col + 1]; ++jj) {
-      const int row = Ai[jj];
-      const int pos = row_next[static_cast<size_t>(row)]++;
-      row_cols[static_cast<size_t>(pos)] = col;
-      row_vals[static_cast<size_t>(pos)] = Ax[jj];
-    }
-  }
-  for (int row = 0; row < m; ++row) {
-    const int start = row_ptr[static_cast<size_t>(row)];
-    const int end = row_ptr[static_cast<size_t>(row + 1)];
-    for (int aa = start; aa < end; ++aa) {
-      const int col_a = row_cols[static_cast<size_t>(aa)];
-      const double x_a = row_vals[static_cast<size_t>(aa)];
-      gram[col_a + static_cast<int64_t>(col_a) * n] += x_a * x_a;
-      for (int bb = aa + 1; bb < end; ++bb) {
-        const int col_b = row_cols[static_cast<size_t>(bb)];
-        const double update = x_a * row_vals[static_cast<size_t>(bb)];
-        gram[col_a + static_cast<int64_t>(col_b) * n] += update;
-        gram[col_b + static_cast<int64_t>(col_a) * n] += update;
+
+  if (!used_implicit_lanczos) {
+    stage_timer = native_timer_now();
+    gram.assign(static_cast<size_t>(n) * static_cast<size_t>(n), 0.0);
+    std::vector<int> row_counts(static_cast<size_t>(m), 0);
+    for (int idx = 0; idx < Ap[n]; ++idx) {
+      const int row = Ai[idx];
+      if (row >= 0 && row < m) {
+        ++row_counts[static_cast<size_t>(row)];
       }
     }
-  }
-  stage_gram_seconds = native_timer_elapsed(stage_timer);
-
-  stage_timer = native_timer_now();
-  std::vector<double> work_matrix(static_cast<size_t>(n) * static_cast<size_t>(n));
-  std::vector<double> values_work(static_cast<size_t>(n), 0.0);
-  std::memcpy(work_matrix.data(), gram.data(),
-              sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(n));
-  SEXP v_ = PROTECT(allocMatrix(REALSXP, n, rank));
-  const char* lapack_eigensolver = "lapack_dsyevr";
-  char jobz = 'V';
-  char range = 'I';
-  char uplo = 'U';
-  double vl = 0.0;
-  double vu = 0.0;
-  const double abstol = 0.0;
-  int il = n - rank + 1;
-  int iu = n;
-  int m_found = 0;
-  int info = 0;
-  int lwork = 26 * n;
-  int liwork = 10 * n;
-  std::vector<int> isuppz(static_cast<size_t>(2 * rank), 0);
-  std::vector<double> work(static_cast<size_t>(lwork));
-  std::vector<int> iwork(static_cast<size_t>(liwork));
-  F77_CALL(dsyevr)(&jobz, &range, &uplo, &n, work_matrix.data(), &n,
-                   &vl, &vu, &il, &iu, &abstol,
-                   &m_found, values_work.data(), REAL(v_), &n,
-                   isuppz.data(), work.data(), &lwork,
-                   iwork.data(), &liwork, &info FCONE FCONE FCONE);
-  if (info != 0 || m_found != rank) {
-    UNPROTECT(1);
-    error("LAPACK dsyevr failed with info=%d, found=%d", info, m_found);
-  }
-  for (int left = 0, right = rank - 1; left < right; ++left, --right) {
-    const double tmp_value = values_work[left];
-    values_work[left] = values_work[right];
-    values_work[right] = tmp_value;
-    for (int row = 0; row < n; ++row) {
-      const int64_t lpos = row + static_cast<int64_t>(left) * n;
-      const int64_t rpos = row + static_cast<int64_t>(right) * n;
-      const double tmp_vec = REAL(v_)[lpos];
-      REAL(v_)[lpos] = REAL(v_)[rpos];
-      REAL(v_)[rpos] = tmp_vec;
+    std::vector<int> row_ptr(static_cast<size_t>(m + 1), 0);
+    for (int row = 0; row < m; ++row) {
+      row_ptr[static_cast<size_t>(row + 1)] =
+        row_ptr[static_cast<size_t>(row)] + row_counts[static_cast<size_t>(row)];
     }
+    std::vector<int> row_next = row_ptr;
+    const int nnz = Ap[n];
+    std::vector<int> row_cols(static_cast<size_t>(nnz), 0);
+    std::vector<double> row_vals(static_cast<size_t>(nnz), 0.0);
+    for (int col = 0; col < n; ++col) {
+      for (int jj = Ap[col]; jj < Ap[col + 1]; ++jj) {
+        const int row = Ai[jj];
+        const int pos = row_next[static_cast<size_t>(row)]++;
+        row_cols[static_cast<size_t>(pos)] = col;
+        row_vals[static_cast<size_t>(pos)] = Ax[jj];
+      }
+    }
+    for (int row = 0; row < m; ++row) {
+      const int start = row_ptr[static_cast<size_t>(row)];
+      const int end = row_ptr[static_cast<size_t>(row + 1)];
+      for (int aa = start; aa < end; ++aa) {
+        const int col_a = row_cols[static_cast<size_t>(aa)];
+        const double x_a = row_vals[static_cast<size_t>(aa)];
+        gram[col_a + static_cast<int64_t>(col_a) * n] += x_a * x_a;
+        for (int bb = aa + 1; bb < end; ++bb) {
+          const int col_b = row_cols[static_cast<size_t>(bb)];
+          const double update = x_a * row_vals[static_cast<size_t>(bb)];
+          gram[col_a + static_cast<int64_t>(col_b) * n] += update;
+          gram[col_b + static_cast<int64_t>(col_a) * n] += update;
+        }
+      }
+    }
+    stage_gram_seconds = native_timer_elapsed(stage_timer);
+
+    stage_timer = native_timer_now();
+    std::vector<double> work_matrix(static_cast<size_t>(n) * static_cast<size_t>(n));
+    std::memcpy(work_matrix.data(), gram.data(),
+                sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(n));
+    char jobz = 'V';
+    char range = 'I';
+    char uplo = 'U';
+    double vl = 0.0;
+    double vu = 0.0;
+    const double abstol = 0.0;
+    int il = n - rank + 1;
+    int iu = n;
+    int m_found = 0;
+    int info = 0;
+    int lwork = 26 * n;
+    int liwork = 10 * n;
+    std::vector<int> isuppz(static_cast<size_t>(2 * rank), 0);
+    std::vector<double> work(static_cast<size_t>(lwork));
+    std::vector<int> iwork(static_cast<size_t>(liwork));
+    F77_CALL(dsyevr)(&jobz, &range, &uplo, &n, work_matrix.data(), &n,
+                     &vl, &vu, &il, &iu, &abstol,
+                     &m_found, values_work.data(), REAL(v_), &n,
+                     isuppz.data(), work.data(), &lwork,
+                     iwork.data(), &liwork, &info FCONE FCONE FCONE);
+    if (info != 0 || m_found != rank) {
+      UNPROTECT(1);
+      error("LAPACK dsyevr failed with info=%d, found=%d", info, m_found);
+    }
+    for (int left = 0, right = rank - 1; left < right; ++left, --right) {
+      const double tmp_value = values_work[left];
+      values_work[left] = values_work[right];
+      values_work[right] = tmp_value;
+      for (int row = 0; row < n; ++row) {
+        const int64_t lpos = row + static_cast<int64_t>(left) * n;
+        const int64_t rpos = row + static_cast<int64_t>(right) * n;
+        const double tmp_vec = REAL(v_)[lpos];
+        REAL(v_)[lpos] = REAL(v_)[rpos];
+        REAL(v_)[rpos] = tmp_vec;
+      }
+    }
+    stage_eigensolve_seconds = native_timer_elapsed(stage_timer);
   }
-  stage_eigensolve_seconds = native_timer_elapsed(stage_timer);
 
   stage_timer = native_timer_now();
   SEXP d_ = PROTECT(allocVector(REALSXP, rank));
@@ -1180,27 +1367,33 @@ extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   const double zero = 0.0;
   std::vector<double> gram_v_small(static_cast<size_t>(rank) * rank, 0.0);
   std::vector<double> gram_u_small(static_cast<size_t>(rank) * rank, 0.0);
-  std::vector<double> gv_block(static_cast<size_t>(n) * static_cast<size_t>(rank), 0.0);
-  F77_CALL(dgemm)(&trans, &notrans, &rank, &rank, &n,
-                  &one, REAL(v_), &n, REAL(v_), &n,
-                  &zero, gram_v_small.data(), &rank FCONE FCONE);
-  F77_CALL(dgemm)(&notrans, &notrans, &n, &rank, &n,
-                  &one, gram.data(), &n, REAL(v_), &n,
-                  &zero, gv_block.data(), &n FCONE FCONE);
-  for (int col = 0; col < rank; ++col) {
-    const double sigma_col = REAL(d_)[col];
-    const double inv_col = sigma_col > 100.0 * DBL_EPSILON ? 1.0 / sigma_col : 0.0;
-    const double* gv_col = gv_block.data() + static_cast<int64_t>(col) * n;
-    for (int row_col = 0; row_col < rank; ++row_col) {
-      const double sigma_row = REAL(d_)[row_col];
-      const double inv_row = sigma_row > 100.0 * DBL_EPSILON ? 1.0 / sigma_row : 0.0;
-      const double* v_row = REAL(v_) + static_cast<int64_t>(row_col) * n;
-      long double dot = 0.0L;
-      for (int row = 0; row < n; ++row) {
-        dot += static_cast<long double>(v_row[row]) * gv_col[row];
+  std::vector<double> gv_block;
+  if (used_implicit_lanczos) {
+    small_column_crossprod_gram(REAL(u_), m, rank, gram_u_small.data());
+    small_column_crossprod_gram(REAL(v_), n, rank, gram_v_small.data());
+  } else {
+    gv_block.assign(static_cast<size_t>(n) * static_cast<size_t>(rank), 0.0);
+    F77_CALL(dgemm)(&trans, &notrans, &rank, &rank, &n,
+                    &one, REAL(v_), &n, REAL(v_), &n,
+                    &zero, gram_v_small.data(), &rank FCONE FCONE);
+    F77_CALL(dgemm)(&notrans, &notrans, &n, &rank, &n,
+                    &one, gram.data(), &n, REAL(v_), &n,
+                    &zero, gv_block.data(), &n FCONE FCONE);
+    for (int col = 0; col < rank; ++col) {
+      const double sigma_col = REAL(d_)[col];
+      const double inv_col = sigma_col > 100.0 * DBL_EPSILON ? 1.0 / sigma_col : 0.0;
+      const double* gv_col = gv_block.data() + static_cast<int64_t>(col) * n;
+      for (int row_col = 0; row_col < rank; ++row_col) {
+        const double sigma_row = REAL(d_)[row_col];
+        const double inv_row = sigma_row > 100.0 * DBL_EPSILON ? 1.0 / sigma_row : 0.0;
+        const double* v_row = REAL(v_) + static_cast<int64_t>(row_col) * n;
+        long double dot = 0.0L;
+        for (int row = 0; row < n; ++row) {
+          dot += static_cast<long double>(v_row[row]) * gv_col[row];
+        }
+        gram_u_small[row_col + static_cast<int64_t>(col) * rank] =
+          static_cast<double>(dot) * inv_row * inv_col;
       }
-      gram_u_small[row_col + static_cast<int64_t>(col) * rank] =
-        static_cast<double>(dot) * inv_row * inv_col;
     }
   }
   REAL(orth_)[0] = max_orthogonality_loss_gram(gram_u_small.data(), rank);
@@ -1210,25 +1403,58 @@ extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   SET_STRING_ELT(orth_names_, 1, mkChar("V"));
   setAttrib(orth_, R_NamesSymbol, orth_names_);
 
-  for (int scol = 0; scol < rank; ++scol) {
-    const double sigma = REAL(d_)[scol];
-    const double lambda = sigma * sigma;
-    long double right_sum = 0.0L;
-    const double inv_sigma = sigma > 100.0 * DBL_EPSILON ? 1.0 / sigma : 0.0;
-    const double* gv_col = gv_block.data() + static_cast<int64_t>(scol) * n;
-    const double* v_col = REAL(v_) + static_cast<int64_t>(scol) * n;
-    for (int row = 0; row < n; ++row) {
-      const double residual = (gv_col[row] - lambda * v_col[row]) * inv_sigma;
-      right_sum += static_cast<long double>(residual) * residual;
+  if (used_implicit_lanczos) {
+    std::vector<double> atu_check(static_cast<size_t>(n), 0.0);
+    for (int scol = 0; scol < rank; ++scol) {
+      const double sigma = REAL(d_)[scol];
+      const double* v_col = REAL(v_) + static_cast<int64_t>(scol) * n;
+      const double* u_col = REAL(u_) + static_cast<int64_t>(scol) * m;
+      csc_transpose_apply_vec(Ai, Ap, Ax, m, n, u_col, atu_check.data());
+      long double right_sum = 0.0L;
+      for (int row = 0; row < n; ++row) {
+        const double residual = atu_check[static_cast<size_t>(row)] -
+          sigma * v_col[row];
+        right_sum += static_cast<long double>(residual) * residual;
+      }
+      const double left = 0.0;
+      const double right = sqrt(static_cast<double>(right_sum));
+      REAL(left_)[scol] = left;
+      REAL(right_)[scol] = right;
+      REAL(combined_)[scol] = sqrt(left * left + right * right);
+      REAL(scale_)[scol] = scale_value;
+      REAL(backward_)[scol] = REAL(combined_)[scol] / scale_value;
+      LOGICAL(converged_)[scol] = (REAL(backward_)[scol] <= tol) ? TRUE : FALSE;
     }
-    const double left = 0.0;
-    const double right = sqrt(static_cast<double>(right_sum));
-    REAL(left_)[scol] = left;
-    REAL(right_)[scol] = right;
-    REAL(combined_)[scol] = right;
-    REAL(scale_)[scol] = scale_value;
-    REAL(backward_)[scol] = REAL(combined_)[scol] / scale_value;
-    LOGICAL(converged_)[scol] = (REAL(backward_)[scol] <= tol) ? TRUE : FALSE;
+  } else {
+    for (int scol = 0; scol < rank; ++scol) {
+      const double sigma = REAL(d_)[scol];
+      const double lambda = sigma * sigma;
+      long double right_sum = 0.0L;
+      const double inv_sigma = sigma > 100.0 * DBL_EPSILON ? 1.0 / sigma : 0.0;
+      const double* gv_col = gv_block.data() + static_cast<int64_t>(scol) * n;
+      const double* v_col = REAL(v_) + static_cast<int64_t>(scol) * n;
+      for (int row = 0; row < n; ++row) {
+        const double residual = (gv_col[row] - lambda * v_col[row]) * inv_sigma;
+        right_sum += static_cast<long double>(residual) * residual;
+      }
+      const double left = 0.0;
+      const double right = sqrt(static_cast<double>(right_sum));
+      REAL(left_)[scol] = left;
+      REAL(right_)[scol] = right;
+      REAL(combined_)[scol] = right;
+      REAL(scale_)[scol] = scale_value;
+      REAL(backward_)[scol] = REAL(combined_)[scol] / scale_value;
+      LOGICAL(converged_)[scol] = (REAL(backward_)[scol] <= tol) ? TRUE : FALSE;
+    }
+  }
+  if (used_implicit_lanczos) {
+    double max_backward = 0.0;
+    for (int scol = 0; scol < rank; ++scol) {
+      if (REAL(backward_)[scol] > max_backward || scol == 0) {
+        max_backward = REAL(backward_)[scol];
+      }
+    }
+    implicit_lanczos_max_backward_error = max_backward;
   }
   stage_diagnostics_seconds = native_timer_elapsed(stage_timer);
 
@@ -1262,10 +1488,12 @@ extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   SET_STRING_ELT(stage_names_, 3, mkChar("diagnostics"));
   setAttrib(stage_, R_NamesSymbol, stage_names_);
 
-  SEXP eigensolver_ = PROTECT(mkString(lapack_eigensolver));
+  SEXP eigensolver_ = PROTECT(mkString(
+    used_implicit_lanczos ? "implicit_normal_lanczos" : lapack_eigensolver
+  ));
   SEXP subspace_be_ = PROTECT(ScalarReal(R_PosInf));
-  SEXP implicit_be_ = PROTECT(ScalarReal(R_PosInf));
-  SEXP implicit_iter_ = PROTECT(ScalarInteger(0));
+  SEXP implicit_be_ = PROTECT(ScalarReal(implicit_lanczos_max_backward_error));
+  SEXP implicit_iter_ = PROTECT(ScalarInteger(implicit_lanczos_iterations));
   SEXP gram_krylov_iter_ = PROTECT(ScalarInteger(0));
 
   SEXP out_ = PROTECT(allocVector(VECSXP, 10));

@@ -744,7 +744,10 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
       )
     },
     eigencore_implicit_normal_lanczos = {
-      old_options <- options(eigencore.csc_left_normal_lanczos_attempt = TRUE)
+      old_options <- options(
+        eigencore.csc_left_normal_lanczos_attempt = TRUE,
+        eigencore.csc_right_normal_lanczos_attempt = TRUE
+      )
       on.exit(options(old_options), add = TRUE)
       svd_partial(A, rank = rank, tol = tol, seed = seed)
     },

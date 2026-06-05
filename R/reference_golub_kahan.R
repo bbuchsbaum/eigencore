@@ -1895,8 +1895,10 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
               native$implicit_lanczos_iterations %||% 0L,
             native_gram_krylov_iterations =
               native$gram_krylov_iterations %||% 0L,
-            normal_operator_implicit = FALSE,
-            materialized_gram = TRUE,
+            normal_operator_implicit =
+              identical(native$eigensolver %||% "", "implicit_normal_lanczos"),
+            materialized_gram =
+              !identical(native$eigensolver %||% "", "implicit_normal_lanczos"),
             stage_seconds = native$stage_seconds,
             zero_singular_completion = FALSE,
             zero_singular_threshold = zero_tol,

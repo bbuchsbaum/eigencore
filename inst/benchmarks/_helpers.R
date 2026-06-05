@@ -127,6 +127,7 @@ svd_surface_default_methods <- function(args) {
   }
   if (isTRUE(args$h_candidate)) {
     methods <- c(
+      "eigencore",
       "eigencore_golub_kahan",
       "eigencore_golub_kahan_one_sided",
       "eigencore_irlba_lbd_one_sided",
@@ -161,7 +162,7 @@ svd_surface_default_methods <- function(args) {
 
 svd_surface_gate_subject <- function(args, methods) {
   subject <- args$subject %||% if (isTRUE(args$h_candidate)) {
-    "eigencore_irlba_lbd_retained_bpro"
+    "eigencore"
   } else {
     "eigencore"
   }

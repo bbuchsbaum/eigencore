@@ -622,7 +622,7 @@ Working status against the sequenced milestones:
 | F | largely done for current paths | Native ortho and certificate kernels exist, but not every future solver path is fully native-certificate-backed. |
 | G0 | done | Native scalar Hermitian staging path exists and certifies on dense/CSC cases. |
 | G1 | green for structured tridiagonal default | The promoted default for symmetric tridiagonal sparse/diagonal Hermitian sources now uses the native selected tridiagonal LAPACK solver and tridiagonal residual certificate. Installed strict `path_laplacian:1000` evidence from 2026-06-05 certifies `20/20` and passes speed, memory, and PRIMME parity. Native block Hermitian Lanczos remains explicit/diagnostic rather than promoted. |
-| H | red / unpromoted | The executable `--h-candidate` gate now targets `eigencore_irlba_lbd_retained_bpro` rather than the stale retained block-GK row. Retained BPRO reuses the accepted native certificate diagnostics at return time instead of recomputing them during result packaging. Fresh installed 3-iteration quick probes on `tall_sparse:600x90` and `wide_sparse:90x600` certify all five requested triplets, but remain speed- and memory-red (`0.140x` / `0.170x` tall, `0.177x` / `0.162x` wide versus the best certified references). Tiny Gram special cases and implicit-normal diagnostics remain benchmark-visible and sometimes faster on narrow fixtures, but they are bounded diagnostic paths, not the general H production answer. Production thick-restart SVD / IRLBA / BPRO for sparse and matrix-free cases remains open. |
+| H | green for promoted tall/wide sparse gate | The executable `--h-candidate` gate targets the promoted `eigencore` SVD path again, with retained BPRO and block-GK rows kept as diagnostics. The tall-sparse production row avoids materializing the right Gram by using the bounded native `implicit_normal_lanczos` right-normal path and exact original-coordinate certificate diagnostics; the wide-sparse row remains on the certified native left-Gram special case. A warning-free installed 2026-06-05 3-iteration quick probe on `tall_sparse:600x90` and `wide_sparse:90x600` certified all five requested triplets and passed speed/memory (`1.194x` / `2.392x` tall, `1.223x` / `2.392x` wide versus the best certified references). Retained BPRO remains benchmark-visible but red, and broader sparse/matrix-free SVD remains a documented limitation rather than this H gate's promoted surface. |
 | I | prototype | Randomized SVD has reference implementation, normalizers, and certified refinement; native approximate engine remains open. |
 | J | partial | Dense generalized `auto()` is demoted to the native dense LAPACK fallback until iterative gates pass. Native generalized SPD LOBPCG slices still exist for explicit/sparse/structured paths, explicitly SPD matrix-free `B`, constraints, and typed shifted-diagonal / shifted-tridiagonal preconditioners. Fresh focused non-quick evidence shows the sparse-smallest shifted-tridiagonal row certifies and passes speed/memory; current installed sparse-largest shifted-tridiagonal evidence uses a non-densifying largest-target shift, certifies, and passes memory but remains performance-red on speed, so sparse-largest and broader generalized production gates remain open. |
 | K | partial reference | Explicit generalized-SPD `lanczos()` requests now route to an honest reference B-orthogonal Lanczos refinement when `B` has a dense, diagonal, or CSC SPD solve. It passes focused adversarial B agreement with LOBPCG certificates, preserves B-orthogonality, and has a focused installed benchmark contract row, but native/block production promotion remains open. |
@@ -726,11 +726,13 @@ Primary attack surfaces, in order:
    restart start width, warm-start count, certified attempt, final-attempt work,
    and total orthogonalization work; future retained-restart patches must move
    those fields in the right direction, not just lower wall-clock noise. The
-   executable H candidate gate now uses
-   `eigencore_irlba_lbd_retained_bpro`, not the older retained block-GK row.
-   Fresh installed quick evidence certifies the tall/wide H fixtures but still
-   fails both speed and memory gates, so this retargeting is a measurement
-   correction rather than H closure. The
+   executable H candidate gate now uses the promoted `eigencore` SVD path, not
+   the older retained block-GK or retained BPRO diagnostic rows. Fresh installed
+   quick evidence certifies the tall/wide H fixtures and passes both speed and
+   memory after the tall row's bounded right-normal implicit Lanczos path plus
+   small-rank native certificate diagnostics. This closes the promoted H
+   tall/wide sparse gate; broader sparse/matrix-free SVD remains a documented
+   limitation and future native retained-restart surface. The
    cached Ritz-start comparators reuse exact `A V` for retained vectors; the
    random-tail variant confirms that prefix caching alone is not enough while
    restarts are still rebuilt from R, so the bridge remains a proper native

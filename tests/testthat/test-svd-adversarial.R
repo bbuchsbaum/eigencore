@@ -78,14 +78,30 @@ test_that("tall-skinny sparse SVD certifies its top triplets", {
   expect_identical(fit$restart$gram_side, "right")
   expect_identical(fit$restart$native_gram_kernel, "csc_right_gram")
   expect_true(isTRUE(fit$fastpath_native_result))
-  expect_identical(fit$restart$native_gram_eigensolver, "lapack_dsyevr")
-  expect_false(fit$restart$normal_operator_implicit)
-  expect_true(fit$restart$materialized_gram)
+  expect_identical(fit$restart$native_gram_eigensolver, "implicit_normal_lanczos")
+  expect_true(fit$restart$normal_operator_implicit)
+  expect_false(fit$restart$materialized_gram)
   expect_true(all(c("gram", "eigensolve", "vector_form", "diagnostics") %in%
                     names(fit$stage_seconds)))
   expect_true(all(is.finite(fit$stage_seconds)))
   expect_true(all(fit$stage_seconds >= 0))
   expect_equal(fit$d, oracle$d[1:5], tolerance = 1e-6)
+  expect_certificate_clean(fit)
+})
+
+test_that("tall-skinny sparse SVD can disable right-normal diagnostic", {
+  old_options <- options(eigencore.csc_right_normal_lanczos_attempt = FALSE)
+  on.exit(options(old_options), add = TRUE)
+  set.seed(104)
+  M <- Matrix::rsparsematrix(200L, 40L, density = 0.05)
+
+  fit <- svd_partial(M, rank = 5, target = largest())
+
+  expect_identical(fit$restart$kind, "gram_svd_special_case")
+  expect_identical(fit$restart$gram_side, "right")
+  expect_identical(fit$restart$native_gram_eigensolver, "lapack_dsyevr")
+  expect_false(fit$restart$normal_operator_implicit)
+  expect_true(fit$restart$materialized_gram)
   expect_certificate_clean(fit)
 })
 
@@ -927,6 +943,27 @@ test_that("wide sparse Gram SVD exposes opt-in implicit normal Lanczos", {
   expect_certificate_clean(fit)
 })
 
+test_that("tall sparse Gram SVD exposes implicit right-normal Lanczos", {
+  old_options <- options(eigencore.csc_right_normal_lanczos_attempt = TRUE)
+  on.exit(options(old_options), add = TRUE)
+  M <- rbind(
+    Matrix::Diagonal(x = c(10, 8, 6, 1, 0.5)),
+    Matrix::Matrix(0, 20, 5, sparse = TRUE)
+  )
+
+  fit <- svd_partial(M, rank = 2, target = largest(), tol = 1e-8)
+
+  expect_identical(fit$restart$kind, "gram_svd_special_case")
+  expect_identical(fit$restart$gram_side, "right")
+  expect_identical(fit$restart$native_gram_eigensolver, "implicit_normal_lanczos")
+  expect_true(fit$restart$normal_operator_implicit)
+  expect_false(fit$restart$materialized_gram)
+  expect_lte(fit$restart$native_implicit_normal_lanczos_max_backward_error, 1e-8)
+  expect_lte(fit$restart$native_implicit_normal_lanczos_iterations, 5L)
+  expect_equal(fit$d, c(10, 8), tolerance = 1e-10)
+  expect_certificate_clean(fit)
+})
+
 test_that("wide sparse implicit normal Lanczos uses bounded restarted work", {
   old_options <- options(
     eigencore.csc_left_normal_lanczos_attempt = TRUE,
@@ -944,6 +981,36 @@ test_that("wide sparse implicit normal Lanczos uses bounded restarted work", {
   expect_false(fit$restart$materialized_gram)
   expect_lte(fit$restart$native_implicit_normal_lanczos_iterations, 90L)
   expect_lte(fit$restart$native_implicit_normal_lanczos_max_backward_error, 1e-8)
+  expect_certificate_clean(fit)
+})
+
+test_that("tall sparse implicit right-normal Lanczos uses bounded restarted work", {
+  old_options <- options(eigencore.csc_right_normal_lanczos_attempt = TRUE)
+  on.exit(options(old_options), add = TRUE)
+  set.seed(701)
+  M <- Matrix::rsparsematrix(600L, 90L, density = 0.03)
+
+  fit <- svd_partial(M, rank = 5L, target = largest(), tol = 1e-8, seed = 701)
+
+  expect_identical(fit$restart$kind, "gram_svd_special_case")
+  expect_identical(fit$restart$native_gram_eigensolver, "implicit_normal_lanczos")
+  expect_true(fit$restart$normal_operator_implicit)
+  expect_false(fit$restart$materialized_gram)
+  expect_lte(fit$restart$native_implicit_normal_lanczos_iterations, 90L)
+  expect_lte(fit$restart$native_implicit_normal_lanczos_max_backward_error, 1e-8)
+  expect_certificate_clean(fit)
+})
+
+test_that("tall sparse implicit right-normal Lanczos falls back when exact certificate fails", {
+  old_options <- options(eigencore.csc_right_normal_lanczos_attempt = TRUE)
+  on.exit(options(old_options), add = TRUE)
+  set.seed(1907)
+  M <- Matrix::rsparsematrix(600L, 90L, density = 0.03)
+
+  fit <- svd_partial(M, rank = 5L, target = largest(), tol = 1e-8, seed = 1907)
+
+  expect_identical(fit$method, "native prototype Golub-Kahan fallback from Gram SVD")
+  expect_true(fit$restart$fallback_used)
   expect_certificate_clean(fit)
 })
 
