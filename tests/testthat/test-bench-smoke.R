@@ -65,6 +65,7 @@ test_that("benchmark harness produces certificate-inclusive rows", {
     "projected_max_residual", "projected_checks", "projected_seconds",
     "native_workspace_bytes", "basis_returned", "reorthogonalization_passes",
     "retained_restart", "retained_restart_native", "retained_av_cache",
+    "retained_converged_count", "retained_leading_converged_count",
     "native_attempt_certification", "native_early_stop",
     "native_stage_accounted_seconds",
     "stage_reorthogonalization_fraction",

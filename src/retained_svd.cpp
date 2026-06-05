@@ -1501,12 +1501,17 @@ static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
                                            const std::vector<double>* cheap_residuals = nullptr,
                                            const std::vector<int>* certificate_passed = nullptr,
                                            const std::vector<double>* max_backward_error = nullptr,
-                                           const std::vector<double>* max_residual = nullptr) {
+                                           const std::vector<double>* max_residual = nullptr,
+                                           const std::vector<int>* converged_count = nullptr,
+                                           const std::vector<int>* leading_converged_count = nullptr) {
   const int rows = static_cast<int>(attempts.size());
   const bool has_cheap = cheap_residuals != nullptr;
   const bool has_certificate =
     certificate_passed != nullptr && max_backward_error != nullptr && max_residual != nullptr;
-  const int cols = 5 + (has_cheap ? 1 : 0) + (has_certificate ? 3 : 0);
+  const bool has_counts =
+    has_certificate && converged_count != nullptr && leading_converged_count != nullptr;
+  const int cols = 5 + (has_cheap ? 1 : 0) + (has_certificate ? 3 : 0) +
+    (has_counts ? 2 : 0);
   SEXP attempt_ = PROTECT(allocVector(INTSXP, rows));
   SEXP max_subspace_ = PROTECT(allocVector(INTSXP, rows));
   SEXP iterations_ = PROTECT(allocVector(INTSXP, rows));
@@ -1516,6 +1521,8 @@ static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
   SEXP certificate_passed_ = R_NilValue;
   SEXP max_backward_error_ = R_NilValue;
   SEXP max_residual_ = R_NilValue;
+  SEXP converged_count_ = R_NilValue;
+  SEXP leading_converged_count_ = R_NilValue;
   int optional_protects = 0;
   if (has_cheap) {
     cheap_residual_ = PROTECT(allocVector(REALSXP, rows));
@@ -1526,6 +1533,11 @@ static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
     max_backward_error_ = PROTECT(allocVector(REALSXP, rows));
     max_residual_ = PROTECT(allocVector(REALSXP, rows));
     optional_protects += 3;
+  }
+  if (has_counts) {
+    converged_count_ = PROTECT(allocVector(INTSXP, rows));
+    leading_converged_count_ = PROTECT(allocVector(INTSXP, rows));
+    optional_protects += 2;
   }
   for (int row = 0; row < rows; ++row) {
     INTEGER(attempt_)[row] = row + 1;
@@ -1544,6 +1556,12 @@ static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
         (*max_backward_error)[static_cast<size_t>(row)];
       REAL(max_residual_)[row] =
         (*max_residual)[static_cast<size_t>(row)];
+      if (has_counts) {
+        INTEGER(converged_count_)[row] =
+          (*converged_count)[static_cast<size_t>(row)];
+        INTEGER(leading_converged_count_)[row] =
+          (*leading_converged_count)[static_cast<size_t>(row)];
+      }
     }
   }
 
@@ -1561,6 +1579,10 @@ static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
     SET_VECTOR_ELT(out_, col++, certificate_passed_);
     SET_VECTOR_ELT(out_, col++, max_backward_error_);
     SET_VECTOR_ELT(out_, col++, max_residual_);
+    if (has_counts) {
+      SET_VECTOR_ELT(out_, col++, converged_count_);
+      SET_VECTOR_ELT(out_, col++, leading_converged_count_);
+    }
   }
   SEXP names_ = PROTECT(allocVector(STRSXP, cols));
   SET_STRING_ELT(names_, 0, mkChar("attempt"));
@@ -1576,6 +1598,10 @@ static SEXP irlba_lbd_attempt_history_pack(const std::vector<int>& attempts,
     SET_STRING_ELT(names_, col++, mkChar("certificate_passed"));
     SET_STRING_ELT(names_, col++, mkChar("max_backward_error"));
     SET_STRING_ELT(names_, col++, mkChar("max_residual"));
+    if (has_counts) {
+      SET_STRING_ELT(names_, col++, mkChar("converged_count"));
+      SET_STRING_ELT(names_, col++, mkChar("leading_converged_count"));
+    }
   }
   setAttrib(out_, R_NamesSymbol, names_);
   SEXP row_names_ = PROTECT(allocVector(INTSXP, 2));
@@ -1866,6 +1892,8 @@ static SEXP irlba_lbd_augmented_retained_projection(
   std::vector<int> attempt_certificate_passed;
   std::vector<double> attempt_max_backward_error;
   std::vector<double> attempt_max_residual;
+  std::vector<int> attempt_converged_count;
+  std::vector<int> attempt_leading_converged_count;
   attempted_subspaces.reserve(static_cast<size_t>(chunks));
   attempt_iterations.reserve(static_cast<size_t>(chunks));
   attempt_matvecs.reserve(static_cast<size_t>(chunks));
@@ -1874,6 +1902,8 @@ static SEXP irlba_lbd_augmented_retained_projection(
   attempt_certificate_passed.reserve(static_cast<size_t>(chunks));
   attempt_max_backward_error.reserve(static_cast<size_t>(chunks));
   attempt_max_residual.reserve(static_cast<size_t>(chunks));
+  attempt_converged_count.reserve(static_cast<size_t>(chunks));
+  attempt_leading_converged_count.reserve(static_cast<size_t>(chunks));
   SEXP ritz_ = R_NilValue;
   int ritz_protected = 0;
   int small_svds = 0;
@@ -2077,6 +2107,10 @@ static SEXP irlba_lbd_augmented_retained_projection(
     attempt_certificate_passed.push_back(certificate_passed);
     attempt_max_backward_error.push_back(max_backward_error);
     attempt_max_residual.push_back(max_residual);
+    attempt_converged_count.push_back(force_certificate ? converged_count : NA_INTEGER);
+    attempt_leading_converged_count.push_back(
+      force_certificate ? leading_converged_count : NA_INTEGER
+    );
     last_recorded_tail_steps = tail_for_attempt;
 
     if (certificate_passed == 1 || keep_candidate) {
@@ -2234,7 +2268,8 @@ static SEXP irlba_lbd_augmented_retained_projection(
   SEXP history_ = PROTECT(irlba_lbd_attempt_history_pack(
     attempted_subspaces, attempt_iterations, attempt_matvecs, attempt_warm_started,
     &attempt_cheap_residuals, &attempt_certificate_passed,
-    &attempt_max_backward_error, &attempt_max_residual
+    &attempt_max_backward_error, &attempt_max_residual,
+    &attempt_converged_count, &attempt_leading_converged_count
   ));
   SEXP tol_ = PROTECT(ScalarReal(tol));
   SEXP cert_diag_ = PROTECT(native_operator_svd_certificate_cached_av(

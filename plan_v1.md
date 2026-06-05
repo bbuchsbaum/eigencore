@@ -985,7 +985,14 @@ Primary attack surfaces, in order:
    `irlba_lbd_native_certificate_diagnostics_swapped`; a source-loaded
    `wide_sparse:90x600` one-iteration retained-BPRO row reports both as `TRUE`
    with certificate phase time around `3.5us`, while still remaining red versus
-   certified `RSpectra` on total time and memory. It now also exposes
+   certified `RSpectra` on total time and memory. The exact certificate attempt
+   history now also records `converged_count` and
+   `leading_converged_count` for retained IRLBA/LBD chunks. On a deterministic
+   H-shaped `wide_sparse:90x600` probe, the failed `30`-tail chunk reports
+   `4/5` converged and leading-converged triplets before the `35`-tail chunk
+   reaches `5/5`, giving future partial-locking/refinement work concrete
+   failed-chunk evidence instead of relying on the final certificate alone. It
+   now also exposes
    exact-certified final lock diagnostics:
    `retained_locked_count`, `irlba_lbd_soft_locked_count`,
    `irlba_lbd_hard_locked_count`,
