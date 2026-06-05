@@ -131,6 +131,8 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
     "native dense generalized SPD LAPACK fallback"
   } else if (has_metric && is_hermitian) {
     "dense generalized SPD LAPACK oracle (prototype fallback)"
+  } else if (should_use_native_tridiagonal_hermitian(problem, k)) {
+    native_tridiagonal_hermitian_label()
   } else if (!is.null(promoted_block_lanczos_controls(problem, k))) {
     "native block Hermitian Lanczos (thick restart, locking)"
   } else if (is_hermitian && is_native_csc && native_lanczos_target_supported(problem$target)) {

@@ -57,12 +57,14 @@ Current target mapping:
 | `"SM"` | `smallest_magnitude()` |
 | `"BE"` | `both_ends()` |
 
-For Hermitian regimes, eigencore routes to native scalar Lanczos by default for
-sparse requests. Block Lanczos is available for explicit block requests, dense
-full-subspace cases, and diagnostic sparse opt-in while G1 sparse
-auto-promotion remains red. Unsupported Hermitian targets or operator classes
-keep honest reference/oracle labels rather than pretending to be production
-native code.
+For Hermitian regimes, eigencore routes symmetric tridiagonal sparse/diagonal
+sources to the promoted native selected tridiagonal solver when the target is
+largest or smallest algebraic. Other sparse requests use native scalar Lanczos
+by default. Block Lanczos is available for explicit block requests, dense
+full-subspace cases, and diagnostic sparse opt-in; it is not promoted for
+general sparse `auto()`. Unsupported Hermitian targets or operator classes keep
+honest reference/oracle labels rather than pretending to be production native
+code.
 
 ## `eigs()`
 
@@ -201,7 +203,8 @@ their documented regimes:
 | Label pattern | Interpretation |
 |---|---|
 | `native scalar thick-restart Hermitian Lanczos` | Native Hermitian path. |
-| `native block Hermitian Lanczos (thick restart, locking)` | Block Hermitian path for explicit block requests, dense full-subspace cases, and diagnostic sparse opt-in while G1 sparse auto-promotion is red. |
+| `native tridiagonal Hermitian LAPACK selected eigensolver` | Promoted native Hermitian default for symmetric tridiagonal sparse/diagonal sources with largest/smallest algebraic targets. |
+| `native block Hermitian Lanczos (thick restart, locking)` | Block Hermitian path for explicit block requests, dense full-subspace cases, and diagnostic sparse opt-in; not promoted for general sparse `auto()`. |
 | `native certified Gram SVD special case` | Bounded Gram SVD special case, certified in original coordinates. |
 | `native dense ... fallback` | Native dense LAPACK fallback, not an iterative sparse solver. |
 | `native prototype ...` | Native prototype or staging path; do not count as V1 completion by itself. |

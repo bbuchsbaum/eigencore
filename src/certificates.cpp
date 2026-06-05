@@ -825,6 +825,100 @@ extern "C" SEXP eigencore_diagonal_eigen_certificate(SEXP x_, SEXP dim_,
                                            asReal(norm_A_), values_, vectors_, tol_);
 }
 
+extern "C" SEXP eigencore_tridiagonal_eigen_certificate(SEXP alpha_, SEXP beta_,
+                                                        SEXP values_,
+                                                        SEXP vectors_,
+                                                        SEXP norm_A_,
+                                                        SEXP tol_) {
+  if (!isReal(alpha_) || !isReal(beta_) || !isReal(values_) || !isReal(vectors_)) {
+    error("invalid tridiagonal eigen certificate inputs");
+  }
+  const int n = LENGTH(alpha_);
+  if (n < 1) {
+    error("alpha must have positive length");
+  }
+  if (LENGTH(beta_) < n - 1) {
+    error("beta must have length at least length(alpha) - 1");
+  }
+  SEXP dimV = getAttrib(vectors_, R_DimSymbol);
+  if (dimV == R_NilValue) {
+    error("vectors must be a matrix");
+  }
+  const int rowsV = INTEGER(dimV)[0];
+  const int k = INTEGER(dimV)[1];
+  if (rowsV != n || LENGTH(values_) != k) {
+    error("non-conformable tridiagonal eigen certificate inputs");
+  }
+
+  const char trans = 'T';
+  const char notrans = 'N';
+  const double one = 1.0;
+  const double zero = 0.0;
+  const double eps = DBL_EPSILON;
+  const double norm_A = asReal(norm_A_);
+  const double tol = asReal(tol_);
+
+  SEXP residuals_ = PROTECT(allocVector(REALSXP, k));
+  SEXP scale_ = PROTECT(allocVector(REALSXP, k));
+  SEXP backward_ = PROTECT(allocVector(REALSXP, k));
+  SEXP converged_ = PROTECT(allocVector(LGLSXP, k));
+  SEXP gram_ = PROTECT(allocMatrix(REALSXP, k, k));
+
+  const double* alpha = REAL(alpha_);
+  const double* beta = REAL(beta_);
+  const double* values = REAL(values_);
+  const double* vectors = REAL(vectors_);
+  for (int col = 0; col < k; ++col) {
+    const double lambda = values[col];
+    const int offset = col * n;
+    long double residual_sum = 0.0L;
+    long double vector_sum = 0.0L;
+    for (int row = 0; row < n; ++row) {
+      const double v = vectors[offset + row];
+      double Av = alpha[row] * v;
+      if (row > 0) {
+        Av += beta[row - 1] * vectors[offset + row - 1];
+      }
+      if (row + 1 < n) {
+        Av += beta[row] * vectors[offset + row + 1];
+      }
+      const long double residual = Av - lambda * v;
+      residual_sum += residual * residual;
+      vector_sum += static_cast<long double>(v) * v;
+    }
+    const double residual = sqrt(static_cast<double>(residual_sum));
+    const double vector_norm = sqrt(static_cast<double>(vector_sum));
+    const double scale = fmax((norm_A + fabs(lambda)) * fmax(vector_norm, eps), eps);
+    const double backward = residual / scale;
+    REAL(residuals_)[col] = residual;
+    REAL(scale_)[col] = scale;
+    REAL(backward_)[col] = backward;
+    LOGICAL(converged_)[col] = (R_FINITE(backward) && backward <= tol) ? TRUE : FALSE;
+  }
+
+  F77_CALL(dgemm)(&trans, &notrans, &k, &k, &n,
+                  &one, REAL(vectors_), &n, REAL(vectors_), &n,
+                  &zero, REAL(gram_), &k FCONE FCONE);
+  const double orth = max_orthogonality_loss_cert(REAL(gram_), k);
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 5));
+  SET_VECTOR_ELT(out_, 0, residuals_);
+  SET_VECTOR_ELT(out_, 1, backward_);
+  SET_VECTOR_ELT(out_, 2, ScalarReal(orth));
+  SET_VECTOR_ELT(out_, 3, scale_);
+  SET_VECTOR_ELT(out_, 4, converged_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 5));
+  SET_STRING_ELT(names_, 0, mkChar("residuals"));
+  SET_STRING_ELT(names_, 1, mkChar("backward_error"));
+  SET_STRING_ELT(names_, 2, mkChar("orthogonality"));
+  SET_STRING_ELT(names_, 3, mkChar("scale"));
+  SET_STRING_ELT(names_, 4, mkChar("converged"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(7);
+  return out_;
+}
+
 extern "C" SEXP eigencore_csc_svd_certificate(SEXP i_, SEXP p_, SEXP x_,
                                               SEXP dim_, SEXP d_,
                                               SEXP u_, SEXP v_,

@@ -105,7 +105,7 @@ they are machine-dependent.
 - Added `docs/v1-completion-audit.md` as the final stop-rule checklist for the
   active V1 readiness goal. It restates the deliverables, maps each prompt
   requirement to concrete artifacts and evidence, and records the current
-  decision as not V1 ready while G1, H, I, J, K, sparse-native L,
+  decision as not V1 ready while H, I, J, K, sparse-native L,
   production-grade nonsymmetric Arnoldi, sanitizer/valgrind-style coverage,
   final benchmark artifacts, and final README/vignette refresh remain open.
 - Added migration-facing release-hardening docs:
@@ -197,6 +197,21 @@ they are machine-dependent.
   slower in single-run probes. The post-fix block candidate also remains red on
   this row: `0.488s` median, memory gate green, speed `0.093x` versus RSpectra,
   and PRIMME parity `0.356x`.
+- G1 is green for the promoted structured-tridiagonal default as of
+  2026-06-05. The default `auto()` path now detects symmetric tridiagonal
+  sparse/diagonal Hermitian sources and dispatches to the native selected
+  tridiagonal LAPACK solver with a tridiagonal residual certificate. The
+  installed strict gate
+  `LC_ALL=C LANG=C R_LIBS=/private/tmp/eigencore-g1-lib Rscript inst/benchmarks/bench-native-hermitian-gate.R --strict --save --cases=path_laplacian:1000`
+  certified all `20/20` requested eigenpairs on `path_laplacian:1000` with
+  median `0.007990162s`, memory `579696` bytes, max backward error
+  `7.631017e-18`, `6.152318x` speed versus RSpectra, `1.073942x` memory
+  versus the best certified reference, and `22.58426x` parity versus PRIMME.
+  Saved artifacts:
+  `inst/benchmarks/results/20260605-native-hermitian-gate-rows.rds` and
+  `inst/benchmarks/results/20260605-native-hermitian-gate-summary.rds`.
+  The block Hermitian Lanczos path remains explicit/diagnostic; it was not
+  promoted by this gate.
 - Certificate scale-estimate hardening is now explicitly tested across current
   certificate entry points. `new_certificate(scale_is_estimate = TRUE)`,
   matrix-free eigen certificates, matrix-free SVD certificates, and

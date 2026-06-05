@@ -1,6 +1,6 @@
 # eigencore V1 Completion Audit
 
-Last refreshed: 2026-05-18
+Last refreshed: 2026-06-05
 
 This is the final stop-rule checklist for the active V1 readiness goal. It is
 not a release signoff. It exists to keep completion tied to evidence instead of
@@ -33,7 +33,7 @@ V1 is complete only when all of these deliverables are true at the same time:
 | Diff hygiene | whole repo | `git diff --check` | Green in latest local runs. |
 | Planner honesty | `R/problem.R`, `R/solve.R`, result diagnostics, solver tests | Every nonnative public path has reference/oracle/fallback labels; no production claim points to an R prototype. | Mostly covered for current paths; re-audit after any solver promotion. |
 | Native operator foundation | `R/operator_algebra.R`, `src/native_operators.cpp`, `tests/testthat/test-operator-algebra.R` | Built-in dense/CSC/diagonal transforms preserve native provenance without sparse densification. | Green for explicit built-ins; matrix-free centering remains an honest callback boundary. |
-| G1 Hermitian native gate | `inst/benchmarks/bench-native-hermitian-gate.R` | Clean installed strict gate and saved artifacts. | Red. `path_laplacian:1000` certifies but misses speed, memory, and PRIMME parity after the projected-matrix update. |
+| G1 Hermitian native gate | `inst/benchmarks/bench-native-hermitian-gate.R` | Clean installed strict gate and saved artifacts. | Green for the promoted structured-tridiagonal default. Installed strict `path_laplacian:1000` on 2026-06-05 certified `20/20` with the native selected tridiagonal solver, median `0.00799s`, memory `579696` bytes, `6.15x` speed versus RSpectra, `1.07x` memory versus the best reference, and `22.58x` parity versus PRIMME. |
 | H production SVD | `inst/benchmarks/bench-svd-surface.R` | Installed SVD surface gate passes against certified references. | Red. Tiny-Gram rows certify and pass memory but miss speed; retained IRLBA/LBD remains `ritz_subspace_only` and falls back. |
 | I randomized SVD | `inst/benchmarks/bench-randomized-rsvd.R` | Randomized gate passes only against certified `rsvd` baseline rows. | Mixed, not promoted. Large exact-low-rank dense row is green; quick exact-low-rank and slow-decay/native sketch regimes remain open. |
 | J generalized SPD LOBPCG | `inst/benchmarks/bench-generalized-lobpcg.R` | Sparse smallest/largest and broader generalized production gates pass with native labels. | Partial. Sparse-smallest shifted-tridiagonal row passes; sparse-largest certifies and passes memory but remains speed-red. |
@@ -50,7 +50,7 @@ V1 is complete only when all of these deliverables are true at the same time:
 
 Current decision: **not V1 ready**.
 
-The blocking requirements are G1, H, I, J, K native production promotion, L
+The blocking requirements are H, I, J, K native production promotion, L
 general sparse native shift-invert, production-grade nonsymmetric Arnoldi,
 final sanitizer/valgrind-style coverage, final benchmark artifacts, and final
 README/vignette refresh. Passing tests and `R CMD check` are necessary but not

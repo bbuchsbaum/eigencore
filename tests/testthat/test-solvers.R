@@ -384,20 +384,52 @@ test_that("auto uses Lanczos for matrix-free Hermitian operators", {
 
 test_that("auto uses native CSC-backed Lanczos for sparse Hermitian matrices", {
   A <- Matrix::sparseMatrix(
-    i = c(1, 2, 3, 4),
-    j = c(1, 2, 3, 4),
-    x = c(8, 5, 3, 1),
+    i = c(1, 2, 3, 4, 1, 4),
+    j = c(1, 2, 3, 4, 4, 1),
+    x = c(8, 5, 3, 1, 0.25, 0.25),
     dims = c(4, 4)
   )
   op <- as_operator(A)
   fit <- eig_partial(A, k = 2, seed = 101)
+  oracle <- eigen(as.matrix(A), symmetric = TRUE)
 
   expect_null(eigencore:::source_or_null(op))
   expect_equal(fit$plan$method, "native scalar thick-restart Hermitian Lanczos")
   expect_equal(fit$method, "native scalar thick-restart Hermitian Lanczos")
   expect_identical(fit$warnings, character())
-  expect_equal(values(fit), c(8, 5), tolerance = 1e-10)
+  expect_equal(values(fit), oracle$values[1:2], tolerance = 1e-10)
   expect_true(certificate(fit)$passed)
+})
+
+test_that("auto uses selected native tridiagonal eigensolver for tridiagonal sparse Hermitian matrices", {
+  n <- 20
+  A <- Matrix::bandSparse(
+    n,
+    n,
+    k = c(-1, 0, 1),
+    diagonals = list(rep(-1, n - 1), rep(2, n), rep(-1, n - 1))
+  )
+  fit <- eig_partial(A, k = 4, target = smallest(), seed = 101)
+  oracle <- eigen(as.matrix(A), symmetric = TRUE)
+  idx <- order(oracle$values)[1:4]
+
+  expect_equal(fit$plan$method, eigencore:::native_tridiagonal_hermitian_label())
+  expect_equal(fit$method, eigencore:::native_tridiagonal_hermitian_label())
+  expect_identical(fit$warnings, character())
+  expect_equal(values(fit), oracle$values[idx], tolerance = 1e-10)
+  expect_true(certificate(fit)$passed)
+  expect_equal(fit$restart$kind, "tridiagonal_lapack_selected")
+
+  generic <- eigencore:::certify_eigen_operator(
+    as_operator(A),
+    fit$values,
+    fit$vectors,
+    tol = 1e-8
+  )
+  expect_equal(certificate(fit)$norm_bound_type, generic$norm_bound_type)
+  expect_equal(certificate(fit)$residuals, generic$residuals, tolerance = 1e-12)
+  expect_equal(certificate(fit)$backward_error, generic$backward_error, tolerance = 1e-12)
+  expect_equal(certificate(fit)$scale, generic$scale, tolerance = 1e-12)
 })
 
 test_that("explicit Lanczos uses the native thick-restart path for dense Hermitian matrices", {
@@ -528,7 +560,12 @@ test_that("planner labels explicit block Lanczos with production label and store
 })
 
 test_that("auto planner keeps small-k sparse requests on scalar Lanczos", {
-  A <- Matrix::sparseMatrix(i = 1:8, j = 1:8, x = 8:1)
+  A <- Matrix::sparseMatrix(
+    i = c(1:8, 1, 8),
+    j = c(1:8, 8, 1),
+    x = c(8:1, 0.1, 0.1),
+    dims = c(8, 8)
+  )
   P <- eigen_problem(A, target = largest())
   plan <- plan_solver(P, k = 4L, method = auto())
 
@@ -752,6 +789,24 @@ test_that("native tridiagonal eigensolve matches dense projected oracle", {
 
   expect_equal(native$values[idx], oracle$values, tolerance = 1e-12)
   expect_equal(abs(crossprod(native$vectors[, idx], oracle$vectors)), diag(length(alpha)), tolerance = 1e-10)
+})
+
+test_that("selected native tridiagonal eigensolve matches dense projected oracle", {
+  alpha <- c(2, 1, 3, 4, 0)
+  beta <- c(0.2, -0.5, 0.1, 0.3, 0)
+  projected <- eigencore:::tridiagonal_matrix(alpha, beta)
+  oracle <- eigen(projected, symmetric = TRUE)
+
+  smallest <- eigencore:::native_tridiagonal_eigen_selected(alpha, beta, 2, smallest())
+  expect_equal(smallest$values, sort(oracle$values)[1:2], tolerance = 1e-12)
+  expect_equal(
+    abs(crossprod(smallest$vectors, oracle$vectors[, order(oracle$values)[1:2], drop = FALSE])),
+    diag(2),
+    tolerance = 1e-10
+  )
+
+  largest <- eigencore:::native_tridiagonal_eigen_selected(alpha, beta, 2, largest())
+  expect_equal(largest$values, sort(oracle$values, decreasing = TRUE)[1:2], tolerance = 1e-12)
 })
 
 test_that("prototype Golub-Kahan solves matrix-free rectangular SVD", {

@@ -1266,14 +1266,16 @@ test_that("auto planner keeps sparse block promotion diagnostic-only by default"
     k = c(-1, 0, 1),
     diagonals = list(rep(-1, 999L), c(1, rep(2, 998L), 1), rep(-1, 999L))
   )
+  mid[1, 1000] <- 0.01
+  mid[1000, 1] <- 0.01
   mid_plan <- plan_solver(eigen_problem(mid, target = smallest()), k = 20L)
   expect_equal(mid_plan$method, "native scalar thick-restart Hermitian Lanczos")
   expect_equal(mid_plan$controls$block, 1L)
 
   large <- Matrix::sparseMatrix(
-    i = 1:5000,
-    j = 1:5000,
-    x = 1,
+    i = c(1:5000, 1, 5000),
+    j = c(1:5000, 5000, 1),
+    x = c(rep(1, 5000), 0.01, 0.01),
     dims = c(5000L, 5000L)
   )
   large_plan <- plan_solver(eigen_problem(large, target = smallest()), k = 20L)
@@ -1300,15 +1302,17 @@ test_that("sparse block auto promotion remains available as diagnostic opt-in", 
     k = c(-1, 0, 1),
     diagonals = list(rep(-1, 999L), c(1, rep(2, 998L), 1), rep(-1, 999L))
   )
+  mid[1, 1000] <- 0.01
+  mid[1000, 1] <- 0.01
   mid_plan <- plan_solver(eigen_problem(mid, target = smallest()), k = 20L)
   expect_equal(mid_plan$method, "native block Hermitian Lanczos (thick restart, locking)")
   expect_equal(mid_plan$controls$block, 2L)
   expect_equal(mid_plan$controls$max_subspace, 160L)
 
   large <- Matrix::sparseMatrix(
-    i = 1:5000,
-    j = 1:5000,
-    x = 1,
+    i = c(1:5000, 1, 5000),
+    j = c(1:5000, 5000, 1),
+    x = c(rep(1, 5000), 0.01, 0.01),
     dims = c(5000L, 5000L)
   )
   large_plan <- plan_solver(eigen_problem(large, target = smallest()), k = 20L)

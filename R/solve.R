@@ -63,6 +63,9 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
   if (plan_dispatches_lobpcg(plan)) {
     return(solve_eigen_lobpcg(a, k, method, tol, maxit, vectors, certify, plan))
   }
+  if (plan_dispatches_native_tridiagonal_eigen(plan)) {
+    return(solve_eigen_native_tridiagonal_hermitian(a, k, tol, vectors, certify, plan))
+  }
   if (plan_dispatches_lanczos(plan)) {
     return(solve_eigen_lanczos(a, k, method, tol, maxit, vectors, certify, plan))
   }
@@ -145,6 +148,11 @@ native_standard_lobpcg_label <- function() {
 }
 
 #' @keywords internal
+native_tridiagonal_hermitian_label <- function() {
+  "native tridiagonal Hermitian LAPACK selected eigensolver"
+}
+
+#' @keywords internal
 plan_dispatches_lobpcg <- function(plan) {
   plan$method %in% c(
     native_standard_lobpcg_label(),
@@ -153,6 +161,11 @@ plan_dispatches_lobpcg <- function(plan) {
     "reference generalized SPD LOBPCG prototype",
     reference_generalized_lobpcg_label()
   )
+}
+
+#' @keywords internal
+plan_dispatches_native_tridiagonal_eigen <- function(plan) {
+  identical(plan$method, native_tridiagonal_hermitian_label())
 }
 
 #' @keywords internal
@@ -241,6 +254,27 @@ should_use_native_lanczos <- function(problem, method, k = NULL) {
     identical(method$kind, "auto") &&
     (identical(native_kernel_kind(problem$A), "csc") ||
        auto_dense_partial_lanczos(problem, k))
+}
+
+#' @keywords internal
+should_use_native_tridiagonal_hermitian <- function(problem, k = NULL) {
+  if (!is.null(problem$metric) ||
+      !identical(problem$structure$kind, "hermitian") ||
+      !native_lanczos_target_supported(problem$target)) {
+    return(FALSE)
+  }
+  target <- target_label(problem$target)
+  if (!target %in% c("largest", "smallest")) {
+    return(FALSE)
+  }
+  if (is.null(k) || length(k) != 1L || is.na(k) || as.integer(k) < 1L) {
+    return(FALSE)
+  }
+  A <- problem$A$metadata$matrix %||% source_or_null(problem$A)
+  if (!(inherits(A, "CsparseMatrix") || inherits(A, "diagonalMatrix"))) {
+    return(FALSE)
+  }
+  !is.null(shift_invert_tridiagonal_parts(A, shift = 0))
 }
 
 #' @keywords internal

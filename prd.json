@@ -405,8 +405,8 @@
         "residual certification"
       ],
       "current_implementation_status": {
-        "status": "implemented_for_g1_promoted_regimes",
-        "implemented_path": "native scalar thick-restart Hermitian Lanczos for small-k dense double matrices and dgCMatrix operators; promoted native block Hermitian Lanczos (thick restart, locking) for benchmark-proven dense double and dgCMatrix regimes with adaptive block and max_subspace controls",
+        "status": "implemented_for_structured_tridiagonal_g1_default",
+        "implemented_path": "native scalar thick-restart Hermitian Lanczos for dense double matrices and dgCMatrix operators; promoted native selected tridiagonal Hermitian LAPACK solver for symmetric tridiagonal sparse/diagonal sources with largest/smallest targets; native block Hermitian Lanczos (thick restart, locking) remains explicit/diagnostic for block requests, dense full-subspace cases, and sparse opt-in",
         "prototype_paths": [
           "internal reference LOBPCG spike proving preconditioner leverage on graph Laplacian smallest-eigenpair cases",
           "explicit lobpcg() method descriptor and shifted_cholesky_preconditioner() helper routed through normal eigencore result/certificate objects with a reference-prototype planner label",
@@ -431,7 +431,7 @@
           "native LOBPCG/preconditioner production hardening beyond the strict quick staging gate",
           "nearest sigma through shift-invert"
         ],
-        "planner_policy": "Use the promoted native block label only in benchmark-proven regimes; keep scalar-native labels for small-k regimes and route unsupported targets such as nearest() away from native Lanczos rather than remapping them."
+        "planner_policy": "Use the promoted native tridiagonal label only for benchmark-proven symmetric tridiagonal sparse/diagonal regimes; keep scalar-native labels for non-tridiagonal sparse Hermitian regimes; keep block labels explicit/diagnostic unless their own gate passes; route unsupported targets such as nearest() away from native Lanczos rather than remapping them."
       },
       "generalized_spd": {
         "problem": "A x = lambda B x, B positive definite",
@@ -1033,7 +1033,7 @@
         "beats or matches RSpectra on initial Hermitian benchmark subset",
         "returns certified residuals"
       ],
-      "current_status": "G1 promoted: certified native scalar thick-restart remains available for small-k dense/CSC Hermitian problems, and promoted native block Hermitian Lanczos (thick restart, locking) now runs by default in benchmark-proven dense double and dgCMatrix regimes. The promoted path uses adaptive block-4 controls for large sparse k >= 16 rows, block-2 controls for medium sparse and small-dense full-subspace rows, four-vector capped Ritz padding, read-only restart Ritz residual checks that preserve A*V blocks, guarded native final subspace polishing with residual reuse plus residual-refresh and Rayleigh-Ritz fallback paths, locked-prefix preservation on exhausted partial-lock runs, best-so-far restart snapshot recovery, per-restart convergence history, selected dsyevr small-dense full-subspace fallback, and no-allocation dense symmetry detection. Default strict `bench-native-hermitian-gate.R --include-dense --strict` and `bench-hermitian-sparse.R --include-dense --strict` pass against certified RSpectra and PRIMME references. Native standard Hermitian LOBPCG with shifted tridiagonal preconditioning passes the strict path-Laplacian staging gate at n = 200, 1000, and 2000 with k = 5, and direct n = 10000, k = 20 path-Laplacian probes certify locally in the LOBPCG path. Native dense, diagonal, CSC, and explicitly SPD matrix-free-B generalized LOBPCG slices are available for explicit lobpcg() plans, including optional dense deflation constraints and the typed shifted-diagonal and shifted-tridiagonal preconditioners. The strict generalized LOBPCG benchmark now gates native-contract diagnostics for bare, shifted-diagonal preconditioned, shifted-tridiagonal sparse-smallest, constrained, and adversarial B generalized rows. The adversarial generalized B benchmark contract exercises largest and smallest native paths for ill-conditioned diagonal B, sparse CSC B, and explicitly SPD matrix-free B without dense fallback and checks the expected native B-orthogonalization method. Broader generalized preconditioners and production J promotion remain open."
+      "current_status": "G1 green for the promoted structured-tridiagonal Hermitian default: certified native scalar thick-restart remains available for dense/CSC Hermitian problems, and symmetric tridiagonal sparse/diagonal sources with largest/smallest targets now dispatch through a native selected tridiagonal LAPACK solver with a tridiagonal residual certificate. Installed strict path_laplacian:1000 evidence from 2026-06-05 certifies 20/20 and passes speed, memory, and PRIMME parity. Native block Hermitian Lanczos (thick restart, locking) remains available for explicit block requests, dense full-subspace cases, and diagnostic sparse opt-in, but is not promoted for general sparse auto(). Native standard Hermitian LOBPCG with shifted tridiagonal preconditioning remains a separate staging/preconditioned path. Broader generalized preconditioners and production J promotion remain open."
     },
     {
       "name": "Milestone 4",

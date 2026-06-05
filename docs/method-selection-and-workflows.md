@@ -53,7 +53,7 @@ Method guidance:
 
 | Request | Current planner behavior |
 |---|---|
-| `method = auto()` | Uses promoted native Hermitian paths where the benchmark-backed planner permits them. Sparse block Lanczos is currently diagnostic opt-in after red G1 benchmark evidence, so sparse `auto()` stays scalar by default. |
+| `method = auto()` | Uses promoted native Hermitian paths where the benchmark-backed planner permits them. Symmetric tridiagonal sparse/diagonal Hermitian sources use the native selected tridiagonal solver; general sparse block Lanczos remains diagnostic opt-in, so non-tridiagonal sparse `auto()` stays scalar by default. |
 | `method = lanczos()` | Requests Lanczos explicitly; supported dense/CSC Hermitian operators use native paths, unsupported targets use honest reference labels. |
 | Dense near-full request | May use a native dense LAPACK fallback rather than an iterative solver. |
 

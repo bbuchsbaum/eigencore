@@ -595,6 +595,31 @@ native_builtin_eigen_certificate <- function(Aop, values, vectors, Bop = NULL, t
 }
 
 #' @keywords internal
+native_tridiagonal_eigen_certificate <- function(Aop, parts, values, vectors, tol = 1e-8) {
+  norm_A <- operator_norm_for_certificate_info(Aop)
+  diag <- .Call(
+    "eigencore_tridiagonal_eigen_certificate",
+    as.numeric(parts$diag),
+    as.numeric(parts$upper),
+    as.numeric(values),
+    as.matrix(vectors),
+    as.numeric(norm_A$value),
+    as.numeric(tol),
+    PACKAGE = "eigencore"
+  )
+  new_certificate(
+    tol = tol,
+    residuals = diag$residuals,
+    backward_error = diag$backward_error,
+    orthogonality = diag$orthogonality,
+    converged = diag$converged,
+    scale = diag$scale,
+    norm_bound_type = paste(c(norm_A$norm_bound_type, "identity_exact"), collapse = "+"),
+    scale_is_estimate = isTRUE(norm_A$scale_is_estimate)
+  )
+}
+
+#' @keywords internal
 native_builtin_svd_certificate <- function(Aop, d, u, v, tol = 1e-8) {
   storage <- Aop$metadata$storage %||% NULL
   source <- source_or_null(Aop)

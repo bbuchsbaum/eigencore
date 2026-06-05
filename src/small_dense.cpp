@@ -196,7 +196,7 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_selected(SEXP A_, SEXP k_, SEXP 
     char uplo = 'U';
     double vl = 0.0;
     double vu = 0.0;
-    const double abstol = 0.0;
+    double abstol = 0.0;
     int il = 1;
     int iu = k;
     if (target_kind == 1) {
@@ -320,7 +320,7 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevx_selected(SEXP A_, SEXP k_
     char uplo = 'U';
     double vl = 0.0;
     double vu = 0.0;
-    const double abstol = 0.0;
+    double abstol = 0.0;
     int il = 1;
     int iu = k;
     if (target_kind == 1) {
@@ -538,6 +538,113 @@ extern "C" SEXP eigencore_tridiagonal_eigen(SEXP alpha_, SEXP beta_) {
       error("LAPACK dstev failed with info=%d", info);
     }
     UNPROTECT(2);
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 2));
+  SET_VECTOR_ELT(out_, 0, values_);
+  SET_VECTOR_ELT(out_, 1, vectors_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(names_, 0, mkChar("values"));
+  SET_STRING_ELT(names_, 1, mkChar("vectors"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(4);
+  return out_;
+}
+
+extern "C" SEXP eigencore_tridiagonal_eigen_selected(SEXP alpha_, SEXP beta_,
+                                                     SEXP k_, SEXP target_kind_) {
+  if (!isReal(alpha_) || !isReal(beta_)) {
+    error("alpha and beta must be double vectors");
+  }
+  const int n = LENGTH(alpha_);
+  if (n < 1) {
+    error("alpha must have positive length");
+  }
+  if (LENGTH(beta_) < n - 1) {
+    error("beta must have length at least length(alpha) - 1");
+  }
+  int k = static_cast<int>(asInteger(k_));
+  if (k < 1) {
+    error("k must be >= 1");
+  }
+  if (k > n) {
+    k = n;
+  }
+  const int target_kind = static_cast<int>(asInteger(target_kind_));
+  if (target_kind != 1 && target_kind != 2) {
+    error("selected tridiagonal eigen supports only largest/smallest algebraic targets");
+  }
+
+  SEXP values_ = PROTECT(allocVector(REALSXP, k));
+  SEXP vectors_ = PROTECT(allocMatrix(REALSXP, n, k));
+  if (n == 1) {
+    REAL(values_)[0] = REAL(alpha_)[0];
+    REAL(vectors_)[0] = 1.0;
+  } else {
+    double* diag = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(n), sizeof(double))
+    );
+    double* offdiag = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(n - 1), sizeof(double))
+    );
+    double* values_work = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(n), sizeof(double))
+    );
+    double* work = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(5 * n), sizeof(double))
+    );
+    int* iwork = reinterpret_cast<int*>(
+      R_alloc(static_cast<size_t>(5 * n), sizeof(int))
+    );
+    int* ifail = reinterpret_cast<int*>(
+      R_alloc(static_cast<size_t>(n), sizeof(int))
+    );
+    for (int i = 0; i < n; ++i) {
+      diag[i] = REAL(alpha_)[i];
+    }
+    for (int i = 0; i < n - 1; ++i) {
+      offdiag[i] = REAL(beta_)[i];
+    }
+
+    char jobz = 'V';
+    char range = 'I';
+    int il = 1;
+    int iu = k;
+    if (target_kind == 1) {
+      il = n - k + 1;
+      iu = n;
+    }
+    double vl = 0.0;
+    double vu = 0.0;
+    double abstol = 0.0;
+    int m_found = 0;
+    int info = 0;
+    int ldz = n;
+    F77_CALL(dstevx)(&jobz, &range, &n, diag, offdiag,
+                     &vl, &vu, &il, &iu, &abstol, &m_found,
+                     values_work, REAL(vectors_), &ldz,
+                     work, iwork, ifail, &info FCONE FCONE);
+    if (info != 0 || m_found != k) {
+      error("LAPACK dstevx failed with info=%d, found=%d", info, m_found);
+    }
+    for (int col = 0; col < k; ++col) {
+      REAL(values_)[col] = values_work[col];
+    }
+    if (target_kind == 1) {
+      for (int left = 0, right = k - 1; left < right; ++left, --right) {
+        const double tmp_value = REAL(values_)[left];
+        REAL(values_)[left] = REAL(values_)[right];
+        REAL(values_)[right] = tmp_value;
+        for (int row = 0; row < n; ++row) {
+          const int64_t lpos = row + static_cast<int64_t>(left) * n;
+          const int64_t rpos = row + static_cast<int64_t>(right) * n;
+          const double tmp_vec = REAL(vectors_)[lpos];
+          REAL(vectors_)[lpos] = REAL(vectors_)[rpos];
+          REAL(vectors_)[rpos] = tmp_vec;
+        }
+      }
+    }
   }
 
   SEXP out_ = PROTECT(allocVector(VECSXP, 2));

@@ -75,9 +75,9 @@ test_that("eigen result diagnostics are stable across current public paths", {
 
   sparse <- eig_partial(
     Matrix::sparseMatrix(
-      i = 1:4,
-      j = 1:4,
-      x = c(9, 7, 4, 1),
+      i = c(1:4, 1, 4),
+      j = c(1:4, 4, 1),
+      x = c(9, 7, 4, 1, 0.1, 0.1),
       dims = c(4L, 4L)
     ),
     k = 2L

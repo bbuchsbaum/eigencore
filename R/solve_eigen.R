@@ -304,6 +304,55 @@ solve_eigen_native_dense_hermitian <- function(a, k, tol, vectors, certify,
 }
 
 #' @keywords internal
+solve_eigen_native_tridiagonal_hermitian <- function(a, k, tol, vectors, certify, plan) {
+  A <- a$A$metadata$matrix %||% source_or_null(a$A)
+  parts <- shift_invert_tridiagonal_parts(A, shift = 0)
+  if (is.null(parts)) {
+    stop("native tridiagonal Hermitian eigensolver requires a symmetric tridiagonal source.", call. = FALSE)
+  }
+  eig <- native_tridiagonal_eigen_selected(parts$diag, parts$upper, k, a$target)
+  vals <- eig$values
+  vecs_for_cert <- eig$vectors
+  cert <- if (isTRUE(certify) && ncol(vecs_for_cert) > 0L) {
+    native_tridiagonal_eigen_certificate(a$A, parts, vals, vecs_for_cert, tol = tol)
+  } else {
+    empty_certificate(
+      tol,
+      note = if (!isTRUE(certify)) {
+        "native tridiagonal eigensolver: certification disabled by caller"
+      } else {
+        "native tridiagonal eigensolver: no eigenpairs returned; residual certificate not computed"
+      }
+    )
+  }
+  restart <- list(
+    kind = "tridiagonal_lapack_selected",
+    native = TRUE,
+    implemented = TRUE,
+    selected = length(vals)
+  )
+  make_eigen_result(
+    values = vals,
+    vectors = if (vectors) vecs_for_cert else NULL,
+    certificate = cert,
+    iter = list(iterations = 1L, matvecs = 0L, restart = restart),
+    requested = k,
+    method_label = plan$method,
+    target_label_value = target_label(a$target),
+    plan = plan,
+    warnings = character(),
+    extras = list(
+      residuals = cert$residuals,
+      backward_error = cert$backward_error,
+      orthogonality = cert$orthogonality,
+      restarts = 0L,
+      restart = restart,
+      locked = which(cert$converged)
+    )
+  )
+}
+
+#' @keywords internal
 solve_eigen_dense_oracle <- function(a, k, tol, vectors, certify,
                                      allow_dense_fallback, plan) {
   dense_inputs <- materialize_dense_fallbacks(

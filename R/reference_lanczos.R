@@ -494,6 +494,22 @@ native_tridiagonal_eigen <- function(alpha, beta) {
 }
 
 #' @keywords internal
+native_tridiagonal_eigen_selected <- function(alpha, beta, k, target) {
+  out <- .Call(
+    "eigencore_tridiagonal_eigen_selected",
+    as.numeric(alpha),
+    as.numeric(beta),
+    as.integer(k),
+    as.integer(lanczos_target_kind(target)),
+    PACKAGE = "eigencore"
+  )
+  if (is.null(names(out)) && length(out) == 2L) {
+    names(out) <- c("values", "vectors")
+  }
+  out
+}
+
+#' @keywords internal
 tridiagonal_matrix <- function(alpha, beta) {
   m <- length(alpha)
   T <- diag(alpha, m)

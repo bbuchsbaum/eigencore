@@ -66,12 +66,14 @@ extern "C" SEXP eigencore_dense_svd_certificate(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_svd_certificate_cached_av(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_eigen_certificate(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_diagonal_eigen_certificate(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_tridiagonal_eigen_certificate(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_svd_certificate(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_svd_certificate_cached_av(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_diagonal_svd_certificate(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_diagonal_svd_certificate_cached_av(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_rayleigh_ritz_symmetric(SEXP, SEXP);
 extern "C" SEXP eigencore_tridiagonal_eigen(SEXP, SEXP);
+extern "C" SEXP eigencore_tridiagonal_eigen_selected(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_bidiagonal_svd(SEXP, SEXP);
 extern "C" SEXP eigencore_block_golub_kahan_ritz(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_ritz(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -153,12 +155,14 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_dense_svd_certificate_cached_av", (DL_FUNC) &eigencore_dense_svd_certificate_cached_av, 6},
   {"eigencore_csc_eigen_certificate", (DL_FUNC) &eigencore_csc_eigen_certificate, 8},
   {"eigencore_diagonal_eigen_certificate", (DL_FUNC) &eigencore_diagonal_eigen_certificate, 7},
+  {"eigencore_tridiagonal_eigen_certificate", (DL_FUNC) &eigencore_tridiagonal_eigen_certificate, 6},
   {"eigencore_csc_svd_certificate", (DL_FUNC) &eigencore_csc_svd_certificate, 9},
   {"eigencore_csc_svd_certificate_cached_av", (DL_FUNC) &eigencore_csc_svd_certificate_cached_av, 10},
   {"eigencore_diagonal_svd_certificate", (DL_FUNC) &eigencore_diagonal_svd_certificate, 8},
   {"eigencore_diagonal_svd_certificate_cached_av", (DL_FUNC) &eigencore_diagonal_svd_certificate_cached_av, 9},
   {"eigencore_rayleigh_ritz_symmetric", (DL_FUNC) &eigencore_rayleigh_ritz_symmetric, 2},
   {"eigencore_tridiagonal_eigen", (DL_FUNC) &eigencore_tridiagonal_eigen, 2},
+  {"eigencore_tridiagonal_eigen_selected", (DL_FUNC) &eigencore_tridiagonal_eigen_selected, 4},
   {"eigencore_bidiagonal_svd", (DL_FUNC) &eigencore_bidiagonal_svd, 2},
   {"eigencore_block_golub_kahan_ritz", (DL_FUNC) &eigencore_block_golub_kahan_ritz, 5},
   {"eigencore_golub_kahan_ritz", (DL_FUNC) &eigencore_golub_kahan_ritz, 7},

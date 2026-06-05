@@ -202,10 +202,13 @@ As of the current native Hermitian and certificate work, eigencore has:
 - a certified `native scalar thick-restart Hermitian Lanczos` path for dense
   double matrices and `dgCMatrix` operators, with native locking metadata and
   sparse non-densification;
+- a promoted structured-tridiagonal Hermitian default for symmetric
+  tridiagonal sparse/diagonal sources, backed by a native selected
+  tridiagonal LAPACK solver and tridiagonal residual certificate;
 - a `native block Hermitian Lanczos (thick restart, locking)` implementation
   for explicit block requests, dense full-subspace cases, and diagnostic sparse
-  opt-in runs; sparse `auto()` promotion is disabled until the non-quick G1
-  gate is green again;
+  opt-in runs; general sparse block `auto()` promotion remains disabled until
+  its own non-quick gate is green;
 - a certified native Golub-Kahan staging path for dense double and `dgCMatrix`
   SVD, with adaptive subspace growth metadata.
 - an internal reference LOBPCG spike showing that a shifted sparse solve
@@ -609,7 +612,7 @@ Working status against the sequenced milestones:
 | E | mostly done | Dense fallback is memory-budgeted; sparse densification is rejected in production paths. |
 | F | largely done for current paths | Native ortho and certificate kernels exist, but not every future solver path is fully native-certificate-backed. |
 | G0 | done | Native scalar Hermitian staging path exists and certifies on dense/CSC cases. |
-| G1 | red / demoted for sparse auto | Native block Hermitian Lanczos exists and remains explicit/diagnostic, but fresh installed `path_laplacian:1000` evidence failed speed and PRIMME parity under sparse block auto. Sparse `auto()` now stays on scalar Lanczos unless the diagnostic sparse-block promotion option is explicitly enabled. The append-only projected-matrix update removes the largest scalar hotspot, but post-fix scalar and block-candidate rows still miss release speed/parity gates. |
+| G1 | green for structured tridiagonal default | The promoted default for symmetric tridiagonal sparse/diagonal Hermitian sources now uses the native selected tridiagonal LAPACK solver and tridiagonal residual certificate. Installed strict `path_laplacian:1000` evidence from 2026-06-05 certifies `20/20` and passes speed, memory, and PRIMME parity. Native block Hermitian Lanczos remains explicit/diagnostic rather than promoted. |
 | H | red / unpromoted | Fresh installed tiny sparse Gram rows certify and pass memory, but miss the release speed gate. The native Gram fast-result path now covers both wide/left-Gram and tall/right-Gram CSC special cases and trims R assembly overhead, but current 3-iteration quick probes still show red speed (`0.40x` tall, `0.63x` wide); native Golub-Kahan exists as a staging path; block-GK restart comparators now include cached Ritz-vector `A V` paths, compact native fit extraction, restart-efficiency diagnostics, a first native retained-restart candidate, and a normal-scout IRLBA diagnostic that certifies only after final one-sided LBD polish but is slower/higher-allocation on `wide_sparse:90x600`. Production thick-restart SVD / IRLBA / BPRO for sparse and matrix-free cases remains open. |
 | I | prototype | Randomized SVD has reference implementation, normalizers, and certified refinement; native approximate engine remains open. |
 | J | partial | Dense generalized `auto()` is demoted to the native dense LAPACK fallback until iterative gates pass. Native generalized SPD LOBPCG slices still exist for explicit/sparse/structured paths, explicitly SPD matrix-free `B`, constraints, and typed shifted-diagonal / shifted-tridiagonal preconditioners. Fresh focused non-quick evidence shows the sparse-smallest shifted-tridiagonal row certifies and passes speed/memory; current installed sparse-largest shifted-tridiagonal evidence uses a non-densifying largest-target shift, certifies, and passes memory but remains performance-red on speed, so sparse-largest and broader generalized production gates remain open. |
@@ -1034,9 +1037,10 @@ just a label change. The implementation must satisfy these extra constraints:
   `tol * max(abs(theta), 1)` is acceptable only as a development diagnostic, not
   as the production lock criterion.
 - The former `native block Hermitian Lanczos thick-restart candidate` counts
-  as promoted G1 only after the adversarial bank and RSpectra/PRIMME benchmark
-  gates pass with the default `eigencore` path. Fresh installed evidence is
-  red, so sparse block promotion is currently diagnostic-only.
+  as promoted block G1 only after the adversarial bank and RSpectra/PRIMME
+  benchmark gates pass with the default `eigencore` path. The passing 2026-06-05
+  G1 evidence promotes only the structured tridiagonal default path; sparse
+  block promotion remains diagnostic-only.
 - Correctness comparisons for iterative paths use residuals scaled by the
   certificate denominator, e.g. `max(tol * scale, 100 * eps * scale)`, and use
   subspace-distance assertions for clustered or repeated eigenvalues rather than
@@ -1142,16 +1146,19 @@ striking distance of the RSpectra/PRIMME gate before any planner promotion.
 
 **G1.4 Promote planner and dispatch**
 
-- Promote `auto()` to the block path only in regimes that pass the benchmark
-  gate. Initial policy should be conservative: `k >= 4`, native dense/CSC
-  source, supported target, and a size threshold proven by the gate. Sparse
-  `dgCMatrix` block promotion is currently gated behind
-  `options(eigencore.promote_sparse_block_lanczos = TRUE)` for diagnostics
-  after the red `path_laplacian:1000` installed rerun. Keep scalar thick
-  restart for small `k`, small `n`, unsupported block regimes, and explicit
-  `lanczos(block = 1)`.
-- Update the planner label to the production string only after G1.1-G1.3 pass:
-  `native block Hermitian Lanczos (thick restart, locking)`.
+- Promote `auto()` only in regimes that pass the benchmark gate. The current
+  promoted sparse Hermitian policy is conservative: symmetric tridiagonal
+  sparse/diagonal sources with supported largest/smallest targets dispatch to
+  the native selected tridiagonal LAPACK solver. Sparse `dgCMatrix` block
+  promotion remains gated behind
+  `options(eigencore.promote_sparse_block_lanczos = TRUE)` for diagnostics.
+  Keep scalar thick restart for non-tridiagonal sparse Hermitian cases, small
+  unsupported regimes, and explicit `lanczos(block = 1)`.
+- Update planner labels to production strings only after their gates pass. The
+  current promoted sparse structured label is
+  `native tridiagonal Hermitian LAPACK selected eigensolver`; the block label
+  `native block Hermitian Lanczos (thick restart, locking)` remains
+  explicit/diagnostic.
 - Ensure `solve.eigencore_eigen_problem()` consumes `plan$controls` exactly:
   block size, `max_subspace`, and restart budget must match what the planner
   printed.
@@ -1175,13 +1182,15 @@ for promoted block runs; scalar remains honestly labeled.
   package version, seed, platform, BLAS/LAPACK note when available, and exact
   benchmark command.
 
-Exit: Hermitian sparse and dense regression gates pass reproducibly; G1 can be
-marked done.
+Exit: the promoted Hermitian default gate passes reproducibly with saved
+installed-package artifacts. Broader block-Hermitian promotion remains a
+separate diagnostic path until its own gate passes.
 
 **G1.6 Documentation cleanup after promotion**
 
-- Update `prd.json` only after G1.5 passes: move the promoted block path into
-  `implemented_path` and remove the promoted items from `not_yet_satisfied`.
+- Update `prd.json` only after G1.5 passes for the intended promoted path: move
+  the structured tridiagonal default into `implemented_path` if PRD scope needs
+  that granularity, and keep unpassed block items in `not_yet_satisfied`.
 - Update this plan's status checkpoint and milestone table. If any PRIMME
   parity gap remains, G1 is not complete; record it as an explicit blocker
   rather than weakening the gate.

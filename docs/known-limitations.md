@@ -1,6 +1,6 @@
 # Known Limitations Before V1
 
-Date: 2026-05-17
+Date: 2026-06-05
 
 This file records current user-facing limitations. It should shrink as V1
 milestones close. The authoritative release gate map remains
@@ -17,7 +17,7 @@ as a release signoff.
 
 | Area | Current limitation |
 |---|---|
-| Hermitian eigen | Native scalar Hermitian Lanczos remains the default sparse path. Native block Hermitian Lanczos exists for explicit requests and diagnostic sparse opt-in, but fresh installed `path_laplacian:1000` strict evidence is red. The native projected-matrix update hotspot is much smaller now, yet scalar and block-candidate rows still fail speed/parity gates. |
+| Hermitian eigen | Symmetric tridiagonal sparse/diagonal Hermitian sources now use a promoted native selected tridiagonal solver and pass the installed `path_laplacian:1000` G1 gate. Native scalar Hermitian Lanczos remains the default for non-tridiagonal sparse paths. Native block Hermitian Lanczos exists for explicit requests and diagnostic sparse opt-in, but is not promoted for general sparse `auto()`. |
 | SVD | Tiny sparse Gram rows certify and pass memory on fresh installed probes, but are speed-red; general sparse and matrix-free production thick-restart SVD remains open. |
 | Randomized SVD | Reference prototype with certified refinement exists; native randomized sketch/projection engine and broader benchmark gates remain open. |
 | Generalized SPD | Dense generalized `auto()` now uses the native dense LAPACK fallback until iterative gates pass. Native generalized LOBPCG slices exist for sparse/structured and explicit requests, but the full non-quick strict gate is still red. |
