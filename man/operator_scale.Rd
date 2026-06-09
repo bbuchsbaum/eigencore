@@ -7,14 +7,12 @@
 operator_scale(A, scalar, name = NULL)
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Operator-like object.}
 
-\item{scalar}{Scalar multiplier.}
+\item{scalar}{Finite numeric scalar multiplier.}
 
-\item{name}{Optional operator name.}
-
+\item{name}{Optional label for the scaled operator.}
 }
 \description{
 Multiply an operator by a scalar.
 }
-\keyword{internal}

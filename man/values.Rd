@@ -7,11 +7,14 @@
 values(x, ...)
 }
 \arguments{
-\item{x}{Object.}
+\item{x}{An eigencore result object.}
 
-\item{...}{Additional arguments passed to methods.}
-
+\item{...}{Reserved for future methods.}
 }
 \description{
 Extract computed values.
+}
+\examples{
+fit <- eig_partial(diag(c(3, 2, 1)), k = 2, target = largest())
+values(fit)
 }

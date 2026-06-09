@@ -2,6 +2,7 @@
 #define EIGENCORE_NATIVE_OPERATORS_H
 
 #include <Rinternals.h>
+#include <R_ext/Complex.h>
 #include <stdint.h>
 #include "eigencore_operator.h"
 
@@ -9,6 +10,12 @@ struct DenseColumnMajorOperator {
   int64_t rows;
   int64_t cols;
   double* values;
+};
+
+struct DenseComplexColumnMajorOperator {
+  int64_t rows;
+  int64_t cols;
+  Rcomplex* values;
 };
 
 struct CSCOperator {
@@ -27,7 +34,9 @@ struct DiagonalOperator {
 
 struct RApplyOperator {
   int64_t rows;
+  int64_t cols;
   SEXP apply;
+  SEXP apply_adjoint;
 };
 
 struct DenseShiftInvertOperator {
@@ -74,6 +83,17 @@ extern "C" int eigencore_dense_apply(void* impl,
                                       double* Y,
                                       int64_t ldy,
                                       EigencoreWorkspace* workspace);
+
+extern "C" int eigencore_dense_complex_apply(void* impl,
+                                             EigencoreTranspose op,
+                                             int64_t block_cols,
+                                             const Rcomplex* X,
+                                             int64_t ldx,
+                                             Rcomplex alpha,
+                                             Rcomplex beta,
+                                             Rcomplex* Y,
+                                             int64_t ldy,
+                                             EigencoreWorkspace* workspace);
 
 extern "C" int eigencore_dense_shift_invert_apply(void* impl,
                                                    EigencoreTranspose op,

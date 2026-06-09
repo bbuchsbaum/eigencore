@@ -9,7 +9,10 @@ golub_kahan(max_subspace = NULL, reorthogonalize = TRUE)
 \arguments{
 \item{max_subspace}{Optional maximum Krylov subspace size.}
 
-\item{reorthogonalize}{Whether to apply full reorthogonalization.}
+\item{reorthogonalize}{Whether to apply full two-sided
+reorthogonalization. \code{FALSE} selects the native one-sided small-side
+policy where supported, with final acceptance still controlled by the
+exact two-sided certificate.}
 }
 \value{
 An \code{eigencore_method} descriptor selecting Golub-Kahan

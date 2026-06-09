@@ -237,6 +237,13 @@ static double* eigencore_r_alloc_zero_doubles(size_t n) {
   return out;
 }
 
+static double* eigencore_malloc_doubles(size_t n) {
+  double* out = reinterpret_cast<double*>(
+    std::malloc((n > 0 ? n : 1) * sizeof(double))
+  );
+  return out;
+}
+
 void block_golub_kahan_basis_scratch_free(BlockGolubKahanBasisScratch* scratch) {
   if (!scratch->transient) {
     std::free(scratch->Z_v);
@@ -268,6 +275,31 @@ int block_golub_kahan_basis_scratch_alloc(BlockGolubKahanBasisScratch* scratch,
   scratch->coeff = eigencore_r_alloc_zero_doubles(coeff_elems);
   scratch->tmp = eigencore_r_alloc_zero_doubles(tmp_len);
   scratch->transient = true;
+  scratch->bytes = (nb + mb + coeff_elems + tmp_len) * sizeof(double);
+  return 0;
+}
+
+int block_golub_kahan_basis_scratch_alloc_native(BlockGolubKahanBasisScratch* scratch,
+                                                 int m,
+                                                 int n,
+                                                 int max_subspace,
+                                                 int block_size) {
+  const size_t nb = static_cast<size_t>(n) * static_cast<size_t>(block_size);
+  const size_t mb = static_cast<size_t>(m) * static_cast<size_t>(block_size);
+  const int coeff_rows = (max_subspace > block_size) ? max_subspace : block_size;
+  const size_t coeff_elems = static_cast<size_t>(coeff_rows) *
+    static_cast<size_t>(block_size);
+  const size_t tmp_len = static_cast<size_t>((m > n) ? m : n);
+  scratch->Z_v = eigencore_malloc_doubles(nb);
+  scratch->Z_u = eigencore_malloc_doubles(mb);
+  scratch->coeff = eigencore_malloc_doubles(coeff_elems);
+  scratch->tmp = eigencore_malloc_doubles(tmp_len);
+  if (scratch->Z_v == nullptr || scratch->Z_u == nullptr ||
+      scratch->coeff == nullptr || scratch->tmp == nullptr) {
+    block_golub_kahan_basis_scratch_free(scratch);
+    return -1;
+  }
+  scratch->transient = false;
   scratch->bytes = (nb + mb + coeff_elems + tmp_len) * sizeof(double);
   return 0;
 }

@@ -7,14 +7,13 @@
 mgs2(X, against = NULL, tol = sqrt(.Machine$double.eps))
 }
 \arguments{
-\item{X}{Numeric matrix input.}
+\item{X}{Numeric matrix whose columns are orthogonalized.}
 
-\item{against}{Optional basis to orthogonalize against.}
+\item{against}{Optional matrix whose columns are projected out before
+orthogonalization.}
 
-\item{tol}{Numerical tolerance.}
-
+\item{tol}{Orthogonality warning tolerance.}
 }
 \description{
 Modified Gram-Schmidt with two passes.
 }
-\keyword{internal}

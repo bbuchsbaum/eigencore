@@ -7,12 +7,10 @@
 cholqr2(X, tol = sqrt(.Machine$double.eps))
 }
 \arguments{
-\item{X}{Numeric matrix input.}
+\item{X}{Numeric matrix whose columns are orthogonalized.}
 
-\item{tol}{Numerical tolerance.}
-
+\item{tol}{Orthogonality warning tolerance.}
 }
 \description{
 Cholesky QR with a corrective second pass.
 }
-\keyword{internal}

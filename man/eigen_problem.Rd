@@ -13,17 +13,23 @@ eigen_problem(
 )
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Matrix or operator defining the linear map.}
 
-\item{metric}{Optional metric operator.}
+\item{metric}{Optional metric operator for generalized eigenproblems.}
 
-\item{structure}{Operator structure descriptor.}
+\item{structure}{Optional structure descriptor; defaults to the operator
+structure.}
 
-\item{target}{Spectral target descriptor.}
+\item{target}{Eigencore target descriptor.}
 
-\item{transform}{Optional spectral transform.}
-
+\item{transform}{Optional transform method such as \code{\link[=shift_invert]{shift_invert()}}.}
 }
 \description{
 Define an eigenproblem.
+}
+\examples{
+A <- diag(c(4, 3, 2, 1))
+P <- eigen_problem(A, target = largest())
+fit <- solve(P, k = 2)
+values(fit)
 }

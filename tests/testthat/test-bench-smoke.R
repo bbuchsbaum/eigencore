@@ -63,7 +63,8 @@ test_that("benchmark harness produces certificate-inclusive rows", {
     "projected_stop_requested", "projected_stop_enabled",
     "projected_stop_disable_reason", "projected_stop", "projected_nconv",
     "projected_max_residual", "projected_checks", "projected_seconds",
-    "native_workspace_bytes", "basis_returned", "reorthogonalization_passes",
+    "native_workspace_bytes", "native_workspace_allocator", "basis_returned",
+    "reorthogonalization_passes",
     "retained_restart", "retained_restart_native", "retained_av_cache",
     "retained_converged_count", "retained_leading_converged_count",
     "native_attempt_certification", "native_early_stop",
@@ -142,7 +143,11 @@ test_that("benchmark harness produces certificate-inclusive rows", {
     "irlba_lbd_normal_scout_polish_accounted_seconds",
     "final_attempt_matvecs", "final_attempt_ortho_passes", "total_ortho_passes",
     "fallback_attempted", "fallback_used", "fallback_method",
-    "gram_max_backward_error", "fallback_max_backward_error"
+    "gram_max_backward_error", "gram_certificate_passed", "gram_dimension",
+    "native_gram_kernel", "native_gram_eigensolver",
+    "native_gram_subspace_max_backward_error",
+    "normal_operator_implicit", "materialized_gram",
+    "certified_in_original_coordinates", "fallback_max_backward_error"
   )
   expect_true(all(required_common %in% names(eigen_rows)))
   expect_true(all(required_svd %in% names(svd_rows)))
@@ -160,6 +165,58 @@ test_that("benchmark harness produces certificate-inclusive rows", {
   expect_true(all(is.finite(svd_rows$max_backward_error)))
   expect_true(all(eigen_rows$nconv >= 0))
   expect_true(all(svd_rows$nconv >= 0))
+})
+
+test_that("Gram SVD cutoff benchmark rows expose 600-side provenance", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_if_not_installed("bench")
+
+  helper_path <- benchmark_file("_helpers.R")
+  source(helper_path)
+
+  old_options <- options(eigencore.gram_svd_max_dimension = 768L)
+  on.exit(options(old_options), add = TRUE)
+
+  X <- tall_skinny_sparse(1200, 600, density = 0.004, seed = 302)
+  rows <- benchmark_svd_case(
+    X,
+    rank = 3,
+    methods = "eigencore",
+    iterations = 1,
+    seed = 302
+  )
+
+  eig <- rows[rows$method == "eigencore", , drop = FALSE]
+  expect_equal(eig$solver_label, "native certified Gram SVD special case")
+  expect_true(eig$certificate_passed)
+  expect_equal(eig$gram_dimension, 600L)
+  expect_true(eig$materialized_gram)
+  expect_false(eig$normal_operator_implicit)
+  expect_true(eig$certified_in_original_coordinates)
+  expect_match(eig$native_gram_kernel, "csc_.*_gram")
+  expect_true(is.finite(eig$max_backward_error))
+})
+
+test_that("PRIMME is an optional certified SVD benchmark baseline", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_if_not_installed("bench")
+  skip_if_not_installed("PRIMME")
+
+  helper_path <- benchmark_file("_helpers.R")
+  source(helper_path)
+
+  expect_true("PRIMME" %in% benchmark_available_svd_methods())
+
+  X <- tall_skinny_sparse(60, 20, density = 0.08, seed = 303)
+  rows <- benchmark_svd_case(
+    X,
+    rank = 2,
+    methods = "PRIMME",
+    iterations = 1,
+    seed = 303
+  )
+  expect_true(rows$certificate_passed)
+  expect_gte(rows$nconv, 2L)
 })
 
 test_that("benchmark timing resets seed for each measured iteration", {
@@ -238,6 +295,8 @@ test_that("generalized LOBPCG release script gates native contract rows", {
   expect_true(file.exists(script))
   lines <- readLines(script, warn = FALSE)
   expect_true(any(grepl("eigencore_auto", lines, fixed = TRUE)))
+  expect_true(any(grepl("eigencore_lanczos_native", lines, fixed = TRUE)))
+  expect_true(any(grepl("eigencore_lanczos_block_native", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_lanczos_reference", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_shifted_diagonal", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_shifted_tridiagonal", lines, fixed = TRUE)))
@@ -248,7 +307,11 @@ test_that("generalized LOBPCG release script gates native contract rows", {
   expect_true(any(grepl("maxit = 300L", lines, fixed = TRUE)))
   expect_true(any(grepl("eigencore_constrained", lines, fixed = TRUE)))
   expect_true(any(grepl("generalized_lobpcg_native_contract", lines, fixed = TRUE)))
+  expect_true(any(grepl("generalized_lanczos_native_contract", lines, fixed = TRUE)))
+  expect_true(any(grepl("generalized_lanczos_block_native_contract", lines, fixed = TRUE)))
   expect_true(any(grepl("generalized_lanczos_reference_contract", lines, fixed = TRUE)))
+  expect_true(any(grepl("generalized-lanczos-native-contracts", lines, fixed = TRUE)))
+  expect_true(any(grepl("generalized-lanczos-block-native-contracts", lines, fixed = TRUE)))
   expect_true(any(grepl("generalized-lanczos-reference-contracts", lines, fixed = TRUE)))
   expect_true(any(grepl("generalized_lobpcg_adversarial_b_specs", lines, fixed = TRUE)))
   expect_true(any(grepl("generalized_lobpcg_adversarial_b_contract", lines, fixed = TRUE)))
@@ -259,9 +322,14 @@ test_that("generalized LOBPCG release script gates native contract rows", {
   expect_true(any(grepl("preconditioner_gate", lines, fixed = TRUE)))
   expect_true(any(grepl("constraint_gate", lines, fixed = TRUE)))
   expect_true(any(grepl("metric_solve_label", lines, fixed = TRUE)))
+  expect_true(any(grepl("metric_solve_native", lines, fixed = TRUE)))
+  expect_true(any(grepl("metric_boundary_gate", lines, fixed = TRUE)))
   expect_true(any(grepl("ill_conditioned_diagonal_b", lines, fixed = TRUE)))
-  expect_true(any(grepl("diagonal_generalized_lanczos_ref_smallest", lines, fixed = TRUE)))
-  expect_true(any(grepl("sparse_csc_generalized_lanczos_ref_smallest", lines, fixed = TRUE)))
+  expect_true(any(grepl("diagonal_generalized_lanczos_native_smallest", lines, fixed = TRUE)))
+  expect_true(any(grepl("diagonal_generalized_block_lanczos_native_smallest", lines, fixed = TRUE)))
+  expect_true(any(grepl("dense_generalized_lanczos_native_largest", lines, fixed = TRUE)))
+  expect_true(any(grepl("sparse_tridiagonal_b_generalized_lanczos_native_metric_smallest", lines, fixed = TRUE)))
+  expect_true(any(grepl("sparse_csc_generalized_lanczos_ref_cholesky_smallest", lines, fixed = TRUE)))
   expect_true(any(grepl("explicit_spd_matrix_free_b", lines, fixed = TRUE)))
   expect_true(any(grepl("expected_orthogonalization", lines, fixed = TRUE)))
 })
@@ -361,9 +429,187 @@ test_that("SVD surface benchmark script is available", {
   expect_true(any(grepl("message_benchmark_case(\"bench-svd-surface\"", lines, fixed = TRUE)))
   expect_true(any(grepl("tall_sparse:600x90", lines, fixed = TRUE)))
   expect_true(any(grepl("rank_deficient_sparse", lines, fixed = TRUE)))
+  expect_true(any(grepl("smallest_sparse", lines, fixed = TRUE)))
+  expect_true(any(grepl("eigencore_smallest", lines, fixed = TRUE)))
+  expect_true(any(grepl("base_smallest", lines, fixed = TRUE)))
+  expect_true(any(grepl("interior_sparse", lines, fixed = TRUE)))
+  expect_true(any(grepl("eigencore_interior", lines, fixed = TRUE)))
+  expect_true(any(grepl("base_interior", lines, fixed = TRUE)))
+  expect_true(any(grepl("solver_label", lines, fixed = TRUE)))
+  expect_true(any(grepl("svd_target_contract", lines, fixed = TRUE)))
+  expect_true(any(grepl("svd-surface-target-contracts", lines, fixed = TRUE)))
+  expect_true(any(grepl("native certified Gram SVD special case", lines, fixed = TRUE)))
+  expect_true(any(grepl("quick_reference_contract_gate", lines, fixed = TRUE)))
+  expect_true(any(grepl("speed and memory ratios are diagnostics", lines, fixed = TRUE)))
   expect_true(any(grepl("clustered_dense", lines, fixed = TRUE)))
+  expect_true(any(grepl("complex_dense", lines, fixed = TRUE)))
+  expect_true(any(grepl("gate = FALSE", lines, fixed = TRUE)))
   expect_true(any(grepl("slow_decay_dense", lines, fixed = TRUE)))
   expect_true(any(grepl("benchmark_svd_case", lines, fixed = TRUE)))
+})
+
+test_that("post-V1 benchmark gate manifest covers hard promotion surfaces", {
+  manifest_path <- benchmark_file("post-v1-gate-manifest.R")
+  expect_true(file.exists(manifest_path))
+
+  env <- new.env(parent = globalenv())
+  sys.source(manifest_path, envir = env)
+  manifest <- env$post_v1_gate_manifest
+
+  expect_type(manifest, "list")
+  expect_equal(manifest$version, 1L)
+  expect_equal(manifest$generated_on, "2026-06-06")
+  expect_true(grepl("YYYYMMDD-", manifest$artifact_policy$naming, fixed = TRUE))
+  expect_true(all(c("smoke", "strict", "long") %in% names(manifest$tier_profile)))
+  expect_equal(manifest$tier_profile$smoke$default_gate_ids, "post_v1_operator_sidecars")
+  expect_equal(manifest$tier_profile$strict$default_gate_ids, "all")
+  expect_equal(manifest$tier_profile$long$default_gate_ids, "all")
+  expect_true(all(c(
+    "time_to_certified_answer",
+    "memory",
+    "max_residual",
+    "max_backward_error",
+    "orthogonality_loss",
+    "planner_label",
+    "certificate_type",
+    "native_or_reference_boundary",
+    "nconv"
+  ) %in% manifest$required_metrics))
+  current_gate_owners <- c(
+    "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
+  )
+  expect_equal(manifest$current_gate_owner_issue_ids, current_gate_owners)
+
+  gates <- manifest$gates
+  gate_ids <- vapply(gates, `[[`, character(1), "id")
+  expect_true(all(c(
+    "post_v1_svd_hard_surface",
+    "post_v1_operator_sidecars",
+    "post_v1_randomized_svd_hard_surface",
+    "post_v1_generalized_preconditioned_surface",
+    "post_v1_shift_invert_boundaries",
+    "post_v1_nonsymmetric_matrix_free_surface"
+  ) %in% gate_ids))
+
+  required_fields <- c(
+    "id", "owner_issue", "surface", "script", "command",
+    "quick_smoke_command", "long_command", "cases", "baselines",
+    "artifacts", "thresholds"
+  )
+  for (gate in gates) {
+    expect_true(all(required_fields %in% names(gate)), info = gate$id)
+    expect_true(gate$owner_issue %in% current_gate_owners, info = gate$id)
+    expect_true(file.exists(benchmark_file(basename(gate$script))), info = gate$id)
+    expect_true(grepl(gate$script, gate$command, fixed = TRUE), info = gate$id)
+    expect_true(grepl("Rscript", gate$quick_smoke_command, fixed = TRUE), info = gate$id)
+    expect_true(grepl("Rscript", gate$long_command, fixed = TRUE), info = gate$id)
+    expect_true(grepl("--iterations=10", gate$long_command, fixed = TRUE), info = gate$id)
+    expect_true(length(gate$cases) > 0L, info = gate$id)
+    expect_true(length(gate$baselines) > 0L, info = gate$id)
+    expect_true(length(gate$thresholds) > 0L, info = gate$id)
+    expect_true(all(grepl("\\.rds$", gate$artifacts)), info = gate$id)
+  }
+
+  svd_gate <- gates[[match("post_v1_svd_hard_surface", gate_ids)]]
+  expect_true(any(grepl("rank_deficient_sparse", svd_gate$cases, fixed = TRUE)))
+  expect_true(any(grepl("slow_decay_dense", svd_gate$cases, fixed = TRUE)))
+  expect_true("RSpectra" %in% svd_gate$baselines)
+  expect_true("irlba" %in% svd_gate$baselines)
+  expect_equal(svd_gate$thresholds$speed_ratio_min, 1.10)
+
+  operator_gate <- gates[[match("post_v1_operator_sidecars", gate_ids)]]
+  expect_equal(operator_gate$owner_issue, "bd-01KTE8G6RYE4RD5F6CN7SNKKC6")
+  expect_true(any(grepl("matrix_free_svd", operator_gate$cases, fixed = TRUE)))
+  expect_true(any(grepl("matrix_free_nonnormal", operator_gate$cases, fixed = TRUE)))
+  expect_true(any(grepl("matrix_free_b", operator_gate$cases, fixed = TRUE)))
+  expect_true(operator_gate$thresholds$planner_label_exact)
+  expect_true(operator_gate$thresholds$native_boundary_exact)
+
+  closed_owner_ids <- c(
+    "bd-01KTE8J396W5SGK6FQBSQX7BY8",
+    "bd-01KTE8JNVAJW5SHR6AHFCH9T4B",
+    "bd-01KTE8K131G6EBK3QKYA3PRH0E",
+    "bd-01KTE8K6PRRY1SRCFXXQR84YQW",
+    "bd-01KTE8J9SF16Y1832D8HQQ9KEC",
+    "bd-01KTE8JFKPA90ZJTXK496SBMK4",
+    "bd-01KTEH5JM64A4CBZG7ECBWT9WB",
+    "bd-01KTE8JVEPGA1EEQYERZS1V7S1",
+    "bd-01KTEH6862GB19JJWX2M3FQP6T",
+    "bd-01KTEH60X91VZRSW7NGV65FBDR"
+  )
+  expect_false(any(vapply(gates, function(gate) {
+    gate$owner_issue %in% closed_owner_ids
+  }, logical(1))))
+})
+
+test_that("post-V1 benchmark profile runner and workflow are wired", {
+  runner <- benchmark_file("run-post-v1-gates.R")
+  workflow <- test_path("../../.github/workflows/post-v1-benchmarks.yaml")
+  expect_true(file.exists(runner))
+
+  runner_lines <- readLines(runner, warn = FALSE)
+  required_runner <- c(
+    "validate_gate_manifest",
+    "select_gate_ids",
+    "gate_command",
+    "--tier=",
+    "--gates=",
+    "--dry-run",
+    "--load-all",
+    "command_with_load_all",
+    "smoke",
+    "strict",
+    "long",
+    "owner_issue",
+    "Post-V1 gate failed"
+  )
+  for (needle in required_runner) {
+    expect_true(any(grepl(needle, runner_lines, fixed = TRUE)), info = needle)
+  }
+
+  skip_if_not(
+    file.exists(workflow),
+    "GitHub workflow is source-only and excluded from the built package"
+  )
+  expect_true(file.exists(workflow))
+  workflow_lines <- readLines(workflow, warn = FALSE)
+  required_workflow <- c(
+    "workflow_dispatch",
+    "schedule:",
+    "post-v1-benchmarks.yaml",
+    "BENCH_LIB",
+    "setup-r-dependencies",
+    "Run post-V1 benchmark profile",
+    "run-post-v1-gates.R",
+    "actions/upload-artifact",
+    "inst/benchmarks/results"
+  )
+  for (needle in required_workflow) {
+    expect_true(any(grepl(needle, workflow_lines, fixed = TRUE)), info = needle)
+  }
+})
+
+test_that("post-V1 operator sidecar benchmark gates matrix-free boundaries", {
+  script <- benchmark_file("bench-post-v1-operator-sidecars.R")
+  expect_true(file.exists(script))
+  lines <- readLines(script, warn = FALSE)
+
+  required <- c(
+    "post_v1_matrix_free_svd_native_callback_boundary",
+    "post_v1_matrix_free_nonsymmetric_native_boundary",
+    "post_v1_matrix_free_b_native_generalized_contract",
+    "native_matrix_free_golub_kahan_label",
+    "native matrix-free Arnoldi callback cycle + native Ritz extraction",
+    "native_matrix_free_b_mgs2",
+    "expected_native = TRUE",
+    "planner_label",
+    "native_boundary",
+    "strict_pass",
+    "post-v1-operator-sidecars-rows"
+  )
+  for (needle in required) {
+    expect_true(any(grepl(needle, lines, fixed = TRUE)), info = needle)
+  }
 })
 
 test_that("randomized-rsvd benchmark script is available", {
@@ -429,6 +675,12 @@ test_that("shift-invert benchmark script is available", {
   expect_true(any(grepl("estimated_converged", lines, fixed = TRUE)))
   expect_true(any(grepl("user_solve", lines, fixed = TRUE)))
   expect_true(any(grepl("Matrix::lu", lines, fixed = TRUE)))
+  expect_true(any(grepl("shift_invert_factorization_contract_v1", lines, fixed = TRUE)))
+  expect_true(any(grepl("factorization_contract_provider", lines, fixed = TRUE)))
+  expect_true(any(grepl("factorization_contract_gate", lines, fixed = TRUE)))
+  expect_true(any(grepl("eigencore_native_factorization", lines, fixed = TRUE)))
+  expect_true(any(grepl("Matrix::lu_reference_factorization", lines, fixed = TRUE)))
+  expect_true(any(grepl("user_supplied_solve", lines, fixed = TRUE)))
   expect_true(any(grepl("shift_invert_contract", lines, fixed = TRUE)))
 })
 
@@ -444,6 +696,10 @@ test_that("nonsymmetric benchmark script is available", {
   expect_true(any(grepl("dense LAPACK general eigen oracle", lines, fixed = TRUE)))
   expect_true(any(grepl("native Arnoldi cycle", lines, fixed = TRUE)))
   expect_true(any(grepl("native Ritz extraction", lines, fixed = TRUE)))
+  expect_true(any(grepl("matrix_free_nonnormal", lines, fixed = TRUE)))
+  expect_true(any(grepl("native matrix-free Arnoldi callback cycle", lines, fixed = TRUE)))
+  expect_true(any(grepl("native_matrix_free_arnoldi_label", lines, fixed = TRUE)))
+  expect_true(any(grepl("matrix_free_native", lines, fixed = TRUE)))
   expect_true(any(grepl("reference Arnoldi (prototype/oracle fallback)", lines, fixed = TRUE)))
   expect_true(any(grepl("right_residual_backward_error", lines, fixed = TRUE)))
   expect_true(any(grepl("arnoldi_native", lines, fixed = TRUE)))
@@ -455,12 +711,15 @@ test_that("nonsymmetric benchmark script is available", {
   expect_true(any(grepl("ritz_extraction_native", lines, fixed = TRUE)))
   expect_true(any(grepl("dense_native_arnoldi_lm", lines, fixed = TRUE)))
   expect_true(any(grepl("dense_eigs_native_arnoldi_li", lines, fixed = TRUE)))
+  expect_true(any(grepl("dense_complex_lapack_li", lines, fixed = TRUE)))
+  expect_true(any(grepl("native dense complex general LAPACK fallback", lines, fixed = TRUE)))
+  expect_true(any(grepl("native_dense_complex_label", lines, fixed = TRUE)))
   expect_true(any(grepl("sparse_native_arnoldi_lr", lines, fixed = TRUE)))
   expect_true(any(grepl("sparse_native_arnoldi_li", lines, fixed = TRUE)))
   expect_true(any(grepl("nonsymmetric_contract", lines, fixed = TRUE)))
 })
 
-test_that("V1 benchmark manifest names release benchmark surfaces", {
+test_that("V2 CRAN benchmark manifest names release benchmark surfaces", {
   manifest <- test_path("../../docs/v1-benchmark-manifest.md")
   skip_if_not(file.exists(manifest), "source docs are not available in installed-package checks")
   expect_true(file.exists(manifest))
@@ -480,9 +739,62 @@ test_that("V1 benchmark manifest names release benchmark surfaces", {
     expect_true(any(grepl(needle, lines, fixed = TRUE)), info = needle)
   }
   expect_true(any(grepl("not a release signoff", lines, fixed = TRUE)))
+  expect_true(any(grepl("V2 CRAN release", lines, fixed = TRUE)))
 })
 
-test_that("V1 completion audit maps the active goal to stop-rule evidence", {
+test_that("contribution methods artifact ties claims to evidence and losses", {
+  artifact <- test_path("../../docs/contribution-methods-artifact.md")
+  skip_if_not(file.exists(artifact), "source docs are not available in installed-package checks")
+  lines <- readLines(artifact, warn = FALSE)
+  text <- paste(lines, collapse = "\n")
+
+  required <- c(
+    "Contribution Thesis",
+    "Method Design",
+    "Benchmark Report",
+    "Losses and boundaries",
+    "Migration Package",
+    "V3 Deferral Program",
+    "V2 does not add solver families beyond the CRAN release surface",
+    "docs/v1-benchmark-manifest.md",
+    "bench-native-hermitian-gate.R",
+    "bench-svd-surface.R",
+    "bench-randomized-rsvd.R",
+    "bench-generalized-lobpcg.R",
+    "bench-shift-invert.R",
+    "bench-nonsymmetric.R",
+    "docs/rspectra-migration.md",
+    "docs/known-limitations.md",
+    "docs/post-v1-benchmark-gates.md",
+    "Base complex dense matrices use native dense complex",
+    "shift_invert_factorization_contract_v1",
+    "bd-01KTE8J9SF16Y1832D8HQQ9KEC",
+    "bd-01KTE8JFKPA90ZJTXK496SBMK4",
+    "bd-01KTEH4RA4NJBQSKF9JQV3V4BS",
+    "bd-01KTEH4G1QPR4RT14B4G78PF1M",
+    "bd-01KTEH4ZPPBESDDPR0Z5MRSQCG",
+    "bd-01KTEH57J1RR3SP1SJ27YRC0ZE",
+    "bd-01KTEH5JM64A4CBZG7ECBWT9WB",
+    "bd-01KTEH60X91VZRSW7NGV65FBDR",
+    "bd-01KTEH6862GB19JJWX2M3FQP6T",
+    "bd-01KTEH5SRWDHXBZXK5CPHBT6G2",
+    "bd-01KTEH6HNN33M15YNGW7T35RQR",
+    "bd-01KTE8JVEPGA1EEQYERZS1V7S1",
+    "Closed No-Promotion Decisions",
+    "Closed Non-Goal Decisions",
+    "bd-01KTEH48HH4X8G9Q69HHAJ983B",
+    "documented no-promotion decision",
+    "explicit PRD non-goal",
+    "owner ids stay current",
+    "Jacobi-Davidson",
+    "GraphBLAS/GPU/distributed/SLEPc/PRIMME plugins"
+  )
+  for (needle in required) {
+    expect_true(grepl(needle, text, fixed = TRUE), info = needle)
+  }
+})
+
+test_that("V2 CRAN completion audit maps the active goal to stop-rule evidence", {
   audit <- test_path("../../docs/v1-completion-audit.md")
   skip_if_not(file.exists(audit), "source docs are not available in installed-package checks")
   lines <- readLines(audit, warn = FALSE)
@@ -492,8 +804,8 @@ test_that("V1 completion audit maps the active goal to stop-rule evidence", {
     "Production SVD and randomized SVD",
     "Generalized SPD, shift-invert, and nonsymmetric surfaces",
     "Sanitizer / valgrind-style evidence",
-    "Current decision: **scoped V1 ready with final validation and mote closure**",
-    "Mark V1 complete only after",
+    "Current decision: **V2 CRAN release candidate pending final validation and mote closure**",
+    "Mark V2 CRAN complete only after",
     "benchmarks/RELEASES.md",
     "mote board"
   )
@@ -502,7 +814,7 @@ test_that("V1 completion audit maps the active goal to stop-rule evidence", {
   }
 })
 
-test_that("V1 documentation scope audit names required doc surfaces", {
+test_that("V2 CRAN documentation scope audit names required doc surfaces", {
   audit <- test_path("../../docs/v1-doc-scope-audit.md")
   skip_if_not(file.exists(audit), "source docs are not available in installed-package checks")
   lines <- readLines(audit, warn = FALSE)
@@ -521,6 +833,7 @@ test_that("V1 documentation scope audit names required doc surfaces", {
     "docs/native-generalized-spd-lobpcg.md",
     "docs/native-block-lanczos.md",
     "docs/hegelsvd_svd_acceleration.md",
+    "V2 CRAN Documentation Scope Audit",
     "tridiagonal generalized-with-diagonal-B native labels",
     "Documentation Boundaries",
     "Stop Rule"
@@ -531,16 +844,75 @@ test_that("V1 documentation scope audit names required doc surfaces", {
   expect_true(any(grepl("documentation-scope companion", lines, fixed = TRUE)))
 })
 
+test_that("prd defines V2 as CRAN release and moves hard solver expansion to V3", {
+  prd <- test_path("../../prd.json")
+  skip_if_not(file.exists(prd), "source PRD is not available in installed-package checks")
+  text <- paste(readLines(prd, warn = FALSE), collapse = "\n")
+  required <- c(
+    "\"release_strategy\"",
+    "\"v2_cran_release\"",
+    "Ship eigencore V2 as the first CRAN release",
+    "V2 is a release-hardening and publication boundary",
+    "\"v2_scope\"",
+    "\"release_name\": \"V2 CRAN release\"",
+    "\"v3_scope\"",
+    "Jacobi-Davidson",
+    "full nonsymmetric Krylov-Schur workflows",
+    "scalable sparse/matrix-free interior SVD",
+    "native general sparse LU ownership",
+    "native complex sparse/operator kernels",
+    "GraphBLAS-style sparse kernels",
+    "optional SLEPc/PETSc plugin",
+    "automatic adapters for broad matrix ecosystems"
+  )
+  for (needle in required) {
+    expect_true(grepl(needle, text, fixed = TRUE), info = needle)
+  }
+  v2_pos <- regexpr("\"v2_scope\"", text, fixed = TRUE)[[1]]
+  v3_pos <- regexpr("\"v3_scope\"", text, fixed = TRUE)[[1]]
+  jd_pos <- regexpr("Jacobi-Davidson", text, fixed = TRUE)[[1]]
+  expect_gt(v2_pos, 0)
+  expect_gt(v3_pos, v2_pos)
+  expect_gt(jd_pos, v3_pos)
+})
+
 test_that("known limitations match current shift-invert boundary", {
   limits <- test_path("../../docs/known-limitations.md")
   skip_if_not(file.exists(limits), "source docs are not available in installed-package checks")
   lines <- readLines(limits, warn = FALSE)
   required <- c(
     "Dense standard, dense generalized SPD, diagonal standard, sparse symmetric-tridiagonal standard, and sparse/diagonal tridiagonal generalized paths are native",
-    "general sparse standard and general sparse/diagonal generalized remain reference-labelled"
+    "shift_invert_factorization_contract_v1",
+    "general sparse uses an honest `Matrix::lu` reference contract",
+    "user solves use an external-cache contract"
   )
   for (needle in required) {
     expect_true(any(grepl(needle, lines, fixed = TRUE)), info = needle)
+  }
+})
+
+test_that("known limitations document complex ABI certificate contract", {
+  limits <- test_path("../../docs/known-limitations.md")
+  skip_if_not(file.exists(limits), "source docs are not available in installed-package checks")
+  text <- paste(readLines(limits, warn = FALSE), collapse = "\n")
+  required <- c(
+    "Complex ABI And Certificate Contract",
+    "ScalarType::C128",
+    "`dtype = \"complex\"`",
+    "`apply_adjoint()` to implement the conjugate",
+    "`storage = \"complex_dense_matrix\"`",
+    "`native = TRUE`",
+    "`native_operator_kernel = \"dense_complex_zgemm\"`",
+    "`V^* V`",
+    "`A v - sigma u`",
+    "`A^* u - sigma v`",
+    "Explicit dense complex sources use exact Frobenius scales",
+    "`norm_bound_type = \"frobenius_metadata\"`",
+    "`scale_is_estimate = FALSE`",
+    "Complex matrix-free solver operators fail with actionable future-scope messages"
+  )
+  for (needle in required) {
+    expect_true(grepl(needle, text, fixed = TRUE), info = needle)
   }
 })
 
@@ -585,6 +957,39 @@ test_that("randomized-rsvd gate enforces accuracy and speed versus rsvd", {
   expect_match(uncertified_ref$note, "rsvd baseline did not satisfy")
 })
 
+test_that("randomized-rsvd controller contract enforces native dense and sparse provenance", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+
+  source(benchmark_file("_helpers.R"))
+
+  rows <- data.frame(
+    method = c("eigencore_randomized", "eigencore_randomized"),
+    case = c("exact_low_rank_dense", "low_rank_sparse"),
+    rank = c(4L, 4L),
+    certificate_passed = c(TRUE, TRUE),
+    nconv = c(4L, 4L),
+    scale_is_estimate = c(FALSE, FALSE),
+    randomized_controller_native = c(TRUE, TRUE),
+    randomized_controller_kind = c(
+      "native_dense_randomized_controller",
+      "native_csc_randomized_controller"
+    ),
+    randomized_dense_native_controller = c(TRUE, FALSE),
+    randomized_sparse_native_controller = c(FALSE, TRUE),
+    randomized_native_certificate_diagnostics = c(TRUE, TRUE),
+    stringsAsFactors = FALSE
+  )
+
+  contracts <- randomized_controller_contract(rows)
+  expect_true(all(contracts$certificate_gate))
+  expect_true(all(contracts$provenance_gate))
+  expect_true(all(contracts$passed))
+
+  rows$randomized_controller_kind[[2L]] <- "randomized_range_finder"
+  failed <- randomized_controller_contract(rows)
+  expect_false(failed$passed[[2L]])
+})
+
 test_that("randomized-rsvd benchmark rows expose native projection diagnostics", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
 
@@ -614,13 +1019,31 @@ test_that("randomized-rsvd benchmark rows expose native projection diagnostics",
   for (rows in list(dense_rows, sparse_rows)) {
     expect_true("randomized_native_sketch" %in% names(rows))
     expect_true("randomized_sketch_kind" %in% names(rows))
+    expect_true("randomized_controller_native" %in% names(rows))
+    expect_true("randomized_controller_kind" %in% names(rows))
+    expect_true("randomized_dense_native_controller" %in% names(rows))
+    expect_true("randomized_sparse_native_controller" %in% names(rows))
+    expect_true("randomized_native_certificate_diagnostics" %in% names(rows))
+    expect_true("randomized_adaptive_stop_used" %in% names(rows))
+    expect_true("randomized_core_solver" %in% names(rows))
     expect_true("randomized_projection_kind" %in% names(rows))
     expect_true("randomized_projection_transposed" %in% names(rows))
     expect_true(rows$randomized_native_sketch)
     expect_equal(rows$randomized_sketch_kind, "native_fused_a_omega")
+    expect_match(rows$randomized_core_solver, "^native_")
     expect_equal(rows$randomized_projection_kind, "native_direct_qt_a")
     expect_true(rows$randomized_projection_transposed)
   }
+  expect_true(dense_rows$randomized_controller_native)
+  expect_equal(dense_rows$randomized_controller_kind, "native_dense_randomized_controller")
+  expect_true(dense_rows$randomized_dense_native_controller)
+  expect_false(dense_rows$randomized_sparse_native_controller)
+  expect_true(dense_rows$randomized_native_certificate_diagnostics)
+  expect_true(sparse_rows$randomized_controller_native)
+  expect_equal(sparse_rows$randomized_controller_kind, "native_csc_randomized_controller")
+  expect_true(sparse_rows$randomized_sparse_native_controller)
+  expect_false(sparse_rows$randomized_dense_native_controller)
+  expect_true(sparse_rows$randomized_native_certificate_diagnostics)
 })
 
 test_that("SVD surface H candidate preset selects production eigencore subject", {
@@ -652,6 +1075,10 @@ test_that("SVD surface H candidate preset selects production eigencore subject",
   expect_true("eigencore_block_golub_kahan_retained_cached" %in% svd_internal_methods())
   expect_true("eigencore_implicit_normal_lanczos" %in% svd_internal_methods())
   expect_true("eigencore_gram_dsyevx" %in% svd_internal_methods())
+  expect_true("eigencore_smallest" %in% svd_internal_methods())
+  expect_true("eigencore_golub_kahan_smallest" %in% svd_internal_methods())
+  expect_true("eigencore_interior" %in% svd_internal_methods())
+  expect_true("eigencore_golub_kahan_interior" %in% svd_internal_methods())
   expect_true("eigencore_golub_kahan_one_sided" %in% svd_internal_methods())
   expect_true("eigencore_irlba_lbd_one_sided" %in% svd_internal_methods())
   expect_true("eigencore_irlba_lbd_retained_native" %in% svd_internal_methods())
@@ -993,6 +1420,7 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
   expect_true(retained$retained_restart)
   expect_true(retained$retained_restart_native)
   expect_gt(retained$native_workspace_bytes, 0)
+  expect_equal(retained$native_workspace_allocator, "native_malloc")
   expect_false(retained$retained_av_cache)
   expect_true(retained$native_attempt_certification)
   expect_false(retained$native_early_stop)
@@ -1001,6 +1429,7 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
   expect_true(retained_cached$retained_restart)
   expect_true(retained_cached$retained_restart_native)
   expect_gt(retained_cached$native_workspace_bytes, 0)
+  expect_equal(retained_cached$native_workspace_allocator, "native_malloc")
   expect_true(retained_cached$retained_av_cache)
   expect_true(retained_cached$native_attempt_certification)
   expect_false(retained_cached$fallback_attempted)

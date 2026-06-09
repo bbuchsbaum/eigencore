@@ -7,12 +7,10 @@
 orthogonality_loss(Q, B = NULL)
 }
 \arguments{
-\item{Q}{Basis matrix.}
+\item{Q}{Matrix whose columns are expected to be orthonormal.}
 
-\item{B}{Metric, operator, or basis input.}
-
+\item{B}{Optional metric matrix for B-orthogonality.}
 }
 \description{
 Measure orthogonality loss.
 }
-\keyword{internal}

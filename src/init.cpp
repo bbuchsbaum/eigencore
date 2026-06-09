@@ -3,13 +3,16 @@
 #include <R_ext/Rdynload.h>
 
 extern "C" SEXP eigencore_dense_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_dense_complex_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_randomized_apply(SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_randomized_sketch(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_randomized_project_transposed(SEXP, SEXP);
+extern "C" SEXP eigencore_dense_randomized_svd_controller(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_randomized_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_randomized_sketch(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_randomized_project_transposed(SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_csc_randomized_svd_controller(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_centered_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_diagonal_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_native_apply_noalloc_check(SEXP, SEXP, SEXP, SEXP);
@@ -31,6 +34,7 @@ extern "C" SEXP eigencore_shift_invert_lanczos_dense_generalized(SEXP, SEXP, SEX
 extern "C" SEXP eigencore_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_golub_kahan_r_operator(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -63,7 +67,9 @@ extern "C" SEXP eigencore_lobpcg_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, S
 extern "C" SEXP eigencore_lobpcg_csc_shifted_tridiagonal(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_arnoldi_dense_cycle(SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_arnoldi_csc_cycle(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_arnoldi_r_operator_cycle(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_arnoldi_ritz(SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_arnoldi_refined_ritz(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_orthogonality_loss(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_eigen_residuals(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_eigen_certificate(SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -86,6 +92,8 @@ extern "C" SEXP eigencore_golub_kahan_ritz(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, S
 extern "C" SEXP eigencore_dense_is_symmetric(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen(SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevd(SEXP);
+extern "C" SEXP eigencore_dense_complex_hermitian_eigen(SEXP);
+extern "C" SEXP eigencore_dense_complex_general_eigen(SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen_selected(SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevx_selected(SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_left_gram_svd(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -94,17 +102,21 @@ extern "C" SEXP eigencore_csc_left_gram_svd_fast_result(SEXP, SEXP, SEXP, SEXP, 
 extern "C" SEXP eigencore_csc_right_gram_svd_fast_result(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_generalized_spd_eigen(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_svd(SEXP);
+extern "C" SEXP eigencore_dense_complex_svd(SEXP);
 extern "C" SEXP eigencore_tridiagonal_solve(SEXP, SEXP, SEXP, SEXP);
 
 static const R_CallMethodDef CallEntries[] = {
   {"eigencore_dense_block_apply", (DL_FUNC) &eigencore_dense_block_apply, 6},
+  {"eigencore_dense_complex_block_apply", (DL_FUNC) &eigencore_dense_complex_block_apply, 6},
   {"eigencore_dense_randomized_apply", (DL_FUNC) &eigencore_dense_randomized_apply, 3},
   {"eigencore_dense_randomized_sketch", (DL_FUNC) &eigencore_dense_randomized_sketch, 2},
   {"eigencore_dense_randomized_project_transposed", (DL_FUNC) &eigencore_dense_randomized_project_transposed, 2},
+  {"eigencore_dense_randomized_svd_controller", (DL_FUNC) &eigencore_dense_randomized_svd_controller, 6},
   {"eigencore_csc_block_apply", (DL_FUNC) &eigencore_csc_block_apply, 9},
   {"eigencore_csc_randomized_apply", (DL_FUNC) &eigencore_csc_randomized_apply, 6},
   {"eigencore_csc_randomized_sketch", (DL_FUNC) &eigencore_csc_randomized_sketch, 5},
   {"eigencore_csc_randomized_project_transposed", (DL_FUNC) &eigencore_csc_randomized_project_transposed, 5},
+  {"eigencore_csc_randomized_svd_controller", (DL_FUNC) &eigencore_csc_randomized_svd_controller, 9},
   {"eigencore_csc_centered_block_apply", (DL_FUNC) &eigencore_csc_centered_block_apply, 13},
   {"eigencore_diagonal_block_apply", (DL_FUNC) &eigencore_diagonal_block_apply, 7},
   {"eigencore_native_apply_noalloc_check", (DL_FUNC) &eigencore_native_apply_noalloc_check, 4},
@@ -126,6 +138,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_lanczos_csc", (DL_FUNC) &eigencore_lanczos_csc, 9},
   {"eigencore_golub_kahan_dense", (DL_FUNC) &eigencore_golub_kahan_dense, 7},
   {"eigencore_golub_kahan_csc", (DL_FUNC) &eigencore_golub_kahan_csc, 10},
+  {"eigencore_golub_kahan_r_operator", (DL_FUNC) &eigencore_golub_kahan_r_operator, 11},
   {"eigencore_golub_kahan_dense_fit", (DL_FUNC) &eigencore_golub_kahan_dense_fit, 9},
   {"eigencore_golub_kahan_csc_fit", (DL_FUNC) &eigencore_golub_kahan_csc_fit, 12},
   {"eigencore_irlba_lbd_dense_retained", (DL_FUNC) &eigencore_irlba_lbd_dense_retained, 14},
@@ -158,7 +171,9 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_lobpcg_csc_shifted_tridiagonal", (DL_FUNC) &eigencore_lobpcg_csc_shifted_tridiagonal, 10},
   {"eigencore_arnoldi_dense_cycle", (DL_FUNC) &eigencore_arnoldi_dense_cycle, 3},
   {"eigencore_arnoldi_csc_cycle", (DL_FUNC) &eigencore_arnoldi_csc_cycle, 6},
+  {"eigencore_arnoldi_r_operator_cycle", (DL_FUNC) &eigencore_arnoldi_r_operator_cycle, 4},
   {"eigencore_arnoldi_ritz", (DL_FUNC) &eigencore_arnoldi_ritz, 3},
+  {"eigencore_arnoldi_refined_ritz", (DL_FUNC) &eigencore_arnoldi_refined_ritz, 4},
   {"eigencore_orthogonality_loss", (DL_FUNC) &eigencore_orthogonality_loss, 2},
   {"eigencore_dense_eigen_residuals", (DL_FUNC) &eigencore_dense_eigen_residuals, 4},
   {"eigencore_dense_eigen_certificate", (DL_FUNC) &eigencore_dense_eigen_certificate, 5},
@@ -181,6 +196,8 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_dense_is_symmetric", (DL_FUNC) &eigencore_dense_is_symmetric, 2},
   {"eigencore_dense_symmetric_eigen", (DL_FUNC) &eigencore_dense_symmetric_eigen, 1},
   {"eigencore_dense_symmetric_eigen_dsyevd", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyevd, 1},
+  {"eigencore_dense_complex_hermitian_eigen", (DL_FUNC) &eigencore_dense_complex_hermitian_eigen, 1},
+  {"eigencore_dense_complex_general_eigen", (DL_FUNC) &eigencore_dense_complex_general_eigen, 1},
   {"eigencore_dense_symmetric_eigen_selected", (DL_FUNC) &eigencore_dense_symmetric_eigen_selected, 3},
   {"eigencore_dense_symmetric_eigen_dsyevx_selected", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyevx_selected, 3},
   {"eigencore_csc_left_gram_svd", (DL_FUNC) &eigencore_csc_left_gram_svd, 6},
@@ -189,6 +206,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_csc_right_gram_svd_fast_result", (DL_FUNC) &eigencore_csc_right_gram_svd_fast_result, 6},
   {"eigencore_dense_generalized_spd_eigen", (DL_FUNC) &eigencore_dense_generalized_spd_eigen, 2},
   {"eigencore_dense_svd", (DL_FUNC) &eigencore_dense_svd, 1},
+  {"eigencore_dense_complex_svd", (DL_FUNC) &eigencore_dense_complex_svd, 1},
   {"eigencore_tridiagonal_solve", (DL_FUNC) &eigencore_tridiagonal_solve, 4},
   {NULL, NULL, 0}
 };

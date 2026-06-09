@@ -7,12 +7,12 @@
 symmetric_operator(A, validate = TRUE, tol = 1e-10)
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Operator-like object.}
 
-\item{validate}{Whether to validate assumptions.}
+\item{validate}{Whether to check the adjoint identity before marking the
+operator symmetric.}
 
-\item{tol}{Numerical tolerance.}
-
+\item{tol}{Relative tolerance for the adjoint check.}
 }
 \description{
 Mark an operator as symmetric/Hermitian.

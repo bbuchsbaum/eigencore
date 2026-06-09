@@ -7,11 +7,16 @@
 diagnostics(x, ...)
 }
 \arguments{
-\item{x}{Object.}
+\item{x}{An eigencore result object.}
 
-\item{...}{Additional arguments passed to methods.}
-
+\item{...}{Reserved for future methods.}
 }
 \description{
 Extract diagnostics.
+}
+\examples{
+fit <- eig_partial(diag(c(3, 2, 1)), k = 1, target = largest())
+d <- diagnostics(fit)
+d$nconv
+d$method
 }

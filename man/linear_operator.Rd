@@ -15,21 +15,37 @@ linear_operator(
 )
 }
 \arguments{
-\item{dim}{Operator dimensions.}
+\item{dim}{Integer vector of length two giving row and column dimensions.}
 
-\item{apply}{Block apply callback.}
+\item{apply}{Function implementing block multiplication by the operator.}
 
-\item{apply_adjoint}{Adjoint block apply callback.}
+\item{apply_adjoint}{Optional function implementing block multiplication by
+the adjoint operator.}
 
-\item{dtype}{Scalar dtype.}
+\item{dtype}{Scalar character type label, currently \code{"double"} or
+\code{"complex"}.}
 
-\item{structure}{Operator structure descriptor.}
+\item{structure}{Eigencore structure descriptor such as \code{\link[=general]{general()}} or
+\code{\link[=hermitian]{hermitian()}}.}
 
-\item{name}{Optional operator name.}
+\item{name}{Optional operator label used in plans and diagnostics.}
 
-\item{metadata}{Optional operator metadata.}
-
+\item{metadata}{Optional list of implementation metadata.}
 }
 \description{
 Create a block-native linear operator.
+}
+\examples{
+A <- diag(c(3, 2, 1))
+op <- linear_operator(
+  dim = dim(A),
+  apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+    Z <- alpha * (A \%*\% X)
+    if (is.null(Y) || beta == 0) Z else Z + beta * Y
+  },
+  structure = hermitian(),
+  metadata = list(frobenius_norm = sqrt(sum(A^2)))
+)
+fit <- eig_partial(op, k = 1, target = largest())
+values(fit)
 }

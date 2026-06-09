@@ -7,11 +7,16 @@
 certificate(x, ...)
 }
 \arguments{
-\item{x}{Object.}
+\item{x}{An eigencore result object.}
 
-\item{...}{Additional arguments passed to methods.}
-
+\item{...}{Reserved for future methods.}
 }
 \description{
 Extract a result certificate.
+}
+\examples{
+fit <- eig_partial(diag(c(3, 2, 1)), k = 1, target = largest())
+cert <- certificate(fit)
+cert$passed
+cert$max_residual
 }

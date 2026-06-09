@@ -63,6 +63,9 @@ test_that("solve dispatch helpers follow plan method labels", {
     method = "native prototype Golub-Kahan"
   )))
   expect_true(eigencore:::plan_dispatches_golub_kahan(list(
+    method = eigencore:::native_matrix_free_golub_kahan_label()
+  )))
+  expect_true(eigencore:::plan_dispatches_golub_kahan(list(
     method = "prototype Golub-Kahan"
   )))
   expect_false(eigencore:::plan_dispatches_golub_kahan(list(
@@ -232,6 +235,37 @@ test_that("native dense SVD fallback matches base SVD on rectangular inputs", {
   expect_match(fit$warnings, "native dense LAPACK SVD fallback")
 })
 
+test_that("native dense complex kernels match base LAPACK paths", {
+  H <- matrix(c(1, 1i, -1i, 2), 2, 2)
+  hfit <- eig_partial(H, k = 2L, target = largest(), tol = 1e-10)
+  horacle <- eigen(H, symmetric = TRUE)
+
+  expect_equal(hfit$method, eigencore:::native_dense_complex_hermitian_label())
+  expect_equal(values(hfit), horacle$values, tolerance = 1e-10)
+  expect_true(certificate(hfit)$passed)
+  expect_match(hfit$warnings, "native dense complex Hermitian LAPACK fallback")
+
+  G <- matrix(c(0, 1i, 2, 0), 2, 2)
+  gfit <- eig_partial(G, k = 2L, target = largest_magnitude(), tol = 1e-10)
+  goracle <- eigen(G)
+
+  expect_equal(gfit$method, eigencore:::native_dense_complex_general_label())
+  expect_equal(sort(Mod(values(gfit))), sort(Mod(goracle$values)), tolerance = 1e-10)
+  expect_true(certificate(gfit)$passed)
+  expect_false(certificate(gfit)$orthogonality_required)
+
+  A <- matrix(c(1 + 1i, 2, 3 - 1i, 4, 5i, 6), nrow = 3)
+  sfit <- svd_partial(A, rank = 2L, tol = 1e-10)
+  soracle <- svd(A, nu = 2, nv = 2)
+
+  expect_equal(sfit$method, eigencore:::native_dense_complex_svd_label())
+  expect_equal(values(sfit), soracle$d[1:2], tolerance = 1e-10)
+  expect_true(is.complex(left_vectors(sfit)))
+  expect_true(is.complex(right_vectors(sfit)))
+  expect_true(certificate(sfit)$passed)
+  expect_match(sfit$warnings, "native dense complex LAPACK SVD fallback")
+})
+
 test_that("randomized SVD path returns honest certified results on low-rank input", {
   set.seed(31)
   U <- qr.Q(qr(matrix(rnorm(12 * 3), nrow = 12, ncol = 3)))
@@ -240,11 +274,63 @@ test_that("randomized SVD path returns honest certified results on low-rank inpu
   fit <- svd_partial(A, rank = 2, method = randomized(oversample = 4, n_iter = 1),
                      seed = 31, tol = 1e-8)
 
-  expect_equal(fit$plan$method, "reference randomized SVD prototype")
+  expect_equal(fit$plan$method, eigencore:::native_dense_randomized_svd_label())
   expect_equal(values(fit), c(9, 5), tolerance = 1e-8)
   expect_true(certificate(fit)$passed)
-  expect_equal(fit$restart$kind, "randomized_range_finder")
-  expect_false(fit$restart$native)
+  expect_equal(fit$restart$kind, "native_dense_randomized_controller")
+  expect_true(fit$restart$native)
+  expect_true(fit$restart$controller_native)
+  expect_true(fit$restart$dense_native_controller)
+  expect_true(fit$restart$native_certificate_diagnostics)
+  expect_true(fit$restart$adaptive_stop_used)
+  expect_equal(fit$restart$iterations_used, 1L)
+  expect_equal(fit$plan$controls$randomized_controller, "native_dense_qr")
+  expect_true(fit$plan$controls$randomized_controller_native)
+})
+
+test_that("randomized SVD uses native sparse QR controller and keeps non-QR reference-labelled", {
+  A <- matrix(rnorm(20 * 8), nrow = 20)
+  lu_fit <- svd_partial(
+    A,
+    rank = 3L,
+    method = randomized(normalizer = "lu"),
+    seed = 21,
+    tol = 1e-8
+  )
+  expect_equal(lu_fit$plan$method, "reference randomized SVD prototype")
+  expect_equal(lu_fit$plan$controls$randomized_controller, "reference_control")
+  expect_false(lu_fit$plan$controls$randomized_controller_native)
+
+  set.seed(22)
+  sparse <- Matrix::rsparsematrix(40L, 6L, density = 0.4) %*%
+    Matrix::rsparsematrix(6L, 20L, density = 0.4)
+  sparse_fit <- svd_partial(
+    sparse,
+    rank = 3L,
+    method = randomized(),
+    seed = 22,
+    tol = 1e-8
+  )
+  expect_equal(sparse_fit$plan$method, eigencore:::native_csc_randomized_svd_label())
+  expect_equal(sparse_fit$plan$controls$randomized_controller, "native_csc_qr")
+  expect_true(sparse_fit$plan$controls$randomized_controller_native)
+  expect_true(sparse_fit$restart$native_sketch)
+  expect_true(sparse_fit$restart$controller_native)
+  expect_false(sparse_fit$restart$dense_native_controller)
+  expect_true(sparse_fit$restart$sparse_native_controller)
+  expect_equal(sparse_fit$restart$controller_kind, "native_csc_randomized_controller")
+  expect_true(certificate(sparse_fit)$passed)
+
+  sparse_lu_fit <- svd_partial(
+    sparse,
+    rank = 3L,
+    method = randomized(normalizer = "lu"),
+    seed = 22,
+    tol = 1e-8
+  )
+  expect_equal(sparse_lu_fit$plan$method, "reference randomized SVD prototype")
+  expect_equal(sparse_lu_fit$plan$controls$randomized_controller, "reference_control")
+  expect_false(sparse_lu_fit$plan$controls$randomized_controller_native)
 })
 
 test_that("shift_invert dense native path returns certified original eigenpairs", {
@@ -287,15 +373,17 @@ test_that("solver paths refuse implicit sparse densification", {
   )
 
   sparse_fit <- eig_partial(A, k = 1, seed = 12, allow_dense_fallback = "never")
-  expect_equal(sparse_fit$plan$method, eigencore:::native_arnoldi_label())
+  expect_equal(sparse_fit$plan$method, eigencore:::native_refined_arnoldi_label())
   expect_true(sparse_fit$restart$native)
+  expect_true(sparse_fit$restart$refined_extraction_native)
 
   explicit_fit <- eig_partial(A, k = 1, seed = 12, allow_dense_fallback = "always")
-  expect_equal(explicit_fit$plan$method, eigencore:::native_arnoldi_label())
+  expect_equal(explicit_fit$plan$method, eigencore:::native_refined_arnoldi_label())
 
   fit <- eig_partial(as.matrix(A), k = 1)
-  expect_equal(fit$plan$method, eigencore:::native_arnoldi_label())
+  expect_equal(fit$plan$method, eigencore:::native_refined_arnoldi_label())
   expect_true(fit$restart$native)
+  expect_true(fit$restart$refined_extraction_native)
 })
 
 test_that("RSpectra-compatible shims expose core fields", {
@@ -809,7 +897,7 @@ test_that("selected native tridiagonal eigensolve matches dense projected oracle
   expect_equal(largest$values, sort(oracle$values, decreasing = TRUE)[1:2], tolerance = 1e-12)
 })
 
-test_that("prototype Golub-Kahan solves matrix-free rectangular SVD", {
+test_that("native callback Golub-Kahan solves matrix-free rectangular SVD", {
   sing <- c(7, 5, 3, 1)
   m <- 6
   n <- length(sing)
@@ -835,7 +923,10 @@ test_that("prototype Golub-Kahan solves matrix-free rectangular SVD", {
   expect_equal(values(fit), c(7, 5), tolerance = 1e-10)
   expect_true(certificate(fit)$passed)
   expect_equal(fit$nconv, 2)
-  expect_equal(fit$method, "prototype Golub-Kahan")
+  expect_equal(fit$method, eigencore:::native_matrix_free_golub_kahan_label())
+  expect_true(fit$restart$native)
+  expect_true(fit$restart$native_callback)
+  expect_true(fit$restart$callback_boundary)
 })
 
 test_that("reference Golub-Kahan uses shared scalar subspace validation", {
@@ -869,7 +960,9 @@ test_that("auto uses Golub-Kahan for matrix-free SVD", {
 
   fit <- svd_partial(op, rank = 1, seed = 456)
   expect_equal(values(fit), 4, tolerance = 1e-10)
-  expect_equal(fit$plan$method, "prototype Golub-Kahan")
+  expect_equal(fit$plan$method, eigencore:::native_matrix_free_golub_kahan_label())
+  expect_true(fit$plan$controls$matrix_free_native)
+  expect_true(fit$plan$controls$callback_boundary)
 })
 
 test_that("auto uses native CSC-backed Golub-Kahan for sparse rectangular SVD", {
@@ -911,7 +1004,10 @@ test_that("dense auto SVD stays on LAPACK fallback until retained path wins gate
 
   expect_identical(plan$method, "native dense LAPACK SVD fallback")
   expect_identical(fit$method, "native dense LAPACK SVD fallback")
-  expect_false(identical(fit$plan$method, "native retained Golub-Kahan SVD (thick restart)"))
+  expect_false(identical(
+    fit$plan$method,
+    eigencore:::native_retained_golub_kahan_diagnostic_label()
+  ))
   expect_true(certificate(fit)$passed)
 })
 
@@ -957,11 +1053,17 @@ test_that("native Golub-Kahan exposes adaptive subspace metadata", {
   )
   fit <- svd_partial(A, rank = 3, tol = 1e-8, seed = 445)
 
-  expect_equal(fit$method, "native retained Golub-Kahan SVD (thick restart)")
+  expect_equal(fit$method, eigencore:::native_retained_golub_kahan_diagnostic_label())
+  expect_equal(fit$plan$controls$promotion_status, "diagnostic_only")
+  expect_equal(fit$plan$controls$promotion_gate, "post_v1_svd_hard_surface")
+  expect_equal(fit$plan$controls$promotion_gate_issue, "bd-01KTE8G6RYE4RD5F6CN7SNKKC6")
+  expect_equal(fit$plan$controls$closed_decision_issue, "bd-01KTE8J9SF16Y1832D8HQQ9KEC")
+  expect_match(fit$warnings, "not production-promoted", fixed = TRUE)
   expect_true(all(c(
     "kind", "implemented", "native", "thick_restart",
     "retained_restart", "retained_restart_native",
-    "native_workspace_bytes", "basis_returned", "attempt_history"
+    "native_workspace_bytes", "native_workspace_allocator",
+    "basis_returned", "attempt_history"
   ) %in% names(fit$restart)))
   expect_equal(fit$restart$kind, "block_golub_kahan_native_retained_cycle")
   expect_true(fit$restart$thick_restart)
@@ -974,6 +1076,7 @@ test_that("native Golub-Kahan exposes adaptive subspace metadata", {
   expect_gte(fit$restart$final_max_subspace, fit$restart$final_iterations)
   expect_gte(fit$nconv, 3L)
   expect_gt(fit$restart$native_workspace_bytes, 0)
+  expect_equal(fit$restart$native_workspace_allocator, "native_malloc")
   expect_false(fit$restart$basis_returned)
   expect_gt(fit$restart$total_ortho_passes, 0L)
   expect_true(all(c(

@@ -19,6 +19,7 @@
 ^[.]rcmdcheck_result[.]rds$
 ^[.]github$
 ^README[.]Rmd$
+^README[.]html$
 ^_pkgdown[.]yml$
 ^pkgdown_site$
 ^cran-comments[.]md$

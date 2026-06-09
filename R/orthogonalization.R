@@ -1,4 +1,9 @@
 #' Modified Gram-Schmidt with two passes.
+#'
+#' @param X Numeric matrix whose columns are orthogonalized.
+#' @param against Optional matrix whose columns are projected out before
+#'   orthogonalization.
+#' @param tol Orthogonality warning tolerance.
 mgs2 <- function(X, against = NULL, tol = sqrt(.Machine$double.eps)) {
   X <- as.matrix(X)
   if (!is.null(against)) {
@@ -26,6 +31,9 @@ native_mgs2 <- function(X, tol = sqrt(.Machine$double.eps)) {
 }
 
 #' Cholesky QR with a corrective second pass.
+#'
+#' @param X Numeric matrix whose columns are orthogonalized.
+#' @param tol Orthogonality warning tolerance.
 cholqr2 <- function(X, tol = sqrt(.Machine$double.eps)) {
   X <- as.matrix(X)
   decomp <- native_cholqr2(X)
@@ -47,6 +55,13 @@ native_cholqr2 <- function(X) {
 }
 
 #' Orthogonalize columns in the B-inner product.
+#'
+#' @param X Numeric matrix whose columns are orthogonalized.
+#' @param B Symmetric positive-definite metric matrix defining the inner
+#'   product.
+#' @param against Optional matrix whose columns are projected out in the
+#'   B-inner product.
+#' @param tol Orthogonality warning tolerance.
 b_orthogonalize <- function(X, B, against = NULL, tol = sqrt(.Machine$double.eps)) {
   X <- as.matrix(X)
   B <- as.matrix(B)
@@ -90,6 +105,9 @@ native_diagonal_b_cholqr2 <- function(X, diagonal, unit = FALSE) {
 }
 
 #' Measure orthogonality loss.
+#'
+#' @param Q Matrix whose columns are expected to be orthonormal.
+#' @param B Optional metric matrix for B-orthogonality.
 orthogonality_loss <- function(Q, B = NULL) {
   Q <- as.matrix(Q)
   if (is.null(B)) {
@@ -100,6 +118,13 @@ orthogonality_loss <- function(Q, B = NULL) {
 }
 
 #' Rayleigh-Ritz projection in a trial basis.
+#'
+#' @param A Dense matrix defining the projected eigenproblem.
+#' @param Q Trial-basis matrix with basis vectors in columns.
+#' @param B Optional symmetric positive-definite metric matrix.
+#' @param target Eigencore target descriptor.
+#' @param symmetric Whether the projected problem should be treated as
+#'   symmetric/Hermitian.
 rayleigh_ritz <- function(A, Q, B = NULL, target = largest(), symmetric = TRUE) {
   A <- as.matrix(A)
   Q <- as.matrix(Q)

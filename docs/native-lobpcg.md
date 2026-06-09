@@ -2,26 +2,15 @@
 
 ## Goal
 
-Turn the current `reference LOBPCG prototype` into a production native path for
-standard Hermitian and generalized SPD problems. The first performance target is
-smallest graph-Laplacian eigenpairs with a solve-style preconditioner.
+Keep standard Hermitian LOBPCG as a diagnostic/prototype path unless a future
+design beats the current eigencore scalar/tridiagonal default. Generalized SPD
+LOBPCG has its own promoted scoped surface and is documented separately.
 
 ## Current Evidence
 
-On the quick path-Laplacian gate (`n = 200`, `k = 5`, `tol = 1e-8`):
+On the 2026-06-06 path-Laplacian probe (`n = 200, 1000, 2000`, `k = 5`,
+`tol = 1e-8`):
 
-- scalar native thick-restart Lanczos certifies but is slower than RSpectra;
-- native block Lanczos prototype certifies only with a full subspace and is
-  slower than the scalar path;
-- reference preconditioned LOBPCG certifies in about 10 iterations and is
-  faster than scalar eigencore and PRIMME;
-- reference preconditioned LOBPCG still loses to RSpectra and allocates much
-  more memory because factorization/preconditioner application currently runs
-  through R/Matrix.
-- a native shifted tridiagonal preconditioner preserves the useful iteration
-  count on path-Laplacian-style gates and reduces preconditioner memory versus
-  the Cholesky-backed setup, but the R-level LOBPCG loop still keeps the memory
-  gate open.
 - built-in preconditioners are typed functions with inspectable `kind`,
   `native`, `factorization`, `shift`, and call-count diagnostics, so the
   planner and benchmark gates can distinguish opaque R callbacks from
@@ -29,11 +18,16 @@ On the quick path-Laplacian gate (`n = 200`, `k = 5`, `tol = 1e-8`):
 - a native standard Hermitian LOBPCG prototype now runs the iteration loop,
   trial-basis orthogonalization, Rayleigh-Ritz projection, and shifted
   tridiagonal preconditioner application in C++ for dense double and
-  `dgCMatrix` operators. On the path-Laplacian staging gate
-  (`n = 200, 1000, 2000`, `k = 5`) it certifies, beats scalar eigencore and the
-  best certified external reference, and passes the restored `0.25` memory
-  ratio gate. Reference failures are recorded as uncertified benchmark rows
-  rather than aborting the gate.
+  `dgCMatrix` operators.
+- the native shifted-tridiagonal LOBPCG row certifies `5/5` and beats certified
+  external references by about `2.44x`, `8.11x`, and `6.44x`, with memory gates
+  green.
+- the same rows fail the scalar-speed gate against the current eigencore
+  scalar/tridiagonal default, with speed ratios of about `0.65`, `0.32`, and
+  `0.14`.
+- standard Hermitian LOBPCG/preconditioner promotion is therefore closed as a
+  documented no-promotion decision under `bd-01KTEH4G1QPR4RT14B4G78PF1M`; keep
+  the native label diagnostic/prototype-only.
 - a direct large path-Laplacian probe (`n = 10000`, `k = 20`, `tol = 1e-8`,
   shifted tridiagonal preconditioner) certifies 20/20 requested pairs in about
   `4.8s` locally. This is evidence for the LOBPCG/M milestone, not a substitute
@@ -77,14 +71,9 @@ int apply_preconditioner(void* impl,
 
 ## Acceptance
 
-- No R allocations inside the native iteration loop for the native standard
-  Hermitian path with built-in operators and the shifted tridiagonal
-  preconditioner.
-- Preconditioned path certifies the Laplacian staging gate faster than scalar
-  eigencore and the best certified external reference.
-- Memory ratio versus the best sparse reference improves materially over the
-  reference R/Matrix path and stays inside the preconditioned LOBPCG staging
-  ceiling.
-- Planner label changes from `reference LOBPCG prototype` to
-  `native standard Hermitian LOBPCG prototype` only for supported built-in
-  operator/preconditioner combinations.
+- The diagnostic path must keep certifying supported path-Laplacian probes.
+- Planner labels must stay explicit: `native standard Hermitian LOBPCG
+  prototype` is not a production-promotion label.
+- Any future promotion attempt must beat the current eigencore
+  scalar/tridiagonal default, not only external references, while preserving
+  no-densification and certificate checks.

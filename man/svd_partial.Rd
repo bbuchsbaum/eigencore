@@ -17,36 +17,31 @@ svd_partial(
 )
 }
 \arguments{
-\item{A}{
-Input matrix or operator.
-}
-\item{rank}{
-Requested SVD rank.
-}
-\item{target}{
-Spectral target descriptor.
-}
-\item{method}{
-Solver method descriptor.
-}
-\item{tol}{
-Numerical tolerance.
-}
-\item{vectors}{
-Vector-return mode.
-}
-\item{seed}{
-Optional random seed.
-}
-\item{certify}{
-Whether to compute certificates.
-}
-\item{allow_dense_fallback}{
-Dense fallback policy. \code{"auto"} applies the \code{eigencore.dense_fallback_mb}
-budget and refuses sparse densification; \code{"never"} disables dense fallback;
-\code{"always"} explicitly permits fallback, including sparse materialization.
-}
+\item{A}{Matrix or eigencore operator.}
+
+\item{rank}{Number of singular values to compute.}
+
+\item{target}{Eigencore singular-value target descriptor.}
+
+\item{method}{Solver method descriptor.}
+
+\item{tol}{Convergence and certification tolerance.}
+
+\item{vectors}{Which singular-vector sides to compute.}
+
+\item{seed}{Optional random seed for stochastic solver components.}
+
+\item{certify}{Whether to compute certification diagnostics.}
+
+\item{allow_dense_fallback}{Dense fallback policy.}
 }
 \description{
 Compute a partial singular-value decomposition.
+}
+\examples{
+set.seed(1)
+X <- matrix(rnorm(60), 10, 6)
+fit <- svd_partial(X, rank = 3)
+values(fit)
+certificate(fit)$passed
 }

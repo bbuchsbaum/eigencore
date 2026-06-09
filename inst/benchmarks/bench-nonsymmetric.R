@@ -9,6 +9,9 @@ tol <- 1e-10
 nonsymmetric_oracle_label <- "dense LAPACK general eigen oracle (prototype fallback)"
 nonsymmetric_reference_arnoldi_label <- "reference Arnoldi (prototype/oracle fallback)"
 nonsymmetric_native_arnoldi_label <- "native Arnoldi cycle + native Ritz extraction (compatibility)"
+nonsymmetric_native_refined_arnoldi_label <- "native Arnoldi cycle + native refined Ritz extraction (V2 tranche)"
+nonsymmetric_native_matrix_free_arnoldi_label <- "native matrix-free Arnoldi callback cycle + native Ritz extraction"
+nonsymmetric_native_dense_complex_label <- "native dense complex general LAPACK fallback"
 
 nonsymmetric_real_nonnormal <- function(n) {
   values <- seq(n, 1)
@@ -29,6 +32,17 @@ nonsymmetric_complex_blocks <- function(n) {
   A
 }
 
+nonsymmetric_dense_complex_matrix <- function(n) {
+  A <- nonsymmetric_complex_blocks(n) + 0i
+  A[1, 2] <- 1i
+  A[2, 1] <- 2
+  if (n >= 4L) {
+    A[3, 4] <- -1i
+    A[4, 3] <- 1
+  }
+  A
+}
+
 nonsymmetric_sparse_real <- function(n) {
   A <- Matrix::sparseMatrix(
     i = c(seq_len(n), seq_len(n - 1L)),
@@ -43,9 +57,33 @@ nonsymmetric_sparse_complex_blocks <- function(n) {
   methods::as(Matrix::Matrix(nonsymmetric_complex_blocks(n), sparse = TRUE), "dgCMatrix")
 }
 
+nonsymmetric_matrix_free_nonnormal <- function(n) {
+  A <- nonsymmetric_real_nonnormal(n)
+  linear_operator(
+    dim = dim(A),
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      out <- alpha * (A %*% X)
+      if (!is.null(Y) && beta != 0) {
+        out <- out + beta * Y
+      }
+      out
+    },
+    structure = general(),
+    name = "matrix_free_nonnormal",
+    metadata = list(frobenius_norm = sqrt(sum(A^2)))
+  )
+}
+
 nonsymmetric_cases <- function(quick = FALSE) {
   if (quick) {
     return(list(
+      list(
+        case = "matrix_free_nonnormal",
+        n = 8L, k = 3L, api = "eig_partial",
+        target = largest_real(),
+        which = NA_character_,
+        build = nonsymmetric_matrix_free_nonnormal
+      ),
       list(
         case = "dense_native_arnoldi_lm",
         n = 8L, k = 3L, api = "eig_partial",
@@ -68,6 +106,13 @@ nonsymmetric_cases <- function(quick = FALSE) {
         build = nonsymmetric_complex_blocks
       ),
       list(
+        case = "dense_complex_lapack_li",
+        n = 6L, k = 2L, api = "eigs",
+        target = largest_imaginary(),
+        which = "LI",
+        build = nonsymmetric_dense_complex_matrix
+      ),
+      list(
         case = "sparse_native_arnoldi_lr",
         n = 8L, k = 3L, api = "eig_partial",
         target = largest_real(),
@@ -85,6 +130,13 @@ nonsymmetric_cases <- function(quick = FALSE) {
   }
 
   list(
+    list(
+      case = "matrix_free_nonnormal",
+      n = 30L, k = 6L, api = "eig_partial",
+      target = largest_real(),
+      which = NA_character_,
+      build = nonsymmetric_matrix_free_nonnormal
+    ),
     list(
       case = "dense_native_arnoldi_lm",
       n = 80L, k = 8L, api = "eig_partial",
@@ -105,6 +157,13 @@ nonsymmetric_cases <- function(quick = FALSE) {
       target = largest_imaginary(),
       which = "LI",
       build = nonsymmetric_complex_blocks
+    ),
+    list(
+      case = "dense_complex_lapack_li",
+      n = 40L, k = 4L, api = "eigs",
+      target = largest_imaginary(),
+      which = "LI",
+      build = nonsymmetric_dense_complex_matrix
     ),
     list(
       case = "sparse_native_arnoldi_lr",
@@ -196,6 +255,9 @@ benchmark_nonsymmetric_case <- function(case, iterations = 3L, seed = 1L) {
     stage_ritz_extraction_seconds =
       nonsymmetric_stage_second(stage_seconds, "ritz_extraction"),
     ritz_extraction_native = restart$ritz_extraction_native %||% NA,
+    arnoldi_extraction = restart$extraction %||% NA_character_,
+    refined_extraction_native = restart$refined_extraction_native %||% NA,
+    krylov_schur = restart$krylov_schur %||% NA,
     value_real_1 = Re(vals[[1L]]),
     value_imag_1 = Im(vals[[1L]]),
     complex_values = is.complex(vals),
@@ -204,6 +266,12 @@ benchmark_nonsymmetric_case <- function(case, iterations = 3L, seed = 1L) {
     dense_oracle_label = identical(diag$method, nonsymmetric_oracle_label),
     reference_arnoldi_label = identical(diag$method, nonsymmetric_reference_arnoldi_label),
     native_arnoldi_label = identical(diag$method, nonsymmetric_native_arnoldi_label),
+    native_refined_arnoldi_label =
+      identical(diag$method, nonsymmetric_native_refined_arnoldi_label),
+    native_matrix_free_arnoldi_label =
+      identical(diag$method, nonsymmetric_native_matrix_free_arnoldi_label),
+    native_dense_complex_label = identical(diag$method, nonsymmetric_native_dense_complex_label),
+    matrix_free_native = isTRUE(restart$matrix_free),
     arnoldi_native = grepl("native.*arnoldi|arnoldi.*native", diag$method, ignore.case = TRUE),
     warnings = paste(diag$warnings %||% character(), collapse = "; "),
     seed = seed,
@@ -220,7 +288,10 @@ nonsymmetric_contract <- function(rows) {
       !isTRUE(row$orthogonality_required)
     label_gate <- isTRUE(row$dense_oracle_label) ||
       isTRUE(row$reference_arnoldi_label) ||
-      isTRUE(row$native_arnoldi_label)
+      isTRUE(row$native_arnoldi_label) ||
+      isTRUE(row$native_refined_arnoldi_label) ||
+      isTRUE(row$native_matrix_free_arnoldi_label) ||
+      isTRUE(row$native_dense_complex_label)
     warning_gate <- (
       isTRUE(row$dense_oracle_label) &&
         grepl("dense general eigen oracle", row$warnings, fixed = TRUE) &&
@@ -233,6 +304,18 @@ nonsymmetric_contract <- function(rows) {
       isTRUE(row$native_arnoldi_label) &&
         grepl("native Arnoldi cycle", row$warnings, fixed = TRUE) &&
         grepl("right residuals certified", row$warnings, fixed = TRUE)
+    ) || (
+      isTRUE(row$native_refined_arnoldi_label) &&
+        grepl("native refined Ritz extraction", row$warnings, fixed = TRUE) &&
+        grepl("right residuals certified", row$warnings, fixed = TRUE)
+    ) || (
+      isTRUE(row$native_matrix_free_arnoldi_label) &&
+        grepl("native matrix-free Arnoldi callback cycle", row$warnings, fixed = TRUE) &&
+        grepl("right residuals certified", row$warnings, fixed = TRUE)
+    ) || (
+      isTRUE(row$native_dense_complex_label) &&
+        grepl("native dense complex general LAPACK fallback", row$warnings, fixed = TRUE) &&
+        grepl("right residuals certified", row$warnings, fixed = TRUE)
     )
     data.frame(
       case = row$case,
@@ -244,8 +327,20 @@ nonsymmetric_contract <- function(rows) {
       label_gate = label_gate,
       reference_arnoldi_label = isTRUE(row$reference_arnoldi_label),
       native_arnoldi_label = isTRUE(row$native_arnoldi_label),
+      native_refined_arnoldi_label = isTRUE(row$native_refined_arnoldi_label),
+      native_matrix_free_arnoldi_label = isTRUE(row$native_matrix_free_arnoldi_label),
+      native_dense_complex_label = isTRUE(row$native_dense_complex_label),
+      matrix_free_native = isTRUE(row$matrix_free_native),
       arnoldi_native = isTRUE(row$arnoldi_native),
-      restart_gate = if (isTRUE(row$native_arnoldi_label)) {
+      restart_gate = if (isTRUE(row$native_refined_arnoldi_label)) {
+        !is.na(row$max_restarts) && row$max_restarts >= 1L &&
+          !is.na(row$restart_count) &&
+          isTRUE(row$ritz_extraction_native) &&
+          isTRUE(row$refined_extraction_native) &&
+          identical(row$arnoldi_extraction, "refined_ritz") &&
+          !isTRUE(row$krylov_schur)
+      } else if (isTRUE(row$native_arnoldi_label) ||
+          isTRUE(row$native_matrix_free_arnoldi_label)) {
         !is.na(row$max_restarts) && row$max_restarts >= 1L &&
           !is.na(row$restart_count) &&
           isTRUE(row$ritz_extraction_native)
@@ -255,7 +350,15 @@ nonsymmetric_contract <- function(rows) {
       warning_gate = warning_gate,
       passed = certificate_gate && right_residual_gate && label_gate &&
         warning_gate &&
-        (if (isTRUE(row$native_arnoldi_label)) {
+        (if (isTRUE(row$native_refined_arnoldi_label)) {
+          !is.na(row$max_restarts) && row$max_restarts >= 1L &&
+            !is.na(row$restart_count) &&
+            isTRUE(row$ritz_extraction_native) &&
+            isTRUE(row$refined_extraction_native) &&
+            identical(row$arnoldi_extraction, "refined_ritz") &&
+            !isTRUE(row$krylov_schur)
+        } else if (isTRUE(row$native_arnoldi_label) ||
+            isTRUE(row$native_matrix_free_arnoldi_label)) {
           !is.na(row$max_restarts) && row$max_restarts >= 1L &&
             !is.na(row$restart_count) &&
             isTRUE(row$ritz_extraction_native)

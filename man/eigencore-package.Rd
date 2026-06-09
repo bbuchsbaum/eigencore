@@ -9,7 +9,7 @@
 Foundations for certified partial spectral computation in R.
 }
 \author{
-\strong{Maintainer}: Bradley Buchsbaum \email{brad@example.com}
+\strong{Maintainer}: Bradley Buchsbaum \email{brad.buchsbaum@gmail.com}
 
 }
 \keyword{internal}

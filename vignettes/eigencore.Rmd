@@ -74,6 +74,10 @@ Hermitian eigenproblem, a generalized SPD eigenproblem with a metric `B`, and
 a partial SVD. It also shows the RSpectra-compatible shim for users migrating
 from existing code.
 
+For the V2 CRAN release, planner labels are part of the contract: promoted
+paths are native and benchmark-backed in their documented regimes, while
+reference, prototype, oracle, and diagnostic paths remain clearly labelled.
+
 ```{r setup}
 library(eigencore)
 ```

@@ -7,10 +7,9 @@
 adjoint(x, ...)
 }
 \arguments{
-\item{x}{Object.}
+\item{x}{Operator-like object.}
 
 \item{...}{Additional arguments passed to methods.}
-
 }
 \description{
 Return the adjoint operator.

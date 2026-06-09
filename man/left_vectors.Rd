@@ -7,10 +7,9 @@
 left_vectors(x, ...)
 }
 \arguments{
-\item{x}{Object.}
+\item{x}{An eigencore SVD result object.}
 
-\item{...}{Additional arguments passed to methods.}
-
+\item{...}{Reserved for future methods.}
 }
 \description{
 Extract left singular vectors.

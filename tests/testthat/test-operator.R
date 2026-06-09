@@ -16,6 +16,31 @@ test_that("dense operator block apply honors alpha beta Y contract", {
   expect_equal(op$apply(X, alpha = 2, beta = -0.5, Y = Y), 2 * A %*% X - 0.5 * Y)
 })
 
+test_that("complex dense operator uses native zgemm block apply", {
+  A <- matrix(
+    c(1 + 2i, -2 + 0.5i, 3 - 1i, 4 + 0i, 5 + 2i, -1i),
+    nrow = 3
+  )
+  X <- matrix(c(1 - 1i, 2 + 0.5i, -3i, 4 + 2i), nrow = 2)
+  X_real <- Re(X)
+  Y <- matrix(c(1 + 1i, -2i, 3, 0.5 - 0.5i, -1 + 2i, 4i), nrow = 3)
+  op <- as_operator(A)
+
+  expect_identical(op$name, "complex_dense_matrix")
+  expect_identical(op$dtype, "complex")
+  expect_true(op$metadata$native)
+  expect_identical(op$metadata$storage, "complex_dense_matrix")
+  expect_identical(op$metadata$native_operator_kernel, "dense_complex_zgemm")
+  expect_identical(op$metadata$native_scalar_type, "complex128")
+  expect_equal(op$apply(X), A %*% X)
+  expect_equal(op$apply(X_real), A %*% (X_real + 0i))
+  expect_equal(op$apply_adjoint(Y), Conj(t(A)) %*% Y)
+  expect_equal(
+    op$apply(X, alpha = 1.5 - 0.25i, beta = -0.5 + 0.1i, Y = Y),
+    (1.5 - 0.25i) * (A %*% X) + (-0.5 + 0.1i) * Y
+  )
+})
+
 test_that("native dense apply rejects dimensions beyond LP64 BLAS integer range", {
   status <- .Call("eigencore_dense_apply_int_guard_check", PACKAGE = "eigencore")
 
@@ -33,28 +58,36 @@ test_that("adjoint operator swaps apply directions", {
 
 test_that("adjoint operator preserves native metadata for built-in kernels", {
   dense <- matrix(rnorm(12), nrow = 3)
+  complex_dense <- matrix(c(1 + 1i, 2 - 1i, -0.5i, 3), nrow = 2)
   sparse <- Matrix::rsparsematrix(5, 3, density = 0.4)
   diagonal <- Matrix::Diagonal(x = c(3, 2, 1))
 
   dense_adj <- adjoint(as_operator(dense))
+  complex_adj <- adjoint(as_operator(complex_dense))
   sparse_adj <- adjoint(as_operator(sparse))
   diagonal_adj <- adjoint(as_operator(diagonal))
 
   expect_true(dense_adj$metadata$native)
+  expect_true(complex_adj$metadata$native)
   expect_true(sparse_adj$metadata$native)
   expect_true(diagonal_adj$metadata$native)
   expect_equal(dense_adj$metadata$fused, "adjoint")
+  expect_equal(complex_adj$metadata$fused, "adjoint")
   expect_equal(sparse_adj$metadata$fused, "adjoint")
   expect_equal(diagonal_adj$metadata$fused, "adjoint")
   expect_equal(dense_adj$metadata$source, t(dense))
+  expect_equal(complex_adj$metadata$source, Conj(t(complex_dense)))
+  expect_equal(complex_adj$metadata$storage, "adjoint:complex_dense_matrix")
   expect_s4_class(sparse_adj$metadata$matrix, "dgCMatrix")
   expect_equal(as.matrix(sparse_adj$metadata$matrix), as.matrix(Matrix::t(sparse)))
   expect_equal(diagonal_adj$metadata$storage, "adjoint:ddiMatrix")
 
   X_dense <- matrix(rnorm(9), nrow = 3)
+  X_complex <- matrix(c(1 - 1i, 2i, -3, 4 + 0.25i), nrow = 2)
   X_sparse <- matrix(rnorm(10), nrow = 5)
   X_diag <- matrix(rnorm(6), nrow = 3)
   expect_equal(dense_adj$apply(X_dense), t(dense) %*% X_dense)
+  expect_equal(complex_adj$apply(X_complex), Conj(t(complex_dense)) %*% X_complex)
   expect_equal(sparse_adj$apply(X_sparse), as.matrix(Matrix::t(sparse) %*% X_sparse))
   expect_equal(diagonal_adj$apply(X_diag), as.matrix(Matrix::t(diagonal) %*% X_diag))
 })

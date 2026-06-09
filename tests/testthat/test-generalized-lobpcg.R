@@ -20,7 +20,7 @@ test_that("auto promotes structured generalized SPD LOBPCG without dense fallbac
   expect_equal(crossprod(vectors(fit), as.matrix(B) %*% vectors(fit)), diag(3), tolerance = 1e-8)
 })
 
-test_that("explicit generalized Lanczos uses B-orthogonal refinement instead of standard Lanczos", {
+test_that("explicit generalized Lanczos uses native transformed diagonal-B path", {
   A <- Matrix::Diagonal(x = c(1, 4, 9, 16, 25, 36))
   B <- Matrix::Diagonal(x = c(1, 2, 3, 4, 5, 6))
   fit <- eig_partial(
@@ -34,13 +34,15 @@ test_that("explicit generalized Lanczos uses B-orthogonal refinement instead of 
     allow_dense_fallback = "never"
   )
 
-  expect_equal(fit$method, eigencore:::generalized_lanczos_label())
-  expect_equal(fit$plan$method, eigencore:::generalized_lanczos_label())
-  expect_match(fit$warnings, "B-orthogonal Lanczos refinement", fixed = TRUE)
+  expect_equal(fit$method, eigencore:::native_generalized_lanczos_label())
+  expect_equal(fit$plan$method, eigencore:::native_generalized_lanczos_label())
+  expect_match(fit$warnings, "native transformed generalized SPD B-orthogonal Lanczos", fixed = TRUE)
   expect_true(fit$generalized)
-  expect_equal(fit$restart$kind, "generalized_b_orthogonal_lanczos")
-  expect_false(fit$restart$native)
-  expect_equal(fit$restart$metric_solve, "diagonal solve for B")
+  expect_equal(fit$restart$kind, "native_transformed_generalized_b_orthogonal_lanczos")
+  expect_true(fit$restart$native)
+  expect_true(fit$restart$native_kernels)
+  expect_equal(fit$restart$metric_solve, "diagonal scaling similarity transform for B")
+  expect_equal(fit$restart$transformed_operator_storage, "dgCMatrix")
   expect_true(certificate(fit)$passed)
   expect_equal(values(fit), c(1, 2), tolerance = 1e-8)
   expect_equal(crossprod(vectors(fit), as.matrix(B) %*% vectors(fit)), diag(2), tolerance = 1e-8)
@@ -59,7 +61,7 @@ test_that("explicit generalized Lanczos uses B-orthogonal refinement instead of 
   expect_equal(values(fit), values(lobpcg_fit), tolerance = 1e-8)
 })
 
-test_that("explicit generalized Lanczos supports dense SPD metric solves", {
+test_that("explicit generalized Lanczos supports native dense SPD metric transforms", {
   A <- diag(c(2, 5, 9, 14))
   B <- diag(c(1, 2, 3, 4))
   fit <- eig_partial(
@@ -72,11 +74,37 @@ test_that("explicit generalized Lanczos supports dense SPD metric solves", {
     tol = 1e-8
   )
 
-  expect_equal(fit$method, eigencore:::generalized_lanczos_label())
-  expect_equal(fit$restart$metric_solve, "dense Cholesky solve for B")
+  expect_equal(fit$method, eigencore:::native_generalized_lanczos_label())
+  expect_true(fit$restart$native)
+  expect_equal(fit$restart$metric_solve, "dense Cholesky similarity transform for B")
+  expect_equal(fit$restart$transformed_operator_storage, "dense")
   expect_true(certificate(fit)$passed)
   expect_equal(values(fit), c(3.5, 3), tolerance = 1e-8)
   expect_equal(crossprod(vectors(fit), B %*% vectors(fit)), diag(2), tolerance = 1e-8)
+})
+
+test_that("explicit block generalized Lanczos uses native transformed diagonal-B path", {
+  A <- Matrix::Diagonal(x = c(1, 4, 9, 16, 25, 36))
+  B <- Matrix::Diagonal(x = c(1, 2, 3, 4, 5, 6))
+  fit <- eig_partial(
+    A,
+    B = B,
+    k = 2,
+    target = smallest(),
+    method = lanczos(max_subspace = 6L, block = 2L),
+    seed = 324,
+    tol = 1e-8,
+    allow_dense_fallback = "never"
+  )
+
+  expect_equal(fit$method, eigencore:::native_generalized_lanczos_label())
+  expect_equal(fit$restart$kind, "native_transformed_generalized_b_orthogonal_lanczos")
+  expect_true(fit$restart$native)
+  expect_equal(fit$restart$block, 2L)
+  expect_equal(fit$restart$metric_solve, "diagonal scaling similarity transform for B")
+  expect_true(certificate(fit)$passed)
+  expect_equal(values(fit), c(1, 2), tolerance = 1e-8)
+  expect_equal(crossprod(vectors(fit), as.matrix(B) %*% vectors(fit)), diag(2), tolerance = 1e-8)
 })
 
 test_that("explicit generalized Lanczos supports sparse CSC SPD metric solves", {
@@ -108,7 +136,11 @@ test_that("explicit generalized Lanczos supports sparse CSC SPD metric solves", 
   )
 
   expect_equal(fit$method, eigencore:::generalized_lanczos_label())
-  expect_equal(fit$restart$metric_solve, "sparse Cholesky solve for B")
+  expect_equal(fit$restart$metric_solve, "native sparse tridiagonal Thomas solve for B")
+  expect_equal(fit$restart$metric_solve_kind, "native_sparse_tridiagonal_thomas")
+  expect_equal(fit$restart$metric_factorization, "tridiagonal_thomas")
+  expect_true(fit$restart$metric_solve_native)
+  expect_true(fit$restart$native_metric_solve)
   expect_gt(fit$restart$metric_solves, 0L)
   expect_false(fit$restart$native)
   expect_true(certificate(fit)$passed)
@@ -126,6 +158,46 @@ test_that("explicit generalized Lanczos supports sparse CSC SPD metric solves", 
   )
   expect_true(certificate(lobpcg_fit)$passed)
   expect_equal(values(fit), values(lobpcg_fit), tolerance = 1e-8)
+})
+
+test_that("general sparse CSC SPD metric solves keep reference Cholesky provenance", {
+  n <- 10L
+  A <- Matrix::bandSparse(
+    n,
+    k = c(-1, 0, 1),
+    diagonals = list(rep(-1, n - 1L), rep(2.5, n), rep(-1, n - 1L))
+  )
+  B <- methods::as(
+    Matrix::Diagonal(x = seq(1.5, 2.4, length.out = n)) +
+      Matrix::bandSparse(
+        n,
+        k = c(-2, 2),
+        diagonals = list(rep(0.04, n - 2L), rep(0.04, n - 2L))
+      ),
+    "dgCMatrix"
+  )
+
+  fit <- eig_partial(
+    A,
+    B = B,
+    k = 2,
+    target = smallest(),
+    method = lanczos(max_subspace = 10L),
+    seed = 324,
+    tol = 1e-8,
+    allow_dense_fallback = "never"
+  )
+
+  expect_equal(fit$method, eigencore:::generalized_lanczos_label())
+  expect_equal(fit$restart$metric_solve, "sparse Cholesky solve for B")
+  expect_equal(fit$restart$metric_solve_kind, "sparse_cholesky")
+  expect_equal(fit$restart$metric_factorization, "Matrix::Cholesky")
+  expect_false(fit$restart$metric_solve_native)
+  expect_false(fit$restart$native_metric_solve)
+  expect_gt(fit$restart$metric_solves, 0L)
+  expect_false(fit$restart$native)
+  expect_true(certificate(fit)$passed)
+  expect_equal(crossprod(vectors(fit), as.matrix(B) %*% vectors(fit)), diag(2), tolerance = 1e-8)
 })
 
 test_that("matrix-free B remains a certified reference fallback", {

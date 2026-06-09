@@ -21,6 +21,12 @@ int block_golub_kahan_basis_scratch_alloc(BlockGolubKahanBasisScratch* scratch,
                                           int max_subspace,
                                           int block_size);
 
+int block_golub_kahan_basis_scratch_alloc_native(BlockGolubKahanBasisScratch* scratch,
+                                                 int m,
+                                                 int n,
+                                                 int max_subspace,
+                                                 int block_size);
+
 int native_block_golub_kahan_basis_run_with_scratch(
   void* impl,
   EigencoreApplyFn apply,

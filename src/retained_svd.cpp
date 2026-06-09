@@ -203,7 +203,8 @@ static SEXP block_golub_kahan_retained_cycle_pack(int n,
   SET_STRING_ELT(stage_names_, 2, mkChar("restart"));
   setAttrib(stage_, R_NamesSymbol, stage_names_);
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 17));
+  SEXP allocator_ = PROTECT(mkString("native_malloc"));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 18));
   SET_VECTOR_ELT(out_, 0, combined_d_);
   SET_VECTOR_ELT(out_, 1, combined_u_);
   SET_VECTOR_ELT(out_, 2, combined_v_);
@@ -218,7 +219,8 @@ static SEXP block_golub_kahan_retained_cycle_pack(int n,
   SET_VECTOR_ELT(out_, 14, ScalarReal(native_workspace_bytes));
   SET_VECTOR_ELT(out_, 15, cert_diag_);
   SET_VECTOR_ELT(out_, 16, ScalarInteger(locked_count));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 17));
+  SET_VECTOR_ELT(out_, 17, allocator_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 18));
   SET_STRING_ELT(names_, 0, mkChar("d"));
   SET_STRING_ELT(names_, 1, mkChar("u"));
   SET_STRING_ELT(names_, 2, mkChar("v"));
@@ -236,8 +238,9 @@ static SEXP block_golub_kahan_retained_cycle_pack(int n,
   SET_STRING_ELT(names_, 14, mkChar("native_workspace_bytes"));
   SET_STRING_ELT(names_, 15, mkChar("certificate_diagnostics"));
   SET_STRING_ELT(names_, 16, mkChar("retained_locked_count"));
+  SET_STRING_ELT(names_, 17, mkChar("native_workspace_allocator"));
   setAttrib(out_, R_NamesSymbol, names_);
-  UNPROTECT(locked_count > 0 ? 12 : 7);
+  UNPROTECT(locked_count > 0 ? 13 : 8);
   return out_;
 }
 
@@ -270,6 +273,29 @@ static int block_golub_kahan_fit_arrays_alloc(BlockGolubKahanFitArrays* arrays,
   arrays->AV = reinterpret_cast<double*>(R_alloc(mv > 0 ? mv : 1, sizeof(double)));
   arrays->U = reinterpret_cast<double*>(R_alloc(mv > 0 ? mv : 1, sizeof(double)));
   arrays->transient = true;
+  return 0;
+}
+
+static int block_golub_kahan_fit_arrays_alloc_native(BlockGolubKahanFitArrays* arrays,
+                                                     int n,
+                                                     int m,
+                                                     int max_subspace) {
+  const size_t nv = static_cast<size_t>(n) * static_cast<size_t>(max_subspace);
+  const size_t mv = static_cast<size_t>(m) * static_cast<size_t>(max_subspace);
+  arrays->V = reinterpret_cast<double*>(
+    std::malloc((nv > 0 ? nv : 1) * sizeof(double))
+  );
+  arrays->AV = reinterpret_cast<double*>(
+    std::malloc((mv > 0 ? mv : 1) * sizeof(double))
+  );
+  arrays->U = reinterpret_cast<double*>(
+    std::malloc((mv > 0 ? mv : 1) * sizeof(double))
+  );
+  if (arrays->V == nullptr || arrays->AV == nullptr || arrays->U == nullptr) {
+    block_golub_kahan_fit_arrays_free(arrays);
+    return -1;
+  }
+  arrays->transient = false;
   return 0;
 }
 
@@ -670,12 +696,12 @@ static SEXP block_golub_kahan_retained_cycle_impl(ConfigureOperator configure_op
   }
   const int final_max_subspace = subspaces.back();
   BlockGolubKahanFitArrays arrays;
-  if (block_golub_kahan_fit_arrays_alloc(&arrays, n, m, final_max_subspace) != 0) {
+  if (block_golub_kahan_fit_arrays_alloc_native(&arrays, n, m, final_max_subspace) != 0) {
     error("failed to allocate native retained block Golub-Kahan workspace");
   }
   BlockGolubKahanBasisScratch basis_scratch;
   const int retained_start_capacity = rank + block_size;
-  if (block_golub_kahan_basis_scratch_alloc(
+  if (block_golub_kahan_basis_scratch_alloc_native(
         &basis_scratch, m, n, final_max_subspace, retained_start_capacity
       ) != 0) {
     block_golub_kahan_fit_arrays_free(&arrays);

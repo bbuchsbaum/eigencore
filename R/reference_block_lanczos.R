@@ -10,6 +10,7 @@
 #' not rely on it as a parity reference for the native block Lanczos
 #' three-term path. The honest name is exposed below as
 #' `reference_block_subspace_iteration_thick_restart_hermitian`.
+#' @noRd
 reference_block_subspace_iteration_thick_restart_hermitian <- function(op, k, target = largest(),
                                                             tol = 1e-8,
                                                             max_subspace = NULL,
@@ -213,10 +214,12 @@ reference_block_subspace_iteration_thick_restart_hermitian <- function(op, k, ta
 #' Deprecated alias kept until external test sites migrate. The implementation
 #' is block-Krylov subspace iteration with thick restart, not the three-term
 #' Lanczos recurrence; new callers must use the honestly-named function.
+#' @noRd
 reference_block_lanczos_thick_restart_hermitian <-
   reference_block_subspace_iteration_thick_restart_hermitian
 
 #' @keywords internal
+#' @noRd
 reference_block_lanczos_rr <- function(op, V, AV, target, tol) {
   H <- crossprod(V, AV)
   H <- (H + t(H)) / 2

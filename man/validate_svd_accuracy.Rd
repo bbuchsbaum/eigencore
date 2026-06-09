@@ -7,18 +7,16 @@
 validate_svd_accuracy(A, rank, target = largest(), fit = NULL, tol = 1e-08)
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Matrix or eigencore operator to validate.}
 
-\item{rank}{Number of singular triplets requested.}
+\item{rank}{Number of singular values to validate.}
 
-\item{target}{Spectral target descriptor.}
+\item{target}{Eigencore singular-value target descriptor.}
 
-\item{fit}{Documented argument.}
+\item{fit}{Optional precomputed eigencore SVD result.}
 
-\item{tol}{Numerical tolerance.}
-
+\item{tol}{Validation tolerance.}
 }
 \description{
 Validate eigencore SVD results against base::svd().
 }
-\keyword{internal}

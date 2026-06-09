@@ -230,6 +230,7 @@ test_that("native retained block Golub-Kahan cycle builds restart state inside n
   expect_gte(sum(retained$certificate$converged), 5L)
   expect_gt(retained$matvecs, 0L)
   expect_gt(retained$restart$native_workspace_bytes, 0)
+  expect_equal(retained$restart$native_workspace_allocator, "native_malloc")
   expect_true(is.data.frame(retained$restart$attempt_history))
   expect_gt(nrow(retained$restart$attempt_history), 1L)
   expect_true(any(retained$restart$attempt_history$cached_start_used))
@@ -268,6 +269,7 @@ test_that("native retained block Golub-Kahan cached AV path certifies after MGS2
   expect_true(retained$restart$retained_av_cache_attempted)
   expect_false(retained$restart$retained_av_cache_fallback)
   expect_true(retained$restart$retained_av_cache)
+  expect_equal(retained$restart$native_workspace_allocator, "native_malloc")
   expect_true(any(retained$restart$attempt_history$cached_start_used))
   expect_gte(max(retained$restart$attempt_history$converged_count), 5L)
   expect_gte(max(retained$restart$attempt_history$leading_converged_count), 5L)
@@ -299,6 +301,7 @@ test_that("native retained block Golub-Kahan deflation is opt-in and certificate
   expect_true(retained$restart$retained_av_cache_attempted)
   expect_false(retained$restart$retained_av_cache_fallback)
   expect_type(retained$restart$retained_locked_count, "integer")
+  expect_equal(retained$restart$native_workspace_allocator, "native_malloc")
   expect_gte(retained$restart$retained_locked_count, 0L)
   expect_true("eigencore_block_golub_kahan_retained_deflated" %in%
                 eigencore:::available_svd_methods())

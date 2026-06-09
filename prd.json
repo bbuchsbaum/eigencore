@@ -7,6 +7,30 @@
     "eigencore"
   ],
   "product_type": "R package with native numerical core",
+  "release_strategy": {
+    "v2_cran_release": {
+      "objective": "Ship eigencore V2 as the first CRAN release: a certified, native-first spectral computation package for R with honest planner labels, release-grade docs, CRAN hygiene, and scoped benchmark evidence.",
+      "scope_policy": "V2 is a release-hardening and publication boundary, not a broad solver-expansion milestone. Solver families or ecosystem integrations without release-grade labels, certificates, tests, and benchmark evidence are deferred to V3.",
+      "central_claim_policy": "The CRAN-facing claim is scoped to promoted surfaces with current evidence: certified native-first answers with explicit planner labels, residual/backward-error certificates, no silent sparse densification, and documented reference/prototype boundaries. The unqualified fastest-path claim remains a future ambition.",
+      "release_workstreams": [
+        "scope freeze and V3 deferral map",
+        "public API and export audit",
+        "planner honesty and certificate contract audit",
+        "CRAN package hygiene",
+        "release benchmark evidence",
+        "user-facing documentation and vignettes",
+        "adversarial and regression test hardening",
+        "final release-candidate gate"
+      ],
+      "acceptance": [
+        "A built source tarball passes R CMD check --as-cran --no-manual or has only explicitly accepted CRAN notes.",
+        "The full testthat suite passes from the current source and installed-package context where feasible.",
+        "Public API, planner labels, result fields, certificate semantics, examples, and vignettes are internally consistent.",
+        "Benchmark claims are limited to rows with time-to-certified-answer, certificate, memory, and provenance evidence.",
+        "All V2_CRAN tracker issues are closed and the mote board has no open V2_CRAN blockers."
+      ]
+    }
+  },
   "v1_ambition": "Replace RSpectra for most production use cases, beat it on speed/correctness diagnostics, and establish a more mathematically expressive foundation than SciPy-style sparse linear algebra.",
   "executive_summary": {
     "description": "A ground-up spectral computation library for R focused on partial eigenvalues, eigenvectors, singular values, singular vectors, generalized eigenpairs, and structured PCA/SVD problems using native high-performance iterative algorithms.",
@@ -198,57 +222,97 @@
     "supported_problem_classes": [
       {
         "problem": "Real symmetric/Hermitian partial eigenproblem",
-        "required_in_v1": true,
+        "v1_status": "promoted_scoped_v1",
+        "current_surface": "Native Hermitian paths are promoted for the scoped V1 surfaces documented in the readiness audit: structured tridiagonal sparse/diagonal defaults, scalar native dense/CSC Hermitian paths, and explicit/diagnostic block requests.",
+        "future_scope": "General sparse block-Lanczos auto promotion has a documented 2026-06-06 no-promotion decision; explicit block requests and diagnostic sparse opt-in remain available, but sparse auto() stays on the proven scalar/tridiagonal/default native paths until a redesigned candidate beats current evidence.",
+        "closed_decision_issue": "bd-01KTEH48HH4X8G9Q69HHAJ983B",
         "notes": "Main flagship eigensolver"
       },
       {
         "problem": "General real nonsymmetric eigenproblem",
-        "required_in_v1": true,
+        "v1_status": "compatibility_scoped_v1",
+        "current_surface": "Dense and sparse CSC explicit matrices with supported targets use a native Arnoldi cycle with native refined Ritz extraction, restart diagnostics, best-attempt retention, right-residual certification, and adjoint-capable left eigenvectors with biorthogonality diagnostics. Real matrix-free callback operators keep the native callback Arnoldi cycle with native projected Ritz extraction and the same certificate/restart boundary.",
+        "future_scope": "Full Krylov-Schur or harmonic/interior nonsymmetric extraction, matrix-free refined extraction, and native complex sparse/operator inputs remain future scope.",
+        "tracker_issue": null,
+        "closed_decision_issue": "bd-01KTEH5JM64A4CBZG7ECBWT9WB",
         "notes": "Compatibility-grade; needed to replace RSpectra-style use"
       },
       {
         "problem": "Generalized symmetric/Hermitian SPD problem A x = lambda B x",
-        "required_in_v1": true,
+        "v1_status": "promoted_scoped_v1",
+        "current_surface": "Sparse shifted-tridiagonal generalized SPD LOBPCG is promoted for largest/smallest targets; native matrix-free-B metrics, native shifted-diagonal/tridiagonal preconditioner diagnostics, constraints, and adversarial SPD metric rows are covered by the current generalized strict gate; dense generalized auto uses native dense LAPACK fallback; explicit generalized Lanczos has a native transformed dense/diagonal-B path including block requests inside that transformed boundary and an honest sparse-CSC reference refinement, with native tridiagonal sparse-B Thomas metric solves distinguished from general sparse-CSC reference Cholesky.",
+        "future_scope": "Arbitrary sparse-CSC metric factorization and sparse-CSC block B-orthogonal Lanczos promotion remain post-V1 work.",
+        "tracker_issue": null,
+        "closed_decision_issue": "bd-01KTE8JVEPGA1EEQYERZS1V7S1",
         "notes": "Major differentiator"
       },
       {
         "problem": "Shift-invert symmetric/Hermitian eigenproblem",
-        "required_in_v1": true,
+        "v1_status": "promoted_scoped_v1",
+        "current_surface": "Dense standard, dense generalized SPD, diagonal standard, sparse symmetric-tridiagonal standard, and sparse/diagonal tridiagonal generalized paths are native and certify original-coordinate residuals.",
+        "future_scope": "Native general sparse LU/factorized apply and stronger user-solve ownership are explicit PRD non-goals unless a future PRD reopens them.",
+        "tracker_issue": null,
         "notes": "With explicit factorization or user solve"
       },
       {
         "problem": "Rectangular partial SVD, largest singular values",
-        "required_in_v1": true,
+        "v1_status": "promoted_scoped_v1",
+        "current_surface": "Promoted non-quick tall/wide sparse rows pass through bounded native Gram special cases with exact two-sided certification; dense/CSC native Golub-Kahan staging and diagnostics exist.",
+        "future_scope": "General sparse and matrix-free thick-restarted SVD beyond the bounded Gram surface is not promoted in the current PRD after the 2026-06-06 hard-SVD no-promotion decision.",
+        "tracker_issue": null,
+        "closed_decision_issue": "bd-01KTE8J9SF16Y1832D8HQQ9KEC",
         "notes": "Native Golub-Kahan, not normal equations"
       },
       {
         "problem": "Randomized SVD",
-        "required_in_v1": true,
+        "v1_status": "promoted_scoped_v1",
+        "current_surface": "The scoped V1 release gate is green for the large exact-low-rank dense planner row. Dense double and sparse CSC QR-normalized randomized requests for largest singular values now use native randomized controllers with native sketch generation, subspace iteration, projected-core SVD, residual certification diagnostics, and q=0 early stop; sparse CSC has a green native-controller certificate/provenance contract, while sparse speed remains diagnostic rather than a promoted release claim.",
+        "future_scope": "Matrix-free randomized controllers, LU/none native controller support, broader slow-decay adaptive planner regimes, and sparse-size speed-promotion candidates are not promoted in the current PRD after the 2026-06-06 scoped native-controller/no-promotion decision.",
+        "tracker_issue": null,
+        "closed_decision_issue": "bd-01KTE8JFKPA90ZJTXK496SBMK4",
         "notes": "Fast approximate path with certification/refinement"
       },
       {
         "problem": "LOBPCG for symmetric/Hermitian problems",
-        "required_in_v1": true,
+        "v1_status": "promoted_scoped_v1",
+        "current_surface": "Generalized sparse shifted-tridiagonal LOBPCG and broader generalized SPD contract rows are promoted; standard Hermitian LOBPCG and non-generalized preconditioner paths remain diagnostic/prototype-only after the 2026-06-06 no-promotion decision.",
+        "future_scope": "None unless a future PRD reopens standard Hermitian LOBPCG with evidence that beats the current scalar/tridiagonal eigencore default.",
+        "tracker_issue": null,
         "notes": "Especially with preconditioner"
       },
       {
         "problem": "Smallest singular values",
-        "required_in_v1": "partial",
-        "notes": "Supported where stable; full interior/smallest SVD moves to V2"
+        "v1_status": "partial_current_future_scope",
+        "current_surface": "Dense matrix smallest and nearest-sigma SVD requests use exact dense fallback certificates. Sparse CSC smallest-SVD targets use a native certified Gram special case when the smaller Gram dimension is inside the explicit materialization gate, otherwise use the native certified smallest Golub-Kahan boundary without dense fallback; matrix-free smallest-SVD callbacks use a native certified smallest callback label only when explicit Frobenius norm metadata keeps scale_is_estimate = FALSE. Sparse CSC nearest/interior targets use a native full-subspace Golub-Kahan boundary without densifying the original sparse operator; matrix-free nearest/interior targets use the matching native full-subspace callback boundary only with explicit non-estimated norm metadata. Diagonal/reference prototype interior rows can certify without densification. Planner controls expose svd_target_family, svd_target_boundary, svd_target_issue, promotion_gate_issue, full_subspace_interior, materialized_gram, native_gram_eigensolver, and exact two-sided certificate policy.",
+        "future_scope": "Scalable nearest/interior sparse and matrix-free SVD support through refined Golub-Kahan, shift-invert, or another promoted non-full-subspace native route is not promoted in the current PRD after the 2026-06-06 target-boundary decision.",
+        "tracker_issue": null,
+        "closed_decision_issue": "bd-01KTEH6862GB19JJWX2M3FQP6T",
+        "notes": "Smallest sparse CSC is promoted where the Gram gate or native certified Golub-Kahan boundary applies; nearest/interior now has an exact full-subspace boundary, while scalable refined/shift-invert production is not promoted in the current PRD"
       },
       {
         "problem": "Interior nonsymmetric eigenvalues",
-        "required_in_v1": "limited",
+        "v1_status": "limited_current_future_scope",
+        "current_surface": "Limited to explicit shift-invert/user-solve style boundaries with honest labels and original-coordinate certification where supported.",
+        "future_scope": "Restarted matrix-free native nonsymmetric interior workflows remain V3 scope under the closed Krylov-Schur/refinement non-goal decision for the current PRD.",
+        "tracker_issue": null,
+        "closed_decision_issue": "bd-01KTEH5JM64A4CBZG7ECBWT9WB",
         "notes": "Via user-supplied shift-invert operator"
       },
       {
         "problem": "Complex Hermitian",
-        "required_in_v1": "target",
-        "notes": "At least dense and core operator path; sparse complex may be gated"
+        "v1_status": "native_dense_current_future_scope",
+        "current_surface": "Base complex dense matrices use native dense complex LAPACK labels for Hermitian eigen, general eigen, and SVD public paths, and base complex dense operators use a native zgemm block-apply kernel with exact residual/backward-error certificates and complex orthogonality checks. The complex ABI/certificate contract remains frozen for broader promotion: R operators use dtype = 'complex', base dense operator metadata names native_operator_kernel = 'dense_complex_zgemm', native ScalarType::C128 is reserved for future sparse/matrix-free block/operator kernels, apply_adjoint means conjugate-transpose block apply, explicit dense sources use exact Frobenius scales, metadata-scale complex callbacks can be certified directly with scale_is_estimate = FALSE, and complex Gram matrices use V^* V. Complex matrix-free eigen/SVD solver operators fail with actionable future-scope messages; complex-valued Matrix/sparse inputs remain rejected rather than silently coerced. Real-valued nonsymmetric matrices may still return complex eigenpairs through eigs() for supported LR/SR/LI/SI/LM/SM target semantics.",
+        "future_scope": "Complex sparse/operator paths and broader promoted complex matrix-free benchmark rows are not promoted in the current PRD after the 2026-06-06 complex sparse/operator boundary decision; base complex dense zgemm block apply is the scoped current promotion.",
+        "tracker_issue": null,
+        "closed_decision_issue": "bd-01KTEH60X91VZRSW7NGV65FBDR",
+        "notes": "Dense complex decomposition and base dense zgemm block-apply kernels are now native; complex sparse/operator promotion remains future scope."
       },
       {
         "problem": "Full dense eig/SVD replacement",
-        "required_in_v1": false,
+        "v1_status": "non_goal",
+        "current_surface": "Use base LAPACK for full dense decompositions and treat dense fallbacks as explicit compatibility/oracle paths.",
+        "future_scope": "None unless the PRD is revised.",
+        "tracker_issue": null,
         "notes": "Use base LAPACK for full decompositions"
       }
     ],
@@ -263,7 +327,119 @@
       "full SLEPc/PRIMME interop",
       "automatic adapters for every R matrix ecosystem"
     ],
-    "focus_note": "DelayedArray and out-of-core support can arrive later once the operator protocol is strong. V1 should focus on numerical foundations."
+    "focus_note": "DelayedArray and out-of-core support can arrive later once the operator protocol is strong. V1 should focus on numerical foundations.",
+    "post_v1_tracker_map": {
+      "umbrella_issue": "bd-01KTE8G6RYE4RD5F6CN7SNKKC6",
+      "status_policy": "Promote a solver surface only when installed benchmark evidence, certificate provenance, planner labels, and no-densification tests all cover that surface. Otherwise keep the path scoped, reference-labelled, diagnostic, or future-scope.",
+      "open_items": [],
+      "closed_decisions": [
+        {
+          "issue": "bd-01KTEH48HH4X8G9Q69HHAJ983B",
+          "decision": "Do not promote general sparse block Hermitian Lanczos auto-selection.",
+          "date": "2026-06-06",
+          "evidence": "bench-native-hermitian-gate.R --block-candidate on path_laplacian:1000, k=20 certified 20/20 but took about 0.458s time-to-certified-answer versus about 0.0446s for certified RSpectra and about 0.0073s for the current promoted eigencore path; path_laplacian:10000 did not complete within roughly two minutes in the local probe."
+        },
+        {
+          "issue": "bd-01KTEH4ZPPBESDDPR0Z5MRSQCG",
+          "decision": "Do not promote native general sparse shift-invert LU/factorized apply or native ownership of user-supplied solve functions in the current PRD.",
+          "date": "2026-06-06",
+          "evidence": "The scoped shift-invert boundary is already explicit and green: installed 2026-06-05 strict saved evidence plus the current 2026-06-06 strict source gate pass all eight native/reference contract rows. General sparse rows use Matrix::lu_reference_factorization with sparse pivot diagnostics, cache provenance, no dense rcond, and estimated-scale certificate honesty; user-solve rows use user_supplied_solve external-cache provenance. Native labels remain reserved for eigencore_native_factorization rows."
+        },
+        {
+          "issue": "bd-01KTEH4G1QPR4RT14B4G78PF1M",
+          "decision": "Do not promote native standard Hermitian LOBPCG/preconditioner paths as a production surface in the current PRD.",
+          "date": "2026-06-06",
+          "evidence": "bench-lobpcg-preconditioned.R source evidence on path_laplacian n=200/1000/2000, k=5 certifies the native shifted-tridiagonal LOBPCG rows and beats certified external references by about 2.44x, 8.11x, and 6.44x with memory gates green, but fails the scalar-speed gate against the current eigencore default with ratios about 0.65, 0.32, and 0.14. The path remains diagnostic/prototype-labelled rather than promoted."
+        },
+        {
+          "issue": "bd-01KTE8JFKPA90ZJTXK496SBMK4",
+          "decision": "Do not promote matrix-free, LU/none, slow-decay, or broad sparse-speed randomized SVD regimes in the current PRD.",
+          "date": "2026-06-06",
+          "evidence": "The scoped native-controller boundary is complete: exact_low_rank_dense:2000x500 passes the strict release gate at about 2.55x versus certified rsvd, and low_rank_sparse:2000x500 has a green native CSC controller certificate/provenance contract. Sparse speed remains diagnostic, slow/near-low-rank baselines were not reliably certified, and matrix-free or LU/none randomized regimes remain honest reference-control boundaries unless a future PRD reopens them."
+        },
+        {
+          "issue": "bd-01KTE8JVEPGA1EEQYERZS1V7S1",
+          "decision": "Do not promote arbitrary sparse-CSC metric factorization or sparse-CSC block generalized B-orthogonal Lanczos in the current PRD.",
+          "date": "2026-06-06",
+          "evidence": "Dense and diagonal SPD metrics use native transformed generalized Lanczos, including a focused block transformed row with a green generalized-lanczos-block-native contract. Sparse tridiagonal CSC B metric solves carry eigencore native Thomas provenance inside the honest reference-labelled loop; general sparse CSC B remains Matrix::Cholesky reference provenance."
+        },
+        {
+          "issue": "bd-01KTEH5JM64A4CBZG7ECBWT9WB",
+          "decision": "Do not make full Krylov-Schur-style, harmonic/interior, matrix-free refined, or complex sparse/operator nonsymmetric extraction a current-PRD blocker.",
+          "date": "2026-06-06",
+          "evidence": "The scoped V1 nonsymmetric compatibility surface closed green with native dense, sparse CSC, and real matrix-free Arnoldi cycles, native projected Ritz extraction, restart diagnostics, best-attempt retention, exact right-residual certification, and adjoint-capable left-vector diagnostics. The first V2 tranche under bd-01KTF6H41S9XDN286TR3V184P4 promotes native refined Ritz extraction for dense and sparse CSC explicit matrices; full Krylov-Schur, harmonic/interior, matrix-free refined extraction, and native complex sparse/operator paths remain future scope."
+        },
+        {
+          "issue": "bd-01KTE8J9SF16Y1832D8HQQ9KEC",
+          "decision": "Do not promote general sparse and matrix-free thick-restarted SVD beyond the bounded Gram/callback boundary in the current PRD.",
+          "date": "2026-06-06",
+          "evidence": "The retained native workspace and matrix-free callback-boundary slices are implemented and validated, but installed/quick hard-SVD candidate evidence remains speed or memory red versus certified RSpectra/irlba references. The path stays diagnostic, with active gate ownership moved to the umbrella for regression only."
+        },
+        {
+          "issue": "bd-01KTEH6862GB19JJWX2M3FQP6T",
+          "decision": "Do not promote scalable refined/shift-invert sparse or matrix-free smallest/interior SVD beyond the exact certified boundaries in the current PRD.",
+          "date": "2026-06-06",
+          "evidence": "Sparse CSC smallest targets have native certified Gram/Golub-Kahan boundaries, sparse CSC interior targets have a native full-subspace Golub-Kahan boundary, exact-norm matrix-free callbacks can certify matching smallest/interior full-subspace boundaries, unsupported regimes fail loudly, and benchmark-visible target rows pass. Scalable non-full-subspace refined/shift-invert production remains V3 scope."
+        },
+        {
+          "issue": "bd-01KTEH60X91VZRSW7NGV65FBDR",
+          "decision": "Do not promote complex sparse Matrix or complex matrix-free solver promotion in the current PRD; keep broader complex sparse/operator kernels beyond base dense zgemm future-scoped.",
+          "date": "2026-06-06",
+          "evidence": "Native dense complex LAPACK eigen/SVD paths, base dense zgemm block apply, and exact certificates are implemented; complex sparse Matrix promotion was not possible against the current Matrix surface because zMatrix is virtual and sparse complex construction is not a concrete supported path in the local Matrix version. Complex callbacks can carry exact metadata-scale certificates, while solver promotion fails with actionable future-scope messages instead of real coercion."
+        }
+      ],
+      "completed_items": [
+        {
+          "issue": "bd-01KTEPY7W9Z0V8T0J5R2BWA784",
+          "completed": "Complex ABI and certificate semantics are frozen before native complex promotion.",
+          "date": "2026-06-06",
+          "evidence": "Base complex dense operators carry dtype = 'complex', storage = 'complex_dense_matrix', native = TRUE, native_operator_kernel = 'dense_complex_zgemm', native_scalar_type = 'complex128', and conjugate-transpose adjoint metadata. Dense/operator certificate tests compare exact Frobenius-scale residuals, conjugate Gram semantics, Hermitian eigen certificates, and SVD two-sided certificates. Complex matrix-free and sparse/operator promotion remains future scope under the complex implementation child motes."
+        },
+        {
+          "issue": "bd-01KTF24G7XC2PXV80XSJSECZN4",
+          "completed": "Base complex dense operators now use native zgemm block apply before complex sparse Matrix promotion.",
+          "date": "2026-06-06",
+          "evidence": "R/operator.R routes base complex dense apply/apply_adjoint through eigencore_dense_complex_block_apply, which calls native zgemm with conjugate-transpose adjoints and complex alpha/beta/Y support. test-operator.R and test-target-taxonomy.R require native metadata, native_operator_kernel = 'dense_complex_zgemm', exact source-scale certificates, and explicit future-scope boundaries for unsupported complex sparse/operator solver paths."
+        },
+        {
+          "issue": "bd-01KTEPYEMEDBPJ9X16KGFX6SD9",
+          "completed": "Native dense complex Hermitian eigen, general eigen, and SVD kernels are wired into public dense complex paths.",
+          "date": "2026-06-06",
+          "evidence": "src/small_dense.cpp registers zheev, zgeev, and zgesvd .Call wrappers; eigs_sym(), eigs(), eig_partial(), svd_partial(), and svds() now report native dense complex LAPACK labels with exact complex residual certificates. test-target-taxonomy.R, test-solvers.R, test-result-contracts.R, and test-svd-adversarial.R cover native labels, sorting, RSpectra-shaped shims, and certificate semantics; bench-nonsymmetric.R and bench-svd-surface.R include dense complex benchmark-visible rows."
+        },
+        {
+          "issue": "bd-01KTEH4RA4NJBQSKF9JQV3V4BS",
+          "completed": "Broader generalized SPD LOBPCG, preconditioner diagnostics, dense-fallback policy, constraints, and matrix-free-B promotion.",
+          "date": "2026-06-06",
+          "evidence": "bench-generalized-lobpcg.R --iterations=1 --strict passes the full current generalized gate: sparse generalized path smallest/largest n=1000 certifies 10/10 and passes speed/memory, dense generalized auto remains a native dense LAPACK fallback, constrained rows pass, native/reference generalized-Lanczos contracts pass, and all adversarial B rows pass with native orthogonalization labels."
+        },
+        {
+          "issue": "bd-01KTEH57J1RR3SP1SJ27YRC0ZE",
+          "completed": "nearest(sigma) planner coverage through supported shift-invert transforms.",
+          "date": "2026-06-06",
+          "evidence": "auto() with target = nearest(sigma) now normalizes to an implicit shift_invert(sigma) transform before planning and solve dispatch. Dense standard, sparse general reference, direct solve(eigen_problem(...)), and matrix-free-without-solve behavior are covered in test-shift-invert.R; the strict shift-invert benchmark passes all eight native/reference contract rows with original-coordinate certification and factorization provenance."
+        },
+        {
+          "issue": "bd-01KTEH6HNN33M15YNGW7T35RQR",
+          "completed": "Current native operator algebra and matrix-free sidecar boundary.",
+          "date": "2026-06-06",
+          "evidence": "test-operator-algebra.R covers dense/CSC/diagonal scaling, sums, composition, crossprod, centering, adjoints, native provenance, and no sparse densification. bench-post-v1-operator-sidecars.R --quick --iterations=1 --strict passes matrix-free SVD, matrix-free nonsymmetric Arnoldi, and matrix-free generalized-B callback boundary rows. DelayedArray/out-of-core and automatic adapters for every R matrix ecosystem remain explicit PRD non-goals/deferred scope."
+        },
+        {
+          "issue": "bd-01KTEH5SRWDHXBZXK5CPHBT6G2",
+          "completed": "Nonsymmetric left eigenvectors and biorthogonal certificates for adjoint-capable Arnoldi paths.",
+          "date": "2026-06-06",
+          "evidence": "Dense, sparse CSC, and adjoint-capable real matrix-free nonsymmetric Arnoldi paths now return right_vectors, left_vectors, a separate left_residual_biorthogonal_backward_error certificate, and biorthogonality diagnostics through result accessors and the RSpectra-shaped eigs() shim. Matrix-free operators without apply_adjoint remain right-only with an explicit left-eigenvector-unavailable warning. test-result-contracts.R, test-target-taxonomy.R, and test-adversarial.R cover complex-pair real matrices, sparse/native Arnoldi rows, adjoint-capable and non-adjoint matrix-free operators, and defective/clustered nonsymmetric cases."
+        },
+        {
+          "issue": "bd-01KTF6H41S9XDN286TR3V184P4",
+          "completed": "Native refined Ritz extraction for dense and sparse CSC nonsymmetric Arnoldi paths.",
+          "date": "2026-06-06",
+          "evidence": "Dense and sparse CSC nonsymmetric auto paths now report the native refined Arnoldi release-tranche label, pass arnoldi_extraction = 'refined_ritz' through planner controls and restart diagnostics, carry refined_extraction_native provenance, and explicitly mark krylov_schur = FALSE. A focused clustered/non-normal adversarial test shows native refined Ritz extraction lowering the right-residual certificate versus projected Ritz extraction; target-taxonomy, result-contract, solver, and nonsymmetric benchmark smoke tests cover the public label/certificate contract. Real matrix-free callback Arnoldi remains projected-Ritz native callback scope, and full Krylov-Schur, harmonic/interior, complex sparse/operator promotion remains future scope."
+        }
+      ],
+      "not_yet_satisfied_coverage": []
+    }
   },
   "api_requirements": {
     "high_level_api": {
@@ -406,13 +582,13 @@
       ],
       "current_implementation_status": {
         "status": "implemented_for_structured_tridiagonal_g1_default",
-        "implemented_path": "native scalar thick-restart Hermitian Lanczos for dense double matrices and dgCMatrix operators; promoted native selected tridiagonal Hermitian LAPACK solver for symmetric tridiagonal sparse/diagonal sources with largest/smallest targets; native block Hermitian Lanczos (thick restart, locking) remains explicit/diagnostic for block requests, dense full-subspace cases, and sparse opt-in",
+        "implemented_path": "native scalar thick-restart Hermitian Lanczos for dense double matrices and dgCMatrix operators; promoted native selected tridiagonal Hermitian LAPACK solver for symmetric tridiagonal sparse/diagonal sources with largest/smallest targets; native block Hermitian Lanczos (thick restart, locking) remains explicit/diagnostic for block requests, dense full-subspace cases, and sparse opt-in, with general sparse auto-promotion closed as a documented no-promotion decision",
         "prototype_paths": [
           "internal reference LOBPCG spike proving preconditioner leverage on graph Laplacian smallest-eigenpair cases",
           "explicit lobpcg() method descriptor and shifted_cholesky_preconditioner() helper routed through normal eigencore result/certificate objects with a reference-prototype planner label",
           "native shifted tridiagonal preconditioner for path-Laplacian-style benchmark cases",
           "typed preconditioner metadata and call-count diagnostics threaded into LOBPCG results, planner reasons, and benchmark gate rows",
-          "native standard Hermitian LOBPCG prototype for dense double and dgCMatrix operators with optional native shifted tridiagonal preconditioning; direct n = 10000, k = 20 path-Laplacian probes certify locally with the shifted tridiagonal preconditioner but remain a separate LOBPCG milestone path, not a G1 block-Lanczos substitute"
+          "native standard Hermitian LOBPCG prototype for dense double and dgCMatrix operators with optional native shifted tridiagonal preconditioning; direct n = 10000, k = 20 path-Laplacian probes certify locally with the shifted tridiagonal preconditioner, but production promotion is closed as a 2026-06-06 no-promotion decision because current benchmark rows lose to the promoted scalar/tridiagonal eigencore default"
         ],
         "native_certificate_paths": [
           "dense standard eigen certificate diagnostics",
@@ -425,13 +601,11 @@
           "largest algebraic",
           "smallest algebraic",
           "largest magnitude",
-          "smallest magnitude"
+          "smallest magnitude",
+          "nearest sigma through supported shift-invert transforms"
         ],
-        "not_yet_satisfied": [
-          "native LOBPCG/preconditioner production hardening beyond the strict quick staging gate",
-          "nearest sigma through shift-invert"
-        ],
-        "planner_policy": "Use the promoted native tridiagonal label only for benchmark-proven symmetric tridiagonal sparse/diagonal regimes; keep scalar-native labels for non-tridiagonal sparse Hermitian regimes; keep block labels explicit/diagnostic unless their own gate passes; route unsupported targets such as nearest() away from native Lanczos rather than remapping them."
+        "not_yet_satisfied": [],
+        "planner_policy": "Use the promoted native tridiagonal label only for benchmark-proven symmetric tridiagonal sparse/diagonal regimes; keep scalar-native labels for non-tridiagonal sparse Hermitian regimes; keep sparse block labels explicit/diagnostic after the 2026-06-06 no-promotion decision; route auto() nearest(sigma) through an implicit shift_invert(sigma) transform for supported factorized regimes, and fail loudly for matrix-free/unfactorized inputs instead of remapping the target."
       },
       "generalized_spd": {
         "problem": "A x = lambda B x, B positive definite",
@@ -455,13 +629,13 @@
         "largest/smallest imaginary part",
         "optional user shift-invert operator",
         "right eigenvectors",
+        "adjoint-capable left eigenvectors with biorthogonality diagnostics",
         "residual certification"
       ],
-      "v1_acceptance_boundary": "Dense and sparse CSC explicit matrices must use a native Arnoldi cycle with native projected Ritz extraction, restart diagnostics, and right-residual certification for supported real/imaginary/magnitude targets. Matrix-free/user-operator paths may remain reference-labelled unless a native callback ABI is promoted.",
+      "v1_acceptance_boundary": "Dense and sparse CSC explicit matrices must use a native Arnoldi cycle with native refined Ritz extraction, restart diagnostics, right-residual certification, and left residual/biorthogonality certification when an adjoint apply path is available. Real matrix-free callback operators remain native callback Arnoldi with native projected Ritz extraction. Unsupported user-operator and complex-valued input paths remain reference-labelled, rejected, or future-scope unless their own native ABI and gates are promoted.",
       "v1_non_goals": [
         "full generalized nonsymmetric eigenproblems",
         "advanced harmonic/refined extraction",
-        "left eigenvectors",
         "complex Schur sophistication"
       ]
     },
@@ -484,19 +658,20 @@
       ],
       "current_implementation_status": {
         "status": "scoped_v1_gate",
-        "implemented_path": "native Golub-Kahan staging path for dense double matrices and dgCMatrix operators; bounded native CSC left-Gram and right-Gram certified special cases cover the promoted non-quick tall/wide sparse largest-SVD release rows with exact two-sided certification; unexported block-Golub-Kahan thick-restart oracle, native block Ritz extraction kernel, dense/CSC native block basis-cycle scaffolding, and retained IRLBA/LBD BPRO diagnostics exist for broader H",
+        "implemented_path": "native Golub-Kahan staging path for dense double matrices and dgCMatrix operators; real matrix-free operators with adjoints use a native callback-cycle Golub-Kahan label with native Ritz extraction; bounded native CSC left-Gram and right-Gram certified special cases cover the promoted non-quick tall/wide sparse largest-SVD release rows and sparse smallest target-contract rows with exact two-sided certification; unexported block-Golub-Kahan thick-restart oracle, native block Ritz extraction kernel, dense/CSC native block basis-cycle scaffolding, and retained IRLBA/LBD BPRO diagnostics exist for broader H",
         "tiny_sparse_gram_gate_status": "installed strict non-quick H evidence is green for the promoted eigencore tall/wide sparse surface: tall_sparse 100000 x 500 and wide_sparse 500 x 100000 certify 20/20 triplets and pass speed/memory through the bounded native Gram special case; quick 600x90 fixtures are diagnostic only and not release signoff",
-        "retained_h_candidate_status": "the executable --h-candidate gate targets the promoted eigencore SVD path, with retained IRLBA/BPRO and block-GK rows left as diagnostics; installed 2026-06-05 strict non-quick tall_sparse and wide_sparse probes certify 20/20 requested triplets and pass speed/memory, with ratios 3.849574x and 9.882995x speed and 2.049985x memory versus the best certified references; retained BPRO remains diagnostic and speed/memory-red",
+        "retained_h_candidate_status": "the executable --h-candidate gate targets the promoted eigencore SVD path, with retained IRLBA/BPRO and block-GK rows left as diagnostics; installed 2026-06-05 strict non-quick tall_sparse and wide_sparse probes certify 20/20 requested triplets and pass speed/memory, with ratios 3.849574x and 9.882995x speed and 2.049985x memory versus the best certified references; source 2026-06-06 strict target contracts certify smallest_sparse:5000x500 through the native certified Gram SVD special case and interior_sparse:5000x500 through native full-subspace Golub-Kahan, with speed/memory green versus dense base target rows; retained BPRO remains diagnostic and speed/memory-red",
         "native_certificate_paths": [
           "dense SVD certificate diagnostics",
           "built-in dense, dgCMatrix, and diagonal SVD operator certificate diagnostics"
         ],
         "not_yet_satisfied": [
-          "general sparse and matrix-free thick-restarted SVD speed gates outside the narrow certified Gram production surface",
+          "general sparse and matrix-free thick-restarted SVD speed gates outside the narrow certified Gram production surface and callback-boundary sidecar",
+          "scalable refined/shift-invert sparse and matrix-free interior SVD beyond the full-subspace boundary",
           "fully promoted block-native Golub-Kahan/IRLBA/BPRO performance path",
           "thick restart / continuation without adaptive full reruns for broader sparse regimes"
         ],
-        "planner_policy": "Use an honest native prototype label for the current path; keep matrix-free SVD on the reference path until the native callback/operator ABI is broadened."
+        "planner_policy": "Use honest native prototype labels for dense/CSC staging paths and a native callback-boundary label for real matrix-free SVD with adjoints; broader sparse/matrix-free SVD performance promotion is closed as diagnostic-only in the current PRD unless future installed speed, memory, and exact certificate evidence reopens it. For smallest/interior SVD, expose svd_target_family, svd_target_boundary, promotion gate issue fields, closed decision issue fields, materialized_gram, and native_gram_eigensolver in planner/benchmark controls. Sparse CSC smallest-SVD may use the native certified Gram special case inside the explicit Gram gate and native certified Golub-Kahan otherwise; exact-norm matrix-free smallest-SVD callbacks may use native certified labels. Sparse CSC nearest-sigma SVD and exact-norm matrix-free nearest-sigma callbacks may use native full-subspace labels, while scalable refined/shift-invert interior SVD remains future scope."
       }
     },
     "randomized_svd": {
@@ -513,15 +688,15 @@
         "time-to-certified-answer must beat vendor/rsvd in regimes where the planner selects randomized SVD"
       ],
       "reference_baseline": "vendor/rsvd is the minimum public-package baseline for randomized SVD: eigencore must match or improve rsvd::rsvd() accuracy and exceed rsvd performance once certification/refinement cost is included.",
-      "benchmark_surface": "inst/benchmarks/bench-randomized-rsvd.R reports oracle singular-value error, left/right subspace error, true SVD certificate fields, rsvd speed ratios, and whether the rsvd baseline itself passes eigencore certification.",
+      "benchmark_surface": "inst/benchmarks/bench-randomized-rsvd.R reports oracle singular-value error, left/right subspace error, true SVD certificate fields, rsvd speed ratios, whether the rsvd baseline itself passes eigencore certification, and native dense/sparse randomized controller contracts.",
       "current_implementation_status": {
         "status": "scoped_v1_gate",
-        "implemented_path": "reference-control randomized range finder with deterministic seed, QR/LU/none normalization controls, native dense/CSC fused A Omega sketch generation, native A'Q and direct Q' A projected-core kernels, projected-certificate reuse, certified q=0 early stop, deterministic native Gram refinement when needed, and a wide-core left-Gram eigensolve for small projected cores.",
-        "validated_regime": "installed strict non-quick exact-low-rank dense benchmark passes the scoped randomized 2x release gate versus certified rsvd at about 3.1x with accuracy and certificate gates green; quick dense/sparse and uncertified-baseline rows remain printed diagnostics with release_gate_required = false",
+        "implemented_path": "native dense randomized controller for dense double QR-normalized largest-target requests and native sparse CSC randomized controller for sparse CSC QR-normalized largest-target requests, with deterministic seed, native fused A Omega sketch generation, native QR subspace iteration, native direct Q' A projected-core construction, native projected-core SVD, native residual certification diagnostics, certified q=0 early stop, and deterministic native Gram refinement when needed; matrix-free and LU/none randomized regimes remain reference-control with native sketch/projection/projected-core kernels where available.",
+        "validated_regime": "source strict 2026-06-06 exact-low-rank dense benchmark passes the scoped randomized 2x release gate versus certified rsvd at about 2.55x with randomized_controller_native = true, randomized_native_certificate_diagnostics = true, randomized_adaptive_stop_used = true, and accuracy/certificate gates green; the same strict run certifies low_rank_sparse:2000x500 through native_csc_randomized_controller with randomized_sparse_native_controller = true and the controller contract green, while sparse speed remains diagnostic; quick dense/sparse and uncertified-baseline rows remain printed diagnostics with release_gate_required = false",
         "not_yet_satisfied": [
-          "fully native randomized solver controller beyond the current reference-control path with native dense/CSC kernels",
+          "matrix-free and LU/none native randomized solver controllers beyond the dense/sparse QR native-controller slice",
           "broader slow-decay adaptive planner regimes",
-          "stable sparse-size release candidate against a certified rsvd baseline"
+          "stable sparse-size speed-promotion candidate against certified baselines"
         ]
       }
     },
@@ -546,11 +721,9 @@
       "current_implementation_status": {
         "status": "scoped_v1_gate",
         "implemented_path": "native generalized SPD LOBPCG for explicit/sparse/structured paths with B-orthogonal native kernels, optional constraints, explicit SPD matrix-free B contracts, and typed shifted-diagonal / shifted-tridiagonal preconditioners; dense generalized auto uses the native dense generalized SPD LAPACK fallback.",
-        "validated_regime": "installed 2026-06-05 non-quick strict saved generalized benchmark certifies sparse_generalized_path_smallest:1000 and sparse_generalized_path_largest:1000 at 10/10 with shifted-tridiagonal preconditioner provenance, native B-orthogonal execution, no sparse densification, and speed/memory gates green versus dense base",
+        "validated_regime": "current 2026-06-06 one-iteration strict generalized benchmark certifies sparse_generalized_path_smallest:1000 and sparse_generalized_path_largest:1000 at 10/10 with shifted-tridiagonal preconditioner provenance, native B-orthogonal execution, no sparse densification, and speed/memory gates green versus dense base; the same full gate passes dense fallback policy, constraints, adversarial diagonal/sparse-CSC/matrix-free B rows, generalized-Lanczos native/reference contracts, and sparse CSC metric-boundary rows that distinguish native tridiagonal Thomas solves from general sparse reference Cholesky",
         "not_yet_satisfied": [
-          "broader generalized preconditioner policy beyond the scoped sparse shifted-tridiagonal release surface",
-          "dense generalized auto promotion to iterative LOBPCG",
-          "future-scope native/block generalized B-orthogonal Lanczos alternate beyond the scoped reference refinement"
+          "arbitrary sparse-CSC metric factorization and sparse-CSC block generalized B-orthogonal Lanczos beyond the dense/diagonal transformed native block slice and tridiagonal sparse-B native Thomas metric-solve boundary"
         ]
       }
     },
@@ -567,7 +740,7 @@
       ],
       "current_implementation_status": {
         "status": "scoped_v1_gate",
-        "implemented_path": "native factorized Lanczos shift-invert for dense standard Hermitian, dense generalized SPD, diagonal standard, sparse symmetric-tridiagonal standard, and sparse/diagonal tridiagonal generalized SPD cases; honest reference-labelled sparse-LU and user-solve boundaries remain for general sparse and matrix-free solves. All paths return eigenvalues in original coordinates with operator-side certification.",
+        "implemented_path": "native factorized Lanczos shift-invert for dense standard Hermitian, dense generalized SPD, diagonal standard, sparse symmetric-tridiagonal standard, and sparse/diagonal tridiagonal generalized SPD cases; honest reference-labelled sparse-LU and user-solve boundaries remain for general sparse and matrix-free solves. All paths return eigenvalues in original coordinates with operator-side certification and attach shift_invert_factorization_contract_v1 ownership metadata.",
         "honest_planner_labels": [
           "native dense Hermitian shift-invert (factorized Lanczos)",
           "native dense generalized SPD shift-invert (factorized Lanczos)",
@@ -577,18 +750,26 @@
           "reference generalized SPD Lanczos shift-invert (sparse LU)",
           "reference Hermitian Lanczos shift-invert (user solve)"
         ],
+        "factorization_ownership_model": {
+          "contract_version": "shift_invert_factorization_contract_v1",
+          "native_contract": "Native labels require eigencore-owned factorized apply, cache-key provenance, no dense fallback, and original-coordinate certification.",
+          "matrix_reference_contract": "General sparse rows use Matrix::lu_reference_factorization with sparse pivot diagnostics, cache invalidation by A/B/sigma/structure fingerprint, no dense rcond, and estimated-scale certificate honesty.",
+          "user_solve_contract": "User-supplied solve functions are user_supplied_solve external-cache boundaries with original-coordinate certification and no native ownership claim."
+        },
         "guards": [
           "near-singular shifted operator detected via dense LU or native tridiagonal pivot diagnostics and rejected with an actionable error",
           "general sparse reference rows expose sparse LU pivot-ratio diagnostics without dense rcond",
           "zero-magnitude inverted eigenvalue detected and rejected with an actionable error",
+          "strict benchmark contracts require shift_invert_factorization_contract_v1 metadata and forbid native labels unless the contract provider is eigencore_native_factorization",
           "unsupported sparse or matrix-free generalized metrics reject instead of densifying silently"
         ],
-        "not_yet_satisfied": [
-          "native general sparse LU factorization/apply ownership beyond the current sparse-LU reference boundary",
-          "native user-supplied solve ownership beyond the current external-cache reference boundary"
+        "not_yet_satisfied": [],
+        "closed_non_goals": [
+          "native general sparse LU/factorized apply promotion beyond the current Matrix::lu reference factorization contract",
+          "native ownership of user-supplied solve functions beyond the current external-cache contract"
         ],
-        "validated_regime": "installed 2026-06-05 strict saved shift-invert benchmark passes all eight native/reference contract rows: dense standard, dense generalized, sparse tridiagonal, diagonal standard, sparse tridiagonal generalized, sparse general reference, sparse/diagonal generalized reference, and matrix-free user-solve reference",
-        "planner_policy": "Use native labels only for dense and diagonal/tridiagonal factorized Lanczos regimes. General sparse and user-solve shift-invert remain explicitly reference-labelled with cache/factorization provenance and no silent sparse densification."
+        "validated_regime": "installed 2026-06-05 strict saved shift-invert benchmark and current 2026-06-06 strict source gate pass all eight native/reference contract rows: dense standard, dense generalized, sparse tridiagonal, diagonal standard, sparse tridiagonal generalized, sparse general reference, sparse/diagonal generalized reference, and matrix-free user-solve reference",
+        "planner_policy": "Use native labels only for dense and diagonal/tridiagonal factorized Lanczos regimes whose factorization contract provider is eigencore_native_factorization. General sparse and user-solve shift-invert remain explicitly reference-labelled with cache/factorization provenance, no silent sparse densification, and contract-gated ownership metadata."
       }
     }
   },
@@ -1050,7 +1231,7 @@
         "beats or matches RSpectra on initial Hermitian benchmark subset",
         "returns certified residuals"
       ],
-      "current_status": "G1 green for the promoted structured-tridiagonal Hermitian default: certified native scalar thick-restart remains available for dense/CSC Hermitian problems, and symmetric tridiagonal sparse/diagonal sources with largest/smallest targets now dispatch through a native selected tridiagonal LAPACK solver with a tridiagonal residual certificate. Installed strict path_laplacian:1000 evidence from 2026-06-05 certifies 20/20 and passes speed, memory, and PRIMME parity. Native block Hermitian Lanczos (thick restart, locking) remains available for explicit block requests, dense full-subspace cases, and diagnostic sparse opt-in, but is not promoted for general sparse auto(). Native standard Hermitian LOBPCG with shifted tridiagonal preconditioning remains a separate staging/preconditioned path. The scoped J sparse shifted-tridiagonal generalized LOBPCG gate is green; broader generalized preconditioners remain future scope."
+      "current_status": "G1 green for the promoted structured-tridiagonal Hermitian default: certified native scalar thick-restart remains available for dense/CSC Hermitian problems, and symmetric tridiagonal sparse/diagonal sources with largest/smallest targets now dispatch through a native selected tridiagonal LAPACK solver with a tridiagonal residual certificate. Installed strict path_laplacian:1000 evidence from 2026-06-05 certifies 20/20 and passes speed, memory, and PRIMME parity. Native block Hermitian Lanczos (thick restart, locking) remains available for explicit requests, dense full-subspace cases, and diagnostic sparse opt-in; general sparse block auto-promotion is closed by a 2026-06-06 documented no-promotion decision after current non-quick evidence certified but failed speed/parity. Native standard Hermitian LOBPCG with shifted tridiagonal preconditioning remains diagnostic/prototype-only after a 2026-06-06 no-promotion decision: it certifies and beats external references but fails the scalar-speed gate against the current eigencore default. The generalized SPD LOBPCG strict gate is green for shifted-tridiagonal, matrix-free-B, constrained, adversarial-B, generalized-Lanczos native/reference/block contract rows, and sparse CSC metric-boundary diagnostics; arbitrary sparse-CSC metric factorization and sparse-CSC block generalized Lanczos are not claimed."
     },
     {
       "name": "Milestone 4",
@@ -1072,7 +1253,7 @@
         "sparse A/B inputs are not densified",
         "largest and smallest generalized targets pass adversarial B cases"
       ],
-      "current_status": "Scoped V1 gate green for the promoted sparse shifted-tridiagonal generalized LOBPCG surface. Installed 2026-06-05 non-quick strict saved evidence certifies largest and smallest sparse generalized targets at n = 1000, k = 10 with native B-orthogonal execution, shifted-tridiagonal preconditioner provenance, and no sparse densification. Dense generalized auto remains a native dense LAPACK fallback, while matrix-free B, constrained, generalized-Lanczos-reference, and adversarial B rows remain benchmark-visible contract checks."
+      "current_status": "Scoped V1 gate green for the promoted sparse shifted-tridiagonal generalized LOBPCG surface. Current 2026-06-06 one-iteration strict evidence certifies largest and smallest sparse generalized targets at n = 1000, k = 10 with native B-orthogonal execution, shifted-tridiagonal preconditioner provenance, and no sparse densification; the same full gate also passes dense generalized fallback policy rows, native matrix-free-B metrics, native constraints, adversarial diagonal/sparse-CSC/matrix-free B rows, and generalized-Lanczos native/reference contracts. Dense generalized auto remains a native dense LAPACK fallback rather than an iterative promotion."
     },
     {
       "name": "Milestone 4b",
@@ -1087,7 +1268,7 @@
         "B-orthogonal Lanczos agrees with LOBPCG certificates on shared cases",
         "sigma-targeted problems converge on validation cases"
       ],
-      "current_status": "Scoped V1 K gate green as an explicit honest reference refinement. Dense, diagonal, and sparse CSC SPD metric solves route through the reference generalized SPD B-orthogonal Lanczos label, certify in original generalized coordinates, preserve B-orthogonality, avoid sparse densification, and agree with native generalized LOBPCG certificates. Native/block generalized Lanczos promotion is future scope."
+      "current_status": "Scoped V1 K gate now has a native transformed generalized SPD B-orthogonal Lanczos slice for dense and diagonal SPD metrics, including explicit block requests inside that transformed boundary, with original-coordinate generalized residual certification and B-orthogonality. Sparse CSC SPD metrics remain honestly reference-labelled at the solver-loop level, but tridiagonal sparse-B metrics use eigencore-owned native Thomas metric solves while general sparse CSC metrics retain Matrix::Cholesky reference provenance. The focused strict block row certifies diagonal_generalized_block_lanczos_native_smallest with block_size = 2 and a green block-native contract. These boundaries preserve B-orthogonality, avoid sparse densification, and agree with native generalized LOBPCG certificates. Arbitrary sparse-CSC metric factorization and sparse-CSC block generalized Lanczos promotion are not claimed."
     },
     {
       "name": "Milestone 5",
@@ -1103,7 +1284,8 @@
         "no default A*A materialization",
         "residuals match direct recomputation",
         "beats RSpectra on SVD benchmark subset"
-      ]
+      ],
+      "current_status": "Scoped V1 H gate is green for the promoted non-quick tall/wide sparse surface through bounded native Gram special cases with exact two-sided certificates and installed 2026-06-05 evidence, and source 2026-06-06 strict target contracts are green for sparse smallest/interior rows. Smallest sparse CSC uses the native certified Gram SVD special case inside the explicit Gram-dimension gate; interior sparse CSC uses native full-subspace Golub-Kahan. Dense/CSC native Golub-Kahan staging, block-Golub-Kahan oracle machinery, retained IRLBA/LBD diagnostics, and BPRO diagnostics remain benchmark-visible but are not a general sparse or matrix-free thick-restart production SVD claim. Scalable refined/shift-invert interior SVD is not promoted in the current PRD after the closed 2026-06-06 target-boundary decision under bd-01KTEH6862GB19JJWX2M3FQP6T."
     },
     {
       "name": "Milestone 6",
@@ -1123,7 +1305,8 @@
         "accuracy matches or improves vendor/rsvd on the randomized benchmark bank",
         "time-to-certified-answer beats vendor/rsvd in randomized-planner regimes",
         "planner chooses randomized PCS only in regimes where certification and benchmarks justify it"
-      ]
+      ],
+      "current_status": "Scoped V1 randomized gate is green for the large exact-low-rank dense planner row. Dense double and sparse CSC QR-normalized largest-target requests now use native randomized controllers with exact residual certification diagnostics and q=0 early stop; sparse CSC has a green native-controller certificate/provenance contract but sparse speed remains diagnostic. Quick small-size, slow-decay, uncertified-baseline, matrix-free, and LU/none rows are diagnostic or future scope after the closed 2026-06-06 native-controller/no-promotion decision under bd-01KTE8JFKPA90ZJTXK496SBMK4."
     },
     {
       "name": "Milestone 7",
@@ -1138,7 +1321,8 @@
         "graph Laplacian tests pass",
         "generalized SPD tests pass",
         "preconditioned cases reduce iteration count"
-      ]
+      ],
+      "current_status": "Generalized LOBPCG is green for sparse shifted-tridiagonal largest/smallest targets and the broader generalized strict contract bank with current 2026-06-06 evidence: B-orthogonal native execution, shifted native preconditioner provenance, matrix-free-B metrics, constraints, adversarial B rows, dense fallback policy, generalized-Lanczos native/reference/block contracts, sparse CSC metric-boundary diagnostics, and no sparse densification. Standard Hermitian LOBPCG/preconditioner promotion is closed as diagnostic/prototype-only under bd-01KTEH4G1QPR4RT14B4G78PF1M after certified rows failed the scalar-speed gate; sparse-CSC block generalized Lanczos and arbitrary sparse-CSC metric factorization are not claimed."
     },
     {
       "name": "Milestone 8",
@@ -1158,7 +1342,8 @@
         "API examples work",
         "compatibility tests pass",
         "documentation draft complete"
-      ]
+      ],
+      "current_status": "Scoped V1 public API, result objects, target taxonomy, RSpectra-compatible shims, planner labels, and documentation examples are covered by the current tests and V1 documentation audit. This is not an unlimited compatibility promise: base complex dense matrices now use native dense complex LAPACK labels with exact eigen/SVD certificates and native zgemm block apply, while complex sparse Matrix inputs and promoted complex matrix-free operator paths remain future scope; real matrices may still return complex eigenpairs through the supported general-eigen target taxonomy; broader matrix-free boundaries and unstable helper exports remain non-public."
     },
     {
       "name": "Milestone 9",
@@ -1176,18 +1361,33 @@
         "all V1 acceptance criteria pass",
         "performance gates pass",
         "known limitations documented"
-      ]
+      ],
+      "current_status": "Scoped V2 CRAN release hardening requires fresh evidence after the release-version metadata update: full test suite, tarball CRAN-like check, strict installed benchmark reports for promoted surfaces, UBSan installed native smoke where available, migration docs, known limitations, and release audits. The current post-V1 tracker map has no open implementation owner rows after the 2026-06-06 no-promotion/non-goal decisions; benchmark gates remain umbrella-owned regression evidence, and future claims require a revised PRD plus installed strict or long evidence updates."
     }
   ],
   "v2_scope": {
+    "release_name": "V2 CRAN release",
+    "objective": "Prepare the scoped native-first spectral engine for CRAN submission.",
+    "scope_policy": "No new solver family is required for V2. V2 freezes scope, stabilizes the public API, audits planner labels and certificates, hardens tests, curates benchmark evidence, and makes examples, README, vignettes, package metadata, and build/check hygiene CRAN-safe.",
+    "release_surfaces": [
+      "Hermitian eigen",
+      "SVD",
+      "randomized SVD",
+      "generalized SPD",
+      "shift-invert",
+      "nonsymmetric eigen",
+      "complex dense and operator-boundary diagnostics"
+    ],
+    "acceptance_theme": "V2 is ready only when the package can be built and checked as a CRAN release candidate, with every public claim tied to current certificate/provenance/test/benchmark evidence."
+  },
+  "v3_scope": {
     "algorithmic_additions": [
       "Jacobi-Davidson",
       "Davidson",
+      "full nonsymmetric Krylov-Schur workflows",
       "harmonic Ritz extraction",
-      "refined Ritz vectors",
-      "better nonsymmetric Krylov-Schur",
-      "left eigenvectors",
-      "interior SVD",
+      "matrix-free/interior refined Ritz vectors",
+      "scalable sparse/matrix-free interior SVD",
       "smallest SVD with stronger methods",
       "polynomial/Chebyshev filtering",
       "warm starts and continuation",
@@ -1201,15 +1401,14 @@
     "preconditioning_additions": [
       "incomplete Cholesky",
       "incomplete LU",
+      "native general sparse LU ownership",
       "diagonal/block diagonal preconditioners",
       "deflation preconditioners",
       "polynomial preconditioners",
       "better user preconditioner diagnostics"
     ],
-    "acceptance_theme": "V2 should become the best R package for hard spectral problems: interior eigenvalues, clustered spectra, weighted PCA/SVD, and preconditioned generalized problems."
-  },
-  "v3_scope": {
     "potential_features": [
+      "native complex sparse/operator kernels",
       "GPU block kernels",
       "distributed memory backend",
       "GraphBLAS-style sparse kernels",
@@ -1223,7 +1422,13 @@
       "nonlinear eigenproblem experiments",
       "mixed precision"
     ],
-    "policy": "V3 should not compromise the V1/V2 native core. External backends should plug into the problem/solver/certificate system, not replace it."
+    "broad_matrix_ecosystem_adapters": [
+      "DelayedArray adapters",
+      "HDF5-backed adapters",
+      "file-backed matrix adapters",
+      "automatic adapters for broad matrix ecosystems"
+    ],
+    "policy": "V3 owns hard solver expansion and ecosystem breadth after the V2 CRAN release. It must not compromise the V1/V2 native core; external backends should plug into the problem/solver/certificate system, not replace it."
   },
   "documentation_requirements": {
     "required_docs": [
@@ -1260,6 +1465,8 @@
       "The native core avoids R-level iteration overhead."
     ],
     "central_product_claim": "The fastest path to a trustworthy partial spectrum in R.",
-    "clarification": "Not merely the fastest path to some eigenvalues. A trustworthy, certified result."
+    "claim_status": "Post-V2 ambition, not an unqualified CRAN-facing claim across all problem classes.",
+    "current_scoped_claim": "For promoted V2 CRAN release surfaces, eigencore is a certified native-first spectral engine with explicit planner labels, residual/backward-error certificates, and documented reference/prototype boundaries.",
+    "clarification": "Not merely the fastest path to some eigenvalues. A trustworthy, certified result. The unqualified fastest-path claim is valid only for surfaces with current installed benchmark evidence; all other surfaces must stay scoped, diagnostic, reference-labelled, or future-scope until their tracker gate closes."
   }
 }

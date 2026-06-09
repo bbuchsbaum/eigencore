@@ -56,6 +56,10 @@ the certificate takes 30 seconds and replaces the usual ritual of
 This vignette walks through the certificate's fields, the three things they
 measure, and what to do when one of them fails.
 
+For the V2 CRAN release, a certificate is not just display metadata. It is the
+evidence boundary that keeps promoted native paths, reference fallbacks, and V3
+deferrals honest.
+
 ```{r setup}
 library(eigencore)
 ```
@@ -218,15 +222,17 @@ h_fail <- diagnostics(fit_fail)$convergence_history
 h_ok   <- diagnostics(fit_ok)$convergence_history
 tol <- fit_fail$certificate$tolerance
 yl  <- range(c(h_fail$max_backward_error, h_ok$max_backward_error, tol))
-op <- par(mar = c(4, 4.6, 1, 1)); on.exit(par(op))
-plot(h_fail$restart, h_fail$max_backward_error, log = "y", type = "l",
-     lwd = 2, col = ec_red, bty = "n", ylim = yl,
-     xlab = "restart", ylab = "max backward error (log scale)")
-lines(h_ok$restart, h_ok$max_backward_error, lwd = 2, col = ec_blue)
-abline(h = tol, col = ec_tol, lty = 2, lwd = 2)
-legend("right", c("maxit = 15 (failed)", "maxit = 40 (passed)", "tolerance"),
-       col = c(ec_red, ec_blue, ec_tol), lwd = 2, lty = c(1, 1, 2),
-       bty = "n", cex = 0.9, inset = 0.02)
+op <- par(mar = c(4, 4.6, 1, 1))
+tryCatch({
+  plot(h_fail$restart, h_fail$max_backward_error, log = "y", type = "l",
+       lwd = 2, col = ec_red, bty = "n", ylim = yl,
+       xlab = "restart", ylab = "max backward error (log scale)")
+  lines(h_ok$restart, h_ok$max_backward_error, lwd = 2, col = ec_blue)
+  abline(h = tol, col = ec_tol, lty = 2, lwd = 2)
+  legend("right", c("maxit = 15 (failed)", "maxit = 40 (passed)", "tolerance"),
+         col = c(ec_red, ec_blue, ec_tol), lwd = 2, lty = c(1, 1, 2),
+         bty = "n", cex = 0.9, inset = 0.02)
+}, finally = par(op))
 ```
 
 What to do: increase `maxit`, raise `tol`, or — when you suspect a clustered

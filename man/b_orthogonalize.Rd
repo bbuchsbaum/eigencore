@@ -7,16 +7,16 @@
 b_orthogonalize(X, B, against = NULL, tol = sqrt(.Machine$double.eps))
 }
 \arguments{
-\item{X}{Numeric matrix input.}
+\item{X}{Numeric matrix whose columns are orthogonalized.}
 
-\item{B}{Metric, operator, or basis input.}
+\item{B}{Symmetric positive-definite metric matrix defining the inner
+product.}
 
-\item{against}{Optional basis to orthogonalize against.}
+\item{against}{Optional matrix whose columns are projected out in the
+B-inner product.}
 
-\item{tol}{Numerical tolerance.}
-
+\item{tol}{Orthogonality warning tolerance.}
 }
 \description{
 Orthogonalize columns in the B-inner product.
 }
-\keyword{internal}

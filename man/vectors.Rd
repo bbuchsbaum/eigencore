@@ -7,11 +7,14 @@
 vectors(x, ...)
 }
 \arguments{
-\item{x}{Object.}
+\item{x}{An eigencore eigen result object.}
 
-\item{...}{Additional arguments passed to methods.}
-
+\item{...}{Reserved for future methods.}
 }
 \description{
 Extract eigenvectors.
+}
+\examples{
+fit <- eig_partial(diag(c(3, 2, 1)), k = 2, target = largest())
+dim(vectors(fit))
 }

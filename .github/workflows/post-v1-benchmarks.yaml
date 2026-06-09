@@ -1,0 +1,70 @@
+on:
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: Post-V1 benchmark tier to run
+        required: true
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - strict
+          - long
+      gates:
+        description: Optional comma-separated post-V1 gate ids
+        required: false
+        default: ""
+  schedule:
+    - cron: "17 8 * * 1"
+
+name: post-v1-benchmarks.yaml
+
+permissions: read-all
+
+jobs:
+  post-v1-benchmarks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+      BENCH_LIB: ${{ runner.temp }}/eigencore-bench-lib
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::bench, any::pkgload, any::testthat, any::RSpectra, any::irlba, any::rsvd, any::PRIMME, local::.
+          needs: none
+
+      - name: Install package for installed-gate commands
+        run: |
+          dir.create(Sys.getenv("BENCH_LIB"), recursive = TRUE, showWarnings = FALSE)
+          install.packages(".", repos = NULL, type = "source", lib = Sys.getenv("BENCH_LIB"))
+        shell: Rscript {0}
+
+      - name: Run post-V1 benchmark profile
+        run: |
+          TIER="${{ github.event.inputs.tier }}"
+          GATES="${{ github.event.inputs.gates }}"
+          if [ -z "$TIER" ]; then
+            TIER=smoke
+          fi
+          ARGS="--tier=${TIER}"
+          if [ -n "$GATES" ]; then
+            ARGS="${ARGS} --gates=${GATES}"
+          fi
+          R_LIBS="${BENCH_LIB}:${R_LIBS}" Rscript inst/benchmarks/run-post-v1-gates.R ${ARGS}
+        shell: bash
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-v1-benchmark-results
+          path: inst/benchmarks/results

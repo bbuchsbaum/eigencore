@@ -7,17 +7,22 @@
 eigs_sym(A, k, which = "LA", opts = list(), ...)
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Matrix or eigencore operator.}
 
-\item{k}{Number of eigenpairs or singular triplets requested.}
+\item{k}{Number of eigenpairs to compute.}
 
 \item{which}{RSpectra-style target selector.}
 
-\item{opts}{Compatibility options.}
+\item{opts}{Compatibility options list; currently accepted for API
+compatibility and not interpreted directly.}
 
-\item{...}{Additional arguments passed to methods.}
-
+\item{...}{Additional arguments passed to \code{\link[=solve.eigencore_eigen_problem]{solve.eigencore_eigen_problem()}}.}
 }
 \description{
 RSpectra-compatible symmetric eigen shim.
+}
+\examples{
+A <- diag(c(5, 4, 3, 2, 1))
+res <- eigs_sym(A, k = 2, which = "LA")
+res$values
 }

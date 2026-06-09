@@ -14,20 +14,18 @@ validate_eigen_accuracy(
 )
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Matrix or eigencore operator to validate.}
 
-\item{k}{Number of eigenpairs or singular triplets requested.}
+\item{k}{Number of eigenpairs to validate.}
 
-\item{target}{Spectral target descriptor.}
+\item{target}{Eigencore eigenvalue target descriptor.}
 
-\item{B}{Metric, operator, or basis input.}
+\item{B}{Optional metric matrix or operator for generalized problems.}
 
-\item{fit}{Documented argument.}
+\item{fit}{Optional precomputed eigencore eigen result.}
 
-\item{tol}{Numerical tolerance.}
-
+\item{tol}{Validation tolerance.}
 }
 \description{
 Validate eigencore eigen results against a dense oracle.
 }
-\keyword{internal}

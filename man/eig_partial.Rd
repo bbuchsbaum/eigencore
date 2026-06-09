@@ -19,42 +19,40 @@ eig_partial(
 )
 }
 \arguments{
-\item{A}{
-Input matrix or operator.
-}
-\item{k}{
-Number of requested eigenvalues or vectors.
-}
-\item{target}{
-Spectral target descriptor.
-}
-\item{B}{
-Optional metric or matrix argument.
-}
-\item{method}{
-Solver method descriptor.
-}
-\item{tol}{
-Numerical tolerance.
-}
-\item{maxit}{
-Optional iteration or subspace limit.
-}
-\item{vectors}{
-Vector-return mode.
-}
-\item{seed}{
-Optional random seed.
-}
-\item{certify}{
-Whether to compute certificates.
-}
-\item{allow_dense_fallback}{
-Dense fallback policy. \code{"auto"} applies the \code{eigencore.dense_fallback_mb}
-budget and refuses sparse densification; \code{"never"} disables dense fallback;
-\code{"always"} explicitly permits fallback, including sparse materialization.
-}
+\item{A}{Matrix or eigencore operator.}
+
+\item{k}{Number of eigenpairs to compute.}
+
+\item{target}{Eigencore eigenvalue target descriptor.}
+
+\item{B}{Optional metric matrix or operator for generalized problems.}
+
+\item{method}{Solver method descriptor.}
+
+\item{tol}{Convergence and certification tolerance.}
+
+\item{maxit}{Optional iteration limit.}
+
+\item{vectors}{Whether to compute vectors.}
+
+\item{seed}{Optional random seed for stochastic solver components.}
+
+\item{certify}{Whether to compute certification diagnostics.}
+
+\item{allow_dense_fallback}{Dense fallback policy.}
 }
 \description{
 Compute a partial eigendecomposition.
+}
+\examples{
+A <- diag(c(5, 4, 3, 2, 1))
+A[1, 2] <- A[2, 1] <- 0.1
+fit <- eig_partial(A, k = 2, target = largest())
+values(fit)
+certificate(fit)$passed
+
+# Generalized SPD problem A x = lambda B x
+B <- diag(c(2, 1, 1, 1, 1))
+gfit <- eig_partial(A, B = B, k = 2, target = smallest())
+values(gfit)
 }

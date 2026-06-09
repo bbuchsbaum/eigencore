@@ -18,52 +18,30 @@
 )
 }
 \arguments{
-\item{a}{
-A problem object created by \code{\link[=eigen_problem]{eigen_problem()}}.
-}
-\item{b}{
-Unused; present for compatibility with the \code{\link[base:solve]{base::solve()}} generic.
-}
-\item{k}{
-Number of requested eigenvalues or vectors.
-}
-\item{method}{
-Solver method descriptor.
-}
-\item{tol}{
-Numerical tolerance (backward-error).
-}
-\item{maxit}{
-Optional iteration or subspace limit.
-}
-\item{vectors}{
-Whether to return eigenvectors.
-}
-\item{certify}{
-Whether to compute certificates.
-}
-\item{allow_dense_fallback}{
-Dense fallback policy. \code{"auto"} applies the \code{eigencore.dense_fallback_mb}
-budget and refuses sparse densification; \code{"never"} disables dense fallback;
-\code{"always"} explicitly permits fallback, including sparse materialization.
-}
-\item{...}{
-Unused; present for S3 generic compatibility.
-}
-}
-\value{
-A certified partial eigendecomposition: a list carrying \code{values},
-\code{vectors}, a \code{certificate}, the planner \code{method} label, and
-solver diagnostics. See \code{\link[=eig_partial]{eig_partial()}} for the
-field-by-field description.
+\item{a}{Eigencore eigen problem object.}
+
+\item{b}{Unused second argument reserved by the base \code{\link[=solve]{solve()}} generic.}
+
+\item{k}{Number of eigenpairs to compute.}
+
+\item{method}{Solver method descriptor.}
+
+\item{tol}{Convergence and certification tolerance.}
+
+\item{maxit}{Optional iteration limit.}
+
+\item{vectors}{Whether to compute vectors.}
+
+\item{certify}{Whether to compute certification diagnostics.}
+
+\item{allow_dense_fallback}{Dense fallback policy.}
+
+\item{...}{Reserved for future solver options.}
 }
 \description{
 S3 method that runs the planned solver for an eigenproblem built by
-\code{\link[=eigen_problem]{eigen_problem()}}. Most users call
-\code{\link[=eig_partial]{eig_partial()}}, which constructs the problem and
-dispatches here; call \code{solve()} directly when you want to build a problem
-once and reuse or inspect it.
-}
-\seealso{
-\code{\link[=eig_partial]{eig_partial()}}, \code{\link[=eigen_problem]{eigen_problem()}}, \code{\link[=plan_solver]{plan_solver()}}
+\code{\link[=eigen_problem]{eigen_problem()}}. Most users call \code{\link[=eig_partial]{eig_partial()}}, which constructs the
+problem and dispatches here; call \code{solve()} directly when you want to build
+a problem once and reuse or inspect it. Returns a certified partial
+eigendecomposition.
 }

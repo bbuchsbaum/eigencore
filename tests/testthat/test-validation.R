@@ -212,6 +212,51 @@ test_that("general dense eigen certificate supports complex right eigenpairs", {
   )
 })
 
+test_that("complex matrix-free operators certify exactly with explicit norm metadata", {
+  A <- matrix(c(1 + 1i, 2, 3 - 1i, 4), nrow = 2)
+  calls <- new.env(parent = emptyenv())
+  calls$apply <- 0L
+  calls$adjoint <- 0L
+  op <- linear_operator(
+    dim = dim(A),
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      calls$apply <- calls$apply + 1L
+      out <- alpha * (A %*% X)
+      if (!is.null(Y) && beta != 0) out <- out + beta * Y
+      out
+    },
+    apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) {
+      calls$adjoint <- calls$adjoint + 1L
+      out <- alpha * (Conj(t(A)) %*% X)
+      if (!is.null(Y) && beta != 0) out <- out + beta * Y
+      out
+    },
+    dtype = "complex",
+    structure = general(),
+    name = "complex_matrix_free_exact_norm",
+    metadata = list(frobenius_norm = norm(A, type = "F"))
+  )
+
+  eig <- eigen(A)
+  eig_cert <- eigencore:::certify_general_eigen_operator(
+    op, eig$values, eig$vectors, tol = 1e-10
+  )
+  sv <- svd(A)
+  svd_cert <- eigencore:::certify_svd_operator(
+    op, sv$d, sv$u, sv$v, tol = 1e-10
+  )
+
+  expect_true(eig_cert$passed)
+  expect_true(svd_cert$passed)
+  expect_identical(eig_cert$certificate_type, "right_residual_backward_error")
+  expect_identical(eig_cert$norm_bound_type, "frobenius_metadata")
+  expect_identical(svd_cert$norm_bound_type, "frobenius_metadata")
+  expect_false(eig_cert$scale_is_estimate)
+  expect_false(svd_cert$scale_is_estimate)
+  expect_gt(calls$apply, 0L)
+  expect_gt(calls$adjoint, 0L)
+})
+
 test_that("native dense eigen residuals match direct standard and generalized formulas", {
   set.seed(21)
   A <- crossprod(matrix(rnorm(36), nrow = 6))

@@ -7,11 +7,15 @@
 as_operator(x, ...)
 }
 \arguments{
-\item{x}{Object.}
+\item{x}{Object to convert.}
 
 \item{...}{Additional arguments passed to methods.}
-
 }
 \description{
 Convert an object to an eigencore operator.
+}
+\examples{
+op <- as_operator(diag(c(3, 2, 1)))
+op$dim
+op$structure$kind
 }

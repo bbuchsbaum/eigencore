@@ -7,12 +7,11 @@
 compose(A, B, name = NULL)
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Left operator-like object.}
 
-\item{B}{Metric, operator, or basis input.}
+\item{B}{Right operator-like object.}
 
-\item{name}{Optional operator name.}
-
+\item{name}{Optional label for the composed operator.}
 }
 \description{
 Compose two operators.

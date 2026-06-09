@@ -7,10 +7,9 @@
 crossprod_operator(A, name = NULL)
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Operator-like object with an adjoint implementation.}
 
-\item{name}{Optional operator name.}
-
+\item{name}{Optional label for the cross-product operator.}
 }
 \description{
 Create A^* A as an operator.

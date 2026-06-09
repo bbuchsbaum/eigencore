@@ -1256,6 +1256,21 @@ native_irlba_lbd_select_vectors <- function(final, vectors) {
 }
 
 #' @keywords internal
+native_matrix_free_golub_kahan_label <- function() {
+  "native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary)"
+}
+
+#' @keywords internal
+native_matrix_free_golub_kahan_available <- function(op) {
+  op <- as_operator(op)
+  is.null(source_or_null(op)) &&
+    is.null(op$metadata$matrix) &&
+    is.function(op$apply) &&
+    is.function(op$apply_adjoint) &&
+    identical(op$dtype, "double")
+}
+
+#' @keywords internal
 native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
                                    maxit = NULL,
                                    vectors = c("both", "left", "right", "none"),
@@ -1270,6 +1285,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   m <- op$dim[1L]
   n <- op$dim[2L]
   limit <- min(m, n)
+  interior_target <- svd_target_is_interior(target)
   fixed_maxit <- !is.null(maxit)
   if (!is.null(maxit)) {
     maxit <- min(limit, as.integer(maxit))
@@ -1289,7 +1305,9 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     }
   }
   limit <- min(m, n)
-  if (is.null(maxit)) {
+  if (isTRUE(interior_target) && is.null(maxit)) {
+    maxit <- limit
+  } else if (is.null(maxit)) {
     maxit <- default_golub_kahan_initial_subspace(
       c(m, n),
       rank,
@@ -1317,12 +1335,14 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   }
   storage <- op$metadata$storage %||% NULL
   source <- source_or_null(op)
+  native_callback_path <- native_matrix_free_golub_kahan_available(op)
   projected_stop_requested <- isTRUE(getOption("eigencore.golub_kahan_projected_stop", FALSE))
   projected_stop_disable_reason <- NULL
   if (identical(storage, "dgCMatrix") && m >= 4L * n) {
     projected_stop_disable_reason <- "disabled for high-aspect tall sparse operators"
   }
   projected_stop_enabled <- projected_stop_requested &&
+    !isTRUE(interior_target) &&
     !fixed_maxit &&
     is.null(projected_stop_disable_reason)
   prefix_diagnostics <- isTRUE(getOption("eigencore.golub_kahan_prefix_diagnostics", FALSE))
@@ -1334,9 +1354,11 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   reorthogonalize_u <- isTRUE(reorthogonalize) || m <= n
   reorthogonalize_v <- isTRUE(reorthogonalize) || n <= m
   run_native <- function(active_maxit) {
+    iteration_target <- native_svd_iteration_target_kind(target)
+    use_basis_iteration <- isTRUE(interior_target)
     if (identical(storage, "dgCMatrix")) {
       A <- op$metadata$matrix
-      if (isTRUE(prefix_diagnostics)) {
+      if (isTRUE(prefix_diagnostics) || isTRUE(use_basis_iteration)) {
         .Call(
           "eigencore_golub_kahan_csc",
           methods::slot(A, "i"),
@@ -1346,7 +1368,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
           as.integer(active_maxit),
           as.numeric(start),
           as.integer(rank),
-          as.integer(native_svd_target_kind(target)),
+          as.integer(iteration_target),
           as.numeric(tol),
           as.logical(projected_stop_enabled),
           PACKAGE = "eigencore"
@@ -1361,7 +1383,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
           as.integer(active_maxit),
           as.numeric(start),
           as.integer(rank),
-          as.integer(native_svd_target_kind(target)),
+          as.integer(iteration_target),
           as.numeric(tol),
           as.logical(projected_stop_enabled),
           as.logical(reorthogonalize_u),
@@ -1370,14 +1392,14 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
         )
       }
     } else if (is.matrix(source) && is.double(source)) {
-      if (isTRUE(prefix_diagnostics)) {
+      if (isTRUE(prefix_diagnostics) || isTRUE(use_basis_iteration)) {
         .Call(
           "eigencore_golub_kahan_dense",
           source,
           as.integer(active_maxit),
           as.numeric(start),
           as.integer(rank),
-          as.integer(native_svd_target_kind(target)),
+          as.integer(iteration_target),
           as.numeric(tol),
           as.logical(projected_stop_enabled),
           PACKAGE = "eigencore"
@@ -1389,7 +1411,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
           as.integer(active_maxit),
           as.numeric(start),
           as.integer(rank),
-          as.integer(native_svd_target_kind(target)),
+          as.integer(iteration_target),
           as.numeric(tol),
           as.logical(projected_stop_enabled),
           as.logical(reorthogonalize_u),
@@ -1397,8 +1419,24 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
           PACKAGE = "eigencore"
         )
       }
+    } else if (native_matrix_free_golub_kahan_available(op)) {
+      .Call(
+        "eigencore_golub_kahan_r_operator",
+        as.integer(op$dim),
+        op$apply,
+        op$apply_adjoint,
+        as.integer(active_maxit),
+        as.numeric(start),
+        as.integer(rank),
+        as.integer(iteration_target),
+        as.numeric(tol),
+        as.logical(projected_stop_enabled),
+        as.logical(reorthogonalize_u),
+        as.logical(reorthogonalize_v),
+        PACKAGE = "eigencore"
+      )
     } else {
-      stop("Native Golub-Kahan currently supports dense double matrices and dgCMatrix operators only.", call. = FALSE)
+      stop("Native Golub-Kahan currently supports dense double matrices, dgCMatrix, or real matrix-free operators with adjoints.", call. = FALSE)
     }
   }
 
@@ -1558,6 +1596,10 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   final$restart <- list(
     kind = "adaptive_subspace_growth",
     implemented = TRUE,
+    native = TRUE,
+    matrix_free = native_callback_path,
+    native_callback = native_callback_path,
+    callback_boundary = native_callback_path,
     ritz_native = TRUE,
     restart_policy = "grow subspace until certificate convergence or limit",
     retries = retries,
@@ -1722,8 +1764,9 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     stop("Native Gram SVD requires a dense double matrix or dgCMatrix operator.", call. = FALSE)
   }
   if (!native_gram_svd_target_supported(target)) {
-    stop("Native Gram SVD special case supports only largest singular values.", call. = FALSE)
+    stop("Native Gram SVD special case supports largest and smallest singular-value targets.", call. = FALSE)
   }
+  target_kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
 
   A <- if (identical(storage, "dgCMatrix")) op$metadata$matrix else source
   m <- op$dim[1L]
@@ -1734,7 +1777,8 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     stop("rank must be positive.", call. = FALSE)
   }
 
-  if (identical(storage, "dgCMatrix") && m < n) {
+  if (identical(storage, "dgCMatrix") && m < n &&
+      target_kind %in% c("largest", "largest_magnitude")) {
     native <- .Call(
       "eigencore_csc_left_gram_svd",
       methods::slot(A, "i"),
@@ -1821,7 +1865,8 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     # planner gate, so we must enforce it here. Callers (e.g. randomized
     # SVD's tryCatch) will see this as a fallback signal and stay on the
     # honest sparse path.
-    if (identical(storage, "dgCMatrix")) {
+    if (identical(storage, "dgCMatrix") &&
+        target_kind %in% c("largest", "largest_magnitude")) {
       gram_max <- as.integer(getOption("eigencore.gram_svd_max_dimension", 512L))
       if (n > gram_max) {
         stop(
@@ -2004,6 +2049,9 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
       native = TRUE,
       gram_side = if (n <= m) "right" else "left",
       gram_dimension = min(m, n),
+      native_gram_kernel = if (n <= m) "materialized_right_gram" else "materialized_left_gram",
+      native_gram_eigensolver = "native_dense_symmetric_eigen",
+      materialized_gram = TRUE,
       zero_singular_completion = any(!nz),
       zero_singular_threshold = zero_tol,
       certificate_reuses_gram_sides = !any(!nz),
@@ -2040,7 +2088,10 @@ gram_svd_eigen_slice <- function(gram, rank, target) {
 #' @keywords internal
 gram_svd_zero_tolerance <- function(d, tol) {
   scale <- max(1, d, na.rm = TRUE)
-  max(100 * .Machine$double.eps * scale, sqrt(.Machine$double.eps) * scale, tol * scale * 1e-3)
+  # Gram eigenvectors for numerically null singular values are unstable. A
+  # slightly conservative cutoff lets the zero-triplet completion build clean
+  # nullspace bases instead of certifying arbitrary near-null Ritz vectors.
+  max(100 * .Machine$double.eps * scale, 2 * sqrt(.Machine$double.eps) * scale, tol * scale * 1e-3)
 }
 
 #' @keywords internal
@@ -2394,6 +2445,306 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
 }
 
 #' @keywords internal
+native_randomized_certificate_from_diagnostics <- function(diagnostics, tol) {
+  new_certificate(
+    tol = tol,
+    residuals = diagnostics$residuals,
+    backward_error = diagnostics$backward_error,
+    orthogonality = diagnostics$orthogonality,
+    converged = diagnostics$converged,
+    scale = diagnostics$scale,
+    norm_bound_type = "frobenius_exact"
+  )
+}
+
+#' @keywords internal
+native_dense_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
+                                        oversample = 10L, n_iter = 2L,
+                                        vectors = c("both", "left", "right", "none"),
+                                        refine = TRUE,
+                                        normalizer = c("qr", "lu", "none")) {
+  vectors <- match.arg(vectors)
+  normalizer <- match.arg(normalizer)
+  op <- as_operator(op)
+  source <- source_or_null(op) %||% op$metadata$matrix
+  if (!is.matrix(source) || !is.double(source)) {
+    stop("Native dense randomized SVD controller requires a dense double matrix.", call. = FALSE)
+  }
+  kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
+  if (!kind %in% c("largest", "largest_magnitude")) {
+    stop("Native dense randomized SVD controller supports only largest singular-value targets.", call. = FALSE)
+  }
+  if (!identical(normalizer, "qr")) {
+    stop("Native dense randomized SVD controller currently supports only QR normalization.", call. = FALSE)
+  }
+
+  native <- .Call(
+    "eigencore_dense_randomized_svd_controller",
+    source,
+    as.integer(rank),
+    as.integer(oversample),
+    as.integer(n_iter),
+    normalizer,
+    as.numeric(tol),
+    PACKAGE = "eigencore"
+  )
+  cert <- native_randomized_certificate_from_diagnostics(
+    native$certificate_diagnostics,
+    tol = tol
+  )
+  initial_cert <- native_randomized_certificate_from_diagnostics(
+    native$initial_certificate_diagnostics,
+    tol = tol
+  )
+
+  d <- native$d
+  u <- native$u
+  v <- native$v
+  refinement <- NULL
+  if (isTRUE(refine) && !isTRUE(cert$passed)) {
+    refinement <- tryCatch(
+      native_gram_svd(op, rank = rank, target = target, tol = tol, vectors = "both"),
+      error = function(e) {
+        structure(list(error = conditionMessage(e)), class = "eigencore_refinement_error")
+      }
+    )
+    if (!inherits(refinement, "eigencore_refinement_error") &&
+        isTRUE(refinement$certificate$passed)) {
+      d <- refinement$d
+      u <- refinement$u
+      v <- refinement$v
+      cert <- refinement$certificate
+    }
+  }
+
+  if (vectors == "left") {
+    v <- NULL
+  } else if (vectors == "right") {
+    u <- NULL
+  } else if (vectors == "none") {
+    u <- NULL
+    v <- NULL
+  }
+
+  list(
+    d = d,
+    u = u,
+    v = v,
+    values = d,
+    residuals = cert$residuals,
+    backward_error = cert$backward_error,
+    orthogonality = cert$orthogonality,
+    certificate = cert,
+    stage_seconds = native$stage_seconds,
+    iterations = native$iterations,
+    matvecs = native$matvecs + if (!is.null(refinement) && !inherits(refinement, "eigencore_refinement_error")) {
+      refinement$matvecs
+    } else {
+      0L
+    },
+    restart = list(
+      kind = if (!is.null(refinement) && !inherits(refinement, "eigencore_refinement_error") &&
+        isTRUE(refinement$certificate$passed)) {
+        "native_dense_randomized_controller_refined"
+      } else {
+        "native_dense_randomized_controller"
+      },
+      implemented = TRUE,
+      native = TRUE,
+      controller_native = TRUE,
+      dense_native_controller = TRUE,
+      sparse_native_controller = FALSE,
+      csc_native_controller = FALSE,
+      controller_kind = native$controller_kind,
+      oversample = oversample,
+      n_iter = n_iter,
+      normalizer = normalizer,
+      apply_kind = "dense_direct",
+      native_sketch = TRUE,
+      sketch_kind = "native_fused_a_omega",
+      core_solver = native$core_solver,
+      projection_kind = native$projection_kind,
+      projection_transposed = TRUE,
+      certificate_reuses_projection = FALSE,
+      native_certificate_diagnostics = TRUE,
+      adaptive_stop = TRUE,
+      adaptive_stop_used = isTRUE(native$adaptive_stop_used),
+      iterations_used = native$iterations,
+      stage_seconds = native$stage_seconds,
+      sample_dimension = native$sample_dimension,
+      approximate = TRUE,
+      certificate_policy = if (isTRUE(refine)) {
+        "native dense residual certificate, with deterministic refinement when needed"
+      } else {
+        "native dense residual certificate only; stochastic sketch is not sufficient to pass"
+      },
+      refine = isTRUE(refine),
+      initial_certificate_passed = isTRUE(initial_cert$passed),
+      initial_max_backward_error = initial_cert$max_backward_error,
+      refinement_attempted = !is.null(refinement),
+      refinement_kind = if (!is.null(refinement) && !inherits(refinement, "eigencore_refinement_error")) {
+        refinement$restart$kind
+      } else {
+        NA_character_
+      },
+      refinement_passed = !is.null(refinement) &&
+        !inherits(refinement, "eigencore_refinement_error") &&
+        isTRUE(refinement$certificate$passed),
+      refinement_error = if (inherits(refinement, "eigencore_refinement_error")) {
+        refinement$error
+      } else {
+        NA_character_
+      }
+    )
+  )
+}
+
+#' @keywords internal
+native_csc_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
+                                      oversample = 10L, n_iter = 2L,
+                                      vectors = c("both", "left", "right", "none"),
+                                      refine = TRUE,
+                                      normalizer = c("qr", "lu", "none")) {
+  vectors <- match.arg(vectors)
+  normalizer <- match.arg(normalizer)
+  op <- as_operator(op)
+  source <- source_or_null(op) %||% op$metadata$matrix
+  if (!inherits(source, "dgCMatrix")) {
+    stop("Native CSC randomized SVD controller requires a sparse CSC dgCMatrix.", call. = FALSE)
+  }
+  kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
+  if (!kind %in% c("largest", "largest_magnitude")) {
+    stop("Native CSC randomized SVD controller supports only largest singular-value targets.", call. = FALSE)
+  }
+  if (!identical(normalizer, "qr")) {
+    stop("Native CSC randomized SVD controller currently supports only QR normalization.", call. = FALSE)
+  }
+
+  native <- .Call(
+    "eigencore_csc_randomized_svd_controller",
+    methods::slot(source, "i"),
+    methods::slot(source, "p"),
+    methods::slot(source, "x"),
+    methods::slot(source, "Dim"),
+    as.integer(rank),
+    as.integer(oversample),
+    as.integer(n_iter),
+    normalizer,
+    as.numeric(tol),
+    PACKAGE = "eigencore"
+  )
+  cert <- native_randomized_certificate_from_diagnostics(
+    native$certificate_diagnostics,
+    tol = tol
+  )
+  initial_cert <- native_randomized_certificate_from_diagnostics(
+    native$initial_certificate_diagnostics,
+    tol = tol
+  )
+
+  d <- native$d
+  u <- native$u
+  v <- native$v
+  refinement <- NULL
+  if (isTRUE(refine) && !isTRUE(cert$passed)) {
+    refinement <- tryCatch(
+      native_gram_svd(op, rank = rank, target = target, tol = tol, vectors = "both"),
+      error = function(e) {
+        structure(list(error = conditionMessage(e)), class = "eigencore_refinement_error")
+      }
+    )
+    if (!inherits(refinement, "eigencore_refinement_error") &&
+        isTRUE(refinement$certificate$passed)) {
+      d <- refinement$d
+      u <- refinement$u
+      v <- refinement$v
+      cert <- refinement$certificate
+    }
+  }
+
+  if (vectors == "left") {
+    v <- NULL
+  } else if (vectors == "right") {
+    u <- NULL
+  } else if (vectors == "none") {
+    u <- NULL
+    v <- NULL
+  }
+
+  list(
+    d = d,
+    u = u,
+    v = v,
+    values = d,
+    residuals = cert$residuals,
+    backward_error = cert$backward_error,
+    orthogonality = cert$orthogonality,
+    certificate = cert,
+    stage_seconds = native$stage_seconds,
+    iterations = native$iterations,
+    matvecs = native$matvecs + if (!is.null(refinement) && !inherits(refinement, "eigencore_refinement_error")) {
+      refinement$matvecs
+    } else {
+      0L
+    },
+    restart = list(
+      kind = if (!is.null(refinement) && !inherits(refinement, "eigencore_refinement_error") &&
+        isTRUE(refinement$certificate$passed)) {
+        "native_csc_randomized_controller_refined"
+      } else {
+        "native_csc_randomized_controller"
+      },
+      implemented = TRUE,
+      native = TRUE,
+      controller_native = TRUE,
+      dense_native_controller = FALSE,
+      sparse_native_controller = TRUE,
+      csc_native_controller = TRUE,
+      controller_kind = native$controller_kind,
+      oversample = oversample,
+      n_iter = n_iter,
+      normalizer = normalizer,
+      apply_kind = "csc_direct",
+      native_sketch = TRUE,
+      sketch_kind = "native_fused_a_omega",
+      core_solver = native$core_solver,
+      projection_kind = native$projection_kind,
+      projection_transposed = TRUE,
+      certificate_reuses_projection = FALSE,
+      native_certificate_diagnostics = TRUE,
+      adaptive_stop = TRUE,
+      adaptive_stop_used = isTRUE(native$adaptive_stop_used),
+      iterations_used = native$iterations,
+      stage_seconds = native$stage_seconds,
+      sample_dimension = native$sample_dimension,
+      approximate = TRUE,
+      certificate_policy = if (isTRUE(refine)) {
+        "native sparse CSC residual certificate, with deterministic refinement when needed"
+      } else {
+        "native sparse CSC residual certificate only; stochastic sketch is not sufficient to pass"
+      },
+      refine = isTRUE(refine),
+      initial_certificate_passed = isTRUE(initial_cert$passed),
+      initial_max_backward_error = initial_cert$max_backward_error,
+      refinement_attempted = !is.null(refinement),
+      refinement_kind = if (!is.null(refinement) && !inherits(refinement, "eigencore_refinement_error")) {
+        refinement$restart$kind
+      } else {
+        NA_character_
+      },
+      refinement_passed = !is.null(refinement) &&
+        !inherits(refinement, "eigencore_refinement_error") &&
+        isTRUE(refinement$certificate$passed),
+      refinement_error = if (inherits(refinement, "eigencore_refinement_error")) {
+        refinement$error
+      } else {
+        NA_character_
+      }
+    )
+  )
+}
+
+#' @keywords internal
 randomized_svd_core_decomposition <- function(core, rank, target = largest()) {
   rank <- min(as.integer(rank), min(dim(core)))
   if (rank < 1L) {
@@ -2402,12 +2753,28 @@ randomized_svd_core_decomposition <- function(core, rank, target = largest()) {
   }
   if (nrow(core) <= 128L && ncol(core) >= 2L * nrow(core)) {
     gram <- tcrossprod(core)
-    eig <- eigen(gram, symmetric = TRUE)
-    idx <- order_indices(eig$values, target)
-    idx <- idx[seq_len(min(rank, length(idx)))]
-    values <- pmax(eig$values[idx], 0)
+    kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
+    selected <- if (kind %in% c("largest", "largest_magnitude") && rank < nrow(gram)) {
+      tryCatch(
+        native_dense_symmetric_eigen_selected(gram, rank, largest()),
+        error = function(e) NULL
+      )
+    } else {
+      NULL
+    }
+    if (!is.null(selected)) {
+      values <- pmax(selected$values, 0)
+      u <- selected$vectors
+      solver <- "native_left_gram_eigen_selected"
+    } else {
+      eig <- native_dense_symmetric_eigen(gram)
+      idx <- order_indices(eig$values, target)
+      idx <- idx[seq_len(min(rank, length(idx)))]
+      values <- pmax(eig$values[idx], 0)
+      u <- eig$vectors[, idx, drop = FALSE]
+      solver <- "native_left_gram_eigen_full"
+    }
     d <- sqrt(values)
-    u <- eig$vectors[, idx, drop = FALSE]
     v <- crossprod(core, u)
     for (col in seq_along(d)) {
       if (d[[col]] > 100 * .Machine$double.eps) {
@@ -2416,17 +2783,17 @@ randomized_svd_core_decomposition <- function(core, rank, target = largest()) {
         v[, col] <- 0
       }
     }
-    return(list(d = d, u = u, v = v, solver = "left_gram_eigen"))
+    return(list(d = d, u = u, v = v, solver = solver))
   }
 
-  small <- svd(core, nu = min(nrow(core), rank), nv = min(ncol(core), rank))
+  small <- native_dense_svd(core)
   idx <- order_indices(small$d, target)
   idx <- idx[seq_len(min(rank, length(idx)))]
   list(
     d = small$d[idx],
     u = small$u[, idx, drop = FALSE],
     v = small$v[, idx, drop = FALSE],
-    solver = "dense_svd"
+    solver = "native_dense_svd"
   )
 }
 
@@ -2626,15 +2993,35 @@ native_svd_target_kind <- function(target) {
 }
 
 #' @keywords internal
+native_svd_iteration_target_kind <- function(target) {
+  if (svd_target_is_interior(target)) {
+    return(1L)
+  }
+  native_svd_target_kind(target)
+}
+
+#' @keywords internal
 native_gram_svd_target_supported <- function(target) {
   kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
-  kind %in% c("largest", "largest_magnitude")
+  kind %in% c("largest", "largest_magnitude", "smallest", "smallest_magnitude")
 }
 
 #' @keywords internal
 native_golub_kahan_ritz <- function(op, U, V, alpha, beta, rank, target, tol,
                                     active_iterations = NULL) {
   active_iterations <- as.integer(active_iterations %||% length(alpha))
+  if (svd_target_is_interior(target)) {
+    return(reference_golub_kahan_ritz(
+      op,
+      U[, seq_len(active_iterations), drop = FALSE],
+      V[, seq_len(active_iterations), drop = FALSE],
+      alpha[seq_len(active_iterations)],
+      beta[seq_len(active_iterations)],
+      rank,
+      target,
+      tol
+    ))
+  }
   ritz <- .Call(
     "eigencore_golub_kahan_ritz",
     U,

@@ -9,6 +9,23 @@ for explicit block requests and diagnostic sparse gate reruns, but sparse
 gate is green. The 2026-06-05 G1 gate was closed by a separate structured
 tridiagonal native default, not by promoting this block path.
 
+## Current No-Promotion Decision
+
+As of 2026-06-06, the general sparse block-Lanczos candidate is a documented
+no-promotion path. A live non-quick `path_laplacian:1000`, `k = 20` run of
+`bench-native-hermitian-gate.R --block-candidate` certified `20/20` requested
+pairs, but the block candidate took about `0.458s` time-to-certified-answer
+versus about `0.0446s` for certified RSpectra and about `0.0073s` for the
+current promoted eigencore path. The gate's speed ratio versus the certified
+reference was about `0.097`, and PRIMME parity also failed. A
+`path_laplacian:10000`, `k = 20` probe was stopped after roughly two minutes
+without a completed row, so it is not counted as passing evidence.
+
+The planner policy is therefore intentional: keep sparse block auto-promotion
+off by default, leave explicit block requests and diagnostic opt-in available,
+and treat any future promotion as a new redesign/tuning task rather than an
+open V1 or post-V1 moat.
+
 ## Scope
 
 - Standard Hermitian eigenproblems only.
@@ -54,25 +71,21 @@ tridiagonal native default, not by promoting this block path.
 - The block result matches dense oracle values on small Hermitian matrices.
 - The block result certifies on the quick sparse Laplacian gate with bounded
   restart subspaces.
-- The benchmark script reports an explicit promotion gate. On the current quick
-  path-Laplacian gate (`n = 200`, `k = 5`) the explicit block diagnostic certifies
-  and reaches about `0.98x` to `1.01x` of the RSpectra speed reference on the
-  current quick gate scripts while
-  passing memory and PRIMME parity. The dense Hermitian quick row (`n = 80`,
-  `k = 5`) now certifies through selected native `dsyevr` full-subspace
-  extraction and no-allocation dense symmetry detection, but remains a small-`k`
-  diagnostic rather than a release gate. Current
-  tuning uses `block = 2` for smaller rows and `block = 4` with at least
-  `16*k` restart space for diagnostic large sparse `k >= 16` rows, with a
-  four-vector capped Ritz pad, sparse
-  CSC Ritz-vector residual application, in-solver certificate reuse in the
-  benchmark harness, selected-Ritz workspaces, upper-triangle projected-matrix
-  copies, selective one-pass reorthogonalization for larger restart spaces, and
-  native workspaces that avoid unnecessary zero-fill. The bounded sparse
-  restart path now also uses native loops instead of BLAS calls for tiny block
-  projection updates, a small-column native combiner for selected Ritz-vector
-  rotations, and one reorthogonalization pass for `n >= 64` when the certificate
-  remains tight.
+- The benchmark script reports an explicit promotion gate. Current non-quick
+  evidence records a no-promotion decision for general sparse `auto()`: the
+  explicit block diagnostic certifies but is materially slower than the current
+  promoted eigencore path and certified RSpectra on `path_laplacian:1000`,
+  `k = 20`.
+- Current tuning uses `block = 2` for smaller rows and `block = 4` with at
+  least `16*k` restart space for diagnostic large sparse `k >= 16` rows, with
+  a four-vector capped Ritz pad, sparse CSC Ritz-vector residual application,
+  in-solver certificate reuse in the benchmark harness, selected-Ritz
+  workspaces, upper-triangle projected-matrix copies, selective one-pass
+  reorthogonalization for larger restart spaces, and native workspaces that
+  avoid unnecessary zero-fill. The bounded sparse restart path also uses native
+  loops instead of BLAS calls for tiny block projection updates, a small-column
+  native combiner for selected Ritz-vector rotations, and one
+  reorthogonalization pass for `n >= 64` when the certificate remains tight.
   Certificates now require both residual/backward-error convergence and bounded
   orthogonality, so a fast run with nearly duplicate locked vectors is not
   counted as certified. The native lock path now rejects a converged Ritz vector
@@ -86,18 +99,8 @@ tridiagonal native default, not by promoting this block path.
   `k = 20, n = 1000` orthogonality certificate without R-tracked allocations;
   it also preserves any genuinely locked prefix when the restart budget is
   exhausted, so a noncertified tail cannot rotate away vectors that already met
-  the certificate scale. After retuning the larger-k restart space to `8*k`,
-  adding guarded final-polish fast paths, splitting Ritz residual timing, and
-  adding the small-column selected-vector combiner, that certified
-  `n = 1000, k = 20` staging row reaches about `1.45x` to `1.50x` of RSpectra
-  in local benchmark runs. The larger `n = 10000, k = 20` path row now
-  certifies with the adaptive large-row candidate (`block = 4`,
-  `max_subspace = 320`), with local one-iteration timing around `6.0s`.
-  With robust RSpectra reference controls (`ncv = 120`, `maxitr = 20000`),
-  the same harness certifies RSpectra around `18.2s` and PRIMME around `25.3s`,
-  so the large sparse row passes the strict RSpectra speed gate. The dense
-  regression row now passes speed, memory, and PRIMME parity in the default
-  strict gates.
+  the certificate scale. Older tuning notes below remain useful engineering
+  background, but they are not current promotion evidence.
 
 ## Structured residual sidecar
 

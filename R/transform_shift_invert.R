@@ -274,12 +274,53 @@ shift_invert_factorization_cache_info <- function(Aop, sigma, Bop = NULL,
 }
 
 #' @keywords internal
+shift_invert_factorization_contract <- function(cache) {
+  label_kind <- cache$label_kind %||% NA_character_
+  native <- isTRUE(cache$native)
+  external <- isTRUE(cache$external_cache)
+  provider <- if (native) {
+    "eigencore_native_factorization"
+  } else if (external || identical(label_kind, "user_solve")) {
+    "user_supplied_solve"
+  } else if (isTRUE(grepl("sparse_lu", label_kind, fixed = TRUE))) {
+    "Matrix::lu_reference_factorization"
+  } else {
+    "eigencore_reference_factorization"
+  }
+  memory_policy <- if (native) {
+    "native_factorized_apply_no_dense_fallback"
+  } else if (external || identical(label_kind, "user_solve")) {
+    "external_cache_user_owned_no_dense_fallback"
+  } else if (isTRUE(grepl("sparse_lu", label_kind, fixed = TRUE))) {
+    "sparse_factorization_no_dense_rcond"
+  } else {
+    "reference_factorization_no_silent_densification"
+  }
+  list(
+    contract_version = "shift_invert_factorization_contract_v1",
+    label_kind = label_kind,
+    provider = provider,
+    promotion_status = if (native) "promoted_native" else "reference_boundary",
+    owned_by_eigencore = native,
+    external_cache = external,
+    generalized = isTRUE(cache$generalized),
+    cache_key_scope = "A_fingerprint+B_fingerprint+sigma+structure",
+    cache_invalidation = "cache key changes when A, B, sigma, or structure changes",
+    memory_policy = memory_policy,
+    certificate_policy = "original_coordinate_residual_required",
+    native_label_requires_owned_factorized_apply = TRUE
+  )
+}
+
+#' @keywords internal
 shift_invert_factorization_cache_merge <- function(cache_info, label_kind,
                                                    diagnostics = list()) {
-  modifyList(
+  cache <- modifyList(
     modifyList(cache_info, list(label_kind = label_kind)),
     diagnostics
   )
+  cache$contract <- shift_invert_factorization_contract(cache)
+  cache
 }
 
 #' @keywords internal

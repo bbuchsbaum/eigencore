@@ -7,12 +7,10 @@
 operator_sum(..., name = NULL)
 }
 \arguments{
-\item{...}{Additional arguments passed to methods.}
+\item{...}{Operator-like objects with identical dimensions.}
 
-\item{name}{Optional operator name.}
-
+\item{name}{Optional label for the summed operator.}
 }
 \description{
 Sum compatible operators.
 }
-\keyword{internal}

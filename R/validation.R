@@ -1,4 +1,11 @@
 #' Validate eigencore eigen results against a dense oracle.
+#'
+#' @param A Matrix or eigencore operator to validate.
+#' @param k Number of eigenpairs to validate.
+#' @param target Eigencore eigenvalue target descriptor.
+#' @param B Optional metric matrix or operator for generalized problems.
+#' @param fit Optional precomputed eigencore eigen result.
+#' @param tol Validation tolerance.
 validate_eigen_accuracy <- function(A, k, target = largest(), B = NULL,
                                     fit = NULL, tol = 1e-8) {
   if (is.null(fit)) {
@@ -43,6 +50,12 @@ validate_eigen_accuracy <- function(A, k, target = largest(), B = NULL,
 }
 
 #' Validate eigencore SVD results against base::svd().
+#'
+#' @param A Matrix or eigencore operator to validate.
+#' @param rank Number of singular values to validate.
+#' @param target Eigencore singular-value target descriptor.
+#' @param fit Optional precomputed eigencore SVD result.
+#' @param tol Validation tolerance.
 validate_svd_accuracy <- function(A, rank, target = largest(), fit = NULL,
                                   tol = 1e-8) {
   if (is.null(fit)) {
@@ -81,6 +94,13 @@ validate_svd_accuracy <- function(A, rank, target = largest(), fit = NULL,
 }
 
 #' Benchmark eigen methods against base and optional references.
+#'
+#' @param A Matrix or eigencore operator to benchmark.
+#' @param k Number of eigenpairs to compute.
+#' @param target Eigencore eigenvalue target descriptor.
+#' @param repeats Number of timing repetitions.
+#' @param include Character vector of method labels to include when available.
+#' @param tol Solver tolerance.
 benchmark_eigen_methods <- function(A, k, target = largest(), repeats = 3L,
                                     include = c("eigencore", "base", "RSpectra"),
                                     tol = 1e-8) {
@@ -111,6 +131,12 @@ benchmark_eigen_methods <- function(A, k, target = largest(), repeats = 3L,
 }
 
 #' Benchmark SVD methods against base and optional references.
+#'
+#' @param A Matrix or eigencore operator to benchmark.
+#' @param rank Number of singular values to compute.
+#' @param repeats Number of timing repetitions.
+#' @param include Character vector of method labels to include when available.
+#' @param tol Solver tolerance.
 benchmark_svd_methods <- function(A, rank, repeats = 3L,
                                   include = c("eigencore", "base", "RSpectra", "irlba", "rsvd"),
                                   tol = 1e-8) {
@@ -177,8 +203,7 @@ available_eigen_methods <- function() {
     "eigencore_lobpcg_preconditioned",
     "eigencore_lobpcg_tridiagonal",
     "base",
-    if (requireNamespace("RSpectra", quietly = TRUE)) "RSpectra",
-    if (requireNamespace("PRIMME", quietly = TRUE)) "PRIMME"
+    if (requireNamespace("RSpectra", quietly = TRUE)) "RSpectra"
   )
 }
 
@@ -186,7 +211,11 @@ available_eigen_methods <- function() {
 available_svd_methods <- function() {
   c(
     "eigencore",
+    "eigencore_smallest",
+    "eigencore_interior",
     "eigencore_golub_kahan",
+    "eigencore_golub_kahan_smallest",
+    "eigencore_golub_kahan_interior",
     "eigencore_golub_kahan_one_sided",
     "eigencore_irlba_lbd_one_sided",
     "eigencore_irlba_lbd_retained_native",
@@ -207,8 +236,9 @@ available_svd_methods <- function() {
     "eigencore_block_golub_kahan_retained_deflated",
     "eigencore_randomized",
     "base",
+    "base_smallest",
+    "base_interior",
     if (requireNamespace("RSpectra", quietly = TRUE)) "RSpectra",
-    if (requireNamespace("PRIMME", quietly = TRUE)) "PRIMME",
     if (requireNamespace("irlba", quietly = TRUE)) "irlba",
     if (requireNamespace("rsvd", quietly = TRUE)) "rsvd"
   )
@@ -301,10 +331,6 @@ run_eigen_method <- function(method, A, k, target, tol) {
         which = which,
         opts = benchmark_rspectra_eigen_opts(A, k, target)
       )
-    },
-    PRIMME = {
-      which <- target_to_rspectra_which(target, symmetric = TRUE)
-      PRIMME::eigs_sym(A, NEig = k, which = which, tol = tol)
     },
     stop("Unsupported eigen benchmark method: ", method, call. = FALSE)
   )
@@ -651,12 +677,46 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
   switch(
     method,
     eigencore = svd_partial(A, rank = rank, tol = tol, seed = seed),
+    eigencore_smallest = svd_partial(
+      A,
+      rank = rank,
+      target = smallest(),
+      tol = tol,
+      seed = seed,
+      allow_dense_fallback = "never"
+    ),
+    eigencore_interior = svd_partial(
+      A,
+      rank = rank,
+      target = nearest(1),
+      tol = tol,
+      seed = seed,
+      allow_dense_fallback = "never"
+    ),
     eigencore_golub_kahan = svd_partial(
       A,
       rank = rank,
       method = golub_kahan(),
       tol = tol,
       seed = seed
+    ),
+    eigencore_golub_kahan_smallest = svd_partial(
+      A,
+      rank = rank,
+      target = smallest(),
+      method = golub_kahan(),
+      tol = tol,
+      seed = seed,
+      allow_dense_fallback = "never"
+    ),
+    eigencore_golub_kahan_interior = svd_partial(
+      A,
+      rank = rank,
+      target = nearest(1),
+      method = golub_kahan(),
+      tol = tol,
+      seed = seed,
+      allow_dense_fallback = "never"
     ),
     eigencore_golub_kahan_one_sided = svd_partial(
       A,
@@ -861,8 +921,29 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
         values = decomp$d[idx]
       )
     },
+    base_smallest = {
+      decomp <- svd(as.matrix(A))
+      idx <- order_indices(decomp$d, smallest())
+      idx <- idx[seq_len(min(rank, length(idx)))]
+      list(
+        d = decomp$d[idx],
+        u = decomp$u[, idx, drop = FALSE],
+        v = decomp$v[, idx, drop = FALSE],
+        values = decomp$d[idx]
+      )
+    },
+    base_interior = {
+      decomp <- svd(as.matrix(A))
+      idx <- order_indices(decomp$d, nearest(1))
+      idx <- idx[seq_len(min(rank, length(idx)))]
+      list(
+        d = decomp$d[idx],
+        u = decomp$u[, idx, drop = FALSE],
+        v = decomp$v[, idx, drop = FALSE],
+        values = decomp$d[idx]
+      )
+    },
     RSpectra = RSpectra::svds(A, k = rank),
-    PRIMME = PRIMME::svds(A, NSvals = rank, which = "L", tol = tol),
     irlba = irlba::irlba(A, nv = rank, nu = rank),
     rsvd = rsvd::rsvd(A, k = rank, nu = rank, nv = rank),
     stop("Unsupported SVD benchmark method: ", method, call. = FALSE)

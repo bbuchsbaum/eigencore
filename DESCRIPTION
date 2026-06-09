@@ -1,16 +1,15 @@
 Package: eigencore
 Title: Certified Partial Spectral Computation
-Version: 0.0.0.9000
+Version: 0.2.0
 Authors@R: c(
-    person("Bradley", "Buchsbaum", role = c("aut", "cre"), email = "brad@example.com")
+    person("Bradley", "Buchsbaum", role = c("aut", "cre"), email = "brad.buchsbaum@gmail.com")
   )
 Author: Bradley Buchsbaum [aut, cre]
-Maintainer: Bradley Buchsbaum <brad@example.com>
+Maintainer: Bradley Buchsbaum <brad.buchsbaum@gmail.com>
 Description: Native-oriented foundations for certified partial eigenvalue and
-    singular-value computation in R. The package provides operator, problem,
-    planner, result, and certificate APIs that will host native iterative
-    solvers for large dense, sparse, generalized, and matrix-free spectral
-    problems.
+    singular-value computation in R. The package provides native solver paths
+    plus operator, problem, planner, result, and certificate APIs for large
+    dense, sparse, generalized, and matrix-free spectral problems.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -23,7 +22,6 @@ Imports:
 Suggests:
     bench,
     knitr,
-    PRIMME,
     rmarkdown,
     RSpectra,
     irlba,

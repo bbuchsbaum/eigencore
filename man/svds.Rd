@@ -7,19 +7,25 @@
 svds(A, k, nu = k, nv = k, opts = list(), ...)
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Matrix or eigencore operator.}
 
-\item{k}{Number of eigenpairs or singular triplets requested.}
+\item{k}{Number of singular values to compute.}
 
-\item{nu}{Number of left singular vectors.}
+\item{nu}{Number of left singular vectors requested.}
 
-\item{nv}{Number of right singular vectors.}
+\item{nv}{Number of right singular vectors requested.}
 
-\item{opts}{Compatibility options.}
+\item{opts}{Compatibility options list; currently accepted for API
+compatibility and not interpreted directly.}
 
-\item{...}{Additional arguments passed to methods.}
-
+\item{...}{Additional arguments passed to \code{\link[=svd_partial]{svd_partial()}}.}
 }
 \description{
 RSpectra-compatible SVD shim.
+}
+\examples{
+set.seed(1)
+X <- matrix(rnorm(60), 10, 6)
+res <- svds(X, k = 2)
+res$d
 }

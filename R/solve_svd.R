@@ -6,23 +6,63 @@
 #' @keywords internal
 solve_svd_randomized <- function(a, rank, method, tol, vectors, certify, plan) {
   controls <- plan$controls %||% list()
-  iter <- reference_randomized_svd(
-    a$A,
-    rank = rank,
-    target = a$target,
-    tol = tol,
-    oversample = controls$oversample %||% method$oversample,
-    n_iter = controls$n_iter %||% method$n_iter,
-    vectors = vectors,
-    refine = controls$refine %||% method$refine,
-    normalizer = controls$normalizer %||% method$normalizer
-  )
+  native_dense_controller <- identical(plan$method, native_dense_randomized_svd_label())
+  native_csc_controller <- identical(plan$method, native_csc_randomized_svd_label())
+  iter <- if (native_dense_controller) {
+    native_dense_randomized_svd(
+      a$A,
+      rank = rank,
+      target = a$target,
+      tol = tol,
+      oversample = controls$oversample %||% method$oversample,
+      n_iter = controls$n_iter %||% method$n_iter,
+      vectors = vectors,
+      refine = controls$refine %||% method$refine,
+      normalizer = controls$normalizer %||% method$normalizer
+    )
+  } else if (native_csc_controller) {
+    native_csc_randomized_svd(
+      a$A,
+      rank = rank,
+      target = a$target,
+      tol = tol,
+      oversample = controls$oversample %||% method$oversample,
+      n_iter = controls$n_iter %||% method$n_iter,
+      vectors = vectors,
+      refine = controls$refine %||% method$refine,
+      normalizer = controls$normalizer %||% method$normalizer
+    )
+  } else {
+    reference_randomized_svd(
+      a$A,
+      rank = rank,
+      target = a$target,
+      tol = tol,
+      oversample = controls$oversample %||% method$oversample,
+      n_iter = controls$n_iter %||% method$n_iter,
+      vectors = vectors,
+      refine = controls$refine %||% method$refine,
+      normalizer = controls$normalizer %||% method$normalizer
+    )
+  }
   cert <- if (isTRUE(certify) && !is.null(iter[["u"]]) && !is.null(iter[["v"]])) {
     iter$certificate
   } else {
     empty_certificate(tol, note = "both left and right vectors are required for full SVD certification")
   }
-  warnings_msg <- if (isTRUE(iter$restart$refinement_passed)) {
+  warnings_msg <- if (native_dense_controller && isTRUE(iter$restart$refinement_passed)) {
+    "using native dense randomized SVD controller with certified native refinement"
+  } else if (native_dense_controller && isTRUE(cert$passed)) {
+    "using native dense randomized SVD controller with exact residual certification"
+  } else if (native_dense_controller) {
+    "using native dense randomized SVD controller; residual certificate did not meet tolerance"
+  } else if (native_csc_controller && isTRUE(iter$restart$refinement_passed)) {
+    "using native sparse CSC randomized SVD controller with certified native refinement"
+  } else if (native_csc_controller && isTRUE(cert$passed)) {
+    "using native sparse CSC randomized SVD controller with exact residual certification"
+  } else if (native_csc_controller) {
+    "using native sparse CSC randomized SVD controller; residual certificate did not meet tolerance"
+  } else if (isTRUE(iter$restart$refinement_passed)) {
     "using reference randomized SVD prototype with certified native refinement"
   } else if (isTRUE(cert$passed)) {
     "using reference randomized SVD prototype with residual certification"
@@ -63,17 +103,24 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
   if (length(rank) != 1L || is.na(rank) || rank < 1L) {
     return(NULL)
   }
-  reduced <- min(dims)
-  full <- max(dims)
-  if (rank > reduced / 2) {
-    return(NULL)
-  }
-  gram_max <- as.integer(getOption("eigencore.gram_svd_max_dimension", 512L))
-  if (reduced > gram_max || full < 2L * reduced) {
+  policy <- gram_svd_policy(dims, rank, target)
+  if (!isTRUE(policy$eligible)) {
     return(NULL)
   }
 
   target_kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
+  if (target_kind %in% c("smallest", "smallest_magnitude")) {
+    op <- as_operator(A)
+    plan <- native_gram_svd_fast_plan(op, rank, target)
+    return(solve_svd_gram(
+      list(A = op, target = target),
+      rank = rank,
+      tol = tol,
+      vectors = vectors,
+      certify = certify,
+      plan = plan
+    ))
+  }
   if (dims[1L] < dims[2L] &&
       identical(vectors, "both") && isTRUE(certify) && identical(target_kind, "largest")) {
     fast_native <- .Call(
@@ -347,21 +394,12 @@ native_gram_svd_fast_plan <- function(op, rank, target) {
 #' @keywords internal
 native_gram_svd_fast_plan_from_dims <- function(dims, rank, target) {
   dims <- as.integer(dims)
-  full <- max(dims)
-  reduced <- min(dims)
   problem <- list(type = "svd", target = target)
-  controls <- list(
-    gram_side = if (dims[2L] <= dims[1L]) "right" else "left",
-    gram_dimension = reduced,
-    gram_max_dimension = as.integer(getOption("eigencore.gram_svd_max_dimension", 512L)),
-    rank_fraction_limit = 0.5,
-    certified_in_original_coordinates = TRUE,
-    materializes = "smaller Gram matrix only",
-    fallback_policy = "certification-gated",
-    runtime_fallback = "native Golub-Kahan if original-coordinate certificate is weaker",
-    fallback_requires_vectors = "both",
-    svd_partial_fastpath = TRUE,
-    full_dimension = as.integer(full)
+  controls <- gram_svd_plan_controls(
+    dims,
+    rank,
+    target,
+    svd_partial_fastpath = TRUE
   )
   new_plan(
     problem,
@@ -484,9 +522,9 @@ solve_svd_retained_golub_kahan <- function(a, rank, tol, vectors, certify, plan)
     empty_certificate(tol, note = "both left and right vectors are required for full SVD certification")
   }
   warnings_msg <- if (isTRUE(cert$passed)) {
-    "using native retained Golub-Kahan SVD with thick restart"
+    "using diagnostic native retained Golub-Kahan SVD with thick restart; not production-promoted"
   } else {
-    "using native retained Golub-Kahan SVD; adaptive subspace budget exhausted before full certification"
+    "using diagnostic native retained Golub-Kahan SVD; adaptive subspace budget exhausted before full certification"
   }
   make_svd_result(
     d = iter$d,
@@ -509,7 +547,18 @@ solve_svd_golub_kahan <- function(a, rank, method, tol, vectors, certify, plan) 
     if (inherits(method, "eigencore_method") && identical(method$kind, "golub_kahan")) method$max_subspace else NULL
   method_reorth <- controls$reorthogonalize %||%
     if (inherits(method, "eigencore_method") && identical(method$kind, "golub_kahan")) method$reorthogonalize else TRUE
-  iter <- if (identical(plan$method, "native prototype Golub-Kahan")) {
+  native_callback_path <- identical(plan$method, native_matrix_free_golub_kahan_label()) ||
+    identical(plan$method, native_matrix_free_smallest_golub_kahan_label()) ||
+    identical(plan$method, native_matrix_free_interior_golub_kahan_label())
+  native_golub_kahan_path <- plan$method %in% c(
+    "native prototype Golub-Kahan",
+    native_smallest_golub_kahan_label(),
+    native_interior_golub_kahan_label(),
+    native_matrix_free_golub_kahan_label(),
+    native_matrix_free_smallest_golub_kahan_label(),
+    native_matrix_free_interior_golub_kahan_label()
+  )
+  iter <- if (native_golub_kahan_path) {
     native_golub_kahan_svd(
       a$A,
       rank = rank,
@@ -536,11 +585,41 @@ solve_svd_golub_kahan <- function(a, rank, method, tol, vectors, certify, plan) 
   } else {
     empty_certificate(tol, note = "both left and right vectors are required for full SVD certification")
   }
-  warnings_msg <- if (identical(plan$method, "native prototype Golub-Kahan")) {
+  warnings_msg <- if (identical(plan$method, native_smallest_golub_kahan_label())) {
+    if (isTRUE(iter$restart$converged)) {
+      "using native certified smallest Golub-Kahan SVD; residuals certified in original coordinates"
+    } else {
+      "using native certified smallest Golub-Kahan SVD; adaptive subspace budget exhausted before full certification"
+    }
+  } else if (identical(plan$method, native_matrix_free_smallest_golub_kahan_label())) {
+    if (isTRUE(iter$restart$converged)) {
+      "using native certified smallest matrix-free Golub-Kahan callback SVD with exact norm metadata; residuals certified"
+    } else {
+      "using native certified smallest matrix-free Golub-Kahan callback SVD; adaptive subspace budget exhausted before full certification"
+    }
+  } else if (identical(plan$method, native_interior_golub_kahan_label())) {
+    if (isTRUE(iter$restart$converged)) {
+      "using native full-subspace interior Golub-Kahan SVD; residuals certified in original coordinates"
+    } else {
+      "using native full-subspace interior Golub-Kahan SVD; full subspace did not meet the requested certificate tolerance"
+    }
+  } else if (identical(plan$method, native_matrix_free_interior_golub_kahan_label())) {
+    if (isTRUE(iter$restart$converged)) {
+      "using native full-subspace interior matrix-free Golub-Kahan SVD with exact norm metadata; residuals certified"
+    } else {
+      "using native full-subspace interior matrix-free Golub-Kahan SVD; full subspace did not meet the requested certificate tolerance"
+    }
+  } else if (identical(plan$method, "native prototype Golub-Kahan")) {
     if (isTRUE(iter$restart$converged)) {
       "using native prototype Golub-Kahan iteration with adaptive subspace growth"
     } else {
       "using native prototype Golub-Kahan iteration; adaptive subspace budget exhausted before full certification"
+    }
+  } else if (native_callback_path) {
+    if (isTRUE(iter$restart$converged)) {
+      "using native matrix-free Golub-Kahan callback cycle with native Ritz extraction; residuals certified"
+    } else {
+      "using native matrix-free Golub-Kahan callback cycle; adaptive subspace budget exhausted before full certification"
     }
   } else {
     "using R-level prototype Golub-Kahan; native hot loop not yet implemented"
@@ -564,9 +643,14 @@ solve_svd_dense <- function(a, rank, tol, vectors, certify, allow_dense_fallback
   A <- materialize_dense_fallbacks(list(A = a$A), allow = allow_dense_fallback)$A
   decomp <- if (identical(plan$method, "native dense LAPACK SVD fallback")) {
     native_dense_svd(A)
+  } else if (identical(plan$method, native_dense_complex_svd_label())) {
+    native_dense_complex_svd(A)
   } else {
-    nu <- if (vectors %in% c("both", "left")) min(rank, nrow(A)) else 0L
-    nv <- if (vectors %in% c("both", "right")) min(rank, ncol(A)) else 0L
+    needs_full_vector_basis <- !svd_target_kind(a$target) %in%
+      c("largest", "largest_magnitude")
+    vector_count <- if (isTRUE(needs_full_vector_basis)) min(dim(A)) else rank
+    nu <- if (vectors %in% c("both", "left")) min(vector_count, nrow(A)) else 0L
+    nv <- if (vectors %in% c("both", "right")) min(vector_count, ncol(A)) else 0L
     svd(A, nu = nu, nv = nv)
   }
   idx <- order_indices(decomp$d, a$target)
@@ -582,8 +666,12 @@ solve_svd_dense <- function(a, rank, tol, vectors, certify, allow_dense_fallback
     empty_certificate(tol, note = "both left and right vectors are required for full SVD certification")
   }
 
-  warnings_msg <- if (identical(plan$method, "native dense LAPACK SVD fallback")) {
+  warnings_msg <- if (isTRUE(plan$controls$interior_svd_dense_fallback)) {
+    "using explicit dense fallback for unsupported native interior SVD target; residuals certified in original coordinates"
+  } else if (identical(plan$method, "native dense LAPACK SVD fallback")) {
     "using native dense LAPACK SVD fallback; iterative engine not yet implemented"
+  } else if (identical(plan$method, native_dense_complex_svd_label())) {
+    "using native dense complex LAPACK SVD fallback; iterative engine not yet implemented"
   } else {
     "using dense oracle prototype solver"
   }

@@ -14,20 +14,18 @@ benchmark_eigen_methods(
 )
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Matrix or eigencore operator to benchmark.}
 
-\item{k}{Number of eigenpairs or singular triplets requested.}
+\item{k}{Number of eigenpairs to compute.}
 
-\item{target}{Spectral target descriptor.}
+\item{target}{Eigencore eigenvalue target descriptor.}
 
-\item{repeats}{Number of benchmark repetitions.}
+\item{repeats}{Number of timing repetitions.}
 
-\item{include}{Methods to include.}
+\item{include}{Character vector of method labels to include when available.}
 
-\item{tol}{Numerical tolerance.}
-
+\item{tol}{Solver tolerance.}
 }
 \description{
 Benchmark eigen methods against base and optional references.
 }
-\keyword{internal}

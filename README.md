@@ -3,18 +3,31 @@
 
 # eigencore
 
-**eigencore** is a native engine for certified partial eigenvalue and
-singular-value computation in R. The goal is a partial spectrum that is
-**fast enough to use in production and trustworthy enough to build on**
-— every returned result carries residuals, backward-error estimates,
-orthogonality loss, and an inspectable solver plan that records exactly
-which kernel ran. The package ships RSpectra-compatible shims (`eigs()`,
-`eigs_sym()`, `svds()`) so existing code can migrate gradually.
+**eigencore** is a native engine for **certified** partial eigenvalue
+and singular-value computation in R — the top-*k* singular triplets or
+eigenpairs of a large sparse or structured matrix, returned with a
+numerical certificate that tells you whether you can trust them.
+
+It is **not** a replacement for base `svd()` / `eigen()`, which compute
+the *full* dense decomposition of a small matrix. It is an alternative
+to the partial solvers you already reach for — **RSpectra**, **irlba**,
+**PRIMME** — and it adds two things they don’t give you:
+
+1.  **A trust verdict on every result.** Each call returns residuals, a
+    backward-error bound, orthogonality loss, and a `passed`/`failed`
+    flag — and *withholds* the verdict rather than vouch for a number it
+    can only estimate.
+2.  **A structure-aware planner.** Dense, sparse-CSC, diagonal, scaled,
+    centered, and composed operators route through native C++ kernels
+    *without densifying*, and the planner tells you exactly which kernel
+    ran.
+
+In its promoted regimes it is also meaningfully faster than RSpectra,
+irlba, and PRIMME (see [Benchmarks](#benchmarks)). Outside them, it
+tells you so honestly and ships drop-in shims so you can fall back per
+call.
 
 ## Installation
-
-eigencore is in early development. You can install the development
-version from GitHub:
 
 ``` r
 # install.packages("pak")
@@ -23,163 +36,249 @@ pak::pak("bbuchsbaum/eigencore")
 
 ## Quick start
 
+The bread-and-butter task: the top few singular triplets of a tall
+sparse data matrix — a partial SVD, the engine behind sparse PCA, LSA,
+and low-rank models.
+
 ``` r
 library(eigencore)
+library(Matrix)
 
-set.seed(1)
-n <- 200
-A <- crossprod(matrix(rnorm(n * n), n, n)) / n + diag(n)
+set.seed(2)
+A <- as(rsparsematrix(100000, 500, density = 0.002), "dgCMatrix")
 
-fit <- eig_partial(A, k = 5, target = largest())
+fit <- svd_partial(A, rank = 10, target = largest())
 fit
-#> Partial eigen decomposition
-#>   requested: 5
-#>   converged: 5
-#>   method: native scalar thick-restart Hermitian Lanczos
-#>   target: largest
-#>   restart:thick_restart(in_native_loop)
-#>   locked: 5
-#>   max residual: 1.67046e-07
-#>   max backward error: 4.546939e-09
-#>   max orthogonality loss: 1.776357e-15
-#>   norm bound: frobenius_exact+identity_exact
-#>   scale estimated: FALSE
+#> Partial SVD
+#>   requested rank: 10 
+#>   converged rank: 10 
+#>   method: native certified Gram SVD special case 
+#>   target: largest 
+#>   max residual: 1.388377e-14 
+#>   max backward error: 4.392928e-17 
+#>   max orthogonality loss: 1.776357e-15 
+#>   norm bound: frobenius_exact 
+#>   scale estimated: FALSE 
 #>   certificate: passed
 ```
 
-The result prints a one-screen ledger: which solver actually ran, how
-many pairs converged, the worst residual and backward error across the
-returned basis, and whether the certificate passed.
-
-``` r
-fit$certificate
-#> eigencore certificate
-#>   passed: TRUE
-#>   tolerance: 1e-08
-#>   type: residual_backward_error
-#>   norm bound: frobenius_exact+identity_exact
-#>   scale estimated: FALSE
-#>   max residual: 1.67046e-07
-#>   max backward error: 4.546939e-09
-#>   max orthogonality loss: 1.776357e-15
-#>   orthogonality tolerance: 1.490116e-08
-#>   orthogonality required: TRUE
-```
-
-The certificate is the differentiator — eigencore tells you whether the
-numbers are trustworthy, not just what they are.
+The result prints a one-screen ledger: which kernel actually ran, how
+many triplets converged, the worst residual / backward error /
+orthogonality loss across the returned basis, and whether the
+certificate passed. Here eigencore proves the answer exactly
+(`norm bound: frobenius_exact`) and does it faster than every baseline —
+1.6× RSpectra, 2.8× PRIMME, 8.9× irlba (see below).
 
 A partial decomposition is a certified *slice* of the spectrum: you
 compute the part you need and leave the rest untouched.
 
-<img src="man/figures/README-spectrum-1.png" alt="The five largest eigenvalues highlighted in blue against the full 200-point spectrum of A in grey." width="100%" />
+<img src="man/figures/README-scree-1.png" alt="The ten largest singular values highlighted in blue against the full 500-point singular spectrum of A in grey." width="100%" />
+
+## The certificate earns its keep
+
+The certificate is the real differentiator: RSpectra, irlba, and PRIMME
+hand you vectors and values, but no statement about whether they are
+trustworthy. eigencore attaches one that covers *both* singular
+relations (`||A v - sigma u||` and `||A^T u - sigma v||`) — and,
+crucially, knows when *not* to vouch.
+
+On the problem above the verdict is `passed`, with an exact norm bound:
+
+``` r
+fit$certificate
+#> eigencore certificate
+#>   passed: TRUE 
+#>   tolerance: 1e-08 
+#>   type: residual_backward_error 
+#>   norm bound: frobenius_exact 
+#>   scale estimated: FALSE 
+#>   max residual: 1.388377e-14 
+#>   max backward error: 4.392928e-17 
+#>   max orthogonality loss: 1.776357e-15 
+#>   orthogonality tolerance: 1.490116e-08 
+#>   orthogonality required: TRUE
+```
+
+Now ask for the singular triplets of a **column-centered** sparse
+matrix. eigencore solves it without ever forming the dense centered copy
+— but the only norm bound it can get cheaply for that operator is a
+*stochastic estimate*, so it returns the right singular values **and
+withholds the `passed` verdict**, telling you exactly why:
+
+``` r
+cen <- svd_partial(center(A, columns = TRUE), rank = 5, target = largest())
+
+cen$certificate$passed
+#> [1] FALSE
+cen$certificate$norm_bound_type
+#> [1] "frobenius_hutchinson_estimate"
+cen$certificate$notes
+#> [1] "certificate scale uses a stochastic norm estimate; passed is withheld"
+```
+
+That is the whole point: a wrong-but-plausible answer that another
+solver would have returned silently, eigencore flags as *unverified*.
+
+## Operators without densifying
+
+Centering a large sparse matrix normally destroys its sparsity — a dense
+centered copy of `A` would occupy **400 MB**, versus a few MB for the
+sparse original. eigencore’s operator algebra lets you express the
+centred (or scaled, or composed) map and solve it through native
+callbacks, so that dense matrix is **never formed**:
+
+``` r
+A_centered <- center(A, columns = TRUE)        # a 100000 x 500 operator, not a matrix
+svd_partial(A_centered, rank = 5, target = largest())$d
+#> [1] 17.23701 16.65319 16.60961 16.48647 16.44760
+```
+
+Build operators with `linear_operator()`, combine them with `compose()`,
+`crossprod_operator()`, `scale_cols()`, `center()`, …; the planner
+inspects the resulting structure and routes accordingly. Call
+`plan_solver()` to see the chosen path *before* you solve:
+
+``` r
+plan_solver(svd_problem(A_centered, target = largest()), rank = 5)$method
+#> [1] "native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary)"
+```
+
+## Partial eigendecomposition
+
+The same contract applies to symmetric eigenproblems. Here is a sparse
+second-difference operator (a 1-D graph Laplacian), asking for its
+**smallest** eigenvalues — the regime where naïve Krylov methods
+struggle most:
+
+``` r
+n <- 20000
+L <- bandSparse(n, n, k = c(-1, 0, 1),
+                diagonals = list(rep(-1, n - 1), rep(2, n), rep(-1, n - 1)))
+L <- as(L, "dgCMatrix")
+
+eig <- eig_partial(L, k = 8, target = smallest())
+eig
+#> Partial eigen decomposition
+#>   requested: 8 
+#>   converged: 8 
+#>   method: native tridiagonal Hermitian LAPACK selected eigensolver 
+#>   target: smallest 
+#>   restart: tridiagonal_lapack_selected 
+#>   locked: 8 
+#>   max residual: 5.035829e-16 
+#>   max backward error: 1.453731e-18 
+#>   max orthogonality loss: 8.65974e-15 
+#>   norm bound: frobenius_metadata+identity_exact 
+#>   scale estimated: FALSE 
+#>   certificate: passed
+```
+
+eigencore certifies these in a fraction of the time RSpectra needs (43×
+faster on this matrix). The full spectrum of this operator is known in
+closed form, so we can show exactly where the computed slice sits:
+
+<img src="man/figures/README-spectrum-1.png" alt="The eight smallest eigenvalues highlighted in blue at the bottom of the full analytic spectrum of the 20,000-point 1-D Laplacian shown in grey." width="100%" />
+
+## Benchmarks
+
+Median wall-clock time of eigencore’s **full certified call** (solve
+*and* certificate) against each baseline’s bare solve — eigencore is
+doing strictly more work in every row. Reproduce with
+`Rscript inst/benchmarks/bench-readme.R`.
+
+| Problem (all certified `passed` by eigencore) | eigencore | vs RSpectra | vs irlba | vs PRIMME |
+|----|----|----|----|----|
+| Tall sparse SVD, 100000 × 500, k = 10 | 16 ms | **1.6× faster** | **8.9× faster** | **2.8× faster** |
+| Wide sparse SVD, 500 × 100000, k = 10 | 14 ms | **12.9× faster** | **25.4× faster** | **13.5× faster** |
+| Banded Hermitian, smallest, n = 20000, k = 8 | 66 ms | **43.8× faster** | — | — |
+
+<sub>R 4.5.1 · aarch64-apple-darwin20 · RSpectra 0.16.2 / irlba 2.3.7 /
+PRIMME 3.2.6. The tall/wide SVD rows also allocate ~6–8× less memory
+than irlba. Numbers are machine- and BLAS-dependent; rerun locally for
+your own.</sub>
+
+**Where eigencore is *not* the fast path.** These wins come from
+structure-aware native kernels — the certified Gram special case for
+tall/wide sparse SVD whose small side is ≤ 512, and the
+banded/tridiagonal Hermitian kernel. On a general 2-D-grid sparse
+Laplacian, or a tall SVD whose narrow side exceeds that Gram limit,
+RSpectra is currently faster and remains an excellent default. eigencore
+reports which path it took (`fit$method`), so you are never guessing.
+
+## eigencore or RSpectra / irlba?
+
+**Reach for eigencore when** you want a trust verdict on every result;
+when you have tall/wide sparse or PCA-shaped SVD problems (faster than
+RSpectra and PRIMME, far lighter than irlba, certified exactly); when
+you need the smallest eigenvalues of a banded/structured Hermitian
+operator; or when you want to centre, scale, or compose operators
+without ever forming a dense matrix.
+
+**Stay with RSpectra / irlba when** you have a general large sparse
+problem outside eigencore’s promoted kernels and don’t need a
+certificate — they are mature and fast, and eigencore’s shims (`eigs()`,
+`eigs_sym()`, `svds()`) let you switch back with a one-line change.
 
 ## RSpectra-compatible drop-in
 
-If you have existing code calling `RSpectra::eigs_sym()`, swapping in
-`eigencore::eigs_sym()` is a one-line change and gives you a certificate
+If you already call `RSpectra::eigs_sym()`, swapping in
+`eigencore::eigs_sym()` is a one-line change that returns a certificate
 for free:
 
 ``` r
-res <- eigs_sym(A, k = 5, which = "LA")
+res <- eigs_sym(L, k = 8, which = "SA")
 res$values
-#> [1] 5.010576 4.769169 4.700866 4.566055 4.504502
-res$certificate
-#> eigencore certificate
-#>   passed: TRUE
-#>   tolerance: 1e-08
-#>   type: residual_backward_error
-#>   norm bound: frobenius_exact+identity_exact
-#>   scale estimated: FALSE
-#>   max residual: 4.542481e-08
-#>   max backward error: 1.236449e-09
-#>   max orthogonality loss: 1.290817e-15
-#>   orthogonality tolerance: 1.490116e-08
-#>   orthogonality required: TRUE
+#> [1] 2.467154e-08 9.868617e-08 2.220439e-07 3.947447e-07 6.167886e-07
+#> [6] 8.881755e-07 1.208906e-06 1.578979e-06
+res$certificate$passed
+#> [1] TRUE
 ```
 
 `eigs()`, `eigs_sym()`, and `svds()` accept the same `which` codes as
 `RSpectra` (`"LM"`, `"SM"`, `"LA"`, `"SA"`, `"LR"`, `"SR"`, `"LI"`,
 `"SI"`, `"BE"`).
 
-## Partial SVD
-
-``` r
-M <- matrix(rnorm(400 * 50), 400, 50)
-svd_fit <- svd_partial(M, rank = 5, target = largest())
-svd_fit
-#> Partial SVD
-#>   requested rank: 5
-#>   converged rank: 5
-#>   method: native certified Gram SVD special case
-#>   target: largest
-#>   max residual: 1.22125e-15
-#>   max backward error: 8.568377e-18
-#>   max orthogonality loss: 5.551115e-16
-#>   norm bound: frobenius_exact
-#>   scale estimated: FALSE
-#>   certificate: passed
-```
-
-The `method` field reports which path ran. eigencore takes a fast
-certified Gram special case when it can prove the result to tolerance,
-and falls back to a Golub–Kahan bidiagonalization when the Gram route
-can’t be certified. Either way the certificate covers *both* singular
-relations, `||A v - sigma u||` and `||A^T u - sigma v||`, so the
-triplets come back with honest backward-error bounds — eigencore never
-takes a shortcut it can’t certify.
-
 ## What makes eigencore different
 
-- **Certificates by default.** Every result carries `max_residual`,
-  `max_backward_error`, `max_orthogonality_loss`, and a
-  `passed`/`failed` verdict. The returned norm bound is labeled
-  (`frobenius_exact`, `frobenius_hutchinson_estimate`, …) so you know
-  how the certificate was computed.
-- **Planner honesty.** The `method` field on every result identifies the
-  path that actually ran —
-  `native scalar thick-restart Hermitian Lanczos`,
-  `native certified Gram SVD special case`,
-  `native dense LAPACK SVD fallback`, or, when a problem class has no
-  production kernel yet,
-  `reference Hermitian Lanczos (prototype/oracle fallback)`. Sparse
-  inputs do not silently densify; reference oracles are never dressed as
-  production paths. Call `plan_solver()` to see the chosen path *before*
-  you solve.
-- **Block-native engine.** Operators apply to dense blocks through a
-  frozen C++17 ABI. Dense, CSC, diagonal, scaled, centered, and composed
-  operators go through native kernels without R-level iteration in the
-  hot loop.
-- **First-class operator algebra.** Build operators with
-  `linear_operator()`, combine them with `compose()`,
-  `crossprod_operator()`, `scale_cols()`, `center()`, etc. — the planner
-  inspects the resulting structure and routes accordingly.
+- **Certificates, with the integrity to withhold them.** Every result
+  carries `max_residual`, `max_backward_error`,
+  `max_orthogonality_loss`, and a labeled norm bound (`frobenius_exact`,
+  `frobenius_hutchinson_estimate`, …). When the bound is only an
+  estimate, `passed` is withheld rather than asserted.
+- **Planner honesty.** `fit$method` and `plan_solver()` name the path
+  that actually ran — `native certified Gram SVD special case`,
+  `native tridiagonal Hermitian LAPACK selected eigensolver`, or, when a
+  problem class has no production kernel yet, an explicit
+  `reference`/`oracle` label. Sparse inputs do not silently densify.
+- **First-class operator algebra over a native engine.** Dense, CSC,
+  diagonal, scaled, centered, and composed operators apply to dense
+  blocks through a frozen C++17 ABI, no R-level iteration in the hot
+  loop.
 
-Run `vignette("eigencore", package = "eigencore")` for a guided tour of
-operators, problems, plans, and certificates, and
+Run `vignette("eigencore", package = "eigencore")` for a guided tour and
 `vignette("certificates", package = "eigencore")` for the deep dive on
 reading the numerical evidence — including what to do when a check
 fails.
 
 ## Status
 
-**eigencore is experimental.** The public surface is settling but now
-has a scoped V1 release surface with fresh local gate evidence. The V1
-native engine ships scalar Hermitian Lanczos plus explicit and
-diagnostic block Hermitian Lanczos, native structured-tridiagonal
-Hermitian defaults, scoped sparse generalized LOBPCG, certified
-tall/wide sparse SVD special cases, scoped randomized SVD acceleration,
-dense LAPACK fallbacks, dense/structured shift-invert, and
-dense/sparse-CSC nonsymmetric Arnoldi compatibility. Broader general
-sparse and matrix-free SVD, fully native randomized solver control,
-general sparse native LU, matrix-free native Arnoldi restart, and
-native/block generalized Lanczos remain future scope. See
-[`plan_v1.md`](plan_v1.md) and the docs under `docs/` for the
-engineering roadmap and current limitations. Start with
+**eigencore is pre-1.0: the API is still settling and is not yet on
+CRAN.** Treat the public surface as stabilising, not frozen.
+
+That caveat is about *lifecycle*, not quality. The scoped V2 release
+surface is hardened — each promoted path carries benchmark-gate evidence
+against RSpectra and PRIMME, an adversarial test bank backs the solvers
+and their certificates, and every result is certified. Broader
+general-sparse and matrix-free SVD, scalable interior workflows, and
+full nonsymmetric Krylov–Schur extraction remain V3 scope, and any path
+without a production kernel carries an honest `reference`/`oracle`
+label. See
 [`docs/method-selection-and-workflows.md`](docs/method-selection-and-workflows.md)
-for the current API workflow map and
+for the workflow map,
 [`docs/v1-benchmark-manifest.md`](docs/v1-benchmark-manifest.md) for the
-benchmark gate inventory.
+benchmark-gate inventory, and
+[`docs/known-limitations.md`](docs/known-limitations.md) for current
+boundaries.
 
 ## License
 

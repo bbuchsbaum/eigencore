@@ -111,6 +111,44 @@ test_that("non-normal nonsymmetric matrices with real spectra are certified", {
   expect_certificate_clean(fit)
 })
 
+test_that("clustered nonsymmetric spectra return certified biorthogonal left vectors", {
+  A <- rbind(
+    c(5, 1e-6, 0, 0),
+    c(0, 5 - 1e-5, 2e-6, 0),
+    c(0, 0, 4, 1e-6),
+    c(0, 0, 0, -1)
+  )
+
+  fit <- eig_partial(A, k = 2, target = largest_real(), tol = 1e-8)
+
+  expect_equal(values(fit), c(5, 5 - 1e-5), tolerance = 1e-8)
+  expect_true(fit$certificate$passed)
+  expect_false(is.null(left_vectors(fit)))
+  expect_false(is.null(right_vectors(fit)))
+  expect_true(fit$left_certificate$passed)
+  expect_lt(fit$left_certificate$max_backward_error, 1e-8)
+  expect_lt(max(abs(fit$biorthogonality - diag(2L))), 1e-8)
+  expect_match(fit$warnings, "left residuals and biorthogonality certified")
+})
+
+test_that("defective nonsymmetric spectra do not report false biorthogonal success", {
+  A <- matrix(c(
+    3, 1, 0,
+    0, 3, 1,
+    0, 0, 1
+  ), nrow = 3, byrow = TRUE)
+
+  fit <- eig_partial(A, k = 2, target = largest_real(), tol = 1e-10)
+
+  expect_equal(values(fit), c(3, 3), tolerance = 1e-8)
+  expect_true(fit$certificate$passed)
+  expect_true(fit$left_eigenvectors$supported)
+  expect_false(fit$left_certificate$passed)
+  expect_gte(fit$left_certificate$max_orthogonality_loss, 0.5)
+  expect_match(fit$warnings, "left residuals or biorthogonality did not pass certificate")
+  expect_false(grepl("left residuals and biorthogonality certified", fit$warnings, fixed = TRUE))
+})
+
 test_that("dense nonsymmetric native Arnoldi certifies complex right residuals", {
   A <- rbind(
     c(0, -2, 0),
@@ -125,13 +163,16 @@ test_that("dense nonsymmetric native Arnoldi certifies complex right residuals",
   expect_equal(fit$certificate$certificate_type, "right_residual_backward_error")
   expect_false(fit$certificate$orthogonality_required)
   expect_true(fit$certificate$passed)
-  expect_equal(fit$plan$method, eigencore:::native_arnoldi_label())
+  expect_equal(fit$plan$method, eigencore:::native_refined_arnoldi_label())
   expect_true(fit$restart$native)
   expect_true(fit$restart$ritz_extraction_native)
+  expect_equal(fit$restart$extraction, "refined_ritz")
+  expect_true(fit$restart$refined_extraction_native)
+  expect_false(fit$restart$krylov_schur)
   expect_match(fit$warnings, "right residuals certified")
 })
 
-test_that("reference Arnoldi handles nonsymmetric matrix-free real spectra honestly", {
+test_that("native matrix-free Arnoldi handles nonsymmetric real spectra", {
   A <- rbind(
     c(5, 2, 0, 0),
     c(0, 3, 1, 0),
@@ -152,14 +193,28 @@ test_that("reference Arnoldi handles nonsymmetric matrix-free real spectra hones
 
   fit <- eig_partial(op, k = 2L, target = largest_real(), tol = 1e-10, seed = 11)
 
-  expect_equal(fit$plan$method, eigencore:::reference_arnoldi_label())
-  expect_match(fit$warnings, "reference Arnoldi prototype", fixed = TRUE)
+  expect_equal(fit$plan$method, eigencore:::native_matrix_free_arnoldi_label())
+  expect_equal(fit$plan$controls$arnoldi_extraction, "projected_ritz")
+  expect_match(fit$warnings, "native matrix-free Arnoldi callback cycle", fixed = TRUE)
   expect_true(fit$certificate$passed)
   expect_equal(sort(Re(fit$values), decreasing = TRUE), c(5, 3), tolerance = 1e-8)
   expect_equal(fit$certificate$certificate_type, "right_residual_backward_error")
   expect_false(fit$certificate$orthogonality_required)
   expect_true(fit$restart$implemented)
-  expect_false(fit$restart$native)
+  expect_true(fit$restart$native)
+  expect_true(fit$restart$matrix_free)
+  expect_true(fit$restart$ritz_extraction_native)
+  expect_equal(fit$restart$extraction, "projected_ritz")
+  expect_false(fit$restart$refined_extraction_native)
+  expect_error(
+    eigencore:::native_arnoldi_general(
+      op,
+      k = 2L,
+      target = largest_real(),
+      extraction = "refined_ritz"
+    ),
+    "matrix-free refined Ritz extraction is future scope"
+  )
   expect_certificate_clean(fit)
 })
 
@@ -180,9 +235,11 @@ test_that("native Arnoldi handles nonsymmetric sparse real spectra without densi
     allow_dense_fallback = "never"
   )
 
-  expect_equal(fit$plan$method, eigencore:::native_arnoldi_label())
+  expect_equal(fit$plan$method, eigencore:::native_refined_arnoldi_label())
   expect_match(fit$warnings, "native Arnoldi cycle", fixed = TRUE)
   expect_equal(fit$plan$controls$max_restarts, 5L)
+  expect_equal(fit$plan$controls$arnoldi_extraction, "refined_ritz")
+  expect_true(fit$plan$controls$refined_extraction_native)
   expect_true(fit$certificate$passed)
   expect_equal(sort(Re(fit$values), decreasing = TRUE), c(5, 3), tolerance = 1e-8)
   expect_equal(fit$certificate$certificate_type, "right_residual_backward_error")
@@ -191,6 +248,10 @@ test_that("native Arnoldi handles nonsymmetric sparse real spectra without densi
   expect_true(fit$restart$native)
   expect_equal(fit$restart$max_restarts, 5L)
   expect_true(fit$restart$ritz_extraction_native)
+  expect_equal(fit$restart$extraction, "refined_ritz")
+  expect_true(fit$restart$refined_extraction_native)
+  expect_false(fit$restart$krylov_schur)
+  expect_equal(fit$restart$v2_issue, "bd-01KTF6H41S9XDN286TR3V184P4")
   expect_true(all(c("cycle", "ritz_extraction") %in% names(fit$restart$stage_seconds)))
   expect_true(all(is.finite(fit$restart$stage_seconds)))
   expect_true(all(fit$restart$stage_seconds >= 0))
@@ -213,7 +274,7 @@ test_that("native Arnoldi handles nonsymmetric dense real spectra without oracle
     allow_dense_fallback = "never"
   )
 
-  expect_equal(fit$plan$method, eigencore:::native_arnoldi_label())
+  expect_equal(fit$plan$method, eigencore:::native_refined_arnoldi_label())
   expect_match(fit$warnings, "native Arnoldi cycle", fixed = TRUE)
   expect_true(fit$certificate$passed)
   expect_equal(sort(Re(fit$values), decreasing = TRUE), c(5, 3), tolerance = 1e-8)
@@ -222,6 +283,8 @@ test_that("native Arnoldi handles nonsymmetric dense real spectra without oracle
   expect_true(fit$restart$implemented)
   expect_true(fit$restart$native)
   expect_true(fit$restart$ritz_extraction_native)
+  expect_equal(fit$restart$extraction, "refined_ritz")
+  expect_true(fit$restart$refined_extraction_native)
   expect_certificate_clean(fit)
 })
 
@@ -241,13 +304,15 @@ test_that("native Arnoldi uses full dense subspace for dense compatibility", {
     allow_dense_fallback = "never"
   )
 
-  expect_equal(fit$plan$method, eigencore:::native_arnoldi_label())
+  expect_equal(fit$plan$method, eigencore:::native_refined_arnoldi_label())
   expect_equal(fit$plan$controls$max_subspace, n)
+  expect_equal(fit$plan$controls$arnoldi_extraction, "refined_ritz")
   expect_equal(fit$restart$max_subspace, n)
   expect_true(fit$certificate$passed)
   expect_equal(sum(fit$certificate$converged), 4L)
   expect_true(fit$restart$native)
   expect_true(fit$restart$ritz_extraction_native)
+  expect_true(fit$restart$refined_extraction_native)
   expect_certificate_clean(fit)
 })
 
@@ -278,6 +343,35 @@ test_that("native Arnoldi Ritz extraction preserves complex Ritz pairs", {
   expect_lt(max(Mod(residual)), 1e-8)
 })
 
+test_that("native refined Ritz extraction improves clustered non-normal residuals", {
+  set.seed(42)
+  n <- 12L
+  Q <- matrix(rnorm(n * n), n)
+  A <- Q %*% diag(c(5, 5 - 1e-5, 4.99, seq(2, -2, length.out = n - 3L))) %*% solve(Q)
+  op <- eigencore:::as_operator(A)
+  start <- rnorm(n)
+  start <- start / sqrt(sum(start^2))
+  cycle <- eigencore:::native_arnoldi_cycle(op, start, 10L)
+
+  projected <- eigencore:::native_arnoldi_ritz(
+    op, cycle, k = 1L, target = largest_real(), tol = 1e-12,
+    extraction = "projected_ritz"
+  )
+  refined <- eigencore:::native_arnoldi_ritz(
+    op, cycle, k = 1L, target = largest_real(), tol = 1e-12,
+    extraction = "refined_ritz"
+  )
+
+  expect_equal(refined$extraction, "refined_ritz")
+  expect_true(length(refined$refined_residual_estimates) == 1L)
+  expect_lt(refined$certificate$max_residual, projected$certificate$max_residual / 5)
+  expect_lt(refined$certificate$max_backward_error,
+            projected$certificate$max_backward_error / 5)
+  expect_equal(refined$certificate$max_residual,
+               refined$refined_residual_estimates,
+               tolerance = 1e-10)
+})
+
 test_that("native Arnoldi sparse path supports imaginary-part targets", {
   A <- Matrix::bdiag(
     matrix(c(0, -3, 3, 0), 2, 2, byrow = TRUE),
@@ -295,11 +389,12 @@ test_that("native Arnoldi sparse path supports imaginary-part targets", {
     allow_dense_fallback = "never"
   )
 
-  expect_equal(fit$plan$method, eigencore:::native_arnoldi_label())
+  expect_equal(fit$plan$method, eigencore:::native_refined_arnoldi_label())
   expect_equal(Im(fit$values), c(3, 1), tolerance = 1e-8)
   expect_true(is.complex(fit$vectors))
   expect_true(fit$restart$native)
   expect_true(fit$restart$ritz_extraction_native)
+  expect_true(fit$restart$refined_extraction_native)
   expect_certificate_clean(fit)
 })
 
@@ -327,15 +422,20 @@ test_that("native Arnoldi restart budget is wired and keeps best attempt", {
   history <- fit$restart$attempt_history
   finite_errors <- history$max_backward_error[is.finite(history$max_backward_error)]
 
-  expect_equal(fit$plan$method, eigencore:::native_arnoldi_label())
+  expect_equal(fit$plan$method, eigencore:::native_refined_arnoldi_label())
   expect_equal(fit$plan$controls$max_restarts, 2L)
+  expect_equal(fit$plan$controls$arnoldi_extraction, "refined_ritz")
   expect_equal(fit$restart$max_restarts, 2L)
   expect_equal(fit$restart$restart_count, 2L)
   expect_equal(nrow(history), 3L)
-  expect_equal(fit$restart$selected_attempt, 1L)
+  expect_equal(
+    fit$restart$selected_attempt,
+    history$attempt[which.min(history$max_backward_error)]
+  )
   expect_equal(fit$certificate$max_backward_error, min(finite_errors), tolerance = 1e-12)
   expect_false(fit$certificate$passed)
   expect_true(fit$restart$native)
+  expect_true(fit$restart$refined_extraction_native)
 })
 
 test_that("native Arnoldi default subspace certifies sparse benchmark-sized row", {
@@ -356,12 +456,13 @@ test_that("native Arnoldi default subspace certifies sparse benchmark-sized row"
     allow_dense_fallback = "never"
   )
 
-  expect_equal(fit$plan$method, eigencore:::native_arnoldi_label())
+  expect_equal(fit$plan$method, eigencore:::native_refined_arnoldi_label())
   expect_equal(fit$restart$max_subspace, 72L)
   expect_equal(fit$restart$max_restarts, 5L)
   expect_true(fit$certificate$passed)
   expect_equal(sum(fit$certificate$converged), 8L)
   expect_true(fit$restart$native)
+  expect_true(fit$restart$refined_extraction_native)
   expect_certificate_clean(fit)
 })
 

@@ -1,4 +1,28 @@
 #' Create a block-native linear operator.
+#'
+#' @param dim Integer vector of length two giving row and column dimensions.
+#' @param apply Function implementing block multiplication by the operator.
+#' @param apply_adjoint Optional function implementing block multiplication by
+#'   the adjoint operator.
+#' @param dtype Scalar character type label, currently `"double"` or
+#'   `"complex"`.
+#' @param structure Eigencore structure descriptor such as [general()] or
+#'   [hermitian()].
+#' @param name Optional operator label used in plans and diagnostics.
+#' @param metadata Optional list of implementation metadata.
+#' @examples
+#' A <- diag(c(3, 2, 1))
+#' op <- linear_operator(
+#'   dim = dim(A),
+#'   apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+#'     Z <- alpha * (A %*% X)
+#'     if (is.null(Y) || beta == 0) Z else Z + beta * Y
+#'   },
+#'   structure = hermitian(),
+#'   metadata = list(frobenius_norm = sqrt(sum(A^2)))
+#' )
+#' fit <- eig_partial(op, k = 1, target = largest())
+#' values(fit)
 linear_operator <- function(dim, apply, apply_adjoint = NULL, dtype = "double",
                             structure = general(), name = NULL,
                             metadata = list()) {
@@ -22,6 +46,13 @@ linear_operator <- function(dim, apply, apply_adjoint = NULL, dtype = "double",
 }
 
 #' Convert an object to an eigencore operator.
+#'
+#' @param x Object to convert.
+#' @param ... Additional arguments passed to methods.
+#' @examples
+#' op <- as_operator(diag(c(3, 2, 1)))
+#' op$dim
+#' op$structure$kind
 as_operator <- function(x, ...) {
   UseMethod("as_operator")
 }
@@ -33,6 +64,9 @@ as_operator.eigencore_operator <- function(x, ...) {
 
 #' @export
 as_operator.matrix <- function(x, ...) {
+  if (is.complex(x)) {
+    return(complex_dense_matrix_as_operator(x))
+  }
   storage.mode(x) <- "double"
   dim_x <- dim(x)
   linear_operator(
@@ -52,6 +86,7 @@ as_operator.matrix <- function(x, ...) {
 
 #' @export
 as_operator.default <- function(x, ...) {
+  stop_if_complex_matrix_input(x)
   if (inherits(x, "ddiMatrix")) {
     return(diagonal_matrix_as_operator(x))
   }
@@ -64,7 +99,32 @@ as_operator.default <- function(x, ...) {
   stop("Cannot convert object of class ", paste(class(x), collapse = "/"), " to an eigencore operator.", call. = FALSE)
 }
 
+#' @keywords internal
+stop_if_complex_matrix_input <- function(x) {
+  complex_input <- if (is.matrix(x)) {
+    FALSE
+  } else if (inherits(x, "Matrix")) {
+    inherits(x, "zMatrix") ||
+      inherits(x, "complexMatrix") ||
+      ("x" %in% methods::slotNames(x) && is.complex(methods::slot(x, "x")))
+  } else {
+    FALSE
+  }
+  if (isTRUE(complex_input)) {
+    stop(
+      "Complex-valued Matrix inputs are future scope in eigencore's native sparse/operator API. ",
+      "Base complex dense matrices use native dense complex LAPACK kernels; ",
+      "real-valued matrices may still return complex eigenpairs through eigs().",
+      call. = FALSE
+    )
+  }
+  invisible(x)
+}
+
 #' Return the adjoint operator.
+#'
+#' @param x Operator-like object.
+#' @param ... Additional arguments passed to methods.
 adjoint <- function(x, ...) {
   UseMethod("adjoint")
 }
@@ -76,11 +136,11 @@ adjoint.eigencore_operator <- function(x, ...) {
   }
   source <- x$metadata$source
   if (!is.null(source)) {
-    source <- t(source)
+    source <- if (identical(x$dtype, "complex")) Conj(t(source)) else t(source)
   }
   matrix <- x$metadata$matrix
   if (!is.null(matrix)) {
-    matrix <- Matrix::t(matrix)
+    matrix <- if (identical(x$dtype, "complex")) Conj(Matrix::t(matrix)) else Matrix::t(matrix)
   }
   storage <- x$metadata$storage
   if (!is.null(storage)) {
@@ -100,6 +160,30 @@ adjoint.eigencore_operator <- function(x, ...) {
       storage = storage,
       source = source,
       matrix = matrix
+    )
+  )
+}
+
+#' @keywords internal
+complex_dense_matrix_as_operator <- function(x) {
+  dim_x <- dim(x)
+  linear_operator(
+    dim = dim_x,
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      complex_dense_block_apply(x, X, alpha = alpha, beta = beta, Y = Y, adjoint = FALSE)
+    },
+    apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) {
+      complex_dense_block_apply(x, X, alpha = alpha, beta = beta, Y = Y, adjoint = TRUE)
+    },
+    dtype = "complex",
+    structure = if (is_square_symmetric(x)) hermitian() else general(),
+    name = "complex_dense_matrix",
+    metadata = list(
+      source = x,
+      native = TRUE,
+      storage = "complex_dense_matrix",
+      native_operator_kernel = "dense_complex_zgemm",
+      native_scalar_type = "complex128"
     )
   )
 }
@@ -144,6 +228,33 @@ dense_block_apply <- function(A, X, alpha = 1, beta = 0, Y = NULL, transpose = F
     as.numeric(beta),
     Y,
     isTRUE(transpose),
+    PACKAGE = "eigencore"
+  )
+}
+
+#' @keywords internal
+complex_dense_block_apply <- function(A, X, alpha = 1, beta = 0, Y = NULL, adjoint = FALSE) {
+  X <- as.matrix(X)
+  if (!is.complex(X)) {
+    X <- X + 0i
+  }
+  if (is.null(Y)) {
+    out_nrow <- if (adjoint) ncol(A) else nrow(A)
+    Y <- matrix(0 + 0i, out_nrow, ncol(X))
+  } else {
+    Y <- as.matrix(Y)
+    if (!is.complex(Y)) {
+      Y <- Y + 0i
+    }
+  }
+  .Call(
+    "eigencore_dense_complex_block_apply",
+    A,
+    X,
+    as.complex(alpha),
+    as.complex(beta),
+    Y,
+    isTRUE(adjoint),
     PACKAGE = "eigencore"
   )
 }

@@ -1,10 +1,11 @@
 # RSpectra Migration Notes
 
-Date: 2026-05-17
+Date: 2026-06-07
 
 This guide describes the current eigencore migration surface for code that
 already calls `RSpectra::eigs()`, `RSpectra::eigs_sym()`, or
-`RSpectra::svds()`. It is a compatibility guide, not a V1 release claim. The
+`RSpectra::svds()`. It is a compatibility guide for the scoped V2 CRAN release,
+not a promise that every future solver family is already production-native. The
 planner label and certificate on each result remain the source of truth for
 which path actually ran.
 
@@ -85,11 +86,17 @@ Additional target mappings:
 | `"SI"` | `smallest_imaginary()` |
 
 Current limitation: dense and sparse CSC nonsymmetric matrices with supported
-real/imaginary/magnitude targets can use a native Arnoldi cycle with native
-projected Ritz extraction, right-residual certification, a wired restart
-budget, and best-attempt retention. Matrix-free general operators remain
-reference-labelled. Treat this as the scoped V1 compatibility surface; fully
-restarted matrix-free native Arnoldi is future scope.
+real/imaginary/magnitude targets use a native Arnoldi cycle with native refined
+Ritz extraction, right-residual certification, a wired restart budget, and
+best-attempt retention. Real matrix-free callback operators with supported
+targets keep the native callback Arnoldi cycle with native projected Ritz
+extraction. Adjoint-capable dense, sparse CSC, and matrix-free rows also return
+left vectors with separate left-residual and biorthogonality diagnostics through
+the `eigs()` shim. Treat this as the scoped compatibility surface; full
+Krylov-Schur or harmonic/interior extraction, matrix-free refined extraction,
+and native complex-valued sparse/operator paths remain future scope. Base
+complex dense matrices use native dense complex LAPACK labels with exact
+certificates.
 
 ## `svds()`
 
@@ -118,14 +125,28 @@ Returned fields:
 | `certificate` | Two-sided SVD residual and orthogonality evidence. |
 | `diagnostics` | Planner and backend metadata. |
 
-The production V1 SVD promise is not complete. The tiny sparse Gram special
+The production V2 CRAN SVD promise is scoped. The tiny sparse Gram special
 case is promoted and certified in original coordinates; dense inputs may use a
 native dense LAPACK fallback; explicit dense/CSC Golub-Kahan exists as a native
 prototype; general sparse and matrix-free thick-restart SVD remain open
-performance work. Randomized SVD has a scoped exact-low-rank V1 gate with
-native fused sketch/projection kernels, but public randomized control remains
-reference-labelled and broader sparse/slow-decay/native-controller promotion
-remains future work.
+performance work. Randomized SVD has a scoped exact-low-rank release gate with
+native fused sketch/projection kernels and native projected-core solves, but
+public randomized control remains reference-labelled and broader sparse,
+slow-decay, and native-controller promotion remains future work.
+Base complex dense SVD is accepted through the native dense complex LAPACK SVD
+label with an exact two-sided certificate. Complex sparse or matrix-free SVD
+remains future scope and fails explicitly rather than entering real-only
+kernels.
+
+For smallest or interior singular-value targets, eigencore is deliberately
+stricter than a silent normal-equation fallback. Dense smallest and
+`nearest(sigma)` requests are exactly certified through dense fallback.
+Sparse CSC `nearest(sigma)` requests use a native full-subspace Golub-Kahan
+boundary without densifying the original operator; matrix-free
+`nearest(sigma)` requests use the same full-subspace callback boundary only
+when explicit norm metadata keeps the certificate scale non-estimated.
+Diagonal/reference prototype rows remain labelled as prototypes even when
+their two-sided certificates pass.
 
 ## Dense Fallback Policy
 
@@ -169,17 +190,24 @@ fit <- eigencore::eig_partial(
 )
 ```
 
-Current state: the promoted iterative V1 surface is sparse
+Current state: the promoted iterative V2 CRAN surface is sparse
 shifted-tridiagonal generalized SPD LOBPCG for largest/smallest targets. Dense
 generalized `auto()` uses the native dense generalized SPD LAPACK fallback, and
-explicit generalized-SPD `lanczos()` requests have an honest reference
-B-orthogonal refinement for dense, diagonal, and CSC SPD metric solves. Broader
-generalized preconditioner and native/block generalized Lanczos promotion
-remain future scope.
+explicit generalized-SPD `lanczos()` requests use native transformed Lanczos
+for dense and diagonal SPD metrics, including block requests inside that
+transformed boundary. Sparse CSC SPD metric solves remain an
+honest reference B-orthogonal refinement, but tridiagonal sparse CSC metrics now
+use an eigencore-owned native Thomas metric solve instead of the reference
+Cholesky boundary. General sparse CSC metrics remain reference Cholesky-labelled.
+Matrix-free-B generalized LOBPCG, native shifted-diagonal/tridiagonal
+preconditioners, constraints, and adversarial B contract rows are covered by the
+current generalized strict gate. Arbitrary sparse-CSC metric factorization and
+sparse-CSC block generalized Lanczos promotion are not claimed.
 
 ## Shift-Invert
 
-Use `method = shift_invert(sigma)` for explicit shift-invert requests:
+Use `target = nearest(sigma)` for automatic shift-invert planning, or
+`method = shift_invert(sigma)` for explicit shift-invert requests:
 
 ```r
 fit <- eigencore::eig_partial(
@@ -196,9 +224,13 @@ Sparse diagonal/symmetric-tridiagonal standard paths and tridiagonal
 generalized paths with diagonal `B` are also native. General sparse standard
 shift-invert and general sparse or diagonal-metric generalized shift-invert
 remain honest reference-labelled paths with cache provenance rather than native
-production claims. User-supplied solve functions are treated as reference
-boundary code with external-cache provenance. This is the scoped V1 boundary;
-native general sparse LU ownership is future scope.
+production claims. `auto()` plus `nearest(sigma)` uses an implicit
+`shift_invert(sigma)` transform for supported factorized Hermitian regimes;
+matrix-free or otherwise unfactorized requests fail loudly unless a solve is
+supplied. User-supplied solve functions are treated as reference boundary code
+with external-cache provenance. This is the scoped V2 CRAN boundary; native general
+sparse LU ownership and native ownership of user-supplied solve functions are
+explicit PRD non-goals unless a future PRD reopens them.
 
 ## Planner Labels To Watch
 
@@ -212,7 +244,7 @@ their documented regimes:
 | `native block Hermitian Lanczos (thick restart, locking)` | Block Hermitian path for explicit block requests, dense full-subspace cases, and diagnostic sparse opt-in; not promoted for general sparse `auto()`. |
 | `native certified Gram SVD special case` | Bounded Gram SVD special case, certified in original coordinates. |
 | `native dense ... fallback` | Native dense LAPACK fallback, not an iterative sparse solver. |
-| `native prototype ...` | Native prototype or staging path; do not count as V1 completion by itself. |
+| `native prototype ...` | Native prototype or staging path; do not count as V2 CRAN completion by itself. |
 | `reference ...` | R reference/prototype/oracle path. |
 | `dense ... oracle` | Dense oracle fallback for compatibility and certification. |
 

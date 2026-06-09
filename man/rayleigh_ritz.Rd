@@ -7,18 +7,17 @@
 rayleigh_ritz(A, Q, B = NULL, target = largest(), symmetric = TRUE)
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Dense matrix defining the projected eigenproblem.}
 
-\item{Q}{Basis matrix.}
+\item{Q}{Trial-basis matrix with basis vectors in columns.}
 
-\item{B}{Metric, operator, or basis input.}
+\item{B}{Optional symmetric positive-definite metric matrix.}
 
-\item{target}{Spectral target descriptor.}
+\item{target}{Eigencore target descriptor.}
 
-\item{symmetric}{Whether the problem is symmetric.}
-
+\item{symmetric}{Whether the projected problem should be treated as
+symmetric/Hermitian.}
 }
 \description{
 Rayleigh-Ritz projection in a trial basis.
 }
-\keyword{internal}

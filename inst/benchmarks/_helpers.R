@@ -179,7 +179,11 @@ svd_surface_gate_subject <- function(args, methods) {
 svd_internal_methods <- function() {
   c(
     "eigencore",
+    "eigencore_smallest",
+    "eigencore_interior",
     "eigencore_golub_kahan",
+    "eigencore_golub_kahan_smallest",
+    "eigencore_golub_kahan_interior",
     "eigencore_golub_kahan_one_sided",
     "eigencore_irlba_lbd_one_sided",
     "eigencore_irlba_lbd_retained_native",
@@ -322,6 +326,19 @@ randomized_rsvd_benchmark_cases <- function(quick = FALSE) {
       seed = 1703L,
       release_gate_required = FALSE,
       release_gate_note = "diagnostic row; rsvd baseline fails eigencore certification"
+    ),
+    list(
+      case = "low_rank_sparse",
+      id = "low_rank_sparse:2000x500",
+      A = {
+        set.seed(1705L)
+        Matrix::rsparsematrix(2000L, 40L, density = 0.05) %*%
+          Matrix::rsparsematrix(40L, 500L, density = 0.05)
+      },
+      rank = 30L,
+      seed = 1705L,
+      release_gate_required = FALSE,
+      release_gate_note = "native sparse CSC controller contract; sparse baselines are diagnostic rather than promoted release gates"
     )
   )
 }
@@ -408,9 +425,9 @@ benchmark_g1_candidate_baseline <- function(quick = FALSE,
 
 bench_methods <- function(kind, requested = NULL) {
   methods <- if (identical(kind, "eigen")) {
-    eigencore:::available_eigen_methods()
+    benchmark_available_eigen_methods()
   } else {
-    eigencore:::available_svd_methods()
+    benchmark_available_svd_methods()
   }
   if (is.null(requested)) {
     return(methods)
@@ -428,6 +445,35 @@ bench_methods <- function(kind, requested = NULL) {
     )
   }
   requested
+}
+
+benchmark_available_eigen_methods <- function() {
+  c(
+    eigencore:::available_eigen_methods(),
+    if (requireNamespace("PRIMME", quietly = TRUE)) "PRIMME"
+  )
+}
+
+benchmark_available_svd_methods <- function() {
+  c(
+    eigencore:::available_svd_methods(),
+    if (requireNamespace("PRIMME", quietly = TRUE)) "PRIMME"
+  )
+}
+
+run_benchmark_eigen_method <- function(method, A, k, target, tol) {
+  if (identical(method, "PRIMME")) {
+    which <- eigencore:::target_to_rspectra_which(target, symmetric = TRUE)
+    return(PRIMME::eigs_sym(A, NEig = k, which = which, tol = tol))
+  }
+  eigencore:::run_eigen_method(method, A, k = k, target = target, tol = tol)
+}
+
+run_benchmark_svd_method <- function(method, A, rank, tol, seed = NULL) {
+  if (identical(method, "PRIMME")) {
+    return(PRIMME::svds(A, NSvals = rank, tol = tol))
+  }
+  eigencore:::run_svd_method(method, A, rank = rank, tol = tol, seed = seed)
 }
 
 run_timed <- function(expr, iterations = 3L, seed = NULL) {
@@ -557,14 +603,14 @@ svd_oracle_accuracy <- function(A, fit, rank, oracle = NULL) {
 time_certified_eigen_method <- function(method, A, k, target, tol, seed,
                                         iterations) {
   set.seed(seed)
-  warm_fit <- eigencore:::run_eigen_method(method, A, k = k, target = target, tol = tol)
+  warm_fit <- run_benchmark_eigen_method(method, A, k = k, target = target, tol = tol)
   warm_cert <- certify_eigen_result(A, warm_fit, tol = tol)
   rm(warm_fit, warm_cert)
   gc()
 
   set.seed(seed)
   solver <- run_timed(
-    eigencore:::run_eigen_method(method, A, k = k, target = target, tol = tol),
+    run_benchmark_eigen_method(method, A, k = k, target = target, tol = tol),
     iterations = iterations,
     seed = seed
   )
@@ -575,7 +621,7 @@ time_certified_eigen_method <- function(method, A, k, target, tol, seed,
   )
   set.seed(seed)
   total <- run_timed({
-    fit <- eigencore:::run_eigen_method(method, A, k = k, target = target, tol = tol)
+    fit <- run_benchmark_eigen_method(method, A, k = k, target = target, tol = tol)
     cert <- certify_eigen_result(A, fit, tol = tol)
     list(fit = fit, cert = cert)
   }, iterations = iterations, seed = seed)
@@ -590,14 +636,14 @@ time_certified_eigen_method <- function(method, A, k, target, tol, seed,
 
 time_certified_svd_method <- function(method, A, rank, tol, seed, iterations) {
   set.seed(seed)
-  warm_fit <- eigencore:::run_svd_method(method, A, rank = rank, tol = tol, seed = seed)
+  warm_fit <- run_benchmark_svd_method(method, A, rank = rank, tol = tol, seed = seed)
   warm_cert <- certify_svd_result(A, warm_fit, tol = tol)
   rm(warm_fit, warm_cert)
   gc()
 
   set.seed(seed)
   solver <- run_timed(
-    eigencore:::run_svd_method(method, A, rank = rank, tol = tol, seed = seed),
+    run_benchmark_svd_method(method, A, rank = rank, tol = tol, seed = seed),
     iterations = iterations,
     seed = seed
   )
@@ -608,7 +654,7 @@ time_certified_svd_method <- function(method, A, rank, tol, seed, iterations) {
   )
   set.seed(seed)
   total <- run_timed({
-    fit <- eigencore:::run_svd_method(method, A, rank = rank, tol = tol, seed = seed)
+    fit <- run_benchmark_svd_method(method, A, rank = rank, tol = tol, seed = seed)
     cert <- certify_svd_result(A, fit, tol = tol)
     list(fit = fit, cert = cert)
   }, iterations = iterations, seed = seed)
@@ -1247,6 +1293,13 @@ benchmark_randomized_rsvd_case <- function(A, rank, methods = c("eigencore_rando
       stage_refinement_seconds = result_stage_seconds(fit, "refinement"),
       randomized_native_sketch = result_restart_logical(fit, "native_sketch"),
       randomized_sketch_kind = result_restart_character(fit, "sketch_kind"),
+      randomized_controller_native = result_restart_logical(fit, "controller_native"),
+      randomized_controller_kind = result_restart_character(fit, "controller_kind"),
+      randomized_dense_native_controller = result_restart_logical(fit, "dense_native_controller"),
+      randomized_sparse_native_controller = result_restart_logical(fit, "sparse_native_controller"),
+      randomized_native_certificate_diagnostics =
+        result_restart_logical(fit, "native_certificate_diagnostics"),
+      randomized_adaptive_stop_used = result_restart_logical(fit, "adaptive_stop_used"),
       randomized_core_solver = result_restart_character(fit, "core_solver"),
       randomized_projection_kind = result_restart_character(fit, "projection_kind"),
       randomized_projection_transposed = result_restart_logical(fit, "projection_transposed"),
@@ -1329,6 +1382,50 @@ evaluate_randomized_rsvd_gate <- function(rows, subject = "eigencore_randomized"
   )
 }
 
+randomized_controller_contract <- function(rows) {
+  eig <- rows[rows$method == "eigencore_randomized", , drop = FALSE]
+  if (!nrow(eig)) {
+    return(data.frame())
+  }
+  out <- lapply(seq_len(nrow(eig)), function(idx) {
+    row <- eig[idx, , drop = FALSE]
+    case_name <- if ("case" %in% names(row)) as.character(row$case) else ""
+    is_sparse_case <- grepl("sparse", case_name, fixed = TRUE)
+    expected_kind <- if (is_sparse_case) {
+      "native_csc_randomized_controller"
+    } else {
+      "native_dense_randomized_controller"
+    }
+    provenance_gate <- isTRUE(row$randomized_controller_native) &&
+      isTRUE(row$randomized_native_certificate_diagnostics) &&
+      identical(as.character(row$randomized_controller_kind), expected_kind) &&
+      if (is_sparse_case) {
+        isTRUE(row$randomized_sparse_native_controller) &&
+          !isTRUE(row$randomized_dense_native_controller)
+      } else {
+        isTRUE(row$randomized_dense_native_controller) &&
+          !isTRUE(row$randomized_sparse_native_controller)
+      }
+    certificate_gate <- isTRUE(row$certificate_passed) &&
+      isTRUE(row$nconv >= row$rank) &&
+      !isTRUE(row$scale_is_estimate)
+    data.frame(
+      case = case_name,
+      rank = row$rank,
+      controller_kind = as.character(row$randomized_controller_kind),
+      native_certificate_diagnostics =
+        isTRUE(row$randomized_native_certificate_diagnostics),
+      certificate_gate = certificate_gate,
+      provenance_gate = provenance_gate,
+      passed = certificate_gate && provenance_gate,
+      stringsAsFactors = FALSE
+    )
+  })
+  out <- do.call(rbind, out)
+  row.names(out) <- NULL
+  out
+}
+
 benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
                                tol = 1e-8, seed = 1L) {
   methods <- bench_methods("svd", methods)
@@ -1339,6 +1436,7 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
     cert_source <- svd_certificate_source(fit)
     data.frame(
       method = method,
+      solver_label = fit$method %||% NA_character_,
       median = timed$total$median,
       min = timed$total$min,
       mem_alloc = timed$total$mem_alloc,
@@ -1414,6 +1512,7 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
       projected_checks = result_restart_field(fit, "projected_checks"),
       projected_seconds = result_restart_numeric(fit, "projected_seconds"),
       native_workspace_bytes = result_restart_numeric(fit, "native_workspace_bytes"),
+      native_workspace_allocator = result_restart_character(fit, "native_workspace_allocator"),
       basis_returned = result_restart_logical(fit, "basis_returned"),
       retained_restart = result_restart_logical(fit, "retained_restart"),
       retained_restart_native = result_restart_logical(fit, "retained_restart_native"),
@@ -1582,9 +1681,16 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
       fallback_used = result_restart_logical(fit, "fallback_used"),
       fallback_method = result_restart_field(fit, "fallback_method"),
       gram_max_backward_error = result_restart_numeric(fit, "gram_max_backward_error"),
+      gram_certificate_passed = result_restart_logical(fit, "gram_certificate_passed"),
+      gram_dimension = result_restart_integer(fit, "gram_dimension"),
+      native_gram_kernel = result_restart_character(fit, "native_gram_kernel"),
       native_gram_eigensolver = result_restart_character(fit, "native_gram_eigensolver"),
+      native_gram_subspace_max_backward_error =
+        result_restart_numeric(fit, "native_gram_subspace_max_backward_error"),
       normal_operator_implicit = result_restart_logical(fit, "normal_operator_implicit"),
       materialized_gram = result_restart_logical(fit, "materialized_gram"),
+      certified_in_original_coordinates =
+        result_restart_logical(fit, "certified_in_original_coordinates"),
       native_implicit_normal_lanczos_max_backward_error =
         result_restart_numeric(fit, "native_implicit_normal_lanczos_max_backward_error"),
       native_implicit_normal_lanczos_iterations =

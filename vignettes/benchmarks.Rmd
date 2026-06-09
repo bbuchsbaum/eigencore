@@ -1,0 +1,422 @@
+---
+title: "Benchmarking eigencore against established solvers"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Benchmarking eigencore against established solvers}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup-opts, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 8,
+  fig.height = 4.6,
+  fig.align = "center",
+  out.width = "96%",
+  dpi = 100
+)
+
+benchmark_ready <- all(vapply(
+  c("bench", "RSpectra", "irlba"),
+  requireNamespace,
+  logical(1),
+  quietly = TRUE
+))
+benchmark_iterations <- 3L
+```
+
+```{r helpers, include = FALSE}
+`%||%` <- function(x, y) if (is.null(x)) y else x
+
+fro_norm <- function(A) {
+  if (inherits(A, "sparseMatrix")) {
+    sqrt(sum(A@x^2))
+  } else {
+    sqrt(sum(abs(A)^2))
+  }
+}
+
+relative_error <- function(x, truth) {
+  x <- sort(Re(x), decreasing = TRUE)
+  truth <- sort(Re(truth), decreasing = TRUE)
+  max(abs(x - truth) / pmax(1, abs(truth)))
+}
+
+eigen_backward_error <- function(A, values, vectors) {
+  A_dense <- as.matrix(A)
+  values <- Re(values)
+  vectors <- as.matrix(vectors)
+  residual <- A_dense %*% vectors - vectors %*% diag(values, nrow = length(values))
+  scale <- fro_norm(A_dense) + abs(values)
+  max(sqrt(colSums(abs(residual)^2)) / pmax(scale, .Machine$double.eps))
+}
+
+svd_backward_error <- function(A, d, u, v) {
+  A_dense <- as.matrix(A)
+  d <- Re(d)
+  u <- as.matrix(u)
+  v <- as.matrix(v)
+  left_residual <- A_dense %*% v - u %*% diag(d, nrow = length(d))
+  right_residual <- t(A_dense) %*% u - v %*% diag(d, nrow = length(d))
+  residual <- sqrt(colSums(abs(left_residual)^2) + colSums(abs(right_residual)^2))
+  max(residual / pmax(fro_norm(A_dense) + d, .Machine$double.eps))
+}
+
+bench_eval <- function(expr, iterations = benchmark_iterations) {
+  expr <- substitute(expr)
+  env <- parent.frame()
+  last_result <- NULL
+  mark <- tryCatch(
+    bench::mark(
+      last_result <- eval(expr, env),
+      iterations = iterations,
+      check = FALSE,
+      memory = TRUE,
+      filter_gc = FALSE
+    ),
+    error = function(e) e
+  )
+  if (inherits(mark, "error")) {
+    return(list(
+      result = NULL,
+      median_ms = NA_real_,
+      mem_mb = NA_real_,
+      error = conditionMessage(mark)
+    ))
+  }
+  list(
+    result = last_result,
+    median_ms = as.numeric(mark$median[[1L]]) * 1000,
+    mem_mb = as.numeric(mark$mem_alloc[[1L]]) / 1024^2,
+    error = NA_character_
+  )
+}
+
+make_dense_hermitian <- function(n, seed = 1L) {
+  set.seed(seed)
+  X <- matrix(rnorm(n * n), n, n)
+  crossprod(X) / n + diag(seq(1, 1.2, length.out = n))
+}
+
+make_dense_low_rank <- function(m, n, rank = 8L, noise = 1e-3, seed = 1L) {
+  set.seed(seed)
+  U <- qr.Q(qr(matrix(rnorm(m * rank), m, rank)))
+  V <- qr.Q(qr(matrix(rnorm(n * rank), n, rank)))
+  signal <- U %*% diag(seq(rank, 1, length.out = rank), nrow = rank) %*% t(V)
+  signal + noise * matrix(rnorm(m * n), m, n)
+}
+
+path_laplacian <- function(n) {
+  Matrix::bandSparse(
+    n,
+    k = c(-1L, 0L, 1L),
+    diagonals = list(rep(-1, n - 1L), c(1, rep(2, n - 2L), 1), rep(-1, n - 1L))
+  )
+}
+
+eigen_rows <- function(name, A, k = 6L, tol = 1e-8, seed = 1L,
+                       iterations = benchmark_iterations) {
+  truth <- eigen(as.matrix(A), symmetric = TRUE, only.values = TRUE)$values[seq_len(k)]
+  methods <- c("eigencore", "RSpectra", "base")
+  rows <- lapply(methods, function(method) {
+    timed <- switch(
+      method,
+      eigencore = bench_eval({
+        set.seed(seed)
+        eig_partial(A, k = k, target = largest(), tol = tol)
+      }, iterations = iterations),
+      RSpectra = bench_eval({
+        RSpectra::eigs_sym(A, k = k, which = "LA", opts = list(tol = tol, maxitr = 1000L))
+      }, iterations = iterations),
+      base = bench_eval({
+        eigen(as.matrix(A), symmetric = TRUE)
+      }, iterations = iterations)
+    )
+    if (!is.na(timed$error)) {
+      return(data.frame(
+        regime = name,
+        task = "eigen",
+        method = method,
+        median_ms = timed$median_ms,
+        mem_mb = timed$mem_mb,
+        rel_error = NA_real_,
+        backward_error = NA_real_,
+        residual_check = FALSE,
+        eigencore_label = NA_character_,
+        status = timed$error,
+        stringsAsFactors = FALSE
+      ))
+    }
+    result <- timed$result
+    extracted <- switch(
+      method,
+      eigencore = list(values = values(result), vectors = vectors(result)),
+      RSpectra = list(values = result$values, vectors = result$vectors),
+      base = {
+        ord <- order(result$values, decreasing = TRUE)[seq_len(k)]
+        list(values = result$values[ord], vectors = result$vectors[, ord, drop = FALSE])
+      }
+    )
+    backward <- eigen_backward_error(A, extracted$values, extracted$vectors)
+    data.frame(
+      regime = name,
+      task = "eigen",
+      method = method,
+      median_ms = timed$median_ms,
+      mem_mb = timed$mem_mb,
+      rel_error = relative_error(extracted$values, truth),
+      backward_error = backward,
+      residual_check = isTRUE(backward <= tol),
+      eigencore_label = if (method == "eigencore") result$method else NA_character_,
+      status = "ok",
+      stringsAsFactors = FALSE
+    )
+  })
+  do.call(rbind, rows)
+}
+
+svd_rows <- function(name, A, rank = 6L, tol = 1e-8, seed = 1L,
+                     iterations = benchmark_iterations) {
+  truth <- svd(as.matrix(A), nu = 0, nv = 0)$d[seq_len(rank)]
+  methods <- c("eigencore", "RSpectra", "irlba", "base")
+  rows <- lapply(methods, function(method) {
+    timed <- switch(
+      method,
+      eigencore = bench_eval({
+        set.seed(seed)
+        svd_partial(A, rank = rank, target = largest(), tol = tol)
+      }, iterations = iterations),
+      RSpectra = bench_eval({
+        RSpectra::svds(A, k = rank, nu = rank, nv = rank, opts = list(tol = tol, maxitr = 1000L))
+      }, iterations = iterations),
+      irlba = bench_eval({
+        set.seed(seed)
+        irlba::irlba(A, nv = rank, nu = rank, tol = tol)
+      }, iterations = iterations),
+      base = bench_eval({
+        svd(as.matrix(A), nu = rank, nv = rank)
+      }, iterations = iterations)
+    )
+    if (!is.na(timed$error)) {
+      return(data.frame(
+        regime = name,
+        task = "SVD",
+        method = method,
+        median_ms = timed$median_ms,
+        mem_mb = timed$mem_mb,
+        rel_error = NA_real_,
+        backward_error = NA_real_,
+        residual_check = FALSE,
+        eigencore_label = NA_character_,
+        status = timed$error,
+        stringsAsFactors = FALSE
+      ))
+    }
+    result <- timed$result
+    extracted <- switch(
+      method,
+      eigencore = list(d = values(result), u = left_vectors(result), v = right_vectors(result)),
+      RSpectra = list(d = result$d, u = result$u, v = result$v),
+      irlba = list(d = result$d, u = result$u, v = result$v),
+      base = list(d = result$d[seq_len(rank)], u = result$u, v = result$v)
+    )
+    backward <- svd_backward_error(A, extracted$d, extracted$u, extracted$v)
+    data.frame(
+      regime = name,
+      task = "SVD",
+      method = method,
+      median_ms = timed$median_ms,
+      mem_mb = timed$mem_mb,
+      rel_error = relative_error(extracted$d, truth),
+      backward_error = backward,
+      residual_check = isTRUE(backward <= tol),
+      eigencore_label = if (method == "eigencore") result$method else NA_character_,
+      status = "ok",
+      stringsAsFactors = FALSE
+    )
+  })
+  do.call(rbind, rows)
+}
+
+plot_time_summary <- function(rows) {
+  ok <- rows[rows$status == "ok", , drop = FALSE]
+  labels <- paste(ok$regime, ok$method, sep = "\n")
+  colors <- c(eigencore = "#2166ac", RSpectra = "#b2182b", irlba = "#1b7837", base = "grey55")
+  op <- par(mar = c(9, 4.5, 1, 1))
+  on.exit(par(op))
+  barplot(
+    ok$median_ms,
+    names.arg = labels,
+    las = 2,
+    col = colors[ok$method],
+    border = NA,
+    ylab = "median elapsed time (ms)",
+    cex.names = 0.68
+  )
+  legend("topright", names(colors), fill = colors, border = NA, bty = "n", cex = 0.85)
+}
+```
+
+Benchmarks are trust work. They tell you whether a solver is fast enough,
+whether it returns the same numerical slice as established tools, and whether
+the returned vectors actually satisfy the equations they claim to solve.
+
+This vignette runs a compact comparison suite against `RSpectra`, base R, and
+`irlba`. It uses small problems so the article can be rebuilt on a laptop.
+Treat the tables as a reproducible smoke comparison, not as a release-speed
+claim. For promotion-grade evidence, use the installed-package benchmark gates
+at the end of the vignette.
+
+```{r setup}
+library(eigencore)
+```
+
+## What should be compared?
+
+A useful benchmark suite needs more than one matrix. Dense and sparse inputs
+exercise different planner decisions, and SVD has different baselines than
+Hermitian eigenproblems. The smoke suite below covers five regimes:
+
+```{r regimes}
+benchmark_regimes <- data.frame(
+  regime = c(
+    "dense Hermitian",
+    "sparse path Laplacian",
+    "dense low-rank SVD",
+    "tall sparse SVD",
+    "wide sparse SVD"
+  ),
+  input = c("120 x 120 dense", "300 x 300 dgCMatrix", "180 x 70 dense",
+            "320 x 60 dgCMatrix", "60 x 320 dgCMatrix"),
+  compared_methods = c("eigencore, RSpectra, base",
+                       "eigencore, RSpectra, base",
+                       "eigencore, RSpectra, irlba, base",
+                       "eigencore, RSpectra, irlba, base",
+                       "eigencore, RSpectra, irlba, base")
+)
+knitr::kable(benchmark_regimes)
+```
+
+Base R is included as a truth-oriented reference. For sparse matrices it
+intentionally densifies via `as.matrix()`, so it is useful at small sizes but
+not a fair large-sparse production baseline. `irlba` is included for SVD rows,
+where it is a standard partial-SVD comparator.
+
+## How are the rows judged?
+
+Each row records four things:
+
+- median elapsed time from `bench::mark()`;
+- allocated memory reported by `bench`;
+- relative error against a dense base truth for the requested values;
+- an explicit residual/backward-error check on the returned vectors.
+
+For eigencore rows, the table also reports the planner label that ran. That
+label matters: a native row, a dense fallback, and a reference boundary are
+different claims even if their values agree.
+
+## Run the smoke comparison
+
+```{r build-cases, eval = benchmark_ready, include = FALSE}
+set.seed(1001)
+bench_cases <- list(
+  dense_hermitian = make_dense_hermitian(120L, seed = 1001L),
+  sparse_laplacian = path_laplacian(300L),
+  dense_low_rank_svd = make_dense_low_rank(180L, 70L, rank = 8L, seed = 1002L),
+  tall_sparse_svd = Matrix::rsparsematrix(320L, 60L, density = 0.035),
+  wide_sparse_svd = Matrix::rsparsematrix(60L, 320L, density = 0.035)
+)
+```
+
+```{r run-benchmarks, eval = benchmark_ready, include = FALSE}
+benchmark_rows <- rbind(
+  eigen_rows("dense Hermitian", bench_cases$dense_hermitian,
+             k = 6L, seed = 2001L),
+  eigen_rows("sparse path Laplacian", bench_cases$sparse_laplacian,
+             k = 6L, seed = 2002L),
+  svd_rows("dense low-rank SVD", bench_cases$dense_low_rank_svd,
+           rank = 6L, seed = 2003L),
+  svd_rows("tall sparse SVD", bench_cases$tall_sparse_svd,
+           rank = 6L, seed = 2004L),
+  svd_rows("wide sparse SVD", bench_cases$wide_sparse_svd,
+           rank = 6L, seed = 2005L)
+)
+stopifnot(all(is.finite(benchmark_rows$median_ms[benchmark_rows$status == "ok"])))
+stopifnot(all(is.finite(benchmark_rows$rel_error[benchmark_rows$status == "ok"])))
+stopifnot(all(is.finite(benchmark_rows$backward_error[benchmark_rows$status == "ok"])))
+```
+
+```{r benchmark-table, eval = benchmark_ready, echo = FALSE}
+display_rows <- benchmark_rows
+display_rows$median_ms <- signif(display_rows$median_ms, 4)
+display_rows$mem_mb <- signif(display_rows$mem_mb, 4)
+display_rows$rel_error <- signif(display_rows$rel_error, 3)
+display_rows$backward_error <- signif(display_rows$backward_error, 3)
+knitr::kable(
+  display_rows[, c("regime", "task", "method", "median_ms", "mem_mb",
+                   "rel_error", "backward_error", "residual_check",
+                   "eigencore_label", "status")],
+  caption = paste("Smoke benchmark rows with", benchmark_iterations,
+                  "iterations per method.")
+)
+```
+
+```{r benchmark-plot, eval = benchmark_ready, echo = FALSE, fig.cap = "Elapsed-time smoke comparison by regime and method. These small rows are useful for detecting obvious regressions and method-selection surprises, but they are not release-grade speed evidence.", fig.alt = "Bar chart of median elapsed time in milliseconds by benchmark regime and solver method."}
+plot_time_summary(benchmark_rows)
+```
+
+Read the table from right to left. First, `status` should be `"ok"` and
+`residual_check` should be `TRUE`; otherwise the elapsed time is not a useful
+time-to-answer measurement. Next, `rel_error` should be near machine precision
+or solver tolerance. Only then does `median_ms` become meaningful.
+
+For eigencore, inspect `eigencore_label` before interpreting speed. A native
+sparse path and a dense LAPACK fallback both may be correct, but they support
+different scaling claims.
+
+## What this smoke vignette does not prove
+
+The rows above are deliberately small. They keep the vignette runnable, and
+they catch obvious problems: wrong target, broken sparse handling, missing
+vectors, certification drift, and large timing regressions. They do not prove
+large-scale speed claims.
+
+For larger sparse matrices, base R is a truth oracle only while `as.matrix(A)`
+is affordable. The production question is whether eigencore beats certified
+partial solvers without silently densifying. That requires installed-package
+runs, larger fixtures, saved artifacts, and memory evidence.
+
+## Run promotion-grade benchmarks
+
+Use the `inst/benchmarks` scripts when you need evidence suitable for a release
+note, paper, or solver-promotion decision. Run them from an installed package,
+not from a mutable source tree:
+
+```sh
+R CMD INSTALL --library=/tmp/eigencore-bench-lib .
+R_LIBS=/tmp/eigencore-bench-lib \
+  Rscript inst/benchmarks/bench-native-hermitian-gate.R \
+  --strict --save --cases=path_laplacian:1000
+```
+
+For the SVD surface, compare eigencore against `RSpectra`, `irlba`, and base
+rows where those baselines are meaningful:
+
+```sh
+R_LIBS=/tmp/eigencore-bench-lib \
+  Rscript inst/benchmarks/bench-svd-surface.R \
+  --iterations=1 --h-candidate \
+  --methods=eigencore,RSpectra,irlba,base \
+  --cases=tall_sparse,wide_sparse \
+  --subject=eigencore --strict --save
+```
+
+Those scripts add the release-grade pieces this vignette intentionally keeps
+small: strict pass/fail gates, larger sparse fixtures, saved RDS artifacts,
+memory ratios, and planner-provenance checks. Use
+`docs/v1-benchmark-manifest.md` for the current release-gate inventory and
+`docs/post-v1-benchmark-gates.md` for future-promotion gates.

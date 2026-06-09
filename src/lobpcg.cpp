@@ -1075,7 +1075,7 @@ static SEXP lobpcg_run_matrix_free_b(void* impl,
     error("constraints must be a double matrix with n rows");
   }
 
-  RApplyOperator b_impl = {n, B_apply_};
+  RApplyOperator b_impl = {n, n, B_apply_, R_NilValue};
   char error_label[128];
   std::snprintf(error_label, sizeof(error_label), "%s matrix-free-B", label);
   return lobpcg_run_native_checked(

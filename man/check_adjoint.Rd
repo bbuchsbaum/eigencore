@@ -7,14 +7,13 @@
 check_adjoint(A, trials = 20, tol = 1e-12, seed = NULL)
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Operator-like object.}
 
-\item{trials}{Number of randomized trials.}
+\item{trials}{Number of random block trials.}
 
-\item{tol}{Numerical tolerance.}
+\item{tol}{Relative tolerance for each adjoint identity check.}
 
-\item{seed}{Optional random seed.}
-
+\item{seed}{Optional random seed for reproducible trials.}
 }
 \description{
 Check an operator adjoint identity.

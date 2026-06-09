@@ -17,50 +17,28 @@
 )
 }
 \arguments{
-\item{a}{
-A problem object created by \code{\link[=svd_problem]{svd_problem()}}.
-}
-\item{b}{
-Unused; present for compatibility with the \code{\link[base:solve]{base::solve()}} generic.
-}
-\item{rank}{
-Number of requested singular triplets.
-}
-\item{method}{
-Solver method descriptor.
-}
-\item{tol}{
-Numerical tolerance (backward-error).
-}
-\item{vectors}{
-Which singular vectors to return: \code{"both"}, \code{"left"}, \code{"right"},
-or \code{"none"}.
-}
-\item{certify}{
-Whether to compute certificates.
-}
-\item{allow_dense_fallback}{
-Dense fallback policy. \code{"auto"} applies the \code{eigencore.dense_fallback_mb}
-budget and refuses sparse densification; \code{"never"} disables dense fallback;
-\code{"always"} explicitly permits fallback, including sparse materialization.
-}
-\item{...}{
-Unused; present for S3 generic compatibility.
-}
-}
-\value{
-A certified partial singular-value decomposition: a list carrying \code{d},
-\code{u}, \code{v}, a \code{certificate}, the planner \code{method} label, and
-solver diagnostics. See \code{\link[=svd_partial]{svd_partial()}} for the
-field-by-field description.
+\item{a}{Eigencore SVD problem object.}
+
+\item{b}{Unused second argument reserved by the base \code{\link[=solve]{solve()}} generic.}
+
+\item{rank}{Number of singular values to compute.}
+
+\item{method}{Solver method descriptor.}
+
+\item{tol}{Convergence and certification tolerance.}
+
+\item{vectors}{Which singular-vector sides to compute.}
+
+\item{certify}{Whether to compute certification diagnostics.}
+
+\item{allow_dense_fallback}{Dense fallback policy.}
+
+\item{...}{Reserved for future solver options.}
 }
 \description{
 S3 method that runs the planned solver for an SVD problem built by
-\code{\link[=svd_problem]{svd_problem()}}. Most users call
-\code{\link[=svd_partial]{svd_partial()}}, which constructs the problem and
-dispatches here; call \code{solve()} directly when you want to build a problem
-once and reuse or inspect it.
-}
-\seealso{
-\code{\link[=svd_partial]{svd_partial()}}, \code{\link[=svd_problem]{svd_problem()}}, \code{\link[=plan_solver]{plan_solver()}}
+\code{\link[=svd_problem]{svd_problem()}}. Most users call \code{\link[=svd_partial]{svd_partial()}}, which constructs the
+problem and dispatches here; call \code{solve()} directly when you want to build
+a problem once and reuse or inspect it. Returns a certified partial
+singular-value decomposition.
 }

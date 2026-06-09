@@ -46,7 +46,7 @@ test_that("planner labels for SVD paths match the kernel that actually runs", {
   expect_certificate_clean(fit_csc_gk)
 })
 
-test_that("matrix-free operator with adjoint runs the reference Golub-Kahan path", {
+test_that("matrix-free operator with adjoint runs the native callback Golub-Kahan path", {
   set.seed(103)
   m <- 60L; n <- 25L
   source_M <- matrix(rnorm(m * n), m, n)
@@ -63,7 +63,9 @@ test_that("matrix-free operator with adjoint runs the reference Golub-Kahan path
     name = "matrix-free wrapper"
   )
   fit <- svd_partial(op, rank = 4, target = largest())
-  expect_identical(fit$plan$method, "prototype Golub-Kahan")
+  expect_identical(fit$plan$method, eigencore:::native_matrix_free_golub_kahan_label())
+  expect_true(fit$restart$native_callback)
+  expect_true(fit$restart$callback_boundary)
   oracle <- svd(source_M, nu = 4, nv = 4)
   expect_equal(fit$d, oracle$d[1:4], tolerance = 1e-6)
 })
@@ -165,6 +167,319 @@ test_that("sparse Gram SVD certifies exact zero singular triplets", {
   expect_true(all(is.finite(fit$d)))
   expect_equal(fit$d[4:5], c(0, 0), tolerance = 1e-10)
   expect_certificate_clean(fit)
+})
+
+test_that("sparse Gram SVD completes near-null rank-deficient triplets without fallback", {
+  set.seed(703)
+  L <- Matrix::rsparsematrix(5000L, 20L, density = 0.01)
+  R <- Matrix::rsparsematrix(20L, 500L, density = 0.01)
+  M <- L %*% R
+
+  fit <- svd_partial(M, rank = 30L, target = largest(), tol = 1e-8, seed = 701L)
+
+  expect_identical(fit$method, "native certified Gram SVD special case")
+  expect_true(fit$restart$zero_singular_completion)
+  expect_false(fit$restart$fallback_attempted)
+  expect_false(fit$restart$fallback_used)
+  expect_true(fit$restart$gram_certificate_passed)
+  expect_equal(fit$d[21:30], rep(0, 10L), tolerance = 1e-10)
+  expect_certificate_clean(fit)
+})
+
+test_that("smallest and interior dense SVD targets have exact certificate policy", {
+  M <- diag(c(10, 5, 1, 0.2, 0.1))
+
+  smallest_fit <- svd_partial(M, rank = 2L, target = smallest(), tol = 1e-10)
+  expect_identical(smallest_fit$method, "native dense LAPACK SVD fallback")
+  expect_equal(smallest_fit$d, c(0.1, 0.2), tolerance = 1e-12)
+  expect_identical(smallest_fit$plan$controls$svd_target_family, "smallest")
+  expect_identical(
+    smallest_fit$plan$controls$svd_target_certificate_policy,
+    "exact two-sided residual certificate in original coordinates"
+  )
+  expect_certificate_clean(smallest_fit)
+
+  interior_fit <- svd_partial(M, rank = 2L, target = nearest(0.8), tol = 1e-10)
+  expect_identical(interior_fit$method, "native dense LAPACK SVD fallback")
+  expect_equal(interior_fit$d, c(1, 0.2), tolerance = 1e-12)
+  expect_identical(interior_fit$plan$controls$svd_target_family, "interior")
+  expect_identical(interior_fit$plan$controls$svd_target_boundary, "dense exact fallback")
+  expect_certificate_clean(interior_fit)
+})
+
+test_that("sparse interior SVD uses native full-subspace boundary", {
+  M <- Matrix::sparseMatrix(
+    i = 1:5,
+    j = 1:5,
+    x = c(10, 5, 1, 0.2, 0.1),
+    dims = c(8L, 5L)
+  )
+
+  fit <- svd_partial(
+    M,
+    rank = 2L,
+    target = nearest(0.8),
+    tol = 1e-10,
+    seed = 90,
+    allow_dense_fallback = "never"
+  )
+
+  expect_identical(fit$method, eigencore:::native_interior_golub_kahan_label())
+  expect_identical(
+    fit$plan$controls$svd_target_boundary,
+    "native full-subspace interior SVD boundary"
+  )
+  expect_true(fit$plan$controls$full_subspace_interior)
+  expect_equal(fit$restart$final_max_subspace, min(dim(M)))
+  expect_false(fit$restart$projected_stop_enabled)
+  expect_equal(fit$d, c(1, 0.2), tolerance = 1e-12)
+  expect_certificate_clean(fit)
+})
+
+test_that("diagonal interior SVD reference boundary certifies without dense fallback", {
+  M <- Matrix::Diagonal(x = c(10, 5, 1, 0.2, 0.1))
+
+  fit <- svd_partial(
+    M,
+    rank = 1L,
+    target = nearest(1),
+    tol = 1e-10,
+    allow_dense_fallback = "never"
+  )
+
+  expect_identical(fit$method, "prototype Golub-Kahan")
+  expect_identical(fit$plan$controls$svd_target_family, "interior")
+  expect_identical(
+    fit$plan$controls$svd_target_boundary,
+    "reference/prototype interior selection"
+  )
+  expect_equal(fit$d, 1, tolerance = 1e-12)
+  expect_certificate_clean(fit)
+})
+
+test_that("smallest sparse CSC SVD uses native certified production boundary", {
+  M <- Matrix::sparseMatrix(
+    i = 1:6,
+    j = 1:6,
+    x = c(10, 5, 2, 1, 0.4, 0.1),
+    dims = c(8L, 6L)
+  )
+
+  fit <- svd_partial(
+    M,
+    rank = 2L,
+    target = smallest(),
+    tol = 1e-10,
+    seed = 91,
+    allow_dense_fallback = "never"
+  )
+
+  expect_identical(fit$method, eigencore:::native_smallest_golub_kahan_label())
+  expect_identical(
+    fit$plan$controls$svd_target_boundary,
+    "native certified smallest SVD production boundary"
+  )
+  expect_identical(
+    fit$plan$controls$promotion_gate_issue,
+    "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
+  )
+  expect_identical(
+    fit$plan$controls$closed_decision_issue,
+    "bd-01KTEH6862GB19JJWX2M3FQP6T"
+  )
+  expect_equal(fit$d, c(0.1, 0.4), tolerance = 1e-12)
+  expect_true(fit$restart$native)
+  expect_false(fit$restart$matrix_free)
+  expect_certificate_clean(fit)
+})
+
+test_that("smallest tall sparse CSC SVD uses native Gram production boundary", {
+  M <- Matrix::sparseMatrix(
+    i = 1:6,
+    j = 1:6,
+    x = c(10, 5, 2, 1, 0.4, 0.1),
+    dims = c(20L, 6L)
+  )
+
+  fit <- svd_partial(
+    M,
+    rank = 2L,
+    target = smallest(),
+    tol = 1e-10,
+    seed = 92,
+    allow_dense_fallback = "never"
+  )
+
+  expect_identical(fit$method, "native certified Gram SVD special case")
+  expect_identical(fit$plan$controls$svd_target_family, "smallest")
+  expect_identical(
+    fit$plan$controls$svd_target_boundary,
+    "native certified smallest SVD production boundary"
+  )
+  expect_identical(fit$plan$controls$promotion_status, "production_smallest_gram_certified")
+  expect_identical(
+    fit$plan$controls$promotion_gate_issue,
+    "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
+  )
+  expect_identical(
+    fit$plan$controls$closed_decision_issue,
+    "bd-01KTEH6862GB19JJWX2M3FQP6T"
+  )
+  expect_equal(fit$d, c(0.1, 0.4), tolerance = 1e-12)
+  expect_true(fit$restart$native)
+  expect_equal(fit$restart$kind, "gram_svd_special_case")
+  expect_equal(fit$restart$gram_side, "right")
+  expect_equal(fit$restart$native_gram_kernel, "materialized_right_gram")
+  expect_equal(fit$restart$native_gram_eigensolver, "native_dense_symmetric_eigen")
+  expect_true(fit$restart$materialized_gram)
+  expect_certificate_clean(fit)
+})
+
+test_that("smallest matrix-free SVD promotion requires exact norm metadata", {
+  A <- rbind(diag(c(10, 5, 2, 1, 0.4, 0.1)), matrix(0, 2, 6))
+  make_op <- function(metadata = list()) {
+    linear_operator(
+      dim = dim(A),
+      apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+        out <- alpha * (A %*% X)
+        if (!is.null(Y) && beta != 0) out <- out + beta * Y
+        out
+      },
+      apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) {
+        out <- alpha * (t(A) %*% X)
+        if (!is.null(Y) && beta != 0) out <- out + beta * Y
+        out
+      },
+      structure = general(),
+      metadata = metadata
+    )
+  }
+
+  no_metadata_plan <- plan_solver(
+    svd_problem(make_op(), target = smallest()),
+    rank = 2L
+  )
+  expect_identical(
+    no_metadata_plan$method,
+    eigencore:::native_matrix_free_golub_kahan_label()
+  )
+
+  fit <- svd_partial(
+    make_op(metadata = list(frobenius_norm = norm(A, "F"))),
+    rank = 2L,
+    target = smallest(),
+    tol = 1e-10,
+    seed = 92,
+    allow_dense_fallback = "never"
+  )
+
+  expect_identical(
+    fit$method,
+    eigencore:::native_matrix_free_smallest_golub_kahan_label()
+  )
+  expect_identical(fit$certificate$norm_bound_type, "frobenius_metadata")
+  expect_false(fit$certificate$scale_is_estimate)
+  expect_true(fit$restart$matrix_free)
+  expect_true(fit$restart$native_callback)
+  expect_true(fit$plan$controls$requires_nonestimated_norm_scale)
+  expect_equal(fit$d, c(0.1, 0.4), tolerance = 1e-12)
+  expect_certificate_clean(fit)
+})
+
+test_that("interior matrix-free SVD promotion requires exact norm metadata", {
+  A <- rbind(diag(c(10, 5, 1, 0.2, 0.1)), matrix(0, 3, 5))
+  make_op <- function(metadata = list()) {
+    linear_operator(
+      dim = dim(A),
+      apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+        out <- alpha * (A %*% X)
+        if (!is.null(Y) && beta != 0) out <- out + beta * Y
+        out
+      },
+      apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) {
+        out <- alpha * (t(A) %*% X)
+        if (!is.null(Y) && beta != 0) out <- out + beta * Y
+        out
+      },
+      structure = general(),
+      metadata = metadata
+    )
+  }
+
+  expect_error(
+    svd_partial(
+      make_op(),
+      rank = 2L,
+      target = nearest(0.8),
+      tol = 1e-10,
+      seed = 93,
+      allow_dense_fallback = "never"
+    ),
+    "Interior SVD target nearest\\(0.8\\) is not supported by native matrix-free Golub-Kahan callback"
+  )
+
+  fit <- svd_partial(
+    make_op(metadata = list(frobenius_norm = norm(A, "F"))),
+    rank = 2L,
+    target = nearest(0.8),
+    tol = 1e-10,
+    seed = 94,
+    allow_dense_fallback = "never"
+  )
+
+  expect_identical(
+    fit$method,
+    eigencore:::native_matrix_free_interior_golub_kahan_label()
+  )
+  expect_identical(
+    fit$plan$controls$svd_target_boundary,
+    "native full-subspace interior SVD boundary"
+  )
+  expect_true(fit$plan$controls$requires_nonestimated_norm_scale)
+  expect_true(fit$plan$controls$full_subspace_interior)
+  expect_identical(fit$certificate$norm_bound_type, "frobenius_metadata")
+  expect_false(fit$certificate$scale_is_estimate)
+  expect_equal(fit$restart$final_max_subspace, min(dim(A)))
+  expect_equal(fit$d, c(1, 0.2), tolerance = 1e-12)
+  expect_certificate_clean(fit)
+})
+
+test_that("complex dense SVD uses native dense complex certification", {
+  A <- matrix(c(1 + 1i, 0, 0, 2), 2, 2)
+
+  fit <- svd_partial(A, rank = 2L, tol = 1e-10)
+
+  expect_identical(fit$method, eigencore:::native_dense_complex_svd_label())
+  expect_equal(fit$d, c(2, sqrt(2)), tolerance = 1e-10)
+  expect_true(is.complex(fit$u))
+  expect_true(is.complex(fit$v))
+  expect_true(fit$certificate$passed)
+  expect_identical(fit$certificate$norm_bound_type, "frobenius_exact")
+  expect_lt(fit$certificate$max_orthogonality_loss, 1e-10)
+})
+
+test_that("complex matrix-free SVD fails with actionable boundary", {
+  A <- matrix(c(1 + 1i, 0, 0, 2), 2, 2)
+  op <- linear_operator(
+    dim = c(2, 2),
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      out <- alpha * (A %*% X)
+      if (!is.null(Y) && beta != 0) out <- out + beta * Y
+      out
+    },
+    apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) {
+      out <- alpha * (Conj(t(A)) %*% X)
+      if (!is.null(Y) && beta != 0) out <- out + beta * Y
+      out
+    },
+    dtype = "complex",
+    structure = general()
+  )
+
+  expect_error(
+    svd_partial(op, rank = 1L, tol = 1e-10),
+    "Complex matrix-free SVD operators are future scope"
+  )
 })
 
 test_that("native Golub-Kahan completes exact zero singular triplets", {
@@ -1094,7 +1409,14 @@ test_that("randomized SVD records and honors normalizer choices", {
     expect_true(fit$restart$native_sketch)
     expect_equal(fit$restart$projection_kind, "native_direct_qt_a")
     expect_true(fit$restart$projection_transposed)
-    expect_true(fit$restart$certificate_reuses_projection)
+    if (identical(normalizer, "qr")) {
+      expect_true(fit$restart$controller_native)
+      expect_true(fit$restart$native_certificate_diagnostics)
+      expect_false(fit$restart$certificate_reuses_projection)
+    } else {
+      expect_false(isTRUE(fit$restart$controller_native))
+      expect_true(fit$restart$certificate_reuses_projection)
+    }
     expect_equal(fit$restart$adaptive_stop, TRUE)
     expect_equal(fit$restart$adaptive_stop_used, identical(normalizer, "qr"))
     expect_true(fit$certificate$passed)
@@ -1126,7 +1448,7 @@ test_that("randomized SVD stops after q0 when projected certificate already pass
   expect_equal(fit$d, c(9, 7, 5, 3, 2), tolerance = 1e-8)
 })
 
-test_that("randomized SVD projected certificate matches direct recomputation", {
+test_that("native randomized SVD certificate matches direct recomputation", {
   set.seed(1905)
   A <- matrix(rnorm(70 * 40), nrow = 70, ncol = 40)
   fit <- svd_partial(
@@ -1144,7 +1466,9 @@ test_that("randomized SVD projected certificate matches direct recomputation", {
     tol = 1e-8
   )
 
-  expect_true(fit$restart$certificate_reuses_projection)
+  expect_true(fit$restart$controller_native)
+  expect_true(fit$restart$native_certificate_diagnostics)
+  expect_false(fit$restart$certificate_reuses_projection)
   expect_equal(fit$certificate$residuals$left, direct$residuals$left, tolerance = 1e-10)
   expect_equal(fit$certificate$residuals$right, direct$residuals$right, tolerance = 1e-10)
   expect_equal(fit$certificate$backward_error, direct$backward_error, tolerance = 1e-10)
@@ -1157,7 +1481,7 @@ test_that("randomized SVD wide-core eigensolve matches dense SVD values", {
   fast <- eigencore:::randomized_svd_core_decomposition(core, rank = 6)
   dense <- svd(core, nu = 6, nv = 6)
 
-  expect_identical(fast$solver, "left_gram_eigen")
+  expect_identical(fast$solver, "native_left_gram_eigen_selected")
   expect_equal(fast$d, dense$d[seq_len(6)], tolerance = 1e-10)
   expect_equal(crossprod(fast$u), diag(6), tolerance = 1e-10)
   expect_equal(crossprod(fast$v), diag(6), tolerance = 1e-10)
@@ -1165,6 +1489,15 @@ test_that("randomized SVD wide-core eigensolve matches dense SVD values", {
 })
 
 test_that("SVD planner records inspectable method controls", {
+  old_options <- options(
+    eigencore.gram_svd_max_dimension = 512,
+    eigencore.gram_svd_memory_mb = 64,
+    eigencore.gram_svd_work_budget = Inf,
+    eigencore.gram_svd_rank_fraction_limit = 0.5,
+    eigencore.gram_svd_min_aspect_ratio = 2
+  )
+  on.exit(options(old_options), add = TRUE)
+
   set.seed(513)
   M <- Matrix::rsparsematrix(120, 30, density = 0.05)
 
@@ -1172,6 +1505,15 @@ test_that("SVD planner records inspectable method controls", {
   expect_identical(gram_plan$method, "native certified Gram SVD special case")
   expect_identical(gram_plan$controls$gram_side, "right")
   expect_identical(gram_plan$controls$gram_dimension, 30L)
+  expect_identical(gram_plan$controls$gram_max_dimension, 512L)
+  expect_equal(gram_plan$controls$gram_memory_budget_mb, 64)
+  expect_equal(gram_plan$controls$rank_fraction_limit, 0.5)
+  expect_equal(gram_plan$controls$min_aspect_ratio, 2)
+  expect_true(gram_plan$controls$gram_policy_passed)
+  expect_identical(
+    gram_plan$controls$materialization_policy,
+    "budgeted smaller Gram materialization"
+  )
   expect_identical(gram_plan$controls$materializes, "smaller Gram matrix only")
   expect_identical(gram_plan$controls$fallback_policy, "certification-gated")
   expect_match(gram_plan$controls$runtime_fallback, "Golub-Kahan")
@@ -1240,6 +1582,65 @@ test_that("SVD planner records inspectable method controls", {
   expect_match(randomized_plan$controls$certification_refinement, "native Gram SVD")
 })
 
+test_that("memory-budgeted Gram SVD policy keeps default cutoff and supports opt-in just-over-512 route", {
+  old_options <- options(
+    eigencore.gram_svd_max_dimension = 512,
+    eigencore.gram_svd_memory_mb = 64,
+    eigencore.gram_svd_work_budget = Inf,
+    eigencore.gram_svd_rank_fraction_limit = 0.5,
+    eigencore.gram_svd_min_aspect_ratio = 2
+  )
+  on.exit(options(old_options), add = TRUE)
+
+  set.seed(514)
+  M <- Matrix::rsparsematrix(1200, 600, density = 0.004)
+
+  default_plan <- plan_solver(svd_problem(M), rank = 3)
+  expect_identical(default_plan$method, "native prototype Golub-Kahan")
+  default_policy <- eigencore:::gram_svd_policy(dim(M), rank = 3, target = largest())
+  expect_false(default_policy$eligible)
+  expect_true("gram_dimension_exceeds_max" %in% default_policy$rejection_reasons)
+
+  options(eigencore.gram_svd_max_dimension = 768)
+  opt_in_plan <- plan_solver(svd_problem(M), rank = 3)
+  expect_identical(opt_in_plan$method, "native certified Gram SVD special case")
+  expect_identical(opt_in_plan$controls$gram_dimension, 600L)
+  expect_identical(opt_in_plan$controls$gram_max_dimension, 768L)
+  expect_lte(
+    opt_in_plan$controls$estimated_total_materialization_bytes,
+    opt_in_plan$controls$gram_memory_budget_bytes
+  )
+
+  fit <- svd_partial(M, rank = 3, target = largest(), tol = 1e-8, seed = 514)
+  expect_identical(fit$restart$kind, "gram_svd_special_case")
+  expect_identical(fit$restart$gram_dimension, 600L)
+  expect_true(fit$restart$materialized_gram)
+  expect_true(fit$restart$certified_in_original_coordinates)
+  expect_certificate_clean(fit)
+})
+
+test_that("Gram SVD policy rejects large small sides by memory budget even when dimension cap allows them", {
+  old_options <- options(
+    eigencore.gram_svd_max_dimension = 2048,
+    eigencore.gram_svd_memory_mb = 1,
+    eigencore.gram_svd_work_budget = Inf,
+    eigencore.gram_svd_rank_fraction_limit = 0.5,
+    eigencore.gram_svd_min_aspect_ratio = 2
+  )
+  on.exit(options(old_options), add = TRUE)
+
+  set.seed(515)
+  M <- Matrix::rsparsematrix(1400, 600, density = 0.002)
+  policy <- eigencore:::gram_svd_policy(dim(M), rank = 3, target = largest())
+
+  expect_false(policy$eligible)
+  expect_true("gram_memory_budget_exceeded" %in% policy$rejection_reasons)
+  expect_gt(policy$estimated_total_materialization_bytes, policy$gram_memory_budget_bytes)
+
+  plan <- plan_solver(svd_problem(M), rank = 3)
+  expect_identical(plan$method, "native prototype Golub-Kahan")
+})
+
 test_that("randomized SVD reports approximation and certificate policy", {
   set.seed(515)
   M <- Matrix::rsparsematrix(120, 30, density = 0.08)
@@ -1254,9 +1655,12 @@ test_that("randomized SVD reports approximation and certificate policy", {
   expect_true(fit$restart$approximate)
   expect_equal(fit$restart$apply_kind, "csc_direct")
   expect_true(fit$restart$native_sketch)
+  expect_true(fit$restart$controller_native)
+  expect_true(fit$restart$sparse_native_controller)
+  expect_true(fit$restart$native_certificate_diagnostics)
   expect_equal(fit$restart$projection_kind, "native_direct_qt_a")
   expect_true(fit$restart$projection_transposed)
-  expect_true(fit$restart$certificate_reuses_projection)
+  expect_false(fit$restart$certificate_reuses_projection)
   expect_match(fit$restart$certificate_policy, "stochastic sketch is not sufficient")
   expect_false(fit$restart$refine)
   expect_false(fit$restart$refinement_attempted)

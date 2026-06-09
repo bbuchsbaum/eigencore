@@ -57,15 +57,28 @@ gates <- do.call(rbind, gates)
 row.names(gates) <- NULL
 print(gates)
 
+controller_contracts <- randomized_controller_contract(result)
+if (nrow(controller_contracts)) {
+  print(controller_contracts)
+}
+
 if (args$save) {
   message("saved rows: ", save_benchmark_result(result, "randomized-rsvd-rows"))
   message("saved gates: ", save_benchmark_result(gates, "randomized-rsvd-gates"))
+  if (nrow(controller_contracts)) {
+    message("saved controller contracts: ",
+            save_benchmark_result(controller_contracts, "randomized-rsvd-controller-contracts"))
+  }
 }
 
-if (args$strict && !any(gates$release_gate_required)) {
-  stop("randomized-rsvd strict gate selected no release-gate candidate rows.", call. = FALSE)
+if (args$strict && !any(gates$release_gate_required) && !nrow(controller_contracts)) {
+  stop("randomized-rsvd strict gate selected no release-gate or controller-contract rows.", call. = FALSE)
 }
 
 if (args$strict && !all(gates$release_gate_passed[gates$release_gate_required])) {
   stop("randomized-rsvd benchmark failed rsvd parity/performance gate.", call. = FALSE)
+}
+
+if (args$strict && nrow(controller_contracts) && !all(controller_contracts$passed)) {
+  stop("randomized-rsvd benchmark failed native controller contract.", call. = FALSE)
 }

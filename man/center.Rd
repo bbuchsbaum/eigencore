@@ -14,18 +14,19 @@ center(
 )
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Operator-like object.}
 
-\item{rows}{Whether to operate on rows.}
+\item{rows}{Whether to subtract row means.}
 
-\item{columns}{Whether to operate on columns.}
+\item{columns}{Whether to subtract column means.}
 
-\item{row_means}{Optional row means.}
+\item{row_means}{Optional row means. Required for matrix-free row centering
+when they cannot be derived without densifying.}
 
-\item{col_means}{Optional column means.}
+\item{col_means}{Optional column means. Required for matrix-free column
+centering when they cannot be derived without densifying.}
 
-\item{name}{Optional operator name.}
-
+\item{name}{Optional label for the centered operator.}
 }
 \description{
 Center an operator by rows or columns.

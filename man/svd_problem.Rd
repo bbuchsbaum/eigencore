@@ -7,15 +7,21 @@
 svd_problem(A, domain = NULL, codomain = NULL, target = largest())
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Matrix or operator defining the rectangular linear map.}
 
-\item{domain}{Domain space.}
+\item{domain}{Optional domain-space descriptor.}
 
-\item{codomain}{Codomain space.}
+\item{codomain}{Optional codomain-space descriptor.}
 
-\item{target}{Spectral target descriptor.}
-
+\item{target}{Eigencore singular-value target descriptor.}
 }
 \description{
 Define an SVD problem.
+}
+\examples{
+set.seed(1)
+X <- matrix(rnorm(40), 8, 5)
+S <- svd_problem(X, target = largest())
+fit <- solve(S, rank = 2)
+values(fit)
 }

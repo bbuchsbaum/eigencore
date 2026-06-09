@@ -7,12 +7,11 @@
 scale_rows(A, weights, name = NULL)
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Operator-like object.}
 
-\item{weights}{Scaling weights.}
+\item{weights}{Numeric vector of row weights.}
 
-\item{name}{Optional operator name.}
-
+\item{name}{Optional label for the scaled operator.}
 }
 \description{
 Scale operator rows.

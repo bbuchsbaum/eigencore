@@ -13,18 +13,16 @@ benchmark_svd_methods(
 )
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Matrix or eigencore operator to benchmark.}
 
-\item{rank}{Number of singular triplets requested.}
+\item{rank}{Number of singular values to compute.}
 
-\item{repeats}{Number of benchmark repetitions.}
+\item{repeats}{Number of timing repetitions.}
 
-\item{include}{Methods to include.}
+\item{include}{Character vector of method labels to include when available.}
 
-\item{tol}{Numerical tolerance.}
-
+\item{tol}{Solver tolerance.}
 }
 \description{
 Benchmark SVD methods against base and optional references.
 }
-\keyword{internal}

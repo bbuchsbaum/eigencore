@@ -244,6 +244,7 @@ benchmark_shift_invert_case <- function(case, iterations = 3L, tol = 1e-8,
   fit <- timed$value
   cert <- fit$certificate
   cache <- fit$transform$factorization_cache %||% list()
+  contract <- cache$contract %||% list()
   data.frame(
     case = case$case,
     kind = "shift_invert_eigen",
@@ -274,6 +275,13 @@ benchmark_shift_invert_case <- function(case, iterations = 3L, tol = 1e-8,
     external_cache = cache$external_cache %||% NA,
     generalized = cache$generalized %||% !is.null(built$B),
     metric_factorization = cache$metric_factorization %||% NA_character_,
+    factorization_contract_version = contract$contract_version %||% NA_character_,
+    factorization_contract_provider = contract$provider %||% NA_character_,
+    factorization_contract_promotion_status = contract$promotion_status %||% NA_character_,
+    factorization_contract_owned_by_eigencore = contract$owned_by_eigencore %||% NA,
+    factorization_contract_external_cache = contract$external_cache %||% NA,
+    factorization_contract_memory_policy = contract$memory_policy %||% NA_character_,
+    factorization_contract_certificate_policy = contract$certificate_policy %||% NA_character_,
     certification_problem = fit$transform$certification$problem %||% NA_character_,
     seed = seed,
     pkg_version = as.character(utils::packageVersion("eigencore")),
@@ -313,6 +321,32 @@ shift_invert_contract <- function(rows, cases) {
     }
     label_gate <- identical(row$cache_label_kind, case$expected_label_kind)
     original_gate <- identical(row$certification_problem, "original")
+    contract_gate <- identical(
+      row$factorization_contract_version,
+      "shift_invert_factorization_contract_v1"
+    ) &&
+      identical(row$factorization_contract_certificate_policy,
+                "original_coordinate_residual_required") &&
+      if (isTRUE(case$expected_native)) {
+        identical(row$factorization_contract_provider,
+                  "eigencore_native_factorization") &&
+          identical(row$factorization_contract_promotion_status,
+                    "promoted_native") &&
+          isTRUE(row$factorization_contract_owned_by_eigencore)
+      } else if (identical(case$expected_label_kind, "user_solve")) {
+        identical(row$factorization_contract_provider, "user_supplied_solve") &&
+          identical(row$factorization_contract_promotion_status,
+                    "reference_boundary") &&
+          !isTRUE(row$factorization_contract_owned_by_eigencore) &&
+          isTRUE(row$factorization_contract_external_cache)
+      } else {
+        identical(row$factorization_contract_provider,
+                  "Matrix::lu_reference_factorization") &&
+          identical(row$factorization_contract_promotion_status,
+                    "reference_boundary") &&
+          !isTRUE(row$factorization_contract_owned_by_eigencore) &&
+          !isTRUE(row$factorization_contract_external_cache)
+      }
     data.frame(
       case = case$case,
       requested = case$k,
@@ -323,7 +357,9 @@ shift_invert_contract <- function(rows, cases) {
       native_gate = native_gate,
       label_gate = label_gate,
       original_coordinate_gate = original_gate,
-      passed = certification_gate && native_gate && label_gate && original_gate,
+      factorization_contract_gate = contract_gate,
+      passed = certification_gate && native_gate && label_gate && original_gate &&
+        contract_gate,
       stringsAsFactors = FALSE
     )
   })

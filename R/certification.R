@@ -1,12 +1,28 @@
 #' Extract a result certificate.
+#'
+#' @param x An eigencore result object.
+#' @param ... Reserved for future methods.
+#' @examples
+#' fit <- eig_partial(diag(c(3, 2, 1)), k = 1, target = largest())
+#' cert <- certificate(fit)
+#' cert$passed
+#' cert$max_residual
 certificate <- function(x, ...) {
   x$certificate
 }
 
 #' Extract diagnostics.
+#'
+#' @param x An eigencore result object.
+#' @param ... Reserved for future methods.
+#' @examples
+#' fit <- eig_partial(diag(c(3, 2, 1)), k = 1, target = largest())
+#' d <- diagnostics(fit)
+#' d$nconv
+#' d$method
 diagnostics <- function(x, ...) {
   restart <- if (is.list(x$restart)) x$restart else NULL
-  list(
+  out <- list(
     residuals = x$residuals,
     backward_error = x$backward_error,
     orthogonality = x$orthogonality,
@@ -23,34 +39,64 @@ diagnostics <- function(x, ...) {
     plan = x$plan,
     warnings = x$warnings
   )
+  if (!is.null(x$left_eigenvectors)) {
+    out$left_eigenvectors <- x$left_eigenvectors
+    out$left_certificate <- x$left_certificate
+    out$biorthogonality <- x$biorthogonality
+  }
+  out
 }
 
 #' Extract computed values.
+#'
+#' @param x An eigencore result object.
+#' @param ... Reserved for future methods.
+#' @examples
+#' fit <- eig_partial(diag(c(3, 2, 1)), k = 2, target = largest())
+#' values(fit)
 values <- function(x, ...) {
   x$values
 }
 
 #' Extract eigenvectors.
+#'
+#' @param x An eigencore eigen result object.
+#' @param ... Reserved for future methods.
+#' @examples
+#' fit <- eig_partial(diag(c(3, 2, 1)), k = 2, target = largest())
+#' dim(vectors(fit))
 vectors <- function(x, ...) {
   x$vectors
 }
 
 #' Extract left singular vectors.
+#'
+#' @param x An eigencore SVD result object.
+#' @param ... Reserved for future methods.
 left_vectors <- function(x, ...) {
-  x$u
+  x$left_vectors %||% x$u
 }
 
 #' Extract right singular vectors.
+#'
+#' @param x An eigencore SVD or nonsymmetric eigen result object.
+#' @param ... Reserved for future methods.
 right_vectors <- function(x, ...) {
-  x$v
+  x$right_vectors %||% x$v %||% x$vectors
 }
 
 #' Extract residual diagnostics.
+#'
+#' @param x An eigencore result object.
+#' @param ... Reserved for future methods.
 residuals <- function(x, ...) {
   x$residuals
 }
 
 #' Extract backward-error diagnostics.
+#'
+#' @param x An eigencore result object.
+#' @param ... Reserved for future methods.
 backward_error <- function(x, ...) {
   x$backward_error
 }
@@ -58,6 +104,18 @@ backward_error <- function(x, ...) {
 #' @keywords internal
 certify_eigen <- function(A, values, vectors, B = NULL, tol = 1e-8,
                           require_orthogonality = TRUE) {
+  if (is.complex(A) || is.complex(values) || is.complex(vectors) ||
+      (!is.null(B) && is.complex(B))) {
+    return(certify_dense_eigen_r_residual(
+      A,
+      values,
+      vectors,
+      B = B,
+      tol = tol,
+      require_orthogonality = require_orthogonality,
+      norm_bound_type = "frobenius_exact"
+    ))
+  }
   diag <- native_dense_eigen_certificate(A, values, vectors, B = B, tol = tol)
   new_certificate(
     tol = tol,
@@ -67,6 +125,39 @@ certify_eigen <- function(A, values, vectors, B = NULL, tol = 1e-8,
     converged = diag$converged,
     scale = diag$scale,
     norm_bound_type = "frobenius_exact",
+    require_orthogonality = require_orthogonality
+  )
+}
+
+#' @keywords internal
+certify_dense_eigen_r_residual <- function(A, values, vectors, B = NULL,
+                                           tol = 1e-8,
+                                           require_orthogonality = TRUE,
+                                           norm_bound_type = "frobenius_exact") {
+  A <- as.matrix(A)
+  vectors <- as.matrix(vectors)
+  values <- as.vector(values)
+  k <- length(values)
+  if (ncol(vectors) != k) {
+    stop("values and vectors must have compatible dimensions.", call. = FALSE)
+  }
+  Bv <- if (is.null(B)) vectors else as.matrix(B) %*% vectors
+  residual_matrix <- A %*% vectors - sweep(Bv, 2L, values, `*`)
+  residuals <- col_norms(residual_matrix)
+  norm_A <- matrix_norm(A)
+  norm_B <- if (is.null(B)) 1 else matrix_norm(B)
+  scale <- eigen_backward_scale(norm_A, norm_B, values, vectors)
+  backward <- residuals / pmax(scale, .Machine$double.eps)
+  gram <- if (is.null(B)) certificate_gram(vectors) else certificate_gram(vectors, Bv)
+  orth <- max(abs(gram - diag(k)))
+  new_certificate(
+    tol = tol,
+    residuals = residuals,
+    backward_error = backward,
+    orthogonality = orth,
+    converged = backward <= tol,
+    scale = scale,
+    norm_bound_type = norm_bound_type,
     require_orthogonality = require_orthogonality
   )
 }
@@ -105,7 +196,7 @@ certify_eigen_operator <- function(Aop, values, vectors, Bop = NULL, tol = 1e-8)
     vectors
   )
   backward <- residuals / pmax(scale, .Machine$double.eps)
-  gram <- if (is.null(Bop)) crossprod(vectors) else crossprod(vectors, Bv)
+  gram <- if (is.null(Bop)) certificate_gram(vectors) else certificate_gram(vectors, Bv)
   orth <- max(abs(gram - diag(k)))
   new_certificate(
     tol = tol,
@@ -132,7 +223,7 @@ certify_dense_general_eigen <- function(A, values, vectors, tol = 1e-8) {
   residuals <- col_norms(residual_matrix)
   scale <- eigen_backward_scale(matrix_norm(A), 1, values, vectors)
   backward <- residuals / pmax(scale, .Machine$double.eps)
-  gram <- crossprod(vectors)
+  gram <- certificate_gram(vectors)
   orth <- max(abs(gram - diag(k)))
   new_certificate(
     tol = tol,
@@ -163,7 +254,7 @@ certify_general_eigen_operator <- function(Aop, values, vectors, tol = 1e-8) {
   norm_A <- operator_norm_for_certificate_info(Aop)
   scale <- eigen_backward_scale(norm_A$value, 1, values, vectors)
   backward <- residuals / pmax(scale, .Machine$double.eps)
-  gram <- crossprod(vectors)
+  gram <- certificate_gram(vectors)
   orth <- max(abs(gram - diag(length(values))))
   new_certificate(
     tol = tol,
@@ -177,6 +268,50 @@ certify_general_eigen_operator <- function(Aop, values, vectors, tol = 1e-8) {
     norm_bound_type = norm_A$norm_bound_type,
     scale_is_estimate = isTRUE(norm_A$scale_is_estimate),
     require_orthogonality = FALSE
+  )
+}
+
+#' @keywords internal
+certify_left_eigen_operator <- function(Aop, values, left_vectors,
+                                        right_vectors = NULL, tol = 1e-8) {
+  values <- as.vector(values)
+  left_vectors <- as.matrix(left_vectors)
+  if (ncol(left_vectors) != length(values)) {
+    stop("values and left_vectors must have compatible dimensions.", call. = FALSE)
+  }
+
+  adjoint_op <- adjoint(Aop)
+  source <- source_or_null(adjoint_op) %||% adjoint_op$metadata$matrix %||% NULL
+  Astar_w <- if (is.complex(left_vectors) && !is.null(source)) {
+    as.matrix(as.matrix(source) %*% left_vectors)
+  } else {
+    apply_operator(adjoint_op, left_vectors)
+  }
+  residual_matrix <- Astar_w - sweep(left_vectors, 2L, values, `*`)
+  left_residuals <- col_norms(residual_matrix)
+  norm_A <- operator_norm_for_certificate_info(Aop)
+  scale <- eigen_backward_scale(norm_A$value, 1, values, left_vectors)
+  backward <- left_residuals / pmax(scale, .Machine$double.eps)
+
+  biorthogonality <- numeric()
+  if (!is.null(right_vectors)) {
+    right_vectors <- as.matrix(right_vectors)
+    cross <- crossprod(left_vectors, right_vectors)
+    biorthogonality <- max(abs(cross - diag(length(values))))
+  }
+
+  new_certificate(
+    tol = tol,
+    residuals = list(left = left_residuals),
+    backward_error = backward,
+    orthogonality = biorthogonality,
+    converged = backward <= tol,
+    scale = scale,
+    notes = "left residual and biorthogonality certificate for nonsymmetric eigenpairs",
+    certificate_type = "left_residual_biorthogonal_backward_error",
+    norm_bound_type = norm_A$norm_bound_type,
+    scale_is_estimate = isTRUE(norm_A$scale_is_estimate),
+    require_orthogonality = !is.null(right_vectors)
   )
 }
 
@@ -211,6 +346,30 @@ certify_eigen_operator_residuals <- function(Aop, values, vectors, residuals,
 
 #' @keywords internal
 certify_svd <- function(A, d, u, v, tol = 1e-8) {
+  if (is.complex(A) || is.complex(u) || is.complex(v)) {
+    A <- as.matrix(A)
+    d <- as.vector(d)
+    u <- as.matrix(u)
+    v <- as.matrix(v)
+    left_residual_matrix <- A %*% v - sweep(u, 2L, d, `*`)
+    right_residual_matrix <- Conj(t(A)) %*% u - sweep(v, 2L, d, `*`)
+    left <- col_norms(left_residual_matrix)
+    right <- col_norms(right_residual_matrix)
+    combined <- sqrt(left^2 + right^2)
+    scale <- svd_backward_scale(matrix_norm(A), d)
+    backward <- combined / scale
+    orth_u <- max(abs(certificate_gram(u) - diag(length(d))))
+    orth_v <- max(abs(certificate_gram(v) - diag(length(d))))
+    return(new_certificate(
+      tol = tol,
+      residuals = list(left = left, right = right, combined = combined),
+      backward_error = backward,
+      orthogonality = c(U = orth_u, V = orth_v),
+      converged = backward <= tol,
+      scale = scale,
+      norm_bound_type = "frobenius_exact"
+    ))
+  }
   diag <- native_dense_svd_certificate(A, d, u, v, tol = tol)
   new_certificate(
     tol = tol,
@@ -247,8 +406,8 @@ certify_svd_operator <- function(Aop, d, u, v, tol = 1e-8) {
   norm_A <- operator_norm_for_certificate_info(Aop)
   scale <- svd_backward_scale(norm_A$value, d)
   backward <- combined / scale
-  orth_u <- max(abs(crossprod(u) - diag(length(d))))
-  orth_v <- max(abs(crossprod(v) - diag(length(d))))
+  orth_u <- max(abs(certificate_gram(u) - diag(length(d))))
+  orth_v <- max(abs(certificate_gram(v) - diag(length(d))))
   new_certificate(
     tol = tol,
     residuals = list(left = left, right = right, combined = combined),
@@ -316,8 +475,8 @@ certify_svd_operator_cached_av <- function(Aop, d, u, v, Av, tol = 1e-8,
   norm_A <- operator_norm_for_certificate_info(Aop)
   scale <- svd_backward_scale(norm_A$value, d)
   backward <- combined / scale
-  orth_u <- max(abs(crossprod(u) - diag(length(d))))
-  orth_v <- max(abs(crossprod(v) - diag(length(d))))
+  orth_u <- max(abs(certificate_gram(u) - diag(length(d))))
+  orth_v <- max(abs(certificate_gram(v) - diag(length(d))))
   cert <- new_certificate(
     tol = tol,
     residuals = list(left = left, right = right, combined = combined),
@@ -369,8 +528,8 @@ certify_svd_operator_cached_sides <- function(Aop, d, u, v, Av, Atu,
   norm_A <- operator_norm_for_certificate_info(Aop)
   scale <- svd_backward_scale(norm_A$value, d)
   backward <- combined / scale
-  orth_u <- max(abs(crossprod(u) - diag(length(d))))
-  orth_v <- max(abs(crossprod(v) - diag(length(d))))
+  orth_u <- max(abs(certificate_gram(u) - diag(length(d))))
+  orth_v <- max(abs(certificate_gram(v) - diag(length(d))))
   new_certificate(
     tol = tol,
     residuals = list(left = left, right = right, combined = combined),
@@ -468,6 +627,16 @@ col_norms <- function(x) {
     return(sqrt(colSums(Mod(as.matrix(x))^2)))
   }
   .Call("eigencore_col_norms", as.matrix(x), PACKAGE = "eigencore")
+}
+
+#' @keywords internal
+certificate_gram <- function(x, y = x) {
+  x <- as.matrix(x)
+  y <- as.matrix(y)
+  if (is.complex(x) || is.complex(y)) {
+    return(Conj(t(x)) %*% y)
+  }
+  crossprod(x, y)
 }
 
 #' @keywords internal

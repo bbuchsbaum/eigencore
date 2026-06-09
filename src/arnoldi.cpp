@@ -10,6 +10,13 @@
 #include "eigencore_common.h"
 #include "native_operators.h"
 
+static Rcomplex complex_conj(Rcomplex z) {
+  Rcomplex out;
+  out.r = z.r;
+  out.i = -z.i;
+  return out;
+}
+
 static SEXP native_arnoldi_cycle_impl(void* impl,
                                       EigencoreApplyFn apply,
                                       int64_t n64,
@@ -113,6 +120,130 @@ static SEXP native_arnoldi_cycle_impl(void* impl,
   return out_;
 }
 
+extern "C" SEXP eigencore_arnoldi_refined_ritz(SEXP V_, SEXP H_,
+                                                SEXP iterations_,
+                                                SEXP values_) {
+  if (!isReal(V_) || !isReal(H_) || !isComplex(values_)) {
+    error("native Arnoldi refined extraction requires real V/H and complex values");
+  }
+  SEXP dimV = getAttrib(V_, R_DimSymbol);
+  SEXP dimH = getAttrib(H_, R_DimSymbol);
+  if (dimV == R_NilValue || dimH == R_NilValue ||
+      LENGTH(dimV) != 2 || LENGTH(dimH) != 2) {
+    error("native Arnoldi refined extraction requires matrix inputs");
+  }
+
+  const int n = INTEGER(dimV)[0];
+  const int v_cols = INTEGER(dimV)[1];
+  const int h_rows = INTEGER(dimH)[0];
+  const int h_cols = INTEGER(dimH)[1];
+  const int m = asInteger(iterations_);
+  const int k = LENGTH(values_);
+  if (n < 1 || m < 1 || k < 1 ||
+      v_cols < m || h_rows < m + 1 || h_cols < m) {
+    error("invalid native Arnoldi refined extraction dimensions");
+  }
+  if (!eigencore_int_indexable(static_cast<int64_t>(n) * k) ||
+      !eigencore_int_indexable(static_cast<int64_t>(m + 1) * m)) {
+    error("native Arnoldi refined extraction dimensions exceed LP64 BLAS/R integer range");
+  }
+
+  SEXP vectors_ = PROTECT(allocMatrix(CPLXSXP, n, k));
+  SEXP residuals_ = PROTECT(allocVector(REALSXP, k));
+  Rcomplex* vectors = COMPLEX(vectors_);
+  double* residuals = REAL(residuals_);
+  const double* V = REAL(V_);
+  const double* H = REAL(H_);
+  const Rcomplex* values = COMPLEX(values_);
+  const int rows = m + 1;
+
+  for (int col = 0; col < k; ++col) {
+    std::vector<Rcomplex> z(static_cast<size_t>(rows) * static_cast<size_t>(m));
+    for (int j = 0; j < m; ++j) {
+      for (int i = 0; i < rows; ++i) {
+        Rcomplex entry;
+        entry.r = H[i + static_cast<int64_t>(j) * h_rows];
+        entry.i = 0.0;
+        if (i == j) {
+          entry.r -= values[col].r;
+          entry.i -= values[col].i;
+        }
+        z[i + static_cast<int64_t>(j) * rows] = entry;
+      }
+    }
+
+    std::vector<double> s(static_cast<size_t>(m));
+    std::vector<Rcomplex> vt(static_cast<size_t>(m) * static_cast<size_t>(m));
+    Rcomplex u_dummy;
+    int ldu = 1;
+    int ldvt = m;
+    int info = 0;
+    int lwork = -1;
+    Rcomplex work_query;
+    const int rwork_len = std::max(1, 5 * m);
+    std::vector<double> rwork(static_cast<size_t>(rwork_len));
+    char jobu = 'N';
+    char jobvt = 'A';
+    F77_CALL(zgesvd)(&jobu, &jobvt, &rows, &m, z.data(), &rows, s.data(),
+                     &u_dummy, &ldu, vt.data(), &ldvt,
+                     &work_query, &lwork, rwork.data(), &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK zgesvd workspace query failed for native Arnoldi refined extraction with info=%d", info);
+    }
+    lwork = std::max(1, static_cast<int>(work_query.r));
+    std::vector<Rcomplex> work(static_cast<size_t>(lwork));
+    F77_CALL(zgesvd)(&jobu, &jobvt, &rows, &m, z.data(), &rows, s.data(),
+                     &u_dummy, &ldu, vt.data(), &ldvt,
+                     work.data(), &lwork, rwork.data(), &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK zgesvd failed for native Arnoldi refined extraction with info=%d", info);
+    }
+    residuals[col] = s[static_cast<size_t>(m - 1)];
+
+    std::vector<Rcomplex> coeff(static_cast<size_t>(m));
+    for (int j = 0; j < m; ++j) {
+      coeff[static_cast<size_t>(j)] =
+        complex_conj(vt[(m - 1) + static_cast<int64_t>(j) * m]);
+    }
+
+    double norm2 = 0.0;
+    for (int row = 0; row < n; ++row) {
+      double zr = 0.0;
+      double zi = 0.0;
+      for (int basis = 0; basis < m; ++basis) {
+        const double vb = V[row + static_cast<int64_t>(basis) * n];
+        const Rcomplex c = coeff[static_cast<size_t>(basis)];
+        zr += vb * c.r;
+        zi += vb * c.i;
+      }
+      Rcomplex out;
+      out.r = zr;
+      out.i = zi;
+      vectors[row + static_cast<int64_t>(col) * n] = out;
+      norm2 += zr * zr + zi * zi;
+    }
+
+    const double norm = std::sqrt(norm2);
+    if (std::isfinite(norm) && norm > DBL_EPSILON) {
+      for (int row = 0; row < n; ++row) {
+        Rcomplex* out = vectors + row + static_cast<int64_t>(col) * n;
+        out->r /= norm;
+        out->i /= norm;
+      }
+    }
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 2));
+  SET_VECTOR_ELT(out_, 0, vectors_);
+  SET_VECTOR_ELT(out_, 1, residuals_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(names_, 0, mkChar("vectors"));
+  SET_STRING_ELT(names_, 1, mkChar("refined_residual_estimates"));
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(4);
+  return out_;
+}
+
 extern "C" SEXP eigencore_arnoldi_dense_cycle(SEXP A_, SEXP start_,
                                                SEXP max_subspace_) {
   if (!isReal(A_) || !isReal(start_)) {
@@ -151,6 +282,27 @@ extern "C" SEXP eigencore_arnoldi_csc_cycle(SEXP i_, SEXP p_, SEXP x_,
   CSCOperator impl = {nrow, ncol, INTEGER(i_), INTEGER(p_), REAL(x_)};
   return native_arnoldi_cycle_impl(
     &impl, eigencore_csc_apply, nrow, REAL(start_), asInteger(max_subspace_)
+  );
+}
+
+extern "C" SEXP eigencore_arnoldi_r_operator_cycle(SEXP dim_, SEXP apply_,
+                                                    SEXP start_,
+                                                    SEXP max_subspace_) {
+  if (!isInteger(dim_) || LENGTH(dim_) != 2 || TYPEOF(apply_) != CLOSXP ||
+      !isReal(start_)) {
+    error("invalid matrix-free Arnoldi inputs");
+  }
+  const int nrow = INTEGER(dim_)[0];
+  const int ncol = INTEGER(dim_)[1];
+  if (nrow != ncol) {
+    error("A must be a square matrix-free operator");
+  }
+  if (LENGTH(start_) != nrow) {
+    error("start length must equal operator dimension");
+  }
+  RApplyOperator impl = {nrow, ncol, apply_, R_NilValue};
+  return native_arnoldi_cycle_impl(
+    &impl, eigencore_r_operator_apply, nrow, REAL(start_), asInteger(max_subspace_)
   );
 }
 

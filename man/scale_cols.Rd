@@ -7,12 +7,11 @@
 scale_cols(A, weights, name = NULL)
 }
 \arguments{
-\item{A}{Matrix or operator input.}
+\item{A}{Operator-like object.}
 
-\item{weights}{Scaling weights.}
+\item{weights}{Numeric vector of column weights.}
 
-\item{name}{Optional operator name.}
-
+\item{name}{Optional label for the scaled operator.}
 }
 \description{
 Scale operator columns.

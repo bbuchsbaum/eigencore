@@ -7,10 +7,9 @@
 residuals(x, ...)
 }
 \arguments{
-\item{x}{Object.}
+\item{x}{An eigencore result object.}
 
-\item{...}{Additional arguments passed to methods.}
-
+\item{...}{Reserved for future methods.}
 }
 \description{
 Extract residual diagnostics.

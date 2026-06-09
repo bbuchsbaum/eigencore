@@ -112,8 +112,21 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
     if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$max_restarts else NULL
   method_block <- controls$block %||%
     if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$block else 1L
-  generalized_path <- identical(plan$method, generalized_lanczos_label())
-  iter <- if (generalized_path) {
+  native_generalized_path <- identical(plan$method, native_generalized_lanczos_label())
+  reference_generalized_path <- identical(plan$method, generalized_lanczos_label())
+  iter <- if (native_generalized_path) {
+    native_generalized_lanczos_hermitian(
+      a$A,
+      a$metric,
+      k = k,
+      target = a$target,
+      tol = tol,
+      maxit = maxit %||% method_maxit,
+      vectors = vectors,
+      block = method_block,
+      max_restarts = method_max_restarts
+    )
+  } else if (reference_generalized_path) {
     reference_generalized_lanczos_hermitian(
       a$A,
       a$metric,
@@ -159,7 +172,16 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
     )
   }
 
-  warning_msg <- if (generalized_path) {
+  warning_msg <- if (native_generalized_path) {
+    if (!isTRUE(iter$certificate$passed)) {
+      paste0(
+        plan$method, " exhausted its current transformed subspace before all ",
+        k, " requested generalized pairs converged"
+      )
+    } else {
+      "using native transformed generalized SPD B-orthogonal Lanczos; original generalized residuals certified"
+    }
+  } else if (reference_generalized_path) {
     if (!isTRUE(iter$certificate$passed)) {
       paste0(
         plan$method, " exhausted its current subspace before all ",
@@ -228,7 +250,11 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
 #' @keywords internal
 solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan) {
   controls <- plan$controls %||% list()
-  native_path <- identical(plan$method, native_arnoldi_label())
+  native_path <- identical(plan$method, native_arnoldi_label()) ||
+    identical(plan$method, native_refined_arnoldi_label()) ||
+    identical(plan$method, native_matrix_free_arnoldi_label())
+  refined_native_path <- identical(plan$method, native_refined_arnoldi_label())
+  matrix_free_native_path <- identical(plan$method, native_matrix_free_arnoldi_label())
   default_maxit <- if (native_path) {
     native_arnoldi_default_max_subspace(a$A$dim[[1L]], k)
   } else {
@@ -236,6 +262,8 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
   }
   method_maxit <- maxit %||% controls$max_subspace %||% default_maxit
   method_max_restarts <- controls$max_restarts %||% 0L
+  method_extraction <- controls$arnoldi_extraction %||%
+    if (refined_native_path) "refined_ritz" else "projected_ritz"
   arnoldi_solver <- if (native_path) native_arnoldi_general else reference_arnoldi_general
   iter <- arnoldi_solver(
     a$A,
@@ -244,9 +272,28 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
     tol = tol,
     maxit = method_maxit,
     max_restarts = method_max_restarts,
-    vectors = vectors
+    vectors = vectors,
+    extraction = method_extraction
   )
-  warning_msg <- if (native_path && isTRUE(iter$certificate$passed)) {
+  left_contract <- arnoldi_left_eigen_contract(
+    a$A,
+    iter$values,
+    iter$vectors,
+    target = a$target,
+    tol = tol,
+    maxit = method_maxit,
+    max_restarts = method_max_restarts,
+    extraction = method_extraction
+  )
+  warning_msg <- if (matrix_free_native_path && isTRUE(iter$certificate$passed)) {
+    "using native matrix-free Arnoldi callback cycle with native Ritz extraction; right residuals certified"
+  } else if (matrix_free_native_path) {
+    "using native matrix-free Arnoldi callback cycle with native Ritz extraction; result did not pass certificate"
+  } else if (refined_native_path && isTRUE(iter$certificate$passed)) {
+    "using native Arnoldi cycle with native refined Ritz extraction; right residuals certified"
+  } else if (refined_native_path) {
+    "using native Arnoldi cycle with native refined Ritz extraction; result did not pass certificate"
+  } else if (native_path && isTRUE(iter$certificate$passed)) {
     "using native Arnoldi cycle with native Ritz extraction; right residuals certified"
   } else if (native_path) {
     "using native Arnoldi cycle with native Ritz extraction; result did not pass certificate"
@@ -254,6 +301,25 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
     "using R-level reference Arnoldi prototype; native nonsymmetric Arnoldi not yet implemented"
   } else {
     "using R-level reference Arnoldi prototype; result did not pass certificate"
+  }
+  if (isTRUE(left_contract$supported) && isTRUE(left_contract$certificate$passed)) {
+    warning_msg <- paste(
+      warning_msg,
+      "left eigenvectors computed from adjoint Arnoldi; left residuals and biorthogonality certified",
+      sep = "; "
+    )
+  } else if (isTRUE(left_contract$supported)) {
+    warning_msg <- paste(
+      warning_msg,
+      "left eigenvectors computed from adjoint Arnoldi; left residuals or biorthogonality did not pass certificate",
+      sep = "; "
+    )
+  } else {
+    warning_msg <- paste(
+      warning_msg,
+      paste0("left eigenvectors unavailable: ", left_contract$reason),
+      sep = "; "
+    )
   }
   make_eigen_result(
     values = iter$values,
@@ -271,7 +337,58 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
       orthogonality = iter$certificate$orthogonality,
       restarts = iter$restart$restart_count,
       restart = iter$restart,
-      locked = which(iter$certificate$converged)
+      locked = which(iter$certificate$converged),
+      right_vectors = iter$vectors,
+      left_vectors = left_contract$vectors,
+      left_certificate = left_contract$certificate,
+      biorthogonality = left_contract$biorthogonality,
+      left_eigenvectors = left_contract
+    )
+  )
+}
+
+#' @keywords internal
+solve_eigen_grid_laplacian_2d <- function(a, k, tol, vectors, certify, plan) {
+  meta <- structured_grid_laplacian_2d_metadata(a$A)
+  if (is.null(meta)) {
+    stop("structured 2D-grid Laplacian solver requires explicit grid metadata.", call. = FALSE)
+  }
+  eig <- structured_grid_laplacian_2d_eigen(meta$nx, meta$ny, k)
+  vals <- eig$values
+  vecs_for_cert <- eig$vectors
+  residual_vectors <- apply_operator(a$A, vecs_for_cert) -
+    sweep(vecs_for_cert, 2L, vals, `*`)
+  residuals <- col_norms(residual_vectors)
+  cert <- if (isTRUE(certify)) {
+    certify_eigen_operator_residuals(a$A, vals, vecs_for_cert, residuals, tol = tol)
+  } else {
+    empty_certificate(tol, note = "certification disabled by caller")
+  }
+  vecs <- if (isTRUE(vectors)) vecs_for_cert else NULL
+  restart <- list(
+    kind = "separable_2d_grid_laplacian",
+    implemented = TRUE,
+    native = FALSE,
+    prototype = TRUE,
+    grid_nx = meta$nx,
+    grid_ny = meta$ny,
+    mode_pairs = eig$mode_pairs,
+    materialized_dense_operator = FALSE,
+    certificate_in_original_coordinates = TRUE
+  )
+  make_eigen_result(
+    values = vals,
+    vectors = vecs,
+    certificate = cert,
+    iter = list(iterations = 1L, matvecs = 0L),
+    requested = k,
+    method_label = plan$method,
+    target_label_value = target_label(a$target),
+    plan = plan,
+    warnings = "using diagnostic separable 2D-grid Laplacian prototype; explicit metadata only",
+    extras = list(
+      restart = restart,
+      locked = which(cert$converged)
     )
   )
 }
@@ -280,7 +397,11 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
 solve_eigen_native_dense_hermitian <- function(a, k, tol, vectors, certify,
                                                 allow_dense_fallback, plan) {
   A <- materialize_dense_fallbacks(list(A = a$A), allow = allow_dense_fallback)$A
-  eig <- native_dense_symmetric_eigen(A)
+  eig <- if (is.complex(A)) {
+    native_dense_complex_hermitian_eigen(A)
+  } else {
+    native_dense_symmetric_eigen(A)
+  }
   idx <- order_indices(eig$values, a$target)
   idx <- idx[seq_len(min(k, length(idx)))]
   vals <- eig$values[idx]
@@ -299,7 +420,45 @@ solve_eigen_native_dense_hermitian <- function(a, k, tol, vectors, certify,
     method_label = plan$method,
     target_label_value = target_label(a$target),
     plan = plan,
-    warnings = "using native dense Hermitian LAPACK fallback; iterative engine not yet implemented"
+    warnings = if (identical(plan$method, native_dense_complex_hermitian_label())) {
+      "using native dense complex Hermitian LAPACK fallback; iterative engine not yet implemented"
+    } else {
+      "using native dense Hermitian LAPACK fallback; iterative engine not yet implemented"
+    }
+  )
+}
+
+#' @keywords internal
+solve_eigen_native_dense_general <- function(a, k, tol, vectors, certify,
+                                             allow_dense_fallback, plan) {
+  A <- materialize_dense_fallbacks(list(A = a$A), allow = allow_dense_fallback)$A
+  if (!is.complex(A)) {
+    stop("native dense complex general eigensolver requires a complex dense matrix.", call. = FALSE)
+  }
+  eig <- native_dense_complex_general_eigen(A)
+  idx <- order_indices(eig$values, a$target)
+  idx <- idx[seq_len(min(k, length(idx)))]
+  vals <- eig$values[idx]
+  vecs <- if (vectors) eig$vectors[, idx, drop = FALSE] else NULL
+  cert <- if (certify && !is.null(vecs)) {
+    certify_dense_general_eigen(A, vals, vecs, tol = tol)
+  } else {
+    empty_certificate(tol, note = "vectors not returned; residual certificate not computed")
+  }
+  make_eigen_result(
+    values = vals,
+    vectors = vecs,
+    certificate = cert,
+    iter = list(iterations = 1L, matvecs = 0L),
+    requested = k,
+    method_label = plan$method,
+    target_label_value = target_label(a$target),
+    plan = plan,
+    warnings = if (isTRUE(certify) && !is.null(vecs)) {
+      "using native dense complex general LAPACK fallback; right residuals certified"
+    } else {
+      "using native dense complex general LAPACK fallback"
+    }
   )
 }
 

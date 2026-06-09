@@ -118,6 +118,125 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevd(SEXP A_) {
   return out_;
 }
 
+extern "C" SEXP eigencore_dense_complex_hermitian_eigen(SEXP A_) {
+  if (!isComplex(A_)) {
+    error("A must be a complex matrix");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  if (dimA == R_NilValue) {
+    error("A must be a matrix");
+  }
+  const int n = INTEGER(dimA)[0];
+  const int ncolA = INTEGER(dimA)[1];
+  if (n != ncolA) {
+    error("A must be square");
+  }
+
+  SEXP values_ = PROTECT(allocVector(REALSXP, n));
+  SEXP vectors_ = PROTECT(duplicate(A_));
+  if (n > 0) {
+    char jobz = 'V';
+    char uplo = 'U';
+    int info = 0;
+    int lwork = -1;
+    Rcomplex work_query;
+    const int lrwork = (3 * n - 2 > 1) ? (3 * n - 2) : 1;
+    double* rwork = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(lrwork), sizeof(double))
+    );
+    F77_CALL(zheev)(&jobz, &uplo, &n, COMPLEX(vectors_), &n, REAL(values_),
+                    &work_query, &lwork, rwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK zheev workspace query failed with info=%d", info);
+    }
+    lwork = static_cast<int>(work_query.r);
+    if (lwork < 1) {
+      lwork = 1;
+    }
+    SEXP work_ = PROTECT(allocVector(CPLXSXP, lwork));
+    F77_CALL(zheev)(&jobz, &uplo, &n, COMPLEX(vectors_), &n, REAL(values_),
+                    COMPLEX(work_), &lwork, rwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK zheev failed with info=%d", info);
+    }
+    UNPROTECT(1);
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 2));
+  SET_VECTOR_ELT(out_, 0, values_);
+  SET_VECTOR_ELT(out_, 1, vectors_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(names_, 0, mkChar("values"));
+  SET_STRING_ELT(names_, 1, mkChar("vectors"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(4);
+  return out_;
+}
+
+extern "C" SEXP eigencore_dense_complex_general_eigen(SEXP A_) {
+  if (!isComplex(A_)) {
+    error("A must be a complex matrix");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  if (dimA == R_NilValue) {
+    error("A must be a matrix");
+  }
+  const int n = INTEGER(dimA)[0];
+  const int ncolA = INTEGER(dimA)[1];
+  if (n != ncolA) {
+    error("A must be square");
+  }
+
+  SEXP values_ = PROTECT(allocVector(CPLXSXP, n));
+  SEXP vectors_ = PROTECT(allocMatrix(CPLXSXP, n, n));
+  SEXP work_matrix_ = PROTECT(duplicate(A_));
+  if (n > 0) {
+    char jobvl = 'N';
+    char jobvr = 'V';
+    int ldvl = 1;
+    int ldvr = n;
+    int info = 0;
+    int lwork = -1;
+    Rcomplex vl_dummy;
+    Rcomplex work_query;
+    const int lrwork = (2 * n > 1) ? (2 * n) : 1;
+    double* rwork = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(lrwork), sizeof(double))
+    );
+    F77_CALL(zgeev)(&jobvl, &jobvr, &n, COMPLEX(work_matrix_), &n,
+                    COMPLEX(values_), &vl_dummy, &ldvl, COMPLEX(vectors_),
+                    &ldvr, &work_query, &lwork, rwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK zgeev workspace query failed with info=%d", info);
+    }
+    lwork = static_cast<int>(work_query.r);
+    if (lwork < 1) {
+      lwork = 1;
+    }
+    SEXP work_ = PROTECT(allocVector(CPLXSXP, lwork));
+    work_matrix_ = PROTECT(duplicate(A_));
+    F77_CALL(zgeev)(&jobvl, &jobvr, &n, COMPLEX(work_matrix_), &n,
+                    COMPLEX(values_), &vl_dummy, &ldvl, COMPLEX(vectors_),
+                    &ldvr, COMPLEX(work_), &lwork, rwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK zgeev failed with info=%d", info);
+    }
+    UNPROTECT(2);
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 2));
+  SET_VECTOR_ELT(out_, 0, values_);
+  SET_VECTOR_ELT(out_, 1, vectors_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(names_, 0, mkChar("values"));
+  SET_STRING_ELT(names_, 1, mkChar("vectors"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(5);
+  return out_;
+}
+
 extern "C" SEXP eigencore_dense_is_symmetric(SEXP A_, SEXP tol_) {
   if (!isReal(A_)) {
     return ScalarLogical(FALSE);
@@ -489,6 +608,81 @@ extern "C" SEXP eigencore_dense_svd(SEXP A_) {
     for (int col = 0; col < r; ++col) {
       for (int row = 0; row < n; ++row) {
         REAL(v_)[row + col * n] = REAL(vt_)[col + row * r];
+      }
+    }
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 3));
+  SET_VECTOR_ELT(out_, 0, d_);
+  SET_VECTOR_ELT(out_, 1, u_);
+  SET_VECTOR_ELT(out_, 2, v_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 3));
+  SET_STRING_ELT(names_, 0, mkChar("d"));
+  SET_STRING_ELT(names_, 1, mkChar("u"));
+  SET_STRING_ELT(names_, 2, mkChar("v"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(7);
+  return out_;
+}
+
+extern "C" SEXP eigencore_dense_complex_svd(SEXP A_) {
+  if (!isComplex(A_)) {
+    error("A must be a complex matrix");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  if (dimA == R_NilValue) {
+    error("A must be a matrix");
+  }
+  const int m = INTEGER(dimA)[0];
+  const int n = INTEGER(dimA)[1];
+  const int r = (m < n) ? m : n;
+
+  SEXP d_ = PROTECT(allocVector(REALSXP, r));
+  SEXP u_ = PROTECT(allocMatrix(CPLXSXP, m, r));
+  SEXP vt_ = PROTECT(allocMatrix(CPLXSXP, r, n));
+  SEXP v_ = PROTECT(allocMatrix(CPLXSXP, n, r));
+  SEXP work_matrix_ = PROTECT(duplicate(A_));
+
+  if (r > 0) {
+    char jobu = 'S';
+    char jobvt = 'S';
+    int lda = m;
+    int ldu = m;
+    int ldvt = r;
+    int info = 0;
+    int lwork = -1;
+    Rcomplex work_query;
+    double* rwork = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(5 * r), sizeof(double))
+    );
+    F77_CALL(zgesvd)(&jobu, &jobvt, &m, &n, COMPLEX(work_matrix_), &lda,
+                     REAL(d_), COMPLEX(u_), &ldu, COMPLEX(vt_), &ldvt,
+                     &work_query, &lwork, rwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK zgesvd workspace query failed with info=%d", info);
+    }
+    lwork = static_cast<int>(work_query.r);
+    if (lwork < 1) {
+      lwork = 1;
+    }
+    SEXP work_ = PROTECT(allocVector(CPLXSXP, lwork));
+    work_matrix_ = PROTECT(duplicate(A_));
+    F77_CALL(zgesvd)(&jobu, &jobvt, &m, &n, COMPLEX(work_matrix_), &lda,
+                     REAL(d_), COMPLEX(u_), &ldu, COMPLEX(vt_), &ldvt,
+                     COMPLEX(work_), &lwork, rwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK zgesvd failed with info=%d", info);
+    }
+    UNPROTECT(2);
+
+    for (int col = 0; col < r; ++col) {
+      for (int row = 0; row < n; ++row) {
+        const Rcomplex z = COMPLEX(vt_)[col + static_cast<int64_t>(row) * r];
+        Rcomplex z_conj;
+        z_conj.r = z.r;
+        z_conj.i = -z.i;
+        COMPLEX(v_)[row + static_cast<int64_t>(col) * n] = z_conj;
       }
     }
   }

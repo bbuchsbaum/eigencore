@@ -1,4 +1,16 @@
 #' Define an eigenproblem.
+#'
+#' @param A Matrix or operator defining the linear map.
+#' @param metric Optional metric operator for generalized eigenproblems.
+#' @param structure Optional structure descriptor; defaults to the operator
+#'   structure.
+#' @param target Eigencore target descriptor.
+#' @param transform Optional transform method such as [shift_invert()].
+#' @examples
+#' A <- diag(c(4, 3, 2, 1))
+#' P <- eigen_problem(A, target = largest())
+#' fit <- solve(P, k = 2)
+#' values(fit)
 eigen_problem <- function(A, metric = NULL, structure = NULL, target = largest(),
                           transform = NULL) {
   Aop <- as_operator(A)
@@ -19,6 +31,17 @@ eigen_problem <- function(A, metric = NULL, structure = NULL, target = largest()
 }
 
 #' Define an SVD problem.
+#'
+#' @param A Matrix or operator defining the rectangular linear map.
+#' @param domain Optional domain-space descriptor.
+#' @param codomain Optional codomain-space descriptor.
+#' @param target Eigencore singular-value target descriptor.
+#' @examples
+#' set.seed(1)
+#' X <- matrix(rnorm(40), 8, 5)
+#' S <- svd_problem(X, target = largest())
+#' fit <- solve(S, rank = 2)
+#' values(fit)
 svd_problem <- function(A, domain = NULL, codomain = NULL, target = largest()) {
   Aop <- as_operator(A)
   if (is.null(domain)) {
@@ -39,12 +62,24 @@ svd_problem <- function(A, domain = NULL, codomain = NULL, target = largest()) {
 }
 
 #' Plan a solver for a problem.
+#'
+#' @param problem Eigencore eigen or SVD problem object.
+#' @param ... Additional planning arguments passed to methods.
+#' @examples
+#' A <- diag(c(4, 3, 2, 1))
+#' plan <- plan_solver(eigen_problem(A), k = 2)
+#' plan$method
+#' plan$reasons
 plan_solver <- function(problem, ...) {
   UseMethod("plan_solver")
 }
 
 #' @export
 plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...) {
+  nearest_shift <- auto_nearest_shift_invert(problem, method)
+  problem <- nearest_shift$problem
+  method <- nearest_shift$method
+
   has_metric <- !is.null(problem$metric)
   has_shift <- inherits(problem$transform, "eigencore_method") &&
     identical(problem$transform$kind, "shift_invert")
@@ -52,6 +87,7 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
   source_matrix <- source_or_null(problem$A)
   metric_matrix <- if (has_metric) source_or_null(problem$metric) else NULL
   is_dense_source <- is.matrix(source_matrix) && is.double(source_matrix)
+  is_complex_dense_source <- is.matrix(source_matrix) && is.complex(source_matrix)
   is_dense_metric <- is.matrix(metric_matrix) && is.double(metric_matrix)
   is_native_csc <- identical(problem$A$metadata$storage, "dgCMatrix")
   preconditioner_reason <- if (inherits(method, "eigencore_method") &&
@@ -79,6 +115,9 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
   } else if (inherits(method, "eigencore_method") && method$kind != "auto") {
     if (identical(method$kind, "lanczos")) {
       if (has_metric && is_hermitian &&
+          native_generalized_lanczos_supported(problem$A, problem$metric, target = problem$target)) {
+        native_generalized_lanczos_label()
+      } else if (has_metric && is_hermitian &&
           generalized_lanczos_supported(problem$A, problem$metric, target = problem$target)) {
         generalized_lanczos_label()
       } else if (has_metric && is_hermitian) {
@@ -131,6 +170,10 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
     "native dense generalized SPD LAPACK fallback"
   } else if (has_metric && is_hermitian) {
     "dense generalized SPD LAPACK oracle (prototype fallback)"
+  } else if (is_hermitian && is_complex_dense_source) {
+    native_dense_complex_hermitian_label()
+  } else if (structured_grid_laplacian_2d_supported(problem, method, k)) {
+    structured_grid_laplacian_2d_label()
   } else if (should_use_native_tridiagonal_hermitian(problem, k)) {
     native_tridiagonal_hermitian_label()
   } else if (!is.null(promoted_block_lanczos_controls(problem, k))) {
@@ -141,7 +184,11 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
       reference_arnoldi_target_supported(problem$target) &&
       native_arnoldi_available(problem$A) &&
       (is_native_csc || is_dense_source)) {
-    native_arnoldi_label()
+    native_refined_arnoldi_label()
+  } else if (!is_hermitian && !has_metric &&
+      reference_arnoldi_target_supported(problem$target) &&
+      native_matrix_free_arnoldi_available(problem$A)) {
+    native_matrix_free_arnoldi_label()
   } else if (!is_hermitian && !has_metric &&
       reference_arnoldi_target_supported(problem$target) &&
       (is_native_csc || is.null(source_or_null(problem$A)))) {
@@ -154,6 +201,8 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
     "native scalar thick-restart Hermitian Lanczos"
   } else if (is_hermitian && is_dense_source) {
     "native dense Hermitian LAPACK fallback"
+  } else if (!is_hermitian && !has_metric && is_complex_dense_source) {
+    native_dense_complex_general_label()
   } else if (is_hermitian) {
     "dense LAPACK Hermitian eigen oracle (prototype fallback)"
   } else {
@@ -164,10 +213,16 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
     paste0("structure: ", problem$structure$kind),
     paste0("target: ", target_label(problem$target)),
     if (has_metric) "metric/operator B supplied" else "standard eigenproblem",
+    if (nearest_shift$implicit) "nearest target routed through shift_invert(sigma)" else NULL,
     if (has_shift) "shift-invert transform requested" else NULL,
     preconditioner_reason,
     constraints_reason,
-    operator_kernel_reason(problem$A)
+    operator_kernel_reason(problem$A),
+    if (identical(chosen, structured_grid_laplacian_2d_label())) {
+      "explicit 2D path-grid Laplacian metadata enables separable diagnostic prototype; no arbitrary sparse recognition"
+    } else {
+      NULL
+    }
   )
 
   fallback <- if (grepl("Hermitian Lanczos", chosen, fixed = TRUE) ||
@@ -178,11 +233,17 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
   }
   controls <- lanczos_plan_controls(problem, k = k, method = method, chosen = chosen)
   if (identical(chosen, native_arnoldi_label()) ||
+      identical(chosen, native_refined_arnoldi_label()) ||
+      identical(chosen, native_matrix_free_arnoldi_label()) ||
       identical(chosen, reference_arnoldi_label())) {
     controls <- arnoldi_plan_controls(problem, k = k, chosen = chosen)
   }
-  if (identical(chosen, generalized_lanczos_label())) {
+  if (identical(chosen, generalized_lanczos_label()) ||
+      identical(chosen, native_generalized_lanczos_label())) {
     controls <- generalized_lanczos_plan_controls(problem, k = k, method = method)
+  }
+  if (identical(chosen, structured_grid_laplacian_2d_label())) {
+    controls <- structured_grid_laplacian_2d_controls(problem, k = k)
   }
   if (grepl("LOBPCG", chosen, fixed = TRUE)) {
     controls <- lobpcg_plan_controls(method)
@@ -197,27 +258,92 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
   )
 }
 
+#' @keywords internal
+is_auto_method <- function(method) {
+  inherits(method, "eigencore_method") && identical(method$kind, "auto")
+}
+
+#' @keywords internal
+is_nearest_target <- function(target) {
+  inherits(target, "eigencore_target") && identical(target$kind, "nearest")
+}
+
+#' @keywords internal
+auto_nearest_shift_invert <- function(problem, method) {
+  if (!is_auto_method(method) ||
+      is_transform_method(problem$transform) ||
+      !is_nearest_target(problem$target)) {
+    return(list(problem = problem, method = method, implicit = FALSE))
+  }
+
+  sigma <- problem$target$value
+  if (length(sigma) != 1L || !is.finite(sigma)) {
+    stop("nearest(sigma) auto-routing requires a single finite numeric sigma.", call. = FALSE)
+  }
+
+  transform <- shift_invert(sigma)
+  problem$transform <- transform
+  list(problem = problem, method = transform, implicit = TRUE)
+}
+
 #' @export
 plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ...) {
   source_matrix <- source_or_null(problem$A)
   is_dense_source <- is.matrix(source_matrix) && is.double(source_matrix)
+  is_complex_dense_source <- is.matrix(source_matrix) && is.complex(source_matrix)
   is_native_csc <- identical(problem$A$metadata$storage, "dgCMatrix")
+  is_native_matrix_free_gk <- native_matrix_free_golub_kahan_available(problem$A)
+  is_smallest_svd_target <- svd_target_is_smallest(problem$target)
+  is_interior_svd_target <- svd_target_is_interior(problem$target)
+  has_exact_operator_scale <- operator_has_nonestimated_norm_provenance(problem$A)
   chosen <- if (inherits(method, "eigencore_method") && method$kind != "auto") {
     if (identical(method$kind, "golub_kahan")) {
-      if (is_native_csc || is_dense_source) "native prototype Golub-Kahan" else "prototype Golub-Kahan"
+      if (is_smallest_svd_target && is_native_csc) {
+        native_smallest_golub_kahan_label()
+      } else if (is_smallest_svd_target && is_native_matrix_free_gk && has_exact_operator_scale) {
+        native_matrix_free_smallest_golub_kahan_label()
+      } else if (is_interior_svd_target && is_native_csc) {
+        native_interior_golub_kahan_label()
+      } else if (is_interior_svd_target && is_native_matrix_free_gk && has_exact_operator_scale) {
+        native_matrix_free_interior_golub_kahan_label()
+      } else if (is_native_csc || is_dense_source) {
+        "native prototype Golub-Kahan"
+      } else if (is_native_matrix_free_gk) {
+        native_matrix_free_golub_kahan_label()
+      } else {
+        "prototype Golub-Kahan"
+      }
     } else if (identical(method$kind, "randomized")) {
-      "reference randomized SVD prototype"
+      if (native_dense_randomized_svd_supported(problem, method)) {
+        native_dense_randomized_svd_label()
+      } else if (native_csc_randomized_svd_supported(problem, method)) {
+        native_csc_randomized_svd_label()
+      } else {
+        "reference randomized SVD prototype"
+      }
     } else {
       method_label(method)
     }
   } else if (should_use_native_gram_svd(problem, method, rank = rank)) {
     "native certified Gram SVD special case"
   } else if (should_use_native_retained_golub_kahan(problem, method, rank = rank)) {
-    "native retained Golub-Kahan SVD (thick restart)"
+    native_retained_golub_kahan_diagnostic_label()
+  } else if (is_smallest_svd_target && is_native_csc && !is.null(problem$A$apply_adjoint)) {
+    native_smallest_golub_kahan_label()
+  } else if (is_smallest_svd_target && is_native_matrix_free_gk && has_exact_operator_scale) {
+    native_matrix_free_smallest_golub_kahan_label()
+  } else if (is_interior_svd_target && is_native_csc && !is.null(problem$A$apply_adjoint)) {
+    native_interior_golub_kahan_label()
+  } else if (is_interior_svd_target && is_native_matrix_free_gk && has_exact_operator_scale) {
+    native_matrix_free_interior_golub_kahan_label()
   } else if (is_native_csc && !is.null(problem$A$apply_adjoint)) {
     "native prototype Golub-Kahan"
+  } else if (is_native_matrix_free_gk) {
+    native_matrix_free_golub_kahan_label()
   } else if (is.null(source_or_null(problem$A)) && !is.null(problem$A$apply_adjoint)) {
     "prototype Golub-Kahan"
+  } else if (is_complex_dense_source) {
+    native_dense_complex_svd_label()
   } else if (is_dense_source) {
     "native dense LAPACK SVD fallback"
   } else {
@@ -229,8 +355,18 @@ plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ..
     if (!is.null(problem$A$apply_adjoint)) "adjoint is available" else "adjoint is missing",
     if (identical(chosen, "native certified Gram SVD special case")) {
       "small rectangular sparse problem: materializes the smaller Gram matrix as an explicit certified special case"
-    } else if (identical(chosen, "native retained Golub-Kahan SVD (thick restart)")) {
-      "sparse explicit operator uses native retained block Golub-Kahan with thick restart"
+    } else if (identical(chosen, native_retained_golub_kahan_diagnostic_label())) {
+      "sparse explicit operator uses diagnostic native retained block Golub-Kahan with thick restart; not production-promoted"
+    } else if (identical(chosen, native_matrix_free_golub_kahan_label()) ||
+        identical(chosen, native_matrix_free_smallest_golub_kahan_label()) ||
+        identical(chosen, native_matrix_free_interior_golub_kahan_label())) {
+      "matrix-free operator uses a native Golub-Kahan callback cycle with native Ritz extraction; sparse/matrix-free performance promotion remains gated"
+    } else if (identical(chosen, native_smallest_golub_kahan_label())) {
+      "smallest-SVD target uses a native Golub-Kahan cycle with exact two-sided certification"
+    } else if (identical(chosen, native_interior_golub_kahan_label())) {
+      "nearest-SVD target uses a native full-subspace Golub-Kahan cycle without densifying the original operator"
+    } else if (identical(chosen, native_dense_randomized_svd_label())) {
+      "dense randomized request uses the native QR range/subspace/projected-core controller with exact residual certification"
     } else {
       "default avoids normal equations"
     },
@@ -238,10 +374,16 @@ plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ..
   )
   fallback <- if (identical(chosen, "native certified Gram SVD special case")) {
     "native Golub-Kahan if Gram special case is disabled or uncertified"
+  } else if (identical(chosen, native_matrix_free_golub_kahan_label()) ||
+      identical(chosen, native_matrix_free_smallest_golub_kahan_label()) ||
+      identical(chosen, native_matrix_free_interior_golub_kahan_label())) {
+    "dense oracle prototype if native callback boundary is unsupported"
   } else if (grepl("prototype Golub-Kahan", chosen, fixed = TRUE)) {
     "dense oracle prototype if unsupported"
-  } else if (identical(chosen, "native retained Golub-Kahan SVD (thick restart)")) {
+  } else if (identical(chosen, native_retained_golub_kahan_diagnostic_label())) {
     "native prototype Golub-Kahan if retained restart is unsupported"
+  } else if (identical(chosen, native_dense_randomized_svd_label())) {
+    "reference randomized SVD prototype if dense native controller is unsupported"
   } else {
     "dense oracle prototype"
   }
@@ -260,7 +402,11 @@ plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ..
 arnoldi_plan_controls <- function(problem, k, chosen) {
   n <- as.integer(problem$A$dim[1L])
   k <- as.integer(k)
-  native_path <- identical(chosen, native_arnoldi_label())
+  native_path <- identical(chosen, native_arnoldi_label()) ||
+    identical(chosen, native_refined_arnoldi_label()) ||
+    identical(chosen, native_matrix_free_arnoldi_label())
+  refined_native_path <- identical(chosen, native_refined_arnoldi_label())
+  matrix_free_native_path <- identical(chosen, native_matrix_free_arnoldi_label())
   source_matrix <- source_or_null(problem$A)
   dense_native_path <- native_path && is.matrix(source_matrix) && is.double(source_matrix)
   default_restarts <- if (native_path) 5L else 0L
@@ -279,8 +425,23 @@ arnoldi_plan_controls <- function(problem, k, chosen) {
   list(
     max_subspace = max_subspace,
     max_restarts = max_restarts,
-    restart = if (native_path) "native Arnoldi cycle restart budget" else "reference Arnoldi restart budget",
+    restart = if (matrix_free_native_path) {
+      "native matrix-free Arnoldi callback restart budget"
+    } else if (native_path) {
+      "native Arnoldi cycle restart budget"
+    } else {
+      "reference Arnoldi restart budget"
+    },
     ritz_extraction_native = native_path,
+    arnoldi_extraction = if (refined_native_path) "refined_ritz" else "projected_ritz",
+    refined_extraction_native = refined_native_path,
+    krylov_schur = FALSE,
+    krylov_schur_status = if (refined_native_path) {
+      "not implemented; V2 tranche promotes native refined Ritz extraction only"
+    } else {
+      "not requested"
+    },
+    v2_issue = if (refined_native_path) "bd-01KTF6H41S9XDN286TR3V184P4" else NULL,
     certification_policy = "right residual certificate on original nonsymmetric eigenproblem"
   )
 }
@@ -292,6 +453,8 @@ operator_kernel_reason <- function(op) {
     "built-in sparse CSC operator has native block apply"
   } else if (identical(storage, "ddiMatrix")) {
     "built-in diagonal operator has native block apply"
+  } else if (identical(storage, "complex_dense_matrix")) {
+    "base complex dense source has native dense LAPACK decomposition kernels and native zgemm block apply"
   } else if (isTRUE(op$metadata$native)) {
     "built-in dense operator has native block apply"
   } else {
@@ -448,9 +611,157 @@ promoted_block_lanczos_controls <- function(problem, k) {
 }
 
 #' @keywords internal
+native_retained_golub_kahan_diagnostic_label <- function() {
+  "diagnostic native retained Golub-Kahan SVD (thick restart; not production-promoted)"
+}
+
+#' @keywords internal
+native_smallest_golub_kahan_label <- function() {
+  "native certified smallest Golub-Kahan SVD"
+}
+
+#' @keywords internal
+native_matrix_free_smallest_golub_kahan_label <- function() {
+  "native certified smallest matrix-free Golub-Kahan callback SVD (exact-norm boundary)"
+}
+
+#' @keywords internal
+native_interior_golub_kahan_label <- function() {
+  "native full-subspace interior Golub-Kahan SVD"
+}
+
+#' @keywords internal
+native_matrix_free_interior_golub_kahan_label <- function() {
+  "native full-subspace interior matrix-free Golub-Kahan SVD (exact-norm boundary)"
+}
+
+#' @keywords internal
+native_dense_randomized_svd_label <- function() {
+  "native dense randomized SVD controller (QR, exact-certificate boundary)"
+}
+
+#' @keywords internal
+native_csc_randomized_svd_label <- function() {
+  "native sparse CSC randomized SVD controller (QR, exact-certificate boundary)"
+}
+
+#' @keywords internal
+native_dense_randomized_svd_supported <- function(problem, method) {
+  source_matrix <- source_or_null(problem$A)
+  is_dense_source <- is.matrix(source_matrix) && is.double(source_matrix)
+  kind <- svd_target_kind(problem$target)
+  inherits(method, "eigencore_method") &&
+    identical(method$kind, "randomized") &&
+    is_dense_source &&
+    identical(method$normalizer %||% "qr", "qr") &&
+    kind %in% c("largest", "largest_magnitude")
+}
+
+#' @keywords internal
+native_csc_randomized_svd_supported <- function(problem, method) {
+  source_matrix <- source_or_null(problem$A) %||% problem$A$metadata$matrix
+  is_csc_source <- inherits(source_matrix, "dgCMatrix")
+  kind <- svd_target_kind(problem$target)
+  inherits(method, "eigencore_method") &&
+    identical(method$kind, "randomized") &&
+    is_csc_source &&
+    identical(method$normalizer %||% "qr", "qr") &&
+    kind %in% c("largest", "largest_magnitude")
+}
+
+#' @keywords internal
+svd_target_kind <- function(target) {
+  if (inherits(target, "eigencore_target")) target$kind else "largest"
+}
+
+#' @keywords internal
+svd_target_is_smallest <- function(target) {
+  svd_target_kind(target) %in% c("smallest", "smallest_magnitude")
+}
+
+#' @keywords internal
+svd_target_is_interior <- function(target) {
+  identical(svd_target_kind(target), "nearest")
+}
+
+#' @keywords internal
+svd_native_iterative_plan <- function(method_label) {
+  method_label %in% c(
+    "native prototype Golub-Kahan",
+    native_smallest_golub_kahan_label(),
+    native_interior_golub_kahan_label(),
+    native_retained_golub_kahan_diagnostic_label(),
+    native_matrix_free_golub_kahan_label(),
+    native_matrix_free_smallest_golub_kahan_label(),
+    native_matrix_free_interior_golub_kahan_label()
+  )
+}
+
+#' @keywords internal
+operator_has_nonestimated_norm_provenance <- function(op) {
+  !is.null(op$metadata$frobenius_norm) || !is.null(source_or_null(op))
+}
+
+#' @keywords internal
+svd_target_plan_controls <- function(problem, chosen) {
+  target <- problem$target %||% largest()
+  kind <- svd_target_kind(target)
+  family <- if (kind %in% c("largest", "largest_magnitude")) {
+    "largest"
+  } else if (kind %in% c("smallest", "smallest_magnitude")) {
+    "smallest"
+  } else if (identical(kind, "nearest")) {
+    "interior"
+  } else {
+    "unsupported"
+  }
+
+  boundary <- if (identical(family, "interior") && grepl("dense", chosen, fixed = TRUE)) {
+    "dense exact fallback"
+  } else if (identical(chosen, "native certified Gram SVD special case") &&
+      identical(family, "smallest")) {
+    "native certified smallest SVD production boundary"
+  } else if (identical(chosen, native_interior_golub_kahan_label()) ||
+      identical(chosen, native_matrix_free_interior_golub_kahan_label())) {
+    "native full-subspace interior SVD boundary"
+  } else if (identical(family, "interior") && svd_native_iterative_plan(chosen)) {
+    "unsupported native iterative interior SVD"
+  } else if (identical(family, "interior")) {
+    "reference/prototype interior selection"
+  } else if (identical(family, "smallest") && grepl("dense", chosen, fixed = TRUE)) {
+    "dense exact fallback"
+  } else if (identical(chosen, native_smallest_golub_kahan_label()) ||
+      identical(chosen, native_matrix_free_smallest_golub_kahan_label())) {
+    "native certified smallest SVD production boundary"
+  } else if (identical(family, "smallest")) {
+    "exact-certificate iterative smallest SVD boundary"
+  } else {
+    "largest singular-value surface"
+  }
+
+  list(
+    svd_target_kind = kind,
+    svd_target_family = family,
+    svd_target_boundary = boundary,
+    svd_target_issue = if (family %in% c("smallest", "interior")) {
+      "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
+    } else {
+      NULL
+    },
+    svd_target_closed_decision_issue = if (family %in% c("smallest", "interior")) {
+      "bd-01KTEH6862GB19JJWX2M3FQP6T"
+    } else {
+      NULL
+    },
+    svd_target_certificate_policy = "exact two-sided residual certificate in original coordinates"
+  )
+}
+
+#' @keywords internal
 svd_plan_controls <- function(problem, rank, method, chosen) {
   dims <- as.integer(problem$A$dim)
   rank <- min(as.integer(rank), min(dims))
+  target_controls <- svd_target_plan_controls(problem, chosen)
   if (inherits(method, "eigencore_method") && identical(method$kind, "randomized")) {
     oversample <- max(0L, as.integer(method$oversample %||% 10L))
     n_iter <- max(0L, as.integer(method$n_iter %||% 2L))
@@ -459,7 +770,7 @@ svd_plan_controls <- function(problem, rank, method, chosen) {
       normalizer <- "qr"
     }
     sample_dimension <- min(min(dims), rank + oversample)
-    return(list(
+    return(c(target_controls, list(
       oversample = oversample,
       n_iter = n_iter,
       sample_dimension = sample_dimension,
@@ -467,33 +778,60 @@ svd_plan_controls <- function(problem, rank, method, chosen) {
       approximate = TRUE,
       auto_selected = FALSE,
       refine = isTRUE(method$refine),
+      randomized_controller = if (identical(chosen, native_dense_randomized_svd_label())) {
+        "native_dense_qr"
+      } else if (identical(chosen, native_csc_randomized_svd_label())) {
+        "native_csc_qr"
+      } else {
+        "reference_control"
+      },
+      randomized_controller_native = chosen %in% c(
+        native_dense_randomized_svd_label(),
+        native_csc_randomized_svd_label()
+      ),
+      randomized_controller_issue = "bd-01KTEPZ7TP4Q3J1WA83XZH6A05",
+      randomized_controller_boundary = if (identical(chosen, native_dense_randomized_svd_label())) {
+        "dense QR randomized native controller with R result construction"
+      } else if (identical(chosen, native_csc_randomized_svd_label())) {
+        "sparse CSC QR randomized native controller with R result construction"
+      } else {
+        "reference-control randomized SVD prototype"
+      },
       certification_policy = if (isTRUE(method$refine)) {
         "residual certificate, with deterministic refinement when needed"
       } else {
         "residual certificate only; stochastic sketch is not sufficient to pass"
       },
       certification_refinement = "native Gram SVD when available and randomized certificate fails"
-    ))
+    )))
   }
 
   if (identical(chosen, "native certified Gram SVD special case")) {
-    return(list(
-      gram_side = if (dims[2L] <= dims[1L]) "right" else "left",
-      gram_dimension = min(dims),
-      gram_max_dimension = as.integer(getOption("eigencore.gram_svd_max_dimension", 512L)),
-      rank_fraction_limit = 0.5,
-      certified_in_original_coordinates = TRUE,
-      materializes = "smaller Gram matrix only",
-      fallback_policy = "certification-gated",
-      runtime_fallback = "native Golub-Kahan if original-coordinate certificate is weaker",
-      fallback_requires_vectors = "both"
-    ))
+    controls <- c(
+      target_controls,
+      gram_svd_plan_controls(dims, rank, problem$target)
+    )
+    if (identical(target_controls$svd_target_family, "smallest")) {
+      controls$promotion_status <- "production_smallest_gram_certified"
+      controls$promotion_gate <- "post_v1_svd_smallest_surface"
+      controls$promotion_gate_issue <- "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
+      controls$closed_decision_issue <- "bd-01KTEH6862GB19JJWX2M3FQP6T"
+      controls$promotion_requires <- c(
+        "small-side Gram dimension passes explicit materialization gate",
+        "exact two-sided certificate passes",
+        "original sparse operator is not densified"
+      )
+    }
+    return(controls)
   }
 
   if (grepl("Golub-Kahan", chosen, fixed = TRUE)) {
     is_gk <- inherits(method, "eigencore_method") && identical(method$kind, "golub_kahan")
     is_auto <- inherits(method, "eigencore_method") && identical(method$kind, "auto")
     is_native_csc <- identical(problem$A$metadata$storage %||% NULL, "dgCMatrix")
+    is_native_matrix_free <- identical(chosen, native_matrix_free_golub_kahan_label()) ||
+      identical(chosen, native_matrix_free_smallest_golub_kahan_label()) ||
+      identical(chosen, native_matrix_free_interior_golub_kahan_label())
     requested_max_subspace <- if (is_gk) method$max_subspace else NULL
     method_reorthogonalize <- if (is_gk) {
       isTRUE(method$reorthogonalize)
@@ -512,18 +850,90 @@ svd_plan_controls <- function(problem, rank, method, chosen) {
     } else {
       min(min(dims), as.integer(requested_max_subspace))
     }
-    controls <- list(
+    controls <- c(target_controls, list(
       adaptive_subspace = is.null(requested_max_subspace),
       initial_max_subspace = initial_max_subspace,
       reorthogonalize = method_reorthogonalize,
       requires_adjoint = TRUE,
       default_normal_equations = FALSE
-    )
-    if (identical(chosen, "native retained Golub-Kahan SVD (thick restart)")) {
+    ))
+    if (identical(chosen, native_retained_golub_kahan_diagnostic_label())) {
       controls$retained_restart <- TRUE
       controls$thick_restart <- TRUE
       controls$restart_policy <- "native Ritz-plus-random retained restart"
       controls$cached_av_retention <- FALSE
+      controls$promotion_status <- "diagnostic_only"
+      controls$promotion_gate <- "post_v1_svd_hard_surface"
+      controls$promotion_gate_issue <- "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
+      controls$closed_decision_issue <- "bd-01KTE8J9SF16Y1832D8HQQ9KEC"
+      controls$promotion_requires <- c(
+        "general sparse and matrix-free rows pass strict installed gates",
+        "time-to-certified-answer beats certified RSpectra/irlba baselines",
+        "memory is no worse than the best certified reference",
+        "exact two-sided SVD certificates pass",
+        "planner label remains diagnostic until gates pass"
+      )
+    }
+    if (is_native_matrix_free) {
+      controls$matrix_free_native <- TRUE
+      controls$callback_boundary <- TRUE
+      controls$promotion_status <- "callback_boundary_native"
+      controls$promotion_gate <- "post_v1_operator_sidecars"
+      controls$promotion_gate_issue <- "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
+      controls$closed_decision_issue <- "bd-01KTE8J9SF16Y1832D8HQQ9KEC"
+      controls$promotion_requires <- c(
+        "operator-sidecar gate passes with native label and exact two-sided certificate",
+        "general sparse and matrix-free rows still require strict installed time and memory gates",
+        "do not reuse this callback-boundary label as a production sparse SVD promotion"
+      )
+    }
+    if (identical(chosen, native_smallest_golub_kahan_label())) {
+      controls$promotion_status <- "production_smallest_certified"
+      controls$promotion_gate <- "post_v1_svd_smallest_surface"
+      controls$promotion_gate_issue <- "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
+      controls$closed_decision_issue <- "bd-01KTEH6862GB19JJWX2M3FQP6T"
+      controls$promotion_requires <- c(
+        "exact two-sided certificate passes",
+        "no sparse densification is required",
+        "nearest/interior SVD remains a separate future-scope boundary"
+      )
+    }
+    if (identical(chosen, native_interior_golub_kahan_label())) {
+      controls$promotion_status <- "production_interior_full_subspace"
+      controls$promotion_gate <- "post_v1_svd_interior_surface"
+      controls$promotion_gate_issue <- "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
+      controls$closed_decision_issue <- "bd-01KTEH6862GB19JJWX2M3FQP6T"
+      controls$full_subspace_interior <- TRUE
+      controls$promotion_requires <- c(
+        "exact two-sided certificate passes",
+        "native Golub-Kahan reaches the full smaller subspace",
+        "no sparse densification is required"
+      )
+    }
+    if (identical(chosen, native_matrix_free_smallest_golub_kahan_label())) {
+      controls$promotion_status <- "production_smallest_exact_norm_callback"
+      controls$promotion_gate <- "post_v1_svd_smallest_surface"
+      controls$promotion_gate_issue <- "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
+      controls$closed_decision_issue <- "bd-01KTEH6862GB19JJWX2M3FQP6T"
+      controls$requires_nonestimated_norm_scale <- TRUE
+      controls$promotion_requires <- c(
+        "operator supplies exact Frobenius norm metadata",
+        "exact two-sided certificate passes with scale_is_estimate = FALSE",
+        "nearest/interior SVD remains a separate future-scope boundary"
+      )
+    }
+    if (identical(chosen, native_matrix_free_interior_golub_kahan_label())) {
+      controls$promotion_status <- "production_interior_exact_norm_callback_full_subspace"
+      controls$promotion_gate <- "post_v1_svd_interior_surface"
+      controls$promotion_gate_issue <- "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
+      controls$closed_decision_issue <- "bd-01KTEH6862GB19JJWX2M3FQP6T"
+      controls$requires_nonestimated_norm_scale <- TRUE
+      controls$full_subspace_interior <- TRUE
+      controls$promotion_requires <- c(
+        "operator supplies exact Frobenius norm metadata",
+        "native Golub-Kahan reaches the full smaller subspace",
+        "exact two-sided certificate passes with scale_is_estimate = FALSE"
+      )
     }
     if (!is.null(requested_max_subspace)) {
       controls$max_subspace <- min(min(dims), as.integer(requested_max_subspace))
@@ -532,13 +942,14 @@ svd_plan_controls <- function(problem, rank, method, chosen) {
   }
 
   if (grepl("dense", chosen, fixed = TRUE)) {
-    return(list(
+    return(c(target_controls, list(
       dense_fallback_mb = getOption("eigencore.dense_fallback_mb", 256),
-      certification = "original dense coordinates"
-    ))
+      certification = "original dense coordinates",
+      svd_dense_fallback_exact = TRUE
+    )))
   }
 
-  list()
+  target_controls
 }
 
 #' @keywords internal

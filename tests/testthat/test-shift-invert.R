@@ -32,6 +32,84 @@ test_that("shift-invert returns interior eigenvalues nearest sigma on dense Herm
   expect_equal(fit$sigma, 2)
 })
 
+test_that("auto nearest target routes through shift-invert with original-coordinate certification", {
+  set.seed(420)
+  vals <- c(-3, -1, 0.5, 1.5, 2.7, 4, seq(5, 30, length.out = 14L))
+  A <- symmetric_with_spectrum(vals, seed = 420)
+
+  plan <- plan_solver(eigen_problem(A, target = nearest(2)), k = 3L)
+  expect_identical(plan$method, eigencore:::native_dense_shift_invert_label())
+  expect_true(any(grepl("nearest target routed through shift_invert", plan$reasons,
+                        fixed = TRUE)))
+  expect_identical(plan$controls$transform, "shift_invert")
+  expect_identical(plan$controls$transformed_operator_target,
+                   "largest_magnitude")
+  expect_true(plan$controls$certified_in_original_coordinates)
+
+  fit <- eig_partial(A, k = 3L, target = nearest(2))
+  expected <- vals[order(abs(vals - 2))][1:3]
+  expect_identical(fit$method, eigencore:::native_dense_shift_invert_label())
+  expect_equal(sort(values(fit)), sort(expected), tolerance = 1e-7)
+  expect_identical(fit$transform$kind, "shift_invert")
+  expect_identical(fit$target, "nearest(2)")
+  expect_certificate_clean(fit)
+
+  P <- eigen_problem(A, target = nearest(2))
+  fit_direct <- solve(P, k = 3L)
+  expect_identical(fit_direct$method, eigencore:::native_dense_shift_invert_label())
+  expect_equal(sort(values(fit_direct)), sort(expected), tolerance = 1e-7)
+  expect_identical(fit_direct$transform$kind, "shift_invert")
+})
+
+test_that("auto nearest target preserves sparse shift-invert boundary labels", {
+  set.seed(421)
+  vals <- seq(1, 30)
+  A_csc <- methods::as(
+    Matrix::Matrix(symmetric_with_spectrum(vals, seed = 421), sparse = TRUE),
+    "CsparseMatrix"
+  )
+
+  fit <- eig_partial(A_csc, k = 4L, target = nearest(15.5))
+  expected <- vals[order(abs(vals - 15.5))][1:4]
+  expect_identical(fit$method,
+                   "reference Hermitian Lanczos shift-invert (sparse LU)")
+  expect_equal(sort(values(fit)), sort(expected), tolerance = 1e-7)
+  expect_identical(fit$transform$kind, "shift_invert")
+  expect_equal(fit$transform$factorization_cache$contract$provider,
+               "Matrix::lu_reference_factorization")
+  expect_equal(fit$transform$factorization_cache$contract$promotion_status,
+               "reference_boundary")
+  expect_true(all(fit$certificate$converged))
+  expect_true(fit$certificate$scale_is_estimate)
+})
+
+test_that("auto nearest target fails loudly for matrix-free operators without a solve", {
+  A <- diag(c(1, 3, 6, 10))
+  op <- linear_operator(
+    dim = c(4L, 4L),
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      out <- A %*% X
+      if (is.null(Y)) {
+        alpha * out
+      } else {
+        alpha * out + beta * Y
+      }
+    },
+    structure = hermitian(),
+    name = "matrix_free_hermitian"
+  )
+
+  plan <- plan_solver(eigen_problem(op, target = nearest(3)), k = 1L)
+  expect_match(plan$method, "provide method\\$solve for matrix-free A")
+  expect_true(any(grepl("nearest target routed through shift_invert", plan$reasons,
+                        fixed = TRUE)))
+
+  expect_error(
+    eig_partial(op, k = 1L, target = nearest(3)),
+    "user-supplied solve operator"
+  )
+})
+
 test_that("shift-invert handles a sparse CSC source via factorized solve", {
   set.seed(7)
   vals <- seq(1, 30)
@@ -60,6 +138,14 @@ test_that("shift-invert handles a sparse CSC source via factorized solve", {
   expect_true(is.finite(cache$condition_estimate))
   expect_gt(cache$condition_estimate, 0)
   expect_false(isTRUE(cache$near_singular))
+  contract <- cache$contract
+  expect_equal(contract$contract_version, "shift_invert_factorization_contract_v1")
+  expect_equal(contract$provider, "Matrix::lu_reference_factorization")
+  expect_equal(contract$promotion_status, "reference_boundary")
+  expect_false(contract$owned_by_eigencore)
+  expect_false(contract$external_cache)
+  expect_equal(contract$memory_policy, "sparse_factorization_no_dense_rcond")
+  expect_equal(contract$certificate_policy, "original_coordinate_residual_required")
 })
 
 test_that("shift-invert uses native tridiagonal factorized Lanczos for sparse CSC paths", {
@@ -132,6 +218,14 @@ test_that("shift-invert accepts a user-supplied solve operator", {
   expect_equal(sort(fit$values), sort(expected), tolerance = 1e-7)
   expect_equal(fit$transform$factorization_cache$factorization, "user_solve")
   expect_true(fit$transform$factorization_cache$external_cache)
+  contract <- fit$transform$factorization_cache$contract
+  expect_equal(contract$contract_version, "shift_invert_factorization_contract_v1")
+  expect_equal(contract$provider, "user_supplied_solve")
+  expect_equal(contract$promotion_status, "reference_boundary")
+  expect_false(contract$owned_by_eigencore)
+  expect_true(contract$external_cache)
+  expect_equal(contract$memory_policy, "external_cache_user_owned_no_dense_fallback")
+  expect_equal(contract$certificate_policy, "original_coordinate_residual_required")
 })
 
 test_that("shift-invert refuses ignored public factorization handles", {
@@ -244,6 +338,12 @@ test_that("generalized shift-invert keeps non-tridiagonal sparse A reference-lab
   expect_equal(fit$transform$factorization_cache$label_kind,
                "sparse_lu_generalized")
   expect_false(isTRUE(fit$transform$factorization_cache$native))
+  contract <- fit$transform$factorization_cache$contract
+  expect_equal(contract$provider, "Matrix::lu_reference_factorization")
+  expect_equal(contract$promotion_status, "reference_boundary")
+  expect_false(contract$owned_by_eigencore)
+  expect_true(contract$generalized)
+  expect_equal(contract$memory_policy, "sparse_factorization_no_dense_rcond")
 })
 
 test_that("generalized shift-invert rejects unsupported sparse B without densifying", {
@@ -343,6 +443,16 @@ test_that("shift-invert result exposes factorization-cache provenance", {
   expect_true(cache$native)
   expect_true(cache$reusable_within_operator)
   expect_false(cache$external_cache)
+  contract <- cache$contract
+  expect_equal(contract$contract_version, "shift_invert_factorization_contract_v1")
+  expect_equal(contract$provider, "eigencore_native_factorization")
+  expect_equal(contract$promotion_status, "promoted_native")
+  expect_true(contract$owned_by_eigencore)
+  expect_false(contract$external_cache)
+  expect_equal(contract$cache_key_scope, "A_fingerprint+B_fingerprint+sigma+structure")
+  expect_equal(contract$memory_policy, "native_factorized_apply_no_dense_fallback")
+  expect_equal(contract$certificate_policy, "original_coordinate_residual_required")
+  expect_true(contract$native_label_requires_owned_factorized_apply)
 })
 
 test_that("shift-invert near a true eigenvalue surfaces a clear error", {

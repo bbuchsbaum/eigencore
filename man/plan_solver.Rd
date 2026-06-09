@@ -7,11 +7,16 @@
 plan_solver(problem, ...)
 }
 \arguments{
-\item{problem}{Documented argument.}
+\item{problem}{Eigencore eigen or SVD problem object.}
 
-\item{...}{Additional arguments passed to methods.}
-
+\item{...}{Additional planning arguments passed to methods.}
 }
 \description{
 Plan a solver for a problem.
+}
+\examples{
+A <- diag(c(4, 3, 2, 1))
+plan <- plan_solver(eigen_problem(A), k = 2)
+plan$method
+plan$reasons
 }
