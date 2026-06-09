@@ -9,6 +9,16 @@ native_arnoldi_label <- function() {
 }
 
 #' @keywords internal
+native_refined_arnoldi_label <- function() {
+  "native Arnoldi cycle + native refined Ritz extraction (V2 tranche)"
+}
+
+#' @keywords internal
+native_matrix_free_arnoldi_label <- function() {
+  "native matrix-free Arnoldi callback cycle + native Ritz extraction"
+}
+
+#' @keywords internal
 reference_arnoldi_target_supported <- function(target) {
   kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
   kind %in% c(
@@ -23,10 +33,177 @@ reference_arnoldi_target_supported <- function(target) {
 }
 
 #' @keywords internal
+# For real operators A and A^T share the same eigenvalues, so the same target
+# works for both the forward and adjoint solves.  For complex operators the
+# adjoint eigenvalues are the conjugates of A's eigenvalues, which would
+# require flipping imaginary-part targets (largest_imaginary <->
+# smallest_imaginary).  That case does not arise today because every code path
+# that reaches arnoldi_left_eigen_contract operates on real (dtype "double")
+# operators.  If complex operator support is added, this function must be
+# updated to conjugate imaginary-part targets.
+adjoint_arnoldi_target <- function(target) {
+  target
+}
+
+#' @keywords internal
+match_left_eigenvectors <- function(left_values, left_vectors, values) {
+  left_values <- as.vector(left_values)
+  left_vectors <- as.matrix(left_vectors)
+  wanted <- as.vector(values)
+  used <- rep(FALSE, length(left_values))
+  idx <- integer(length(wanted))
+  distance <- rep(Inf, length(wanted))
+
+  for (j in seq_along(wanted)) {
+    available <- which(!used)
+    if (!length(available)) break
+    d <- abs(left_values[available] - wanted[[j]])
+    pick <- available[[which.min(d)]]
+    idx[[j]] <- pick
+    distance[[j]] <- min(d)
+    used[[pick]] <- TRUE
+  }
+
+  if (any(idx == 0L)) {
+    return(NULL)
+  }
+  list(
+    values = left_values[idx],
+    vectors = left_vectors[, idx, drop = FALSE],
+    match_distance = distance
+  )
+}
+
+#' @keywords internal
+normalize_left_eigenvectors <- function(left_vectors, right_vectors) {
+  left_vectors <- as.matrix(left_vectors)
+  right_vectors <- as.matrix(right_vectors)
+  gram <- crossprod(left_vectors, right_vectors)
+  diag_gram <- diag(gram)
+  stable <- is.finite(Mod(diag_gram)) &
+    Mod(diag_gram) > 100 * .Machine$double.eps
+  if (any(stable)) {
+    left_vectors[, stable] <- sweep(
+      left_vectors[, stable, drop = FALSE],
+      2L,
+      diag_gram[stable],
+      `/`
+    )
+  }
+  left_vectors
+}
+
+#' @keywords internal
+arnoldi_left_eigen_contract <- function(op, values, right_vectors, target,
+                                        tol = 1e-8, maxit = NULL,
+                                        max_restarts = 0L,
+                                        extraction = "projected_ritz") {
+  if (is.null(right_vectors)) {
+    return(list(
+      supported = FALSE,
+      reason = "right eigenvectors were not returned",
+      vectors = NULL,
+      certificate = NULL,
+      biorthogonality = NULL
+    ))
+  }
+
+  adjoint_op <- tryCatch(
+    adjoint(op),
+    error = function(e) e
+  )
+  if (inherits(adjoint_op, "error")) {
+    return(list(
+      supported = FALSE,
+      reason = conditionMessage(adjoint_op),
+      vectors = NULL,
+      certificate = NULL,
+      biorthogonality = NULL
+    ))
+  }
+
+  k <- length(values)
+  left_solver <- if (native_arnoldi_available(adjoint_op) ||
+      native_matrix_free_arnoldi_available(adjoint_op)) {
+    native_arnoldi_general
+  } else {
+    reference_arnoldi_general
+  }
+  left_iter <- tryCatch(
+    left_solver(
+      adjoint_op,
+      k = k,
+      target = adjoint_arnoldi_target(target),
+      tol = tol,
+      maxit = maxit,
+      max_restarts = max_restarts,
+      vectors = TRUE,
+      extraction = extraction
+    ),
+    error = function(e) e
+  )
+  if (inherits(left_iter, "error")) {
+    return(list(
+      supported = FALSE,
+      reason = conditionMessage(left_iter),
+      vectors = NULL,
+      certificate = NULL,
+      biorthogonality = NULL
+    ))
+  }
+
+  matched <- match_left_eigenvectors(left_iter$values, left_iter$vectors, values)
+  if (is.null(matched)) {
+    return(list(
+      supported = FALSE,
+      reason = "left eigenvalue matching failed",
+      vectors = NULL,
+      certificate = NULL,
+      biorthogonality = NULL
+    ))
+  }
+
+  left_vectors <- normalize_left_eigenvectors(matched$vectors, right_vectors)
+  cert <- certify_left_eigen_operator(
+    op,
+    values,
+    left_vectors,
+    right_vectors = right_vectors,
+    tol = tol
+  )
+  biorthogonality <- crossprod(left_vectors, as.matrix(right_vectors))
+  list(
+    supported = TRUE,
+    reason = "left eigenvectors computed from the adjoint operator",
+    values = matched$values,
+    match_distance = matched$match_distance,
+    vectors = left_vectors,
+    certificate = cert,
+    biorthogonality = biorthogonality,
+    method = left_iter$restart$kind %||% "adjoint_arnoldi"
+  )
+}
+
+#' @keywords internal
 native_arnoldi_available <- function(op) {
   op <- as_operator(op)
   identical(native_kernel_kind(op), "dense") ||
     identical(native_kernel_kind(op), "csc")
+}
+
+#' @keywords internal
+native_refined_arnoldi_available <- function(op) {
+  native_arnoldi_available(op)
+}
+
+#' @keywords internal
+native_matrix_free_arnoldi_available <- function(op) {
+  op <- as_operator(op)
+  is.null(source_or_null(op)) &&
+    is.null(op$metadata$matrix) &&
+    is.function(op$apply) &&
+    identical(op$dtype, "double") &&
+    op$dim[[1L]] == op$dim[[2L]]
 }
 
 #' @keywords internal
@@ -63,7 +240,17 @@ native_arnoldi_cycle <- function(op, start, m) {
       PACKAGE = "eigencore"
     ))
   }
-  stop("native Arnoldi requires a dense double or dgCMatrix operator.", call. = FALSE)
+  if (native_matrix_free_arnoldi_available(op)) {
+    return(.Call(
+      "eigencore_arnoldi_r_operator_cycle",
+      as.integer(op$dim),
+      op$apply,
+      as.numeric(start),
+      as.integer(m),
+      PACKAGE = "eigencore"
+    ))
+  }
+  stop("native Arnoldi requires a dense double, dgCMatrix, or real matrix-free operator.", call. = FALSE)
 }
 
 #' @keywords internal
@@ -78,15 +265,36 @@ native_arnoldi_projected_ritz <- function(cycle) {
 }
 
 #' @keywords internal
+native_arnoldi_refined_ritz_vectors <- function(cycle, values) {
+  .Call(
+    "eigencore_arnoldi_refined_ritz",
+    cycle$V,
+    cycle$H,
+    as.integer(cycle$iterations),
+    as.complex(values),
+    PACKAGE = "eigencore"
+  )
+}
+
+#' @keywords internal
 native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
                                    maxit = NULL, max_restarts = 0L,
-                                   vectors = TRUE) {
+                                   vectors = TRUE,
+                                   extraction = "projected_ritz") {
   op <- as_operator(op)
+  extraction <- match.arg(extraction, c("projected_ritz", "refined_ritz"))
   if (op$dim[[1L]] != op$dim[[2L]]) {
     stop("native Arnoldi requires a square operator.", call. = FALSE)
   }
-  if (!native_arnoldi_available(op)) {
-    stop("native Arnoldi requires a dense double or dgCMatrix operator.", call. = FALSE)
+  matrix_free_native <- native_matrix_free_arnoldi_available(op)
+  if (!native_arnoldi_available(op) && !matrix_free_native) {
+    stop("native Arnoldi requires a dense double, dgCMatrix, or real matrix-free operator.", call. = FALSE)
+  }
+  if (matrix_free_native && identical(extraction, "refined_ritz")) {
+    stop(
+      "native refined Ritz extraction currently supports dense double and dgCMatrix operators only; matrix-free refined Ritz extraction is future scope.",
+      call. = FALSE
+    )
   }
   if (!reference_arnoldi_target_supported(target)) {
     stop("native Arnoldi currently supports largest/smallest real-part and largest-magnitude targets.",
@@ -125,11 +333,12 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
       cycle$reorthogonalization_passes
     native_workspace_bytes <- native_workspace_bytes + cycle$native_workspace_bytes
     ritz_start <- proc.time()[["elapsed"]]
-    ritz <- native_arnoldi_ritz(op, cycle, k, target, tol)
+    ritz <- native_arnoldi_ritz(op, cycle, k, target, tol, extraction = extraction)
     ritz_seconds <- proc.time()[["elapsed"]] - ritz_start
     total_ritz_extraction_seconds <- total_ritz_extraction_seconds + ritz_seconds
     history[[attempt]] <- data.frame(
       attempt = attempt,
+      extraction = ritz$extraction,
       max_subspace = m,
       iterations = cycle$iterations,
       matvecs = cycle$matvecs,
@@ -139,6 +348,11 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
       nconv = sum(ritz$certificate$converged),
       max_backward_error = ritz$certificate$max_backward_error,
       max_residual = ritz$certificate$max_residual,
+      min_refined_residual_estimate = if (length(ritz$refined_residual_estimates %||% numeric())) {
+        min(ritz$refined_residual_estimates)
+      } else {
+        NA_real_
+      },
       stringsAsFactors = FALSE
     )
     score <- reference_arnoldi_score(ritz$certificate)
@@ -166,10 +380,21 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
     iterations = total_iterations,
     matvecs = total_matvecs,
     restart = list(
-      kind = "native_arnoldi_cycle",
+      kind = if (matrix_free_native) {
+        "native_matrix_free_arnoldi_callback_cycle"
+      } else {
+        "native_arnoldi_cycle"
+      },
       implemented = TRUE,
       native = TRUE,
+      matrix_free = isTRUE(matrix_free_native),
       ritz_extraction_native = TRUE,
+      extraction = extraction,
+      refined_extraction_native = identical(extraction, "refined_ritz"),
+      refined_residual_estimates = best$refined_residual_estimates %||% numeric(),
+      krylov_schur = FALSE,
+      krylov_schur_status = "not implemented; V2 tranche promotes native refined Ritz extraction only",
+      v2_issue = "bd-01KTF6H41S9XDN286TR3V184P4",
       max_subspace = m,
       max_restarts = max_restarts,
       restart_count = nrow(attempt_history) - 1L,
@@ -191,7 +416,8 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
 #' @keywords internal
 reference_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
                                       maxit = NULL, max_restarts = 0L,
-                                      vectors = TRUE) {
+                                      vectors = TRUE,
+                                      extraction = "projected_ritz") {
   op <- as_operator(op)
   if (op$dim[[1L]] != op$dim[[2L]]) {
     stop("reference Arnoldi requires a square operator.", call. = FALSE)
@@ -202,6 +428,13 @@ reference_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
   }
   n <- op$dim[[1L]]
   k <- as.integer(k)
+  # Smaller default subspace than native_arnoldi_general (which uses 9*k).
+  # The reference path is an oracle fallback: it is called when no native
+  # kernel is available, so throughput is limited by R-level matrix-vector
+  # products.  A subspace of roughly 2*k is large enough for certification on
+  # well-conditioned problems and keeps memory and per-restart cost low.  The
+  # native path can afford the larger 9*k subspace because the cycle runs in
+  # compiled C++ and restarts are cheap.
   m <- as.integer(maxit %||% min(n, max(k + 8L, 2L * k + 4L)))
   m <- min(n, max(k + 1L, m))
   max_restarts <- as.integer(max_restarts %||% 0L)
@@ -233,6 +466,7 @@ reference_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
     total_ritz_extraction_seconds <- total_ritz_extraction_seconds + ritz_seconds
     history[[attempt]] <- data.frame(
       attempt = attempt,
+      extraction = "projected_ritz",
       max_subspace = m,
       iterations = cycle$iterations,
       matvecs = cycle$matvecs,
@@ -355,23 +589,51 @@ reference_arnoldi_ritz <- function(op, cycle, k, target, tol) {
 }
 
 #' @keywords internal
-native_arnoldi_ritz <- function(op, cycle, k, target, tol) {
+native_arnoldi_ritz <- function(op, cycle, k, target, tol,
+                                extraction = c("projected_ritz", "refined_ritz")) {
+  extraction <- match.arg(extraction)
   m <- cycle$iterations
   eig <- native_arnoldi_projected_ritz(cycle)
+  if (identical(extraction, "refined_ritz")) {
+    idx <- order_indices(eig$values, target)
+    idx <- idx[seq_len(min(k, length(idx)))]
+    values <- eig$values[idx]
+    refined <- native_arnoldi_refined_ritz_vectors(cycle, values)
+    return(arnoldi_ritz_from_eigen(
+      op,
+      values,
+      NULL,
+      cycle$V,
+      m,
+      k,
+      target,
+      tol,
+      vectors_are_ritz = TRUE,
+      vectors_override = refined$vectors,
+      extraction = "refined_ritz",
+      refined_residual_estimates = refined$refined_residual_estimates
+    ))
+  }
   arnoldi_ritz_from_eigen(
     op, eig$values, eig$vectors, cycle$V, m, k, target, tol,
-    vectors_are_ritz = TRUE
+    vectors_are_ritz = TRUE,
+    extraction = "projected_ritz"
   )
 }
 
 #' @keywords internal
 arnoldi_ritz_from_eigen <- function(op, eigenvalues, eigenvectors, V, m, k, target, tol,
-                                    vectors_are_ritz) {
+                                    vectors_are_ritz,
+                                    vectors_override = NULL,
+                                    extraction = "projected_ritz",
+                                    refined_residual_estimates = NULL) {
   eig <- list(values = eigenvalues, vectors = eigenvectors)
   idx <- order_indices(eig$values, target)
   idx <- idx[seq_len(min(k, length(idx)))]
   values <- eig$values[idx]
-  if (isTRUE(vectors_are_ritz)) {
+  if (!is.null(vectors_override)) {
+    vectors <- vectors_override[, seq_len(length(idx)), drop = FALSE]
+  } else if (isTRUE(vectors_are_ritz)) {
     vectors <- eig$vectors[, idx, drop = FALSE]
   } else {
     vectors <- V[, seq_len(m), drop = FALSE] %*%
@@ -398,5 +660,11 @@ arnoldi_ritz_from_eigen <- function(op, eigenvalues, eigenvectors, V, m, k, targ
       )
     }
   )
-  list(values = values, vectors = vectors, certificate = cert)
+  list(
+    values = values,
+    vectors = vectors,
+    certificate = cert,
+    extraction = extraction,
+    refined_residual_estimates = refined_residual_estimates
+  )
 }
