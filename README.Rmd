@@ -68,7 +68,7 @@ The result prints a one-screen ledger: which kernel actually ran, how many
 triplets converged, the worst residual / backward error / orthogonality loss
 across the returned basis, and whether the certificate passed. Here eigencore
 proves the answer exactly (`norm bound: frobenius_exact`) and does it faster than
-every baseline — 1.6× RSpectra, 2.8× PRIMME, 8.9× irlba (see below).
+every baseline — 1.6× RSpectra, 9.5× irlba, 2.7× PRIMME (see below).
 
 A partial decomposition is a certified *slice* of the spectrum: you compute the
 part you need and leave the rest untouched.
@@ -179,9 +179,9 @@ more work in every row. Reproduce with `Rscript inst/benchmarks/bench-readme.R`.
 
 | Problem (all certified `passed` by eigencore) | eigencore | vs RSpectra | vs irlba | vs PRIMME |
 |---|---|---|---|---|
-| Tall sparse SVD, 100000 × 500, k = 10 | 16 ms | **1.6× faster** | **8.9× faster** | **2.8× faster** |
-| Wide sparse SVD, 500 × 100000, k = 10 | 14 ms | **12.9× faster** | **25.4× faster** | **13.5× faster** |
-| Banded Hermitian, smallest, n = 20000, k = 8 | 66 ms | **43.8× faster** | — | — |
+| Tall sparse SVD, 100000 × 500, k = 10 | 16 ms | **1.6× faster** | **9.5× faster** | **2.7× faster** |
+| Wide sparse SVD, 500 × 100000, k = 10 | 14 ms | **11.4× faster** | **25.3× faster** | **12.7× faster** |
+| Banded Hermitian, smallest, n = 20000, k = 8 | 67 ms | **43.4× faster** | — | — |
 
 <sub>R 4.5.1 · aarch64-apple-darwin20 · RSpectra 0.16.2 / irlba 2.3.7 /
 PRIMME 3.2.6. The tall/wide SVD rows also allocate ~6–8× less memory than irlba.
@@ -235,6 +235,13 @@ res$certificate$passed
 - **First-class operator algebra over a native engine.** Dense, CSC, diagonal,
   scaled, centered, and composed operators apply to dense blocks through a frozen
   C++17 ABI, no R-level iteration in the hot loop.
+- **Kernel-level numerics discipline.** Certificate Gram products use `dsyrk`
+  (symmetric rank-*k* update) rather than `dgemm`, halving the flop count.
+  Arnoldi refined-Ritz extraction hoists all workspace out of the per-eigenpair
+  loop and forms Ritz vectors with two `dgemv` calls — a measured 3× speedup at
+  n = 10⁵. Full reorthogonalization in the scalar Lanczos cycle uses block CGS2
+  (`dgemv`) matching the existing Golub-Kahan path, with adversarial-bank
+  evidence of equivalent orthogonality quality.
 
 Run `vignette("eigencore", package = "eigencore")` for a guided tour and
 `vignette("certificates", package = "eigencore")` for the deep dive on reading the

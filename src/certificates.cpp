@@ -32,6 +32,35 @@ static double max_orthogonality_loss_cert(const double* gram, int k) {
   return loss;
 }
 
+// Upper-triangle variant for Gram matrices produced by dsyrk, which only
+// fills the upper triangle. Equivalent to the full scan for symmetric input.
+static double max_orthogonality_loss_upper_cert(const double* gram, int k) {
+  double loss = 0.0;
+  for (int col = 0; col < k; ++col) {
+    for (int row = 0; row <= col; ++row) {
+      const double target = (row == col) ? 1.0 : 0.0;
+      const double diff = fabs(gram[row + col * k] - target);
+      if (diff > loss) {
+        loss = diff;
+      }
+    }
+  }
+  return loss;
+}
+
+// X^T X Gram product via dsyrk (upper triangle only): half the flops of the
+// equivalent dgemm. Pair with max_orthogonality_loss_upper_cert.
+static void gram_upper_dsyrk_cert(const double* X, int rows, int k,
+                                  double* gram) {
+  const char uplo = 'U';
+  const char trans = 'T';
+  const double one = 1.0;
+  const double zero = 0.0;
+  F77_CALL(dsyrk)(&uplo, &trans, &k, &rows,
+                  &one, const_cast<double*>(X), &rows,
+                  &zero, gram, &k FCONE FCONE);
+}
+
 static double column_norm_cert(const double* X, int rows, int col) {
   long double sum = 0.0L;
   const int offset = col * rows;
@@ -73,9 +102,10 @@ extern "C" SEXP eigencore_orthogonality_loss(SEXP Q_, SEXP B_) {
   SEXP gram_ = PROTECT(allocMatrix(REALSXP, k, k));
 
   if (B_ == R_NilValue) {
-    F77_CALL(dgemm)(&trans, &notrans, &k, &k, &n,
-                    &one, REAL(Q_), &n, REAL(Q_), &n,
-                    &zero, REAL(gram_), &k FCONE FCONE);
+    gram_upper_dsyrk_cert(REAL(Q_), n, k, REAL(gram_));
+    const double loss = max_orthogonality_loss_upper_cert(REAL(gram_), k);
+    UNPROTECT(1);
+    return ScalarReal(loss);
   } else {
     if (!isReal(B_)) {
       error("B must be a double matrix");
@@ -249,10 +279,16 @@ extern "C" SEXP eigencore_dense_eigen_certificate(SEXP A_, SEXP values_,
     LOGICAL(converged_)[col] = (R_FINITE(backward) && backward <= tol) ? TRUE : FALSE;
   }
 
-  F77_CALL(dgemm)(&trans, &notrans, &k, &k, &n,
-                  &one, REAL(vectors_), &n, bv, &n,
-                  &zero, REAL(gram_), &k FCONE FCONE);
-  const double orth = max_orthogonality_loss_cert(REAL(gram_), k);
+  double orth;
+  if (B_ == R_NilValue) {
+    gram_upper_dsyrk_cert(REAL(vectors_), n, k, REAL(gram_));
+    orth = max_orthogonality_loss_upper_cert(REAL(gram_), k);
+  } else {
+    F77_CALL(dgemm)(&trans, &notrans, &k, &k, &n,
+                    &one, REAL(vectors_), &n, bv, &n,
+                    &zero, REAL(gram_), &k FCONE FCONE);
+    orth = max_orthogonality_loss_cert(REAL(gram_), k);
+  }
 
   SEXP out_ = PROTECT(allocVector(VECSXP, 6));
   ++protect_count;
@@ -419,14 +455,10 @@ extern "C" SEXP eigencore_dense_svd_certificate(SEXP A_, SEXP d_,
 
   SEXP gram_u_ = PROTECT(allocMatrix(REALSXP, k, k));
   SEXP gram_v_ = PROTECT(allocMatrix(REALSXP, k, k));
-  F77_CALL(dgemm)(&trans, &notrans, &k, &k, &m,
-                  &one, REAL(u_), &m, REAL(u_), &m,
-                  &zero, REAL(gram_u_), &k FCONE FCONE);
-  F77_CALL(dgemm)(&trans, &notrans, &k, &k, &n,
-                  &one, REAL(v_), &n, REAL(v_), &n,
-                  &zero, REAL(gram_v_), &k FCONE FCONE);
-  REAL(orth_)[0] = max_orthogonality_loss_cert(REAL(gram_u_), k);
-  REAL(orth_)[1] = max_orthogonality_loss_cert(REAL(gram_v_), k);
+  gram_upper_dsyrk_cert(REAL(u_), m, k, REAL(gram_u_));
+  gram_upper_dsyrk_cert(REAL(v_), n, k, REAL(gram_v_));
+  REAL(orth_)[0] = max_orthogonality_loss_upper_cert(REAL(gram_u_), k);
+  REAL(orth_)[1] = max_orthogonality_loss_upper_cert(REAL(gram_v_), k);
   SEXP orth_names_ = PROTECT(allocVector(STRSXP, 2));
   SET_STRING_ELT(orth_names_, 0, mkChar("U"));
   SET_STRING_ELT(orth_names_, 1, mkChar("V"));
@@ -493,10 +525,6 @@ static SEXP native_operator_eigen_certificate(void* impl,
     error("non-conformable native operator eigen certificate inputs");
   }
 
-  const char trans = 'T';
-  const char notrans = 'N';
-  const double one = 1.0;
-  const double zero = 0.0;
   const double eps = DBL_EPSILON;
   const double tol = asReal(tol_);
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
@@ -531,10 +559,8 @@ static SEXP native_operator_eigen_certificate(void* impl,
     LOGICAL(converged_)[col] = (R_FINITE(backward) && backward <= tol) ? TRUE : FALSE;
   }
 
-  F77_CALL(dgemm)(&trans, &notrans, &k, &k, &n,
-                  &one, REAL(vectors_), &n, REAL(vectors_), &n,
-                  &zero, REAL(gram_), &k FCONE FCONE);
-  const double orth = max_orthogonality_loss_cert(REAL(gram_), k);
+  gram_upper_dsyrk_cert(REAL(vectors_), n, k, REAL(gram_));
+  const double orth = max_orthogonality_loss_upper_cert(REAL(gram_), k);
 
   SEXP out_ = PROTECT(allocVector(VECSXP, 6));
   SET_VECTOR_ELT(out_, 0, residuals_);
@@ -578,10 +604,6 @@ static SEXP native_operator_svd_certificate(void* impl,
     error("non-conformable native operator SVD certificate inputs");
   }
 
-  const char trans = 'T';
-  const char notrans = 'N';
-  const double one = 1.0;
-  const double zero = 0.0;
   const double eps = DBL_EPSILON;
   const double tol = asReal(tol_);
   const double scale_value = fmax(norm_A, eps);
@@ -634,14 +656,10 @@ static SEXP native_operator_svd_certificate(void* impl,
 
   SEXP gram_u_ = PROTECT(allocMatrix(REALSXP, k, k));
   SEXP gram_v_ = PROTECT(allocMatrix(REALSXP, k, k));
-  F77_CALL(dgemm)(&trans, &notrans, &k, &k, &m,
-                  &one, REAL(u_), &m, REAL(u_), &m,
-                  &zero, REAL(gram_u_), &k FCONE FCONE);
-  F77_CALL(dgemm)(&trans, &notrans, &k, &k, &n,
-                  &one, REAL(v_), &n, REAL(v_), &n,
-                  &zero, REAL(gram_v_), &k FCONE FCONE);
-  REAL(orth_)[0] = max_orthogonality_loss_cert(REAL(gram_u_), k);
-  REAL(orth_)[1] = max_orthogonality_loss_cert(REAL(gram_v_), k);
+  gram_upper_dsyrk_cert(REAL(u_), m, k, REAL(gram_u_));
+  gram_upper_dsyrk_cert(REAL(v_), n, k, REAL(gram_v_));
+  REAL(orth_)[0] = max_orthogonality_loss_upper_cert(REAL(gram_u_), k);
+  REAL(orth_)[1] = max_orthogonality_loss_upper_cert(REAL(gram_v_), k);
   SEXP orth_names_ = PROTECT(allocVector(STRSXP, 2));
   SET_STRING_ELT(orth_names_, 0, mkChar("U"));
   SET_STRING_ELT(orth_names_, 1, mkChar("V"));
@@ -700,10 +718,6 @@ SEXP native_operator_svd_certificate_cached_av(void* impl,
     error("non-conformable cached-Av native operator SVD certificate inputs");
   }
 
-  const char trans = 'T';
-  const char notrans = 'N';
-  const double one = 1.0;
-  const double zero = 0.0;
   const double eps = DBL_EPSILON;
   const double tol = asReal(tol_);
   const double scale_value = fmax(norm_A, eps);
@@ -752,14 +766,10 @@ SEXP native_operator_svd_certificate_cached_av(void* impl,
 
   SEXP gram_u_ = PROTECT(allocMatrix(REALSXP, k, k));
   SEXP gram_v_ = PROTECT(allocMatrix(REALSXP, k, k));
-  F77_CALL(dgemm)(&trans, &notrans, &k, &k, &m,
-                  &one, REAL(u_), &m, REAL(u_), &m,
-                  &zero, REAL(gram_u_), &k FCONE FCONE);
-  F77_CALL(dgemm)(&trans, &notrans, &k, &k, &n,
-                  &one, REAL(v_), &n, REAL(v_), &n,
-                  &zero, REAL(gram_v_), &k FCONE FCONE);
-  REAL(orth_)[0] = max_orthogonality_loss_cert(REAL(gram_u_), k);
-  REAL(orth_)[1] = max_orthogonality_loss_cert(REAL(gram_v_), k);
+  gram_upper_dsyrk_cert(REAL(u_), m, k, REAL(gram_u_));
+  gram_upper_dsyrk_cert(REAL(v_), n, k, REAL(gram_v_));
+  REAL(orth_)[0] = max_orthogonality_loss_upper_cert(REAL(gram_u_), k);
+  REAL(orth_)[1] = max_orthogonality_loss_upper_cert(REAL(gram_v_), k);
   SEXP orth_names_ = PROTECT(allocVector(STRSXP, 2));
   SET_STRING_ELT(orth_names_, 0, mkChar("U"));
   SET_STRING_ELT(orth_names_, 1, mkChar("V"));
@@ -850,10 +860,6 @@ extern "C" SEXP eigencore_tridiagonal_eigen_certificate(SEXP alpha_, SEXP beta_,
     error("non-conformable tridiagonal eigen certificate inputs");
   }
 
-  const char trans = 'T';
-  const char notrans = 'N';
-  const double one = 1.0;
-  const double zero = 0.0;
   const double eps = DBL_EPSILON;
   const double norm_A = asReal(norm_A_);
   const double tol = asReal(tol_);
@@ -896,10 +902,8 @@ extern "C" SEXP eigencore_tridiagonal_eigen_certificate(SEXP alpha_, SEXP beta_,
     LOGICAL(converged_)[col] = (R_FINITE(backward) && backward <= tol) ? TRUE : FALSE;
   }
 
-  F77_CALL(dgemm)(&trans, &notrans, &k, &k, &n,
-                  &one, REAL(vectors_), &n, REAL(vectors_), &n,
-                  &zero, REAL(gram_), &k FCONE FCONE);
-  const double orth = max_orthogonality_loss_cert(REAL(gram_), k);
+  gram_upper_dsyrk_cert(REAL(vectors_), n, k, REAL(gram_));
+  const double orth = max_orthogonality_loss_upper_cert(REAL(gram_), k);
 
   SEXP out_ = PROTECT(allocVector(VECSXP, 5));
   SET_VECTOR_ELT(out_, 0, residuals_);

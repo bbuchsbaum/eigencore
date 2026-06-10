@@ -26,3 +26,4 @@
 ^CRAN-RELEASE$
 ^codecov[.]yml$
 ^[.]lintr$
+^native-perf-audit[.]md$

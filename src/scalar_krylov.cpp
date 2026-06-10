@@ -258,10 +258,12 @@ static int native_lanczos_run(void* impl,
   double* q = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
   double* q_prev = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
   double* z = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
-  if (q == nullptr || q_prev == nullptr || z == nullptr) {
+  double* coeff = static_cast<double*>(std::calloc(static_cast<size_t>(maxit), sizeof(double)));
+  if (q == nullptr || q_prev == nullptr || z == nullptr || coeff == nullptr) {
     std::free(q);
     std::free(q_prev);
     std::free(z);
+    std::free(coeff);
     return -2;
   }
 
@@ -292,6 +294,7 @@ static int native_lanczos_run(void* impl,
       std::free(q);
       std::free(q_prev);
       std::free(z);
+      std::free(coeff);
       return status;
     }
     ++(*matvecs);
@@ -312,17 +315,24 @@ static int native_lanczos_run(void* impl,
       z[row] -= alpha[j] * q[row];
     }
 
-    for (int pass = 0; pass < 2; ++pass) {
-      for (int prev = 0; prev <= j; ++prev) {
-        const double* qprev_basis = Q + prev * n;
-        long double dot = 0.0L;
-        for (int row = 0; row < n; ++row) {
-          dot += static_cast<long double>(qprev_basis[row]) * z[row];
-        }
-        const double coeff = static_cast<double>(dot);
-        for (int row = 0; row < n; ++row) {
-          z[row] -= coeff * qprev_basis[row];
-        }
+    // Block CGS2 ("twice is enough") full reorthogonalization against the
+    // stored basis: two dgemv passes replace the previous scalar MGS2 loops.
+    // Same pattern as the Golub-Kahan path in native_golub_kahan_run.
+    {
+      const char trans_T = 'T';
+      const char trans_N = 'N';
+      const int one_col = 1;
+      const double one = 1.0;
+      const double zero = 0.0;
+      const double minus_one = -1.0;
+      const int active = j + 1;
+      for (int pass = 0; pass < 2; ++pass) {
+        F77_CALL(dgemv)(&trans_T, &n, &active, &one,
+                        Q, &n, z, &one_col,
+                        &zero, coeff, &one_col FCONE);
+        F77_CALL(dgemv)(&trans_N, &n, &active, &minus_one,
+                        Q, &n, coeff, &one_col,
+                        &one, z, &one_col FCONE);
       }
     }
 
@@ -343,6 +353,7 @@ static int native_lanczos_run(void* impl,
         std::free(q);
         std::free(q_prev);
         std::free(z);
+        std::free(coeff);
         return conv_status;
       }
       history_nconv[j] = nconv;
@@ -364,6 +375,7 @@ static int native_lanczos_run(void* impl,
   std::free(q);
   std::free(q_prev);
   std::free(z);
+  std::free(coeff);
   return 0;
 }
 

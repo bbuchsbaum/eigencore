@@ -1,5 +1,6 @@
 #include <R.h>
 #include <Rinternals.h>
+#include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
 #include <algorithm>
 #include <cfloat>
@@ -157,8 +158,41 @@ extern "C" SEXP eigencore_arnoldi_refined_ritz(SEXP V_, SEXP H_,
   const Rcomplex* values = COMPLEX(values_);
   const int rows = m + 1;
 
+  // All workspace sizes depend only on the loop-invariant m and rows, so
+  // allocate once and run the zgesvd workspace query once, outside the loop.
+  std::vector<Rcomplex> z(static_cast<size_t>(rows) * static_cast<size_t>(m));
+  std::vector<double> s(static_cast<size_t>(m));
+  std::vector<Rcomplex> vt(static_cast<size_t>(m) * static_cast<size_t>(m));
+  Rcomplex u_dummy;
+  int ldu = 1;
+  int ldvt = m;
+  int info = 0;
+  int lwork = -1;
+  Rcomplex work_query;
+  const int rwork_len = std::max(1, 5 * m);
+  std::vector<double> rwork(static_cast<size_t>(rwork_len));
+  char jobu = 'N';
+  char jobvt = 'A';
+  F77_CALL(zgesvd)(&jobu, &jobvt, &rows, &m, z.data(), &rows, s.data(),
+                   &u_dummy, &ldu, vt.data(), &ldvt,
+                   &work_query, &lwork, rwork.data(), &info FCONE FCONE);
+  if (info != 0) {
+    error("LAPACK zgesvd workspace query failed for native Arnoldi refined extraction with info=%d", info);
+  }
+  lwork = std::max(1, static_cast<int>(work_query.r));
+  std::vector<Rcomplex> work(static_cast<size_t>(lwork));
+  // Real and imaginary coefficient parts split out so the Ritz vector can be
+  // formed with two real dgemv calls against the real basis V.
+  std::vector<double> coeff_r(static_cast<size_t>(m));
+  std::vector<double> coeff_i(static_cast<size_t>(m));
+  std::vector<double> ritz_r(static_cast<size_t>(n));
+  std::vector<double> ritz_i(static_cast<size_t>(n));
+  const char notrans = 'N';
+  const double one = 1.0;
+  const double zero = 0.0;
+  const int inc_one = 1;
+
   for (int col = 0; col < k; ++col) {
-    std::vector<Rcomplex> z(static_cast<size_t>(rows) * static_cast<size_t>(m));
     for (int j = 0; j < m; ++j) {
       for (int i = 0; i < rows; ++i) {
         Rcomplex entry;
@@ -172,26 +206,6 @@ extern "C" SEXP eigencore_arnoldi_refined_ritz(SEXP V_, SEXP H_,
       }
     }
 
-    std::vector<double> s(static_cast<size_t>(m));
-    std::vector<Rcomplex> vt(static_cast<size_t>(m) * static_cast<size_t>(m));
-    Rcomplex u_dummy;
-    int ldu = 1;
-    int ldvt = m;
-    int info = 0;
-    int lwork = -1;
-    Rcomplex work_query;
-    const int rwork_len = std::max(1, 5 * m);
-    std::vector<double> rwork(static_cast<size_t>(rwork_len));
-    char jobu = 'N';
-    char jobvt = 'A';
-    F77_CALL(zgesvd)(&jobu, &jobvt, &rows, &m, z.data(), &rows, s.data(),
-                     &u_dummy, &ldu, vt.data(), &ldvt,
-                     &work_query, &lwork, rwork.data(), &info FCONE FCONE);
-    if (info != 0) {
-      error("LAPACK zgesvd workspace query failed for native Arnoldi refined extraction with info=%d", info);
-    }
-    lwork = std::max(1, static_cast<int>(work_query.r));
-    std::vector<Rcomplex> work(static_cast<size_t>(lwork));
     F77_CALL(zgesvd)(&jobu, &jobvt, &rows, &m, z.data(), &rows, s.data(),
                      &u_dummy, &ldu, vt.data(), &ldvt,
                      work.data(), &lwork, rwork.data(), &info FCONE FCONE);
@@ -200,22 +214,23 @@ extern "C" SEXP eigencore_arnoldi_refined_ritz(SEXP V_, SEXP H_,
     }
     residuals[col] = s[static_cast<size_t>(m - 1)];
 
-    std::vector<Rcomplex> coeff(static_cast<size_t>(m));
     for (int j = 0; j < m; ++j) {
-      coeff[static_cast<size_t>(j)] =
-        complex_conj(vt[(m - 1) + static_cast<int64_t>(j) * m]);
+      const Rcomplex c = complex_conj(vt[(m - 1) + static_cast<int64_t>(j) * m]);
+      coeff_r[static_cast<size_t>(j)] = c.r;
+      coeff_i[static_cast<size_t>(j)] = c.i;
     }
+
+    F77_CALL(dgemv)(&notrans, &n, &m, &one, V, &n,
+                    coeff_r.data(), &inc_one,
+                    &zero, ritz_r.data(), &inc_one FCONE);
+    F77_CALL(dgemv)(&notrans, &n, &m, &one, V, &n,
+                    coeff_i.data(), &inc_one,
+                    &zero, ritz_i.data(), &inc_one FCONE);
 
     double norm2 = 0.0;
     for (int row = 0; row < n; ++row) {
-      double zr = 0.0;
-      double zi = 0.0;
-      for (int basis = 0; basis < m; ++basis) {
-        const double vb = V[row + static_cast<int64_t>(basis) * n];
-        const Rcomplex c = coeff[static_cast<size_t>(basis)];
-        zr += vb * c.r;
-        zi += vb * c.i;
-      }
+      const double zr = ritz_r[static_cast<size_t>(row)];
+      const double zi = ritz_i[static_cast<size_t>(row)];
       Rcomplex out;
       out.r = zr;
       out.i = zi;
