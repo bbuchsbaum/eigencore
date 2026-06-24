@@ -44,30 +44,25 @@ shift_invert_tridiagonal_parts <- function(A, shift = 0) {
         return(NULL)
       }
     }
-    i_slot <- methods::slot(A, "i") + 1L
+    row_of <- methods::slot(A, "i") + 1L
     p_slot <- methods::slot(A, "p")
     x_slot <- methods::slot(A, "x")
-    for (j in seq_len(n)) {
-      start <- p_slot[[j]] + 1L
-      end <- p_slot[[j + 1L]]
-      if (start > end) {
-        next
-      }
-      for (pos in start:end) {
-        row <- i_slot[[pos]]
-        value <- x_slot[[pos]]
-        if (!is.finite(value) || abs(row - j) > 1L) {
-          return(NULL)
-        }
-        if (row == j) {
-          diag[j] <- diag[j] + value
-        } else if (row == j + 1L) {
-          lower[j] <- lower[j] + value
-        } else if (row == j - 1L) {
-          upper[j - 1L] <- upper[j - 1L] + value
-        }
-      }
+    if (length(x_slot) && any(!is.finite(x_slot))) {
+      return(NULL)
     }
+    col_of <- rep.int(seq_len(n), diff(p_slot))
+    band <- row_of - col_of
+    if (any(band > 1L | band < -1L)) {
+      return(NULL)
+    }
+    # Valid CsparseMatrix objects carry unique sorted (row, column) entries,
+    # so plain indexed assignment is the loop's accumulation.
+    on_diag <- band == 0L
+    on_lower <- band == 1L
+    on_upper <- band == -1L
+    diag[col_of[on_diag]] <- x_slot[on_diag]
+    lower[col_of[on_lower]] <- x_slot[on_lower]
+    upper[row_of[on_upper]] <- x_slot[on_upper]
   }
   if (any(!is.finite(diag)) || any(!is.finite(lower)) || any(!is.finite(upper))) {
     return(NULL)
@@ -901,6 +896,90 @@ native_tridiagonal_shift_invert_lanczos <- function(problem, k, sigma, tol,
 }
 
 #' @keywords internal
+native_tridiagonal_shift_invert_retryable_error <- function(error) {
+  message <- conditionMessage(error)
+  grepl("zero .*pivot|near-singular|zero-magnitude", message)
+}
+
+#' @keywords internal
+native_tridiagonal_shift_invert_candidate_sigmas <- function(parts, sigma) {
+  sigma <- as.numeric(sigma)
+  if (length(sigma) != 1L || !is.finite(sigma)) {
+    return(numeric())
+  }
+  bounds <- tridiagonal_gershgorin_bounds(parts)
+  diag <- as.numeric(parts$diag)
+  offdiag <- abs(as.numeric(parts$upper))
+  scale <- max(1, abs(sigma), abs(bounds$lower), abs(bounds$upper), abs(diag), offdiag)
+  span <- max(bounds$upper - bounds$lower, scale)
+  margin <- max(1e-8 * span, 10 * sqrt(.Machine$double.eps) * scale)
+  offsets <- margin * c(1, -1, 10, -10, 100, -100, 1000, -1000, 10000, -10000)
+  candidates <- unique(c(sigma, sigma + offsets))
+  candidates[is.finite(candidates)]
+}
+
+#' @keywords internal
+native_tridiagonal_shift_invert_lanczos_with_perturbation <- function(problem, k,
+                                                                      sigma, tol,
+                                                                      maxit,
+                                                                      vectors,
+                                                                      certify,
+                                                                      plan) {
+  A <- problem$A$metadata$matrix %||% source_or_null(problem$A)
+  parts <- shift_invert_tridiagonal_parts(A, shift = 0)
+  if (is.null(parts)) {
+    return(native_tridiagonal_shift_invert_lanczos(
+      problem, k = k, sigma = sigma, tol = tol, maxit = maxit,
+      vectors = vectors, certify = certify, plan = plan
+    ))
+  }
+
+  candidates <- native_tridiagonal_shift_invert_candidate_sigmas(parts, sigma)
+  last_error <- NULL
+  for (candidate in candidates) {
+    result <- tryCatch(
+      native_tridiagonal_shift_invert_lanczos(
+        problem, k = k, sigma = candidate, tol = tol, maxit = maxit,
+        vectors = vectors, certify = certify, plan = plan
+      ),
+      error = function(e) e
+    )
+    if (!inherits(result, "error")) {
+      if (!isTRUE(all.equal(candidate, as.numeric(sigma)))) {
+        delta <- candidate - as.numeric(sigma)
+        note <- paste0(
+          "native tridiagonal shift-invert perturbed requested sigma from ",
+          format(as.numeric(sigma), digits = 17),
+          " to ",
+          format(candidate, digits = 17),
+          " after singular or near-singular Thomas factorization"
+        )
+        result$warnings <- c(result$warnings, note)
+        result$transform$requested_sigma <- as.numeric(sigma)
+        result$transform$sigma_perturbed <- TRUE
+        result$transform$sigma_perturbation <- delta
+        result$restart$requested_sigma <- as.numeric(sigma)
+        result$restart$sigma_perturbed <- TRUE
+        result$restart$sigma_perturbation <- delta
+        result$restart$perturbation_reason <- conditionMessage(last_error)
+      }
+      return(result)
+    }
+    if (!native_tridiagonal_shift_invert_retryable_error(result)) {
+      stop(result)
+    }
+    last_error <- result
+  }
+
+  stop(
+    "native tridiagonal shift_invert(sigma = ", sigma,
+    ") failed at the requested shift and all perturbation retries. Last error: ",
+    conditionMessage(last_error),
+    call. = FALSE
+  )
+}
+
+#' @keywords internal
 native_tridiagonal_generalized_shift_invert_lanczos <- function(problem, k,
                                                                sigma, tol,
                                                                maxit, vectors,
@@ -1211,7 +1290,7 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
   if (identical(plan$method, native_tridiagonal_shift_invert_label()) &&
       is.null(problem$metric) &&
       is.null(method$solve)) {
-    return(native_tridiagonal_shift_invert_lanczos(
+    return(native_tridiagonal_shift_invert_lanczos_with_perturbation(
       problem, k = k, sigma = sigma, tol = tol, maxit = maxit,
       vectors = vectors, certify = certify, plan = plan
     ))

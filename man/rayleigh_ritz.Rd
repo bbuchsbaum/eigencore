@@ -21,3 +21,4 @@ symmetric/Hermitian.}
 \description{
 Rayleigh-Ritz projection in a trial basis.
 }
+\keyword{internal}

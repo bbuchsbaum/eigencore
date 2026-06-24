@@ -102,9 +102,9 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
                                           certify = TRUE,
                                           allow_dense_fallback = c("auto", "never", "always"), ...) {
   allow_dense_fallback <- match.arg(allow_dense_fallback)
-  nearest_shift <- auto_nearest_shift_invert(a, method)
-  a <- nearest_shift$problem
-  method <- nearest_shift$method
+  auto_shift <- auto_shift_invert_route(a, method)
+  a <- auto_shift$problem
+  method <- auto_shift$method
   plan <- plan_solver(a, k = k, method = method)
   plan <- validate_complex_eigen_plan(a, plan)
   if (is_transform_method(a$transform)) {
@@ -214,6 +214,36 @@ native_dense_generalized_spd_eigen <- function(A, B) {
 }
 
 #' @keywords internal
+native_dense_generalized_pencil_eigen <- function(A, B) {
+  .Call(
+    "eigencore_dense_generalized_pencil_eigen",
+    as.matrix(A),
+    as.matrix(B),
+    PACKAGE = "eigencore"
+  )
+}
+
+#' @keywords internal
+native_dense_complex_generalized_hpd_eigen <- function(A, B) {
+  .Call(
+    "eigencore_dense_complex_generalized_hpd_eigen",
+    as.matrix(A),
+    as.matrix(B),
+    PACKAGE = "eigencore"
+  )
+}
+
+#' @keywords internal
+native_dense_complex_generalized_pencil_eigen <- function(A, B) {
+  .Call(
+    "eigencore_dense_complex_generalized_pencil_eigen",
+    as.matrix(A),
+    as.matrix(B),
+    PACKAGE = "eigencore"
+  )
+}
+
+#' @keywords internal
 order_indices <- function(x, target) {
   kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
   switch(
@@ -310,6 +340,16 @@ native_dense_complex_hermitian_label <- function() {
 #' @keywords internal
 native_dense_complex_general_label <- function() {
   "native dense complex general LAPACK fallback"
+}
+
+#' @keywords internal
+native_dense_generalized_spd_full_label <- function() {
+  "native dense generalized SPD/Hermitian LAPACK full"
+}
+
+#' @keywords internal
+native_dense_generalized_pencil_full_label <- function() {
+  "native dense general pencil LAPACK full"
 }
 
 #' @keywords internal
@@ -772,6 +812,16 @@ gram_svd_max_dimension <- function() {
 }
 
 #' @keywords internal
+gram_svd_max_dimension_wide <- function() {
+  value <- gram_svd_numeric_option(
+    "eigencore.gram_svd_max_dimension_wide",
+    1024,
+    min = 1
+  )
+  if (is.finite(value)) as.integer(value) else Inf
+}
+
+#' @keywords internal
 gram_svd_memory_budget_bytes <- function() {
   gram_svd_numeric_option("eigencore.gram_svd_memory_mb", 64, min = 0) * 1e6
 }
@@ -819,6 +869,14 @@ gram_svd_policy <- function(dims, rank, target = largest()) {
   reduced <- min(dims)
   full <- max(dims)
   gram_max <- gram_svd_max_dimension()
+  # Wide (left-Gram) largest-target rows pass the installed cutoff speed gate
+  # up to side 1024 (inst/benchmarks/results/20260611-svd-gram-cutoff-*);
+  # tall (right-Gram) rows do not, so the wider default is scoped to that
+  # promoted regime. max() keeps an explicitly raised global option in force.
+  target_kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
+  if (dims[2L] > dims[1L] && target_kind %in% c("largest", "largest_magnitude")) {
+    gram_max <- max(gram_max, gram_svd_max_dimension_wide())
+  }
   memory_budget <- gram_svd_memory_budget_bytes()
   rank_limit <- gram_svd_rank_fraction_limit()
   min_aspect <- gram_svd_min_aspect_ratio()

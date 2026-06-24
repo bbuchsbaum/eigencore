@@ -17,3 +17,4 @@ orthogonalization.}
 \description{
 Modified Gram-Schmidt with two passes.
 }
+\keyword{internal}

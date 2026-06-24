@@ -80,7 +80,11 @@ test_that("auto nearest target preserves sparse shift-invert boundary labels", {
   expect_equal(fit$transform$factorization_cache$contract$promotion_status,
                "reference_boundary")
   expect_true(all(fit$certificate$converged))
-  expect_true(fit$certificate$scale_is_estimate)
+  # The dsCMatrix source carries an exact Frobenius norm (Matrix::norm), so the
+  # sparse-LU shift-invert certificate uses an exact original-coordinate scale
+  # and passed is not withheld. See review item bd-01KVWRKQ2JMJJJ0CKM939C4NZ6.
+  expect_false(fit$certificate$scale_is_estimate)
+  expect_true(fit$certificate$passed)
 })
 
 test_that("auto nearest target fails loudly for matrix-free operators without a solve", {
@@ -125,10 +129,14 @@ test_that("shift-invert handles a sparse CSC source via factorized solve", {
                    "reference Hermitian Lanczos shift-invert (sparse LU)")
   expected <- vals[order(abs(vals - 15.5))][1:4]
   expect_equal(sort(fit$values), sort(expected), tolerance = 1e-7)
-  # Sparse paths use a Hutchinson norm estimate — all converged but
-  # passed is withheld by design.
+  # The dsCMatrix source carries an exact Frobenius norm (Matrix::norm), so the
+  # sparse-LU shift-invert certificate uses an exact original-coordinate scale;
+  # all pairs converge and passed is no longer withheld (was previously withheld
+  # when this path fell back to a Hutchinson norm estimate).
+  # See review item bd-01KVWRKQ2JMJJJ0CKM939C4NZ6.
   expect_true(all(fit$certificate$converged))
-  expect_true(fit$certificate$scale_is_estimate)
+  expect_false(fit$certificate$scale_is_estimate)
+  expect_true(fit$certificate$passed)
   expect_lt(max(fit$certificate$backward_error), 1e-7)
   cache <- fit$transform$factorization_cache
   expect_equal(cache$label_kind, "sparse_lu")
@@ -465,6 +473,33 @@ test_that("shift-invert near a true eigenvalue surfaces a clear error", {
                 method = shift_invert(sigma = 3)),
     "singular|computationally"
   )
+})
+
+test_that("native tridiagonal shift-invert perturbs singular requested sigma", {
+  n <- 8L
+  L <- Matrix::bandSparse(
+    n,
+    n,
+    k = c(-1, 0, 1),
+    diagonals = list(rep(-1, n - 1L), rep(2, n), rep(-1, n - 1L))
+  )
+  oracle <- eigen(as.matrix(L), symmetric = TRUE, only.values = TRUE)$values
+  expected <- oracle[order(abs(oracle - 1))][1:2]
+
+  fit <- eig_partial(L, k = 2L, target = nearest(1), seed = 27L,
+                     allow_dense_fallback = "never", tol = 1e-10)
+
+  expect_identical(fit$method,
+                   eigencore:::native_tridiagonal_shift_invert_label())
+  expect_false(isTRUE(all.equal(fit$sigma, 1)))
+  expect_equal(fit$transform$requested_sigma, 1)
+  expect_true(fit$transform$sigma_perturbed)
+  expect_true(is.finite(fit$transform$sigma_perturbation))
+  expect_match(fit$warnings, "perturbed requested sigma")
+  expect_equal(sort(fit$values), sort(expected), tolerance = 1e-9)
+  expect_certificate_clean(fit, tol = 1e-8)
+  expect_identical(fit$restart$kind, "native_tridiagonal_shift_invert_lanczos")
+  expect_true(fit$restart$factorization_native)
 })
 
 test_that("shift-invert recovers smallest eigenvalues of a 1D Laplacian", {

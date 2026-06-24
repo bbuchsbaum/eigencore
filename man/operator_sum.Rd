@@ -14,3 +14,4 @@ operator_sum(..., name = NULL)
 \description{
 Sum compatible operators.
 }
+\keyword{internal}

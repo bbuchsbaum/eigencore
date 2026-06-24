@@ -4,6 +4,7 @@
 #' @param against Optional matrix whose columns are projected out before
 #'   orthogonalization.
 #' @param tol Orthogonality warning tolerance.
+#' @keywords internal
 mgs2 <- function(X, against = NULL, tol = sqrt(.Machine$double.eps)) {
   X <- as.matrix(X)
   if (!is.null(against)) {
@@ -34,6 +35,7 @@ native_mgs2 <- function(X, tol = sqrt(.Machine$double.eps)) {
 #'
 #' @param X Numeric matrix whose columns are orthogonalized.
 #' @param tol Orthogonality warning tolerance.
+#' @keywords internal
 cholqr2 <- function(X, tol = sqrt(.Machine$double.eps)) {
   X <- as.matrix(X)
   decomp <- native_cholqr2(X)
@@ -62,6 +64,7 @@ native_cholqr2 <- function(X) {
 #' @param against Optional matrix whose columns are projected out in the
 #'   B-inner product.
 #' @param tol Orthogonality warning tolerance.
+#' @keywords internal
 b_orthogonalize <- function(X, B, against = NULL, tol = sqrt(.Machine$double.eps)) {
   X <- as.matrix(X)
   B <- as.matrix(B)
@@ -108,6 +111,7 @@ native_diagonal_b_cholqr2 <- function(X, diagonal, unit = FALSE) {
 #'
 #' @param Q Matrix whose columns are expected to be orthonormal.
 #' @param B Optional metric matrix for B-orthogonality.
+#' @keywords internal
 orthogonality_loss <- function(Q, B = NULL) {
   Q <- as.matrix(Q)
   if (is.null(B)) {
@@ -125,6 +129,7 @@ orthogonality_loss <- function(Q, B = NULL) {
 #' @param target Eigencore target descriptor.
 #' @param symmetric Whether the projected problem should be treated as
 #'   symmetric/Hermitian.
+#' @keywords internal
 rayleigh_ritz <- function(A, Q, B = NULL, target = largest(), symmetric = TRUE) {
   A <- as.matrix(A)
   Q <- as.matrix(Q)

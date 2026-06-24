@@ -6,6 +6,7 @@
 #' @param B Optional metric matrix or operator for generalized problems.
 #' @param fit Optional precomputed eigencore eigen result.
 #' @param tol Validation tolerance.
+#' @keywords internal
 validate_eigen_accuracy <- function(A, k, target = largest(), B = NULL,
                                     fit = NULL, tol = 1e-8) {
   if (is.null(fit)) {
@@ -56,6 +57,7 @@ validate_eigen_accuracy <- function(A, k, target = largest(), B = NULL,
 #' @param target Eigencore singular-value target descriptor.
 #' @param fit Optional precomputed eigencore SVD result.
 #' @param tol Validation tolerance.
+#' @keywords internal
 validate_svd_accuracy <- function(A, rank, target = largest(), fit = NULL,
                                   tol = 1e-8) {
   if (is.null(fit)) {
@@ -101,6 +103,7 @@ validate_svd_accuracy <- function(A, rank, target = largest(), fit = NULL,
 #' @param repeats Number of timing repetitions.
 #' @param include Character vector of method labels to include when available.
 #' @param tol Solver tolerance.
+#' @keywords internal
 benchmark_eigen_methods <- function(A, k, target = largest(), repeats = 3L,
                                     include = c("eigencore", "base", "RSpectra"),
                                     tol = 1e-8) {
@@ -137,6 +140,7 @@ benchmark_eigen_methods <- function(A, k, target = largest(), repeats = 3L,
 #' @param repeats Number of timing repetitions.
 #' @param include Character vector of method labels to include when available.
 #' @param tol Solver tolerance.
+#' @keywords internal
 benchmark_svd_methods <- function(A, rank, repeats = 3L,
                                   include = c("eigencore", "base", "RSpectra", "irlba", "rsvd"),
                                   tol = 1e-8) {

@@ -90,8 +90,21 @@ path_laplacian <- function(n) {
 herm_case <- function(label, A, k = 8L) {
   fit <- eig_partial(A, k = k, target = smallest())
   ec <- timeit(eig_partial(A, k = k, target = smallest()))
-  rs <- if (have_rspectra) timeit(RSpectra::eigs_sym(A, k = k, which = "SA")) else NULL
+  rs <- NULL
+  conv <- NA_integer_; t_sa <- NA_real_; t_si <- NA_real_
+  if (have_rspectra) {
+    conv <- length(suppressWarnings(RSpectra::eigs_sym(A, k = k, which = "SA"))$values)
+    t_sa <- timeit(suppressWarnings(RSpectra::eigs_sym(A, k = k, which = "SA")))$t
+    t_si <- timeit(RSpectra::eigs_sym(A, k = k, which = "LM", sigma = 0))$t
+    # Only feed the README table a speedup when the baseline actually solved
+    # the problem; a ratio against a non-converged run is not a fair claim.
+    if (identical(conv, k)) rs <- list(t = t_sa, mem = NA_real_)
+  }
   record(label, fit, ec, rs = rs)
+  if (have_rspectra) {
+    cat(sprintf('  RSpectra which="SA"      : %s (converged %d of %d)\n', ms(t_sa), conv, k))
+    cat(sprintf('  RSpectra shift-invert    : %s (which="LM", sigma=0)\n', ms(t_si)))
+  }
 }
 herm_case("Banded Hermitian smallest  n=20000, k=8", path_laplacian(20000L))
 

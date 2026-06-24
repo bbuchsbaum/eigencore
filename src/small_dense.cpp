@@ -8,6 +8,13 @@
 #include <cstdint>
 #include <cstring>
 
+extern "C" {
+void F77_NAME(zhegv)(const La_INT* itype, const char* jobz, const char* uplo,
+                     La_INT* n, Rcomplex* a, La_INT* lda, Rcomplex* b,
+                     La_INT* ldb, double* w, Rcomplex* work, La_INT* lwork,
+                     double* rwork, La_INT* info FCLEN FCLEN);
+}
+
 extern "C" SEXP eigencore_dense_symmetric_eigen(SEXP A_) {
   if (!isReal(A_)) {
     error("A must be a double matrix");
@@ -231,6 +238,252 @@ extern "C" SEXP eigencore_dense_complex_general_eigen(SEXP A_) {
   SEXP names_ = PROTECT(allocVector(STRSXP, 2));
   SET_STRING_ELT(names_, 0, mkChar("values"));
   SET_STRING_ELT(names_, 1, mkChar("vectors"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(5);
+  return out_;
+}
+
+extern "C" SEXP eigencore_dense_generalized_pencil_eigen(SEXP A_, SEXP B_) {
+  if (!isReal(A_) || !isReal(B_)) {
+    error("A and B must be double matrices");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimB = getAttrib(B_, R_DimSymbol);
+  if (dimA == R_NilValue || dimB == R_NilValue) {
+    error("A and B must be matrices");
+  }
+  int n = INTEGER(dimA)[0];
+  if (INTEGER(dimA)[1] != n || INTEGER(dimB)[0] != n || INTEGER(dimB)[1] != n) {
+    error("A and B must be square matrices with the same dimension");
+  }
+
+  SEXP alphar_ = PROTECT(allocVector(REALSXP, n));
+  SEXP alphai_ = PROTECT(allocVector(REALSXP, n));
+  SEXP beta_real_ = PROTECT(allocVector(REALSXP, n));
+  SEXP vr_real_ = PROTECT(allocMatrix(REALSXP, n, n));
+
+  if (n > 0) {
+    char jobvl = 'N';
+    char jobvr = 'V';
+    int ldvl = 1;
+    int ldvr = n;
+    int info = 0;
+    int lwork = -1;
+    double vl_dummy = 0.0;
+    double work_query = 0.0;
+
+    SEXP Awork_ = PROTECT(duplicate(A_));
+    SEXP Bwork_ = PROTECT(duplicate(B_));
+    F77_CALL(dggev)(&jobvl, &jobvr, &n, REAL(Awork_), &n, REAL(Bwork_), &n,
+                    REAL(alphar_), REAL(alphai_), REAL(beta_real_),
+                    &vl_dummy, &ldvl, REAL(vr_real_), &ldvr,
+                    &work_query, &lwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK dggev workspace query failed with info=%d", info);
+    }
+    UNPROTECT(2);
+
+    lwork = static_cast<int>(work_query);
+    if (lwork < 1) {
+      lwork = 1;
+    }
+    SEXP work_ = PROTECT(allocVector(REALSXP, lwork));
+    Awork_ = PROTECT(duplicate(A_));
+    Bwork_ = PROTECT(duplicate(B_));
+    F77_CALL(dggev)(&jobvl, &jobvr, &n, REAL(Awork_), &n, REAL(Bwork_), &n,
+                    REAL(alphar_), REAL(alphai_), REAL(beta_real_),
+                    &vl_dummy, &ldvl, REAL(vr_real_), &ldvr,
+                    REAL(work_), &lwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK dggev failed with info=%d", info);
+    }
+    UNPROTECT(3);
+  }
+
+  SEXP alpha_ = PROTECT(allocVector(CPLXSXP, n));
+  SEXP beta_ = PROTECT(allocVector(CPLXSXP, n));
+  SEXP vectors_ = PROTECT(allocMatrix(CPLXSXP, n, n));
+  for (int j = 0; j < n; ++j) {
+    COMPLEX(alpha_)[j].r = REAL(alphar_)[j];
+    COMPLEX(alpha_)[j].i = REAL(alphai_)[j];
+    COMPLEX(beta_)[j].r = REAL(beta_real_)[j];
+    COMPLEX(beta_)[j].i = 0.0;
+  }
+  int j = 0;
+  while (j < n) {
+    if (REAL(alphai_)[j] > 0.0 && j + 1 < n) {
+      for (int row = 0; row < n; ++row) {
+        const double re = REAL(vr_real_)[row + static_cast<int64_t>(j) * n];
+        const double im = REAL(vr_real_)[row + static_cast<int64_t>(j + 1) * n];
+        COMPLEX(vectors_)[row + static_cast<int64_t>(j) * n].r = re;
+        COMPLEX(vectors_)[row + static_cast<int64_t>(j) * n].i = im;
+        COMPLEX(vectors_)[row + static_cast<int64_t>(j + 1) * n].r = re;
+        COMPLEX(vectors_)[row + static_cast<int64_t>(j + 1) * n].i = -im;
+      }
+      j += 2;
+    } else {
+      // alphai[j] == 0 is a real eigenvalue with a real eigenvector. A nonzero
+      // alphai reaching this branch would mean a complex eigenvalue without a
+      // consecutive conjugate partner (an unpaired positive at the last column,
+      // or a negative not consumed by a preceding positive) -- impossible for
+      // conforming LAPACK output. Error loudly rather than emit a silently
+      // wrong real-only vector.
+      if (REAL(alphai_)[j] != 0.0) {
+        error("LAPACK dggev returned a non-conforming complex eigenvalue at "
+              "index %d without a consecutive conjugate partner", j);
+      }
+      for (int row = 0; row < n; ++row) {
+        COMPLEX(vectors_)[row + static_cast<int64_t>(j) * n].r =
+          REAL(vr_real_)[row + static_cast<int64_t>(j) * n];
+        COMPLEX(vectors_)[row + static_cast<int64_t>(j) * n].i = 0.0;
+      }
+      ++j;
+    }
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 3));
+  SET_VECTOR_ELT(out_, 0, alpha_);
+  SET_VECTOR_ELT(out_, 1, beta_);
+  SET_VECTOR_ELT(out_, 2, vectors_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 3));
+  SET_STRING_ELT(names_, 0, mkChar("alpha"));
+  SET_STRING_ELT(names_, 1, mkChar("beta"));
+  SET_STRING_ELT(names_, 2, mkChar("vectors"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(9);
+  return out_;
+}
+
+extern "C" SEXP eigencore_dense_complex_generalized_hpd_eigen(SEXP A_, SEXP B_) {
+  if (!isComplex(A_) || !isComplex(B_)) {
+    error("A and B must be complex matrices");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimB = getAttrib(B_, R_DimSymbol);
+  if (dimA == R_NilValue || dimB == R_NilValue) {
+    error("A and B must be matrices");
+  }
+  int n = INTEGER(dimA)[0];
+  if (INTEGER(dimA)[1] != n || INTEGER(dimB)[0] != n || INTEGER(dimB)[1] != n) {
+    error("A and B must be square matrices with the same dimension");
+  }
+
+  SEXP values_ = PROTECT(allocVector(REALSXP, n));
+  SEXP vectors_ = PROTECT(duplicate(A_));
+  SEXP Bwork_ = PROTECT(duplicate(B_));
+  if (n > 0) {
+    int itype = 1;
+    char jobz = 'V';
+    char uplo = 'U';
+    int info = 0;
+    int lwork = -1;
+    Rcomplex work_query;
+    const int lrwork = (3 * n - 2 > 1) ? (3 * n - 2) : 1;
+    double* rwork = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(lrwork), sizeof(double))
+    );
+    F77_CALL(zhegv)(&itype, &jobz, &uplo, &n, COMPLEX(vectors_), &n,
+                    COMPLEX(Bwork_), &n, REAL(values_), &work_query,
+                    &lwork, rwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK zhegv workspace query failed with info=%d", info);
+    }
+    lwork = static_cast<int>(work_query.r);
+    if (lwork < 1) {
+      lwork = 1;
+    }
+    SEXP work_ = PROTECT(allocVector(CPLXSXP, lwork));
+    F77_CALL(zhegv)(&itype, &jobz, &uplo, &n, COMPLEX(vectors_), &n,
+                    COMPLEX(Bwork_), &n, REAL(values_), COMPLEX(work_),
+                    &lwork, rwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK zhegv failed with info=%d", info);
+    }
+    UNPROTECT(1);
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 2));
+  SET_VECTOR_ELT(out_, 0, values_);
+  SET_VECTOR_ELT(out_, 1, vectors_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(names_, 0, mkChar("values"));
+  SET_STRING_ELT(names_, 1, mkChar("vectors"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(5);
+  return out_;
+}
+
+extern "C" SEXP eigencore_dense_complex_generalized_pencil_eigen(SEXP A_, SEXP B_) {
+  if (!isComplex(A_) || !isComplex(B_)) {
+    error("A and B must be complex matrices");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimB = getAttrib(B_, R_DimSymbol);
+  if (dimA == R_NilValue || dimB == R_NilValue) {
+    error("A and B must be matrices");
+  }
+  int n = INTEGER(dimA)[0];
+  if (INTEGER(dimA)[1] != n || INTEGER(dimB)[0] != n || INTEGER(dimB)[1] != n) {
+    error("A and B must be square matrices with the same dimension");
+  }
+
+  SEXP alpha_ = PROTECT(allocVector(CPLXSXP, n));
+  SEXP beta_ = PROTECT(allocVector(CPLXSXP, n));
+  SEXP vectors_ = PROTECT(allocMatrix(CPLXSXP, n, n));
+
+  if (n > 0) {
+    char jobvl = 'N';
+    char jobvr = 'V';
+    int ldvl = 1;
+    int ldvr = n;
+    int info = 0;
+    int lwork = -1;
+    Rcomplex vl_dummy;
+    Rcomplex work_query;
+    const int lrwork = (8 * n > 1) ? (8 * n) : 1;
+    double* rwork = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(lrwork), sizeof(double))
+    );
+
+    SEXP Awork_ = PROTECT(duplicate(A_));
+    SEXP Bwork_ = PROTECT(duplicate(B_));
+    F77_CALL(zggev)(&jobvl, &jobvr, &n, COMPLEX(Awork_), &n,
+                    COMPLEX(Bwork_), &n, COMPLEX(alpha_), COMPLEX(beta_),
+                    &vl_dummy, &ldvl, COMPLEX(vectors_), &ldvr,
+                    &work_query, &lwork, rwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK zggev workspace query failed with info=%d", info);
+    }
+    UNPROTECT(2);
+
+    lwork = static_cast<int>(work_query.r);
+    if (lwork < 1) {
+      lwork = 1;
+    }
+    SEXP work_ = PROTECT(allocVector(CPLXSXP, lwork));
+    Awork_ = PROTECT(duplicate(A_));
+    Bwork_ = PROTECT(duplicate(B_));
+    F77_CALL(zggev)(&jobvl, &jobvr, &n, COMPLEX(Awork_), &n,
+                    COMPLEX(Bwork_), &n, COMPLEX(alpha_), COMPLEX(beta_),
+                    &vl_dummy, &ldvl, COMPLEX(vectors_), &ldvr,
+                    COMPLEX(work_), &lwork, rwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK zggev failed with info=%d", info);
+    }
+    UNPROTECT(3);
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 3));
+  SET_VECTOR_ELT(out_, 0, alpha_);
+  SET_VECTOR_ELT(out_, 1, beta_);
+  SET_VECTOR_ELT(out_, 2, vectors_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 3));
+  SET_STRING_ELT(names_, 0, mkChar("alpha"));
+  SET_STRING_ELT(names_, 1, mkChar("beta"));
+  SET_STRING_ELT(names_, 2, mkChar("vectors"));
   setAttrib(out_, R_NamesSymbol, names_);
 
   UNPROTECT(5);
@@ -534,6 +787,9 @@ extern "C" SEXP eigencore_dense_generalized_spd_eigen(SEXP A_, SEXP B_) {
       error("LAPACK dsyev workspace query failed with info=%d", info);
     }
     lwork = static_cast<int>(work_query);
+    if (lwork < 1) {
+      lwork = 1;
+    }
     SEXP work_ = PROTECT(allocVector(REALSXP, lwork));
     F77_CALL(dsyev)(&jobz, &uplo, &n, REAL(vectors_), &n, REAL(values_),
                     REAL(work_), &lwork, &info FCONE FCONE);
@@ -779,20 +1035,16 @@ extern "C" SEXP eigencore_tridiagonal_eigen_selected(SEXP alpha_, SEXP beta_,
     double* diag = reinterpret_cast<double*>(
       R_alloc(static_cast<size_t>(n), sizeof(double))
     );
+    // Length n (not n - 1): dstevr documents E as workspace it may overwrite
+    // through index n - 1 in some implementations.
     double* offdiag = reinterpret_cast<double*>(
-      R_alloc(static_cast<size_t>(n - 1), sizeof(double))
+      R_alloc(static_cast<size_t>(n), sizeof(double))
     );
     double* values_work = reinterpret_cast<double*>(
       R_alloc(static_cast<size_t>(n), sizeof(double))
     );
-    double* work = reinterpret_cast<double*>(
-      R_alloc(static_cast<size_t>(5 * n), sizeof(double))
-    );
-    int* iwork = reinterpret_cast<int*>(
-      R_alloc(static_cast<size_t>(5 * n), sizeof(int))
-    );
-    int* ifail = reinterpret_cast<int*>(
-      R_alloc(static_cast<size_t>(n), sizeof(int))
+    int* isuppz = reinterpret_cast<int*>(
+      R_alloc(static_cast<size_t>(2 * k), sizeof(int))
     );
     for (int i = 0; i < n; ++i) {
       diag[i] = REAL(alpha_)[i];
@@ -800,6 +1052,7 @@ extern "C" SEXP eigencore_tridiagonal_eigen_selected(SEXP alpha_, SEXP beta_,
     for (int i = 0; i < n - 1; ++i) {
       offdiag[i] = REAL(beta_)[i];
     }
+    offdiag[n - 1] = 0.0;
 
     char jobz = 'V';
     char range = 'I';
@@ -815,12 +1068,37 @@ extern "C" SEXP eigencore_tridiagonal_eigen_selected(SEXP alpha_, SEXP beta_,
     int m_found = 0;
     int info = 0;
     int ldz = n;
-    F77_CALL(dstevx)(&jobz, &range, &n, diag, offdiag,
+    int n_la = n;  // dstevr's header declaration is not const-qualified
+    // MRRR driver (dstevr) instead of bisection + inverse iteration (dstevx):
+    // far faster for selected eigenpairs when eigenvalues cluster, e.g. the
+    // smallest eigenvalues of a Laplacian.
+    int lwork = -1;
+    int liwork = -1;
+    double work_query = 0.0;
+    int iwork_query = 0;
+    F77_CALL(dstevr)(&jobz, &range, &n_la, diag, offdiag,
                      &vl, &vu, &il, &iu, &abstol, &m_found,
-                     values_work, REAL(vectors_), &ldz,
-                     work, iwork, ifail, &info FCONE FCONE);
+                     values_work, REAL(vectors_), &ldz, isuppz,
+                     &work_query, &lwork, &iwork_query, &liwork,
+                     &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK dstevr workspace query failed with info=%d", info);
+    }
+    lwork = static_cast<int>(work_query);
+    liwork = iwork_query;
+    double* work = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(lwork), sizeof(double))
+    );
+    int* iwork = reinterpret_cast<int*>(
+      R_alloc(static_cast<size_t>(liwork), sizeof(int))
+    );
+    F77_CALL(dstevr)(&jobz, &range, &n_la, diag, offdiag,
+                     &vl, &vu, &il, &iu, &abstol, &m_found,
+                     values_work, REAL(vectors_), &ldz, isuppz,
+                     work, &lwork, iwork, &liwork,
+                     &info FCONE FCONE);
     if (info != 0 || m_found != k) {
-      error("LAPACK dstevx failed with info=%d, found=%d", info, m_found);
+      error("LAPACK dstevr failed with info=%d, found=%d", info, m_found);
     }
     for (int col = 0; col < k; ++col) {
       REAL(values_)[col] = values_work[col];

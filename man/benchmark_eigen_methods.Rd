@@ -29,3 +29,4 @@ benchmark_eigen_methods(
 \description{
 Benchmark eigen methods against base and optional references.
 }
+\keyword{internal}

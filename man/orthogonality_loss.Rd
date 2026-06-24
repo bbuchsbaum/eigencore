@@ -14,3 +14,4 @@ orthogonality_loss(Q, B = NULL)
 \description{
 Measure orthogonality loss.
 }
+\keyword{internal}

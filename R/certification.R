@@ -87,10 +87,25 @@ right_vectors <- function(x, ...) {
 
 #' Extract residual diagnostics.
 #'
-#' @param x An eigencore result object.
+#' Methods for the [stats::residuals()] generic: return the per-pair (or
+#' per-triplet) residual norms stored in an eigencore result or certificate.
+#'
+#' @param object An eigencore result or certificate object.
 #' @param ... Reserved for future methods.
-residuals <- function(x, ...) {
-  x$residuals
+#' @name residuals
+#' @rdname residuals
+residuals.eigencore_eigen_result <- function(object, ...) {
+  object$residuals
+}
+
+#' @rdname residuals
+residuals.eigencore_svd_result <- function(object, ...) {
+  object$residuals
+}
+
+#' @rdname residuals
+residuals.eigencore_certificate <- function(object, ...) {
+  object$residuals
 }
 
 #' Extract backward-error diagnostics.

@@ -1,15 +1,23 @@
 Package: eigencore
-Title: Certified Partial Spectral Computation
-Version: 0.2.0
+Title: Certified Partial Eigenvalue and Singular Value Computation
+Version: 1.0.0
 Authors@R: c(
     person("Bradley", "Buchsbaum", role = c("aut", "cre"), email = "brad.buchsbaum@gmail.com")
   )
 Author: Bradley Buchsbaum [aut, cre]
 Maintainer: Bradley Buchsbaum <brad.buchsbaum@gmail.com>
-Description: Native-oriented foundations for certified partial eigenvalue and
-    singular-value computation in R. The package provides native solver paths
-    plus operator, problem, planner, result, and certificate APIs for large
-    dense, sparse, generalized, and matrix-free spectral problems.
+Description: Computes the top-k singular triplets or eigenpairs of large
+    sparse and structured matrices: the computation behind principal component
+    analysis on big sparse data, spectral embeddings, and low-rank
+    approximation. Every result carries a numerical certificate with
+    residuals, a backward-error bound, orthogonality loss, and a pass/fail
+    flag, and bounds that can only be estimated are reported as such rather
+    than passed. Centered, scaled, and composed operators are solved through
+    native 'C++' kernels without forming dense matrices. Drop-in replacements
+    for the 'RSpectra' interface are included.
+URL: https://bbuchsbaum.github.io/eigencore/,
+    https://github.com/bbuchsbaum/eigencore
+BugReports: https://github.com/bbuchsbaum/eigencore/issues
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)

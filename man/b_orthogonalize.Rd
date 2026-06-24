@@ -20,3 +20,4 @@ B-inner product.}
 \description{
 Orthogonalize columns in the B-inner product.
 }
+\keyword{internal}

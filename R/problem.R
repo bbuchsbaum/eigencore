@@ -18,6 +18,9 @@ eigen_problem <- function(A, metric = NULL, structure = NULL, target = largest()
     structure <- Aop$structure
   }
   Bop <- if (is.null(metric)) NULL else as_operator(metric)
+  if (!is.null(metric)) {
+    validate_metric_symmetric(metric, Bop)
+  }
   problem <- list(
     type = "eigen",
     A = Aop,
@@ -28,6 +31,36 @@ eigen_problem <- function(A, metric = NULL, structure = NULL, target = largest()
   )
   class(problem) <- "eigencore_eigen_problem"
   problem
+}
+
+#' @keywords internal
+#' Enforce the metric= SPD/Hermitian contract: a generalized eigenproblem
+#' defined through `metric =` interprets B as a symmetric (real) or Hermitian
+#' (complex) positive-definite metric. General/nonsymmetric right-hand pencils
+#' belong to `eig_full(A, B = ...)`, not `metric =`. Definiteness is enforced
+#' downstream (Cholesky/`dpotrf`); here we reject a non-symmetric/non-Hermitian
+#' B before dispatch so it cannot be silently solved as if symmetric (the
+#' native SPD kernel references only one triangle of B). Matrix-free metrics
+#' with no inspectable matrix are left to the caller's contract.
+validate_metric_symmetric <- function(metric, Bop) {
+  src <- if (is.matrix(metric) || inherits(metric, "Matrix")) {
+    metric
+  } else {
+    source_or_null(Bop) %||% Bop$metadata$matrix %||% NULL
+  }
+  if (is.null(src) || !(is.matrix(src) || inherits(src, "Matrix"))) {
+    return(invisible(TRUE))
+  }
+  if (!is_square_symmetric(src)) {
+    stop(
+      "metric B must be symmetric (real) or Hermitian (complex) for a ",
+      "generalized eigenproblem; nonsymmetric or general right-hand pencils ",
+      "are not accepted through metric=. Use eig_full(A, B = ...) for general ",
+      "dense pencils.",
+      call. = FALSE
+    )
+  }
+  invisible(TRUE)
 }
 
 #' Define an SVD problem.
@@ -76,9 +109,9 @@ plan_solver <- function(problem, ...) {
 
 #' @export
 plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...) {
-  nearest_shift <- auto_nearest_shift_invert(problem, method)
-  problem <- nearest_shift$problem
-  method <- nearest_shift$method
+  auto_shift <- auto_shift_invert_route(problem, method)
+  problem <- auto_shift$problem
+  method <- auto_shift$method
 
   has_metric <- !is.null(problem$metric)
   has_shift <- inherits(problem$transform, "eigencore_method") &&
@@ -213,7 +246,16 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
     paste0("structure: ", problem$structure$kind),
     paste0("target: ", target_label(problem$target)),
     if (has_metric) "metric/operator B supplied" else "standard eigenproblem",
-    if (nearest_shift$implicit) "nearest target routed through shift_invert(sigma)" else NULL,
+    if (auto_shift$nearest_implicit) "nearest target routed through shift_invert(sigma)" else NULL,
+    if (auto_shift$tridiagonal_edge_implicit) {
+      paste0(
+        "tridiagonal ", target_label(problem$target),
+        " target auto-routed through factorized shift_invert(sigma = ",
+        format(auto_shift$sigma, digits = 8), ")"
+      )
+    } else {
+      NULL
+    },
     if (has_shift) "shift-invert transform requested" else NULL,
     preconditioner_reason,
     constraints_reason,
@@ -284,6 +326,146 @@ auto_nearest_shift_invert <- function(problem, method) {
   transform <- shift_invert(sigma)
   problem$transform <- transform
   list(problem = problem, method = transform, implicit = TRUE)
+}
+
+#' @keywords internal
+auto_shift_invert_route <- function(problem, method) {
+  nearest_shift <- auto_nearest_shift_invert(problem, method)
+  if (isTRUE(nearest_shift$implicit)) {
+    nearest_shift$nearest_implicit <- TRUE
+    nearest_shift$tridiagonal_edge_implicit <- FALSE
+    nearest_shift$sigma <- nearest_shift$method$sigma
+    return(nearest_shift)
+  }
+
+  edge_shift <- auto_tridiagonal_edge_shift_invert(problem, method)
+  edge_shift$nearest_implicit <- FALSE
+  edge_shift$tridiagonal_edge_implicit <- isTRUE(edge_shift$implicit)
+  edge_shift
+}
+
+#' @keywords internal
+auto_tridiagonal_edge_shift_invert <- function(problem, method) {
+  if (!is_auto_method(method) ||
+      is_transform_method(problem$transform) ||
+      !is.null(problem$metric) ||
+      !identical(problem$structure$kind, "hermitian")) {
+    return(list(problem = problem, method = method, implicit = FALSE, sigma = NULL))
+  }
+
+  target_kind <- if (inherits(problem$target, "eigencore_target")) {
+    problem$target$kind
+  } else {
+    "largest"
+  }
+  if (!target_kind %in% c("largest", "smallest")) {
+    return(list(problem = problem, method = method, implicit = FALSE, sigma = NULL))
+  }
+
+  A <- problem$A$metadata$matrix %||% source_or_null(problem$A)
+  if (!(inherits(A, "CsparseMatrix") || inherits(A, "diagonalMatrix"))) {
+    return(list(problem = problem, method = method, implicit = FALSE, sigma = NULL))
+  }
+  parts <- shift_invert_tridiagonal_parts(A, shift = 0)
+  if (is.null(parts)) {
+    return(list(problem = problem, method = method, implicit = FALSE, sigma = NULL))
+  }
+
+  sigma <- tridiagonal_edge_shift_sigma(parts, target_kind)
+  if (is.null(sigma) || length(sigma) != 1L || !is.finite(sigma)) {
+    return(list(problem = problem, method = method, implicit = FALSE, sigma = NULL))
+  }
+
+  transform <- shift_invert(sigma)
+  problem$transform <- transform
+  list(problem = problem, method = transform, implicit = TRUE, sigma = sigma)
+}
+
+#' @keywords internal
+tridiagonal_gershgorin_bounds <- function(parts) {
+  diag <- as.numeric(parts$diag)
+  n <- length(diag)
+  radius <- numeric(n)
+  if (n > 1L) {
+    offdiag <- abs(as.numeric(parts$upper))
+    radius[seq_len(n - 1L)] <- radius[seq_len(n - 1L)] + offdiag
+    radius[seq.int(2L, n)] <- radius[seq.int(2L, n)] + offdiag
+  }
+  lower <- min(diag - radius)
+  upper <- max(diag + radius)
+  list(lower = lower, upper = upper)
+}
+
+#' @keywords internal
+tridiagonal_shift_pivot_ratio <- function(parts, sigma) {
+  diag <- as.numeric(parts$diag) - as.numeric(sigma)
+  lower <- as.numeric(parts$lower)
+  upper <- as.numeric(parts$upper)
+  n <- length(diag)
+  denom <- numeric(n)
+  cprime <- numeric(max(n - 1L, 0L))
+  if (n < 1L || length(sigma) != 1L || !is.finite(sigma)) {
+    return(NA_real_)
+  }
+  if (abs(diag[[1L]]) <= .Machine$double.eps) {
+    return(0)
+  }
+  denom[[1L]] <- diag[[1L]]
+  if (n > 1L) {
+    cprime[[1L]] <- upper[[1L]] / denom[[1L]]
+    for (i in seq.int(2L, n)) {
+      denom[[i]] <- diag[[i]] - lower[[i - 1L]] * cprime[[i - 1L]]
+      if (abs(denom[[i]]) <= .Machine$double.eps) {
+        return(0)
+      }
+      if (i < n) {
+        cprime[[i]] <- upper[[i]] / denom[[i]]
+      }
+    }
+  }
+  abs_denom <- abs(denom)
+  max_abs <- max(abs_denom)
+  if (!is.finite(max_abs) || max_abs <= 0) {
+    return(NA_real_)
+  }
+  min(abs_denom) / max_abs
+}
+
+#' @keywords internal
+tridiagonal_edge_shift_sigma <- function(parts, target_kind) {
+  bounds <- tridiagonal_gershgorin_bounds(parts)
+  diag <- as.numeric(parts$diag)
+  offdiag <- abs(as.numeric(parts$upper))
+  scale <- max(1, abs(bounds$lower), abs(bounds$upper), abs(diag), offdiag)
+  span <- max(bounds$upper - bounds$lower, scale)
+  margin <- max(1e-8 * span, 10 * sqrt(.Machine$double.eps) * scale)
+  multipliers <- c(1, 10, 100, 1000, 10000)
+  stable_enough <- function(sigma) {
+    ratio <- tridiagonal_shift_pivot_ratio(parts, sigma)
+    is.finite(ratio) && ratio > sqrt(.Machine$double.eps)
+  }
+
+  candidates <- if (identical(target_kind, "smallest")) {
+    c(
+      if (bounds$lower >= 0 && abs(bounds$lower) <= margin) 0 else numeric(),
+      bounds$lower - margin * multipliers
+    )
+  } else if (identical(target_kind, "largest")) {
+    c(
+      if (bounds$upper <= 0 && abs(bounds$upper) <= margin) 0 else numeric(),
+      bounds$upper + margin * multipliers
+    )
+  } else {
+    numeric()
+  }
+
+  candidates <- unique(as.numeric(candidates[is.finite(candidates)]))
+  for (sigma in candidates) {
+    if (stable_enough(sigma)) {
+      return(sigma)
+    }
+  }
+  NULL
 }
 
 #' @export

@@ -77,16 +77,32 @@ static int selected_sorted_ritz_indices(const double* values,
 // Hermitian standard eigenproblem A x = lambda x.
 // =====================================================================
 
+static double trl_norm2(const double* x, int n);
+
+// DGKS reorthogonalization with an adaptive second pass: the second
+// projection runs only when the first one cancelled a large fraction of the
+// vector norm (post < eta * pre, eta = 1/sqrt(2); Daniel-Gragg-Kaufman-
+// Stewart). With that criterion two passes carry the same orthogonality
+// guarantee as unconditional CGS2 ("twice is enough"). Returns the number of
+// projection passes actually performed.
+static const double kDgksEta = 0.7071067811865475;
+
 static int trl_orthogonalise(const double* V_locked, int n_locked,
                              const double* V_active, int m_active,
-                             double* z, double* tmp, int n, int passes = 2) {
+                             double* z, double* tmp, int n,
+                             int max_passes = 2) {
+  if (n_locked <= 0 && m_active <= 0) {
+    return 0;
+  }
   const char trans_T = 'T';
   const char trans_N = 'N';
   const double one = 1.0;
   const double zero = 0.0;
   const double minus_one = -1.0;
   int incx = 1;
-  for (int pass = 0; pass < passes; ++pass) {
+  int passes_done = 0;
+  double pre_norm = trl_norm2(z, n);
+  for (int pass = 0; pass < max_passes; ++pass) {
     if (n_locked > 0) {
       F77_CALL(dgemv)(&trans_T, &n, &n_locked, &one,
                       V_locked, &n, z, &incx,
@@ -103,14 +119,33 @@ static int trl_orthogonalise(const double* V_locked, int n_locked,
                       V_active, &n, tmp, &incx,
                       &one, z, &incx FCONE);
     }
+    ++passes_done;
+    if (pass + 1 >= max_passes) {
+      break;
+    }
+    const double post_norm = trl_norm2(z, n);
+    if (post_norm >= kDgksEta * pre_norm) {
+      break;
+    }
+    pre_norm = post_norm;
   }
-  return 0;
+  return passes_done;
 }
 
 static double trl_norm2(const double* x, int n) {
   long double sum = 0.0L;
   for (int i = 0; i < n; ++i) {
     sum += static_cast<long double>(x[i]) * x[i];
+  }
+  return sqrt(static_cast<double>(sum));
+}
+
+// Frobenius norm of a dense n x cols block stored contiguously (ld == n).
+static double block_frobenius_norm(const double* X, int n, int cols) {
+  long double sum = 0.0L;
+  const int64_t total = static_cast<int64_t>(n) * cols;
+  for (int64_t i = 0; i < total; ++i) {
+    sum += static_cast<long double>(X[i]) * X[i];
   }
   return sqrt(static_cast<double>(sum));
 }
@@ -234,10 +269,10 @@ static int block_accept_work_vector(const double* V_locked, int n_locked,
   if (*m_active >= m_max) {
     return 0;
   }
-  const int passes = 2;
-  trl_orthogonalise(V_locked, n_locked, V_active, *m_active, z, tmp, n, passes);
+  const int passes_done =
+    trl_orthogonalise(V_locked, n_locked, V_active, *m_active, z, tmp, n, 2);
   if (ortho_passes != nullptr) {
-    *ortho_passes += passes;
+    *ortho_passes += passes_done;
   }
   const double nz = trl_norm2(z, n);
   if (nz <= 100.0 * DBL_EPSILON) {
@@ -252,16 +287,24 @@ static int block_accept_work_vector(const double* V_locked, int n_locked,
   return 1;
 }
 
-static void block_reorthogonalise_against(const double* V_locked, int n_locked,
-                                          const double* V_active, int m_active,
-                                          double* X, int n, int cols,
-                                          double* coeff, int passes) {
+// Block variant of the adaptive DGKS scheme in trl_orthogonalise: the second
+// projection runs only when the first cancelled a large fraction of the block
+// Frobenius norm. Returns the number of projection passes performed.
+static int block_reorthogonalise_against(const double* V_locked, int n_locked,
+                                         const double* V_active, int m_active,
+                                         double* X, int n, int cols,
+                                         double* coeff, int max_passes) {
+  if ((n_locked <= 0 && m_active <= 0) || cols <= 0) {
+    return 0;
+  }
   const char trans_T = 'T';
   const char trans_N = 'N';
   const double one = 1.0;
   const double zero = 0.0;
   const double minus_one = -1.0;
-  for (int pass = 0; pass < passes; ++pass) {
+  int passes_done = 0;
+  double pre_norm = block_frobenius_norm(X, n, cols);
+  for (int pass = 0; pass < max_passes; ++pass) {
     if (n_locked > 0) {
       F77_CALL(dgemm)(&trans_T, &trans_N, &n_locked, &cols, &n,
                       &one, V_locked, &n, X, &n,
@@ -278,7 +321,17 @@ static void block_reorthogonalise_against(const double* V_locked, int n_locked,
                       &minus_one, V_active, &n, coeff, &m_active,
                       &one, X, &n FCONE FCONE);
     }
+    ++passes_done;
+    if (pass + 1 >= max_passes) {
+      break;
+    }
+    const double post_norm = block_frobenius_norm(X, n, cols);
+    if (post_norm >= kDgksEta * pre_norm) {
+      break;
+    }
+    pre_norm = post_norm;
   }
+  return passes_done;
 }
 
 // Contract: X and Z_block MAY alias (X == Z_block && ldx == n is a supported
@@ -322,13 +375,14 @@ static int block_accept_columns_blas3(const double* X, int ldx, int x_cols,
     }
   }
 
-  const int reorth_passes = 2;
   const double* active_basis = reorthogonalize_active ? V_active : nullptr;
   const int active_cols = reorthogonalize_active ? *m_active : 0;
-  block_reorthogonalise_against(V_locked, n_locked, active_basis, active_cols,
-                                Z_block, n, cols, coeff, reorth_passes);
+  const int reorth_passes_done = block_reorthogonalise_against(
+    V_locked, n_locked, active_basis, active_cols,
+    Z_block, n, cols, coeff, 2
+  );
   if (ortho_passes != nullptr) {
-    *ortho_passes += reorth_passes;
+    *ortho_passes += reorth_passes_done;
   }
 
   if (cols > 0) {

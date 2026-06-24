@@ -315,9 +315,11 @@ static int native_lanczos_run(void* impl,
       z[row] -= alpha[j] * q[row];
     }
 
-    // Block CGS2 ("twice is enough") full reorthogonalization against the
-    // stored basis: two dgemv passes replace the previous scalar MGS2 loops.
-    // Same pattern as the Golub-Kahan path in native_golub_kahan_run.
+    // Block CGS full reorthogonalization against the stored basis with an
+    // adaptive DGKS second pass: the second projection runs only when the
+    // first cancelled a large fraction of ||z|| (post < eta * pre,
+    // eta = 1/sqrt(2)), which carries the same orthogonality guarantee as
+    // unconditional CGS2 ("twice is enough").
     {
       const char trans_T = 'T';
       const char trans_N = 'N';
@@ -325,7 +327,13 @@ static int native_lanczos_run(void* impl,
       const double one = 1.0;
       const double zero = 0.0;
       const double minus_one = -1.0;
+      const double dgks_eta = 0.7071067811865475;
       const int active = j + 1;
+      long double pre2 = 0.0L;
+      for (int row = 0; row < n; ++row) {
+        pre2 += static_cast<long double>(z[row]) * z[row];
+      }
+      const double pre_norm = sqrt(static_cast<double>(pre2));
       for (int pass = 0; pass < 2; ++pass) {
         F77_CALL(dgemv)(&trans_T, &n, &active, &one,
                         Q, &n, z, &one_col,
@@ -333,6 +341,16 @@ static int native_lanczos_run(void* impl,
         F77_CALL(dgemv)(&trans_N, &n, &active, &minus_one,
                         Q, &n, coeff, &one_col,
                         &one, z, &one_col FCONE);
+        if (pass == 0) {
+          long double post2 = 0.0L;
+          for (int row = 0; row < n; ++row) {
+            post2 += static_cast<long double>(z[row]) * z[row];
+          }
+          const double post_norm = sqrt(static_cast<double>(post2));
+          if (post_norm >= dgks_eta * pre_norm) {
+            break;
+          }
+        }
       }
     }
 

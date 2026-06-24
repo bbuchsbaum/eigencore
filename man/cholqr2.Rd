@@ -14,3 +14,4 @@ cholqr2(X, tol = sqrt(.Machine$double.eps))
 \description{
 Cholesky QR with a corrective second pass.
 }
+\keyword{internal}

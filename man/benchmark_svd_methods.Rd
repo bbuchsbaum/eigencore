@@ -26,3 +26,4 @@ benchmark_svd_methods(
 \description{
 Benchmark SVD methods against base and optional references.
 }
+\keyword{internal}

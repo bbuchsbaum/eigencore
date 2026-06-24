@@ -61,6 +61,37 @@ test_that("explicit generalized Lanczos uses native transformed diagonal-B path"
   expect_equal(values(fit), values(lobpcg_fit), tolerance = 1e-8)
 })
 
+test_that("native generalized LOBPCG handles repeated clusters and magnitude targets", {
+  A <- Matrix::Diagonal(x = c(1, 1, 4, 4, 9, 16))
+  B <- Matrix::Diagonal(x = c(1, 1, 2, 2, 3, 4))
+  cases <- list(
+    list(target = smallest(), expected = c(1, 1)),
+    list(target = largest_magnitude(), expected = c(4, 3))
+  )
+
+  for (case in cases) {
+    fit <- eig_partial(
+      A,
+      B = B,
+      k = 2,
+      target = case$target,
+      method = lobpcg(maxit = 120L),
+      seed = 326,
+      tol = 1e-8,
+      allow_dense_fallback = "never"
+    )
+
+    expect_equal(fit$method, eigencore:::native_generalized_lobpcg_label())
+    expect_true(fit$restart$native)
+    expect_true(fit$restart$native_kernels)
+    expect_true(fit$restart$generalized)
+    expect_true(certificate(fit)$passed)
+    expect_equal(values(fit), case$expected, tolerance = 1e-8)
+    expect_equal(crossprod(vectors(fit), as.matrix(B) %*% vectors(fit)), diag(2),
+                 tolerance = 1e-8)
+  }
+})
+
 test_that("explicit generalized Lanczos supports native dense SPD metric transforms", {
   A <- diag(c(2, 5, 9, 14))
   B <- diag(c(1, 2, 3, 4))
@@ -158,6 +189,60 @@ test_that("explicit generalized Lanczos supports sparse CSC SPD metric solves", 
   )
   expect_true(certificate(lobpcg_fit)$passed)
   expect_equal(values(fit), values(lobpcg_fit), tolerance = 1e-8)
+})
+
+test_that("dsCMatrix generalized SPD inputs keep native sparse eligibility", {
+  n <- 14L
+  A <- methods::as(Matrix::forceSymmetric(Matrix::bandSparse(
+    n,
+    k = c(0, 1),
+    diagonals = list(rep(2.5, n), rep(-1, n - 1L))
+  )), "CsparseMatrix")
+  B <- methods::as(Matrix::forceSymmetric(Matrix::bandSparse(
+    n,
+    k = c(0, 1),
+    diagonals = list(seq(1.5, 2.4, length.out = n), rep(0.03, n - 1L))
+  )), "CsparseMatrix")
+  target <- smallest_magnitude()
+  Aop <- as_operator(A)
+  Bop <- as_operator(B)
+
+  expect_s4_class(A, "dsCMatrix")
+  expect_s4_class(B, "dsCMatrix")
+  expect_equal(Aop$metadata$storage, "dgCMatrix")
+  expect_equal(Bop$metadata$storage, "dgCMatrix")
+  expect_equal(Aop$metadata$input_storage, "dsCMatrix")
+  expect_equal(Bop$metadata$input_storage, "dsCMatrix")
+  expect_true(Aop$metadata$symmetric_storage)
+  expect_true(Bop$metadata$symmetric_storage)
+  expect_lt(length(methods::slot(Aop$metadata$matrix, "x")), n * n / 2)
+
+  problem <- eigen_problem(A, metric = B, target = target)
+  plan <- plan_solver(problem, k = 2L, method = lobpcg(maxit = 180L))
+  expect_equal(plan$method, eigencore:::native_generalized_lobpcg_label())
+
+  fit <- eig_partial(
+    A,
+    B = B,
+    k = 2L,
+    target = target,
+    method = lobpcg(maxit = 180L),
+    seed = 325,
+    tol = 1e-7,
+    allow_dense_fallback = "never"
+  )
+  oracle <- eigencore:::dense_generalized_spd_eigen(as.matrix(A), as.matrix(B))
+  idx <- eigencore:::order_indices(oracle$values, target)[seq_len(2L)]
+  expected <- oracle$values[idx]
+
+  expect_equal(fit$method, eigencore:::native_generalized_lobpcg_label())
+  expect_true(fit$restart$native)
+  expect_true(fit$restart$native_kernels)
+  expect_equal(fit$restart$orthogonalization_methods, "native_csc_b_mgs2")
+  expect_true(certificate(fit)$passed)
+  expect_equal(values(fit), expected, tolerance = 1e-5)
+  expect_equal(crossprod(vectors(fit), as.matrix(B) %*% vectors(fit)), diag(2),
+               tolerance = 1e-6)
 })
 
 test_that("general sparse CSC SPD metric solves keep reference Cholesky provenance", {

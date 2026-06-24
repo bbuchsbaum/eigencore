@@ -36,7 +36,10 @@ if (!gate_subject %in% methods) {
   )
 }
 
-old_options <- options(eigencore.gram_svd_max_dimension = gram_max)
+old_options <- options(
+  eigencore.gram_svd_max_dimension = gram_max,
+  eigencore.gram_svd_max_dimension_wide = gram_max
+)
 on.exit(options(old_options), add = TRUE)
 
 gram_cutoff_case <- function(case, m, n, density, rank, seed,

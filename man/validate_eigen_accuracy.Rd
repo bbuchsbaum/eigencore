@@ -29,3 +29,4 @@ validate_eigen_accuracy(
 \description{
 Validate eigencore eigen results against a dense oracle.
 }
+\keyword{internal}

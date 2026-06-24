@@ -20,3 +20,4 @@ validate_svd_accuracy(A, rank, target = largest(), fit = NULL, tol = 1e-08)
 \description{
 Validate eigencore SVD results against base::svd().
 }
+\keyword{internal}

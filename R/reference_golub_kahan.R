@@ -1867,7 +1867,7 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     # honest sparse path.
     if (identical(storage, "dgCMatrix") &&
         target_kind %in% c("largest", "largest_magnitude")) {
-      gram_max <- as.integer(getOption("eigencore.gram_svd_max_dimension", 512L))
+      gram_max <- gram_svd_max_dimension()
       if (n > gram_max) {
         stop(
           "native_gram_svd: refusing to densify A^T A for sparse dgCMatrix ",

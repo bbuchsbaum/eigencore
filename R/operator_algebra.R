@@ -60,6 +60,7 @@ compose <- function(A, B, name = NULL) {
 #'
 #' @param ... Operator-like objects with identical dimensions.
 #' @param name Optional label for the summed operator.
+#' @keywords internal
 operator_sum <- function(..., name = NULL) {
   ops <- lapply(list(...), as_operator)
   if (!length(ops)) {
@@ -107,6 +108,7 @@ operator_sum <- function(..., name = NULL) {
 #' @param A Operator-like object.
 #' @param scalar Finite numeric scalar multiplier.
 #' @param name Optional label for the scaled operator.
+#' @keywords internal
 operator_scale <- function(A, scalar, name = NULL) {
   A <- as_operator(A)
   scalar <- as.numeric(scalar)

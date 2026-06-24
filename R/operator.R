@@ -90,6 +90,9 @@ as_operator.default <- function(x, ...) {
   if (inherits(x, "ddiMatrix")) {
     return(diagonal_matrix_as_operator(x))
   }
+  if (inherits(x, "dsCMatrix")) {
+    return(csc_matrix_as_operator(x))
+  }
   if (inherits(x, "dgCMatrix")) {
     return(csc_matrix_as_operator(x))
   }
@@ -284,13 +287,24 @@ csc_block_apply <- function(A, X, alpha = 1, beta = 0, Y = NULL, transpose = FAL
 }
 
 #' @keywords internal
+csc_native_matrix <- function(x) {
+  if (inherits(x, "dsCMatrix") || inherits(x, "symmetricMatrix")) {
+    return(methods::as(methods::as(x, "generalMatrix"), "CsparseMatrix"))
+  }
+  x
+}
+
+#' @keywords internal
 csc_matrix_as_operator <- function(x) {
   dim_x <- dim(x)
+  input_storage <- class(x)[[1L]]
+  symmetric_storage <- inherits(x, "symmetricMatrix")
   frobenius_norm <- if (inherits(x, "dgCMatrix") && !inherits(x, "symmetricMatrix")) {
     sqrt(sum(methods::slot(x, "x")^2))
   } else {
     as.numeric(Matrix::norm(x, type = "F"))
   }
+  x <- csc_native_matrix(x)
   linear_operator(
     dim = dim_x,
     apply = function(X, alpha = 1, beta = 0, Y = NULL) {
@@ -306,6 +320,8 @@ csc_matrix_as_operator <- function(x) {
       matrix = x,
       native = TRUE,
       storage = "dgCMatrix",
+      input_storage = input_storage,
+      symmetric_storage = symmetric_storage,
       frobenius_norm = frobenius_norm
     )
   )

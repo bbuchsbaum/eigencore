@@ -2,15 +2,23 @@
 % Please edit documentation in R/certification.R
 \name{residuals}
 \alias{residuals}
+\alias{residuals.eigencore_eigen_result}
+\alias{residuals.eigencore_svd_result}
+\alias{residuals.eigencore_certificate}
 \title{Extract residual diagnostics.}
 \usage{
-residuals(x, ...)
+\method{residuals}{eigencore_eigen_result}(object, ...)
+
+\method{residuals}{eigencore_svd_result}(object, ...)
+
+\method{residuals}{eigencore_certificate}(object, ...)
 }
 \arguments{
-\item{x}{An eigencore result object.}
+\item{object}{An eigencore result or certificate object.}
 
 \item{...}{Reserved for future methods.}
 }
 \description{
-Extract residual diagnostics.
+Methods for the \code{\link[stats:residuals]{stats::residuals()}} generic: return the per-pair (or
+per-triplet) residual norms stored in an eigencore result or certificate.
 }

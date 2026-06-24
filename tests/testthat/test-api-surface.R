@@ -1,0 +1,50 @@
+# Snapshot of the exported API surface, frozen at 1.0.0.
+#
+# A failure here means the public contract changed — exported names, function
+# signatures, S3 registrations, or result/certificate fields. That is a
+# deliberate, NEWS-worthy decision, not a snapshot to refresh casually.
+
+api_signature <- function(nm, ns = asNamespace("eigencore")) {
+  obj <- get(nm, envir = ns)
+  if (!is.function(obj)) {
+    return(sprintf("%s <%s>", nm, class(obj)[1L]))
+  }
+  sig <- paste(deparse(args(obj)), collapse = " ")
+  sig <- sub("^function ?", nm, sig)
+  sig <- sub("NULL$", "", sig)
+  gsub("\\s+", " ", trimws(sig))
+}
+
+test_that("exported function signatures are frozen", {
+  exports <- sort(getNamespaceExports("eigencore"))
+  expect_snapshot(writeLines(vapply(exports, api_signature, character(1L))))
+})
+
+test_that("S3 method registrations are frozen", {
+  info <- getNamespaceInfo("eigencore", "S3methods")
+  regs <- sort(paste(info[, 1L], info[, 2L], sep = "."))
+  expect_snapshot(writeLines(regs))
+})
+
+test_that("result and certificate field names are frozen", {
+  efit <- eig_partial(diag(c(3, 2, 1)), k = 2, target = largest())
+  sfit <- svd_partial(matrix(c(2, 0, 0, 0, 1, 0), 3, 2), rank = 1,
+                      target = largest())
+  expect_snapshot({
+    cat("eigen result:\n")
+    writeLines(sort(names(efit)))
+    cat("svd result:\n")
+    writeLines(sort(names(sfit)))
+    cat("certificate:\n")
+    writeLines(sort(names(efit$certificate)))
+  })
+})
+
+test_that("residuals() dispatches through the stats generic without masking", {
+  expect_false("residuals" %in% getNamespaceExports("eigencore"))
+  efit <- eig_partial(diag(c(3, 2, 1)), k = 2, target = largest())
+  expect_identical(residuals(efit), efit$residuals)
+  expect_identical(residuals(efit$certificate), efit$certificate$residuals)
+  lm_fit <- lm(y ~ x, data = data.frame(x = 1:5, y = c(1, 2, 3, 5, 4)))
+  expect_length(residuals(lm_fit), 5L)
+})

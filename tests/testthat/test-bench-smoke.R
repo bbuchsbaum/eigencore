@@ -330,6 +330,7 @@ test_that("generalized LOBPCG release script gates native contract rows", {
   expect_true(any(grepl("dense_generalized_lanczos_native_largest", lines, fixed = TRUE)))
   expect_true(any(grepl("sparse_tridiagonal_b_generalized_lanczos_native_metric_smallest", lines, fixed = TRUE)))
   expect_true(any(grepl("sparse_csc_generalized_lanczos_ref_cholesky_smallest", lines, fixed = TRUE)))
+  expect_true(any(grepl("symmetric_csc_generalized_lobpcg_smallest_magnitude", lines, fixed = TRUE)))
   expect_true(any(grepl("explicit_spd_matrix_free_b", lines, fixed = TRUE)))
   expect_true(any(grepl("expected_orthogonalization", lines, fixed = TRUE)))
 })

@@ -489,7 +489,7 @@ test_that("auto uses native CSC-backed Lanczos for sparse Hermitian matrices", {
   expect_true(certificate(fit)$passed)
 })
 
-test_that("auto uses selected native tridiagonal eigensolver for tridiagonal sparse Hermitian matrices", {
+test_that("auto routes tridiagonal edge targets through native factorized shift-invert", {
   n <- 20
   A <- Matrix::bandSparse(
     n,
@@ -497,16 +497,26 @@ test_that("auto uses selected native tridiagonal eigensolver for tridiagonal spa
     k = c(-1, 0, 1),
     diagonals = list(rep(-1, n - 1), rep(2, n), rep(-1, n - 1))
   )
-  fit <- eig_partial(A, k = 4, target = smallest(), seed = 101)
+  plan <- plan_solver(eigen_problem(A, target = smallest()), k = 4)
+  expect_equal(plan$method, eigencore:::native_tridiagonal_shift_invert_label())
+  expect_true(any(grepl("tridiagonal smallest target auto-routed", plan$reasons,
+                        fixed = TRUE)))
+  expect_identical(plan$controls$transform, "shift_invert")
+  expect_true(plan$controls$certified_in_original_coordinates)
+
+  fit <- eig_partial(A, k = 4, target = smallest(), seed = 101,
+                     allow_dense_fallback = "never")
   oracle <- eigen(as.matrix(A), symmetric = TRUE)
   idx <- order(oracle$values)[1:4]
 
-  expect_equal(fit$plan$method, eigencore:::native_tridiagonal_hermitian_label())
-  expect_equal(fit$method, eigencore:::native_tridiagonal_hermitian_label())
+  expect_equal(fit$plan$method, eigencore:::native_tridiagonal_shift_invert_label())
+  expect_equal(fit$method, eigencore:::native_tridiagonal_shift_invert_label())
   expect_identical(fit$warnings, character())
   expect_equal(values(fit), oracle$values[idx], tolerance = 1e-10)
   expect_true(certificate(fit)$passed)
-  expect_equal(fit$restart$kind, "tridiagonal_lapack_selected")
+  expect_equal(fit$restart$kind, "native_tridiagonal_shift_invert_lanczos")
+  expect_true(fit$restart$factorization_native)
+  expect_identical(fit$transform$label_kind, "tridiagonal_thomas_native")
 
   generic <- eigencore:::certify_eigen_operator(
     as_operator(A),
@@ -518,6 +528,44 @@ test_that("auto uses selected native tridiagonal eigensolver for tridiagonal spa
   expect_equal(certificate(fit)$residuals, generic$residuals, tolerance = 1e-12)
   expect_equal(certificate(fit)$backward_error, generic$backward_error, tolerance = 1e-12)
   expect_equal(certificate(fit)$scale, generic$scale, tolerance = 1e-12)
+
+  largest_fit <- eig_partial(A, k = 3, target = largest(), seed = 102,
+                             allow_dense_fallback = "never")
+  largest_idx <- order(oracle$values, decreasing = TRUE)[1:3]
+  expect_equal(largest_fit$method, eigencore:::native_tridiagonal_shift_invert_label())
+  expect_gt(largest_fit$sigma, max(oracle$values))
+  expect_equal(values(largest_fit), oracle$values[largest_idx], tolerance = 1e-10)
+  expect_true(certificate(largest_fit)$passed)
+
+  explicit_selected <- eig_partial(
+    A,
+    k = 4,
+    target = smallest(),
+    method = eigencore:::new_method(eigencore:::native_tridiagonal_hermitian_label()),
+    seed = 103
+  )
+  expect_equal(explicit_selected$method, eigencore:::native_tridiagonal_hermitian_label())
+  expect_equal(explicit_selected$restart$kind, "tridiagonal_lapack_selected")
+  expect_equal(values(explicit_selected), oracle$values[idx], tolerance = 1e-10)
+})
+
+test_that("tridiagonal auto shift-invert preserves edge semantics off Laplacians", {
+  n <- 25
+  A <- Matrix::bandSparse(
+    n,
+    n,
+    k = c(-1, 0, 1),
+    diagonals = list(rep(0.35, n - 1), seq(-3, 4, length.out = n), rep(0.35, n - 1))
+  )
+  oracle <- eigen(as.matrix(A), symmetric = TRUE)
+
+  fit <- eig_partial(A, k = 3, target = smallest(), seed = 104,
+                     tol = 1e-10, allow_dense_fallback = "never")
+  idx <- order(oracle$values)[1:3]
+  expect_equal(fit$method, eigencore:::native_tridiagonal_shift_invert_label())
+  expect_lt(fit$sigma, min(oracle$values))
+  expect_equal(values(fit), oracle$values[idx], tolerance = 1e-9)
+  expect_true(certificate(fit)$passed)
 })
 
 test_that("explicit Lanczos uses the native thick-restart path for dense Hermitian matrices", {

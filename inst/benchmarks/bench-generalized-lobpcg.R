@@ -697,6 +697,23 @@ case_specs <- if (args$quick) {
         "dgCMatrix"
       ),
       performance_gate = FALSE
+    ),
+    list(
+      case = "symmetric_csc_generalized_lobpcg_smallest_magnitude",
+      n = 14L, k = 2L, target = smallest_magnitude(), sparse = TRUE,
+      methods = c("eigencore", "base"),
+      subject = "eigencore",
+      A = methods::as(Matrix::forceSymmetric(Matrix::bandSparse(
+        14L,
+        k = c(0, 1),
+        diagonals = list(rep(2.5, 14L), rep(-1, 13L))
+      )), "CsparseMatrix"),
+      B = methods::as(Matrix::forceSymmetric(Matrix::bandSparse(
+        14L,
+        k = c(0, 1),
+        diagonals = list(seq(1.5, 2.4, length.out = 14L), rep(0.03, 13L))
+      )), "CsparseMatrix"),
+      performance_gate = FALSE
     )
   )
 } else {
@@ -814,6 +831,23 @@ case_specs <- if (args$quick) {
           ),
         "dgCMatrix"
       ),
+      performance_gate = FALSE
+    ),
+    list(
+      case = "symmetric_csc_generalized_lobpcg_smallest_magnitude",
+      n = 80L, k = 8L, target = smallest_magnitude(), sparse = TRUE,
+      methods = c("eigencore", "base"),
+      subject = "eigencore",
+      A = methods::as(Matrix::forceSymmetric(Matrix::bandSparse(
+        80L,
+        k = c(0, 1),
+        diagonals = list(rep(2.5, 80L), rep(-1, 79L))
+      )), "CsparseMatrix"),
+      B = methods::as(Matrix::forceSymmetric(Matrix::bandSparse(
+        80L,
+        k = c(0, 1),
+        diagonals = list(seq(1.5, 2.4, length.out = 80L), rep(0.03, 79L))
+      )), "CsparseMatrix"),
       performance_gate = FALSE
     )
   )

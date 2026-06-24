@@ -6,7 +6,9 @@
 \alias{eigencore-package}
 \title{eigencore}
 \description{
-Foundations for certified partial spectral computation in R.
+Computes the top-k singular triplets or eigenpairs of large sparse and
+structured matrices, with a numerical certificate attached to every result.
+See \code{\link[=svd_partial]{svd_partial()}}, \code{\link[=eig_partial]{eig_partial()}}, and \code{vignette("eigencore")}.
 }
 \author{
 \strong{Maintainer}: Bradley Buchsbaum \email{brad.buchsbaum@gmail.com}
