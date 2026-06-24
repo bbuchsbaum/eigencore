@@ -19,6 +19,8 @@ The primary public names are eigencore names, not geigen-compatible names:
 - `generalized_schur(A, B, sort = NULL, vectors = TRUE, ...)` is the dense
   QZ/generalized Schur surface. A short `qz()` alias is not part of the
   current public contract; it can be added only after a separate export audit.
+- `alpha_beta(x)` extracts homogeneous generalized eigenvalue coordinates from
+  dense general-pencil and generalized Schur results.
 - `generalized_svd(A, B, ...)` is the planned generalized SVD compatibility
   surface. It is deferred until the dense generalized eigen and QZ contracts
   are stable.
@@ -86,7 +88,7 @@ QZ results will expose the Schur form separately from eigenvalue accessors:
 
 - `S` and `T` for the generalized Schur pair.
 - `Q` and `Z` when Schur vectors are requested.
-- `alpha`, `beta`, `values`, and `classification` accessors matching the
+- `alpha`, `beta`, `values`, and `classification` fields matching the
   dense-pencil result contract.
 - `method`, `plan`, `certificate`, and `warnings`.
 
@@ -158,6 +160,7 @@ Exported full dense surface:
 
 - `eig_full`
 - `generalized_schur`
+- `alpha_beta`
 
 Planned but not yet exported:
 

@@ -28,7 +28,9 @@ reference:
   desc: High-level functions for partial eigenvalue and SVD computation.
   contents:
   - eig_partial
+  - eig_full
   - svd_partial
+  - generalized_schur
 
 - title: RSpectra-compatible shims
   desc: Drop-in replacements for `RSpectra::eigs()`, `eigs_sym()`, and `svds()`.
@@ -104,6 +106,7 @@ reference:
   - residuals
   - backward_error
   - values
+  - alpha_beta
   - vectors
   - left_vectors
   - right_vectors
@@ -115,4 +118,5 @@ articles:
   contents:
   - eigencore
   - certificates
+  - geigen-migration
   - benchmarks

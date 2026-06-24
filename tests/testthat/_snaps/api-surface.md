@@ -4,6 +4,7 @@
       writeLines(vapply(exports, api_signature, character(1L)))
     Output
       adjoint(x, ...)
+      alpha_beta(x, ...)
       as_operator(x, ...)
       auto()
       backward_error(x, ...)

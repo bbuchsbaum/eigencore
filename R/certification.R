@@ -58,6 +58,39 @@ values <- function(x, ...) {
   x$values
 }
 
+#' Extract homogeneous generalized eigenvalue coordinates.
+#'
+#' Generalized dense-pencil and generalized Schur results store eigenvalues in
+#' homogeneous form as `alpha / beta`. `alpha_beta()` exposes those coordinates
+#' along with the finite/infinite/undefined classification computed by
+#' eigencore.
+#'
+#' @param x An eigencore generalized dense-pencil or generalized Schur result.
+#' @param ... Reserved for future methods.
+#' @return A list containing `alpha`, `beta`, and any available `values`,
+#'   `classification`, `finite`, `infinite`, and `undefined` fields.
+#' @examples
+#' A <- diag(c(2, 3, 0))
+#' B <- diag(c(1, 0, 0))
+#' fit <- eig_full(A, B = B, structure = general())
+#' alpha_beta(fit)$classification
+#' @export
+alpha_beta <- function(x, ...) {
+  if (is.null(x$alpha) || is.null(x$beta)) {
+    stop(
+      "alpha/beta coordinates are not available for this result.",
+      call. = FALSE
+    )
+  }
+  out <- list(alpha = x$alpha, beta = x$beta)
+  for (nm in c("values", "classification", "finite", "infinite", "undefined")) {
+    if (!is.null(x[[nm]])) {
+      out[[nm]] <- x[[nm]]
+    }
+  }
+  out
+}
+
 #' Extract eigenvectors.
 #'
 #' @param x An eigencore eigen result object.

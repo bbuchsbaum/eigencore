@@ -30,6 +30,19 @@ expect_b_orthonormal <- function(fit, B, tolerance = 1e-8) {
   expect_equal(crossprod(V, B %*% V), diag(ncol(V)), tolerance = tolerance)
 }
 
+expect_complex_set_equal <- function(actual, expected, tolerance = 1e-8) {
+  actual <- as.complex(actual)
+  expected <- as.complex(expected)
+  expect_equal(length(actual), length(expected))
+  remaining <- seq_along(actual)
+  for (target in expected) {
+    distances <- Mod(actual[remaining] - target)
+    best <- which.min(distances)
+    expect_lte(distances[[best]], tolerance)
+    remaining <- remaining[-best]
+  }
+}
+
 test_that("dense generalized SPD fallback matches geigen oracle", {
   skip_if_no_geigen()
 
@@ -191,4 +204,64 @@ test_that("sparse tridiagonal generalized shift-invert matches geigen oracle", {
   expect_b_orthonormal(fit, B, tolerance = 1e-8)
   expect_true(fit$restart$native)
   expect_true(fit$restart$generalized)
+})
+
+test_that("eig_full dense real general pencil matches geigen oracle", {
+  skip_if_no_geigen()
+
+  A <- matrix(c(1, 4, 2, 3), 2, 2)
+  B <- matrix(c(2, 1, 0, -1), 2, 2)
+  oracle <- geigen::geigen(A, B, symmetric = FALSE, only.values = TRUE)
+
+  fit <- eig_full(A, B = B, structure = general(), tol = 1e-10)
+  coords <- alpha_beta(fit)
+
+  expect_equal(fit$method, eigencore:::native_dense_generalized_pencil_full_label())
+  expect_complex_set_equal(values(fit), oracle$values, tolerance = 1e-8)
+  expect_complex_set_equal(coords$alpha / coords$beta, oracle$values,
+                           tolerance = 1e-8)
+  expect_true(certificate(fit)$passed)
+})
+
+test_that("eig_full dense complex general pencil matches geigen oracle", {
+  skip_if_no_geigen()
+
+  A <- matrix(
+    c(1 + 1i, 2 - 1i, 0.5 + 0.25i, 3 + 2i),
+    2,
+    2
+  )
+  B <- matrix(
+    c(2 + 0i, 0.4i, 0.25 + 0.1i, 1 - 0.5i),
+    2,
+    2
+  )
+  oracle <- geigen::geigen(A, B, symmetric = FALSE, only.values = TRUE)
+
+  fit <- eig_full(A, B = B, structure = general(), tol = 1e-10)
+  coords <- alpha_beta(fit)
+
+  expect_equal(fit$method, eigencore:::native_dense_generalized_pencil_full_label())
+  expect_complex_set_equal(values(fit), oracle$values, tolerance = 1e-8)
+  expect_complex_set_equal(coords$alpha / coords$beta, oracle$values,
+                           tolerance = 1e-8)
+  expect_true(certificate(fit)$passed)
+})
+
+test_that("generalized_schur and alpha_beta match geigen gqz/gevalues", {
+  skip_if_no_geigen()
+
+  A <- matrix(c(1, 4, 2, 3), 2, 2)
+  B <- matrix(c(2, 1, 0, -1), 2, 2)
+  oracle <- geigen::gqz(A, B, sort = "N")
+  oracle_values <- geigen::gevalues(oracle)
+
+  qz <- generalized_schur(A, B, sort = "none")
+  coords <- alpha_beta(qz)
+
+  expect_equal(qz$method, eigencore:::native_dense_generalized_schur_label())
+  expect_complex_set_equal(values(qz), oracle_values, tolerance = 1e-8)
+  expect_complex_set_equal(coords$alpha / coords$beta, oracle_values,
+                           tolerance = 1e-8)
+  expect_equal(qz$classification, rep("finite", 2L))
 })

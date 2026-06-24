@@ -1,0 +1,150 @@
+---
+title: "Migrating from geigen"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Migrating from geigen}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+```{r setup}
+library(eigencore)
+library(Matrix)
+```
+
+eigencore is not a namespace clone of `geigen`. The migration target is the
+problem class: dense SPD/Hermitian metrics, dense general pencils, dense QZ, or
+sparse SPD partial solves. Results carry planner labels and certificates so
+the numerical path is inspectable.
+
+| geigen call | eigencore call | Status |
+| --- | --- | --- |
+| `geigen::geigen(A, B, symmetric = TRUE)` | `eig_full(A, B = ...)` or `eig_partial(A, B = ..., k = ...)` | Supported for SPD/Hermitian `B` |
+| `geigen::geigen(A, B, symmetric = FALSE)` | `eig_full(A, B = ..., structure = general())` | Supported for dense general pencils |
+| `geigen::gqz(A, B)` | `generalized_schur(A, B)` | Supported for dense QZ |
+| `geigen::gevalues(qz)` | `values(qz)` and `alpha_beta(qz)` | Supported |
+| `geigen::gsvd(A, B)` | `generalized_svd(A, B, ...)` | Deferred |
+
+## Dense SPD/Hermitian Problems
+
+For a full dense generalized SPD/Hermitian problem, pass `B` directly to
+`eig_full()`.
+
+```{r dense-spd}
+A <- diag(c(2, 8, 18))
+B <- diag(c(1, 2, 3))
+
+fit <- eig_full(A, B = B)
+values(fit)
+fit$method
+certificate(fit)$passed
+```
+
+For partial spectra, use `eig_partial()`.
+
+```{r partial-spd}
+part <- eig_partial(A, B = B, k = 2, target = smallest())
+values(part)
+part$method
+certificate(part)$passed
+```
+
+## Dense General Pencils
+
+Use `structure = general()` when `B` is indefinite, singular, nonsymmetric, or
+when homogeneous `alpha`/`beta` diagnostics matter.
+
+```{r dense-general}
+A <- matrix(c(1, 4, 2, 3), 2, 2)
+B <- matrix(c(2, 1, 0, -1), 2, 2)
+
+pencil <- eig_full(A, B = B, structure = general())
+values(pencil)
+alpha_beta(pencil)$classification
+pencil$method
+```
+
+Singular pencils expose finite, infinite, and undefined classifications rather
+than hiding beta-zero cases.
+
+```{r beta-zero}
+singular <- eig_full(
+  diag(c(2, 3, 0)),
+  B = diag(c(1, 0, 0)),
+  structure = general()
+)
+
+values(singular)
+alpha_beta(singular)$classification
+certificate(singular)$failed_indices
+```
+
+## QZ and gevalues
+
+`geigen::gqz()` maps to `generalized_schur()`. Use `values()` for
+`alpha / beta`, and `alpha_beta()` when the homogeneous coordinates or
+classification are needed.
+
+```{r qz}
+qz <- generalized_schur(A, B)
+values(qz)
+coords <- alpha_beta(qz)
+coords$alpha
+coords$beta
+coords$classification
+qz$method
+```
+
+The current QZ sorting contract is eigencore-specific: use no sorting,
+finite-first sorting, or infinite-first sorting. Other geigen sort modes are
+not silently accepted.
+
+```{r qz-sort}
+beta_zero <- generalized_schur(
+  diag(c(2, 3, 0)),
+  diag(c(1, 0, 0)),
+  sort = "infinite"
+)
+alpha_beta(beta_zero)$classification
+```
+
+## Sparse Users
+
+Do not migrate sparse problems by relying on implicit densification. Full dense
+surfaces require base dense matrices and reject sparse/operator inputs.
+
+```{r sparse-reject, error = TRUE}
+eig_full(Matrix::Diagonal(3), B = Matrix::Diagonal(3))
+```
+
+Sparse SPD/Hermitian generalized partial problems use `eig_partial()` with an
+explicit no-densification policy when that boundary matters.
+
+```{r sparse-partial}
+A_sparse <- Matrix::Diagonal(x = c(1, 4, 9, 16, 25, 36))
+B_sparse <- Matrix::Diagonal(x = c(1, 2, 3, 4, 5, 6))
+
+sparse_fit <- eig_partial(
+  A_sparse,
+  B = B_sparse,
+  k = 3,
+  target = smallest(),
+  method = lanczos(max_subspace = 6),
+  allow_dense_fallback = "never"
+)
+
+values(sparse_fit)
+sparse_fit$method
+sparse_fit$restart$metric_solve
+certificate(sparse_fit)$passed
+```
+
+## GSVD
+
+`geigen::gsvd()` has no eigencore replacement yet. Keep using
+`geigen::gsvd()` for GSVD workloads until `generalized_svd(A, B, ...)` is
+implemented and documented.
