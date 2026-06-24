@@ -1,5 +1,8 @@
 generalized_api_contract_text <- function() {
   path <- testthat::test_path("..", "..", "docs", "generalized-eigen-api.md")
+  if (!file.exists(path)) {
+    skip("repository docs/generalized-eigen-api.md is excluded from package tarballs")
+  }
   paste(readLines(path, warn = FALSE), collapse = "\n")
 }
 

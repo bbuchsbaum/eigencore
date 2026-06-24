@@ -148,17 +148,17 @@ L <- as(L, "dgCMatrix")
 eig <- eig_partial(L, k = 8, target = smallest())
 eig
 #> Partial eigen decomposition
-#>   requested: 8 
-#>   converged: 8 
-#>   method: native tridiagonal Hermitian shift-invert (factorized Lanczos) 
-#>   target: smallest 
-#>   restart: native_tridiagonal_shift_invert_lanczos 
-#>   locked: 0 
-#>   max residual: 9.026588e-10 
-#>   max backward error: 2.605773e-12 
-#>   max orthogonality loss: 6.439294e-15 
-#>   norm bound: frobenius_metadata+identity_exact 
-#>   scale estimated: FALSE 
+#>   requested: 8
+#>   converged: 8
+#>   method: native tridiagonal Hermitian shift-invert (factorized Lanczos)
+#>   target: smallest
+#>   restart: native_tridiagonal_shift_invert_lanczos
+#>   locked: 0
+#>   max residual: 9.026588e-10
+#>   max backward error: 2.605773e-12
+#>   max orthogonality loss: 6.439294e-15
+#>   norm bound: frobenius_metadata+identity_exact
+#>   scale estimated: FALSE
 #>   certificate: passed
 ```
 

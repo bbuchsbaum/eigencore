@@ -148,4 +148,3 @@
       scale
       scale_is_estimate
       tolerance
-

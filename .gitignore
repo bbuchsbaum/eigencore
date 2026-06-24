@@ -8,6 +8,8 @@ repomix-output.txt
 .RData
 .Ruserdata
 inst/benchmarks/results/
+README.html
+pkgdown_site/
 src/*.o
 src/*.so
 src/*.dll
