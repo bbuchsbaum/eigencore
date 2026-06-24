@@ -27,7 +27,7 @@ the numerical path is inspectable.
 | `geigen::geigen(A, B, symmetric = FALSE)` | `eig_full(A, B = ..., structure = general())` | Supported for dense general pencils |
 | `geigen::gqz(A, B)` | `generalized_schur(A, B)` | Supported for dense QZ |
 | `geigen::gevalues(qz)` | `values(qz)` and `alpha_beta(qz)` | Supported |
-| `geigen::gsvd(A, B)` | `generalized_svd(A, B, ...)` | Deferred |
+| `geigen::gsvd(A, B)` | `generalized_svd(A, B, ...)` | Real dense only |
 
 ## Dense SPD/Hermitian Problems
 
@@ -145,6 +145,19 @@ certificate(sparse_fit)$passed
 
 ## GSVD
 
-`geigen::gsvd()` has no eigencore replacement yet. Keep using
-`geigen::gsvd()` for GSVD workloads until `generalized_svd(A, B, ...)` is
-implemented and documented.
+Use `generalized_svd(A, B)` for real dense GSVD workloads. The result exposes
+homogeneous generalized singular values through `alpha_beta()`, orthogonal
+factors `U`, `V`, and `Q`, and reconstructable `D1`, `D2`, `R`, and `zero_R`
+factors.
+
+```{r}
+A <- matrix(c(1, 2, 3, 3, 2, 1), nrow = 2, byrow = TRUE)
+B <- matrix(1:9, nrow = 3)
+
+gfit <- generalized_svd(A, B)
+alpha_beta(gfit)$values
+certificate(gfit)$passed
+```
+
+Complex and sparse GSVD inputs remain future scope and fail explicitly rather
+than routing through a dense or external-package fallback.

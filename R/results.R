@@ -37,3 +37,19 @@ print.eigencore_svd_result <- function(x, ...) {
   cat("  certificate:", if (isTRUE(x$certificate$passed)) "passed" else "failed", "\n")
   invisible(x)
 }
+
+#' @export
+print.eigencore_gsvd_result <- function(x, ...) {
+  cat("Generalized SVD\n")
+  cat("  dimensions:", paste(x$dimensions, collapse = " x "), "\n")
+  cat("  rank:", x$rank, "(k =", x$k, ", l =", x$l, ")\n")
+  cat("  method:", x$method, "\n")
+  cat("  finite values:", sum(x$finite), "\n")
+  cat("  infinite values:", sum(x$infinite), "\n")
+  cat("  undefined values:", sum(x$undefined), "\n")
+  cat("  max residual:", format(x$certificate$max_residual), "\n")
+  cat("  max backward error:", format(x$certificate$max_backward_error), "\n")
+  cat("  max orthogonality loss:", format(x$certificate$max_orthogonality_loss), "\n")
+  cat("  certificate:", if (isTRUE(x$certificate$passed)) "passed" else "failed", "\n")
+  invisible(x)
+}

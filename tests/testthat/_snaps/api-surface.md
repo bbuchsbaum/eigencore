@@ -23,6 +23,7 @@
       euclidean(dim, dtype = "double")
       general()
       generalized_schur(A, B, sort = NULL, vectors = TRUE, ...)
+      generalized_svd(A, B, tol = 1e-08, ...)
       golub_kahan(max_subspace = NULL, reorthogonalize = TRUE)
       hermitian()
       lanczos(max_subspace = NULL, max_restarts = NULL, block = 1L, reorthogonalize = TRUE)
@@ -68,6 +69,7 @@
       print.eigencore_benchmark
       print.eigencore_certificate
       print.eigencore_eigen_result
+      print.eigencore_gsvd_result
       print.eigencore_operator
       print.eigencore_plan
       print.eigencore_svd_result

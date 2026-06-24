@@ -28,7 +28,7 @@ The current CRAN reverse dependencies found in the package database were:
 | `geigen(A, B, symmetric = FALSE)` | Dense general matrix pencil, values plus homogeneous `alpha`/`beta` | `eig_full(A, B = ..., structure = general())` |
 | `gqz(A, B, sort = "N")` | Dense QZ/generalized Schur decomposition | `generalized_schur(A, B, sort = NULL)` |
 | `gevalues(gqz_result)` | Values extracted from QZ homogeneous coordinates | `values(qz)` for `alpha / beta`, `alpha_beta(qz)` for homogeneous coordinates and finite/infinite classification |
-| `gsvd(A, B)` | Generalized singular value decomposition | Deferred to `generalized_svd(A, B, ...)` in `bd-01KVWKVRK08D6ZERE81ANGN3QG`; use `geigen::gsvd()` until that surface exists |
+| `gsvd(A, B)` | Generalized singular value decomposition | `generalized_svd(A, B, ...)` for real dense GSVD; complex and sparse GSVD remain unpromoted in `bd-01KVWKVRK08D6ZERE81ANGN3QG` |
 
 `geigen::gqz()` also documents sort modes such as `"+"`, `"-"`, `"S"`,
 `"B"`, and `"R"`. eigencore currently exposes only no sorting, finite-first,
@@ -52,8 +52,8 @@ explicitly instead of being silently interpreted as geigen-compatible modes.
 | conicfit | `geigen(P, Q)` | Small dense general/indefinite pencil | Covered by dense general-pencil tests |
 | quadmatrix | `geigen::geigen(E1, E2)` | Dense companion pencil for quadratic matrix equations | Covered by dense general-pencil tests |
 | rMultiNet | `geigen(L, D, symmetric = TRUE)` | Graph Laplacian with diagonal degree matrix | Covered by sparse diagonal-B SPD tests and dense SPD full tests |
-| PEIP | `geigen::gsvd(A, B)` plus GSVD helper accessors | GSVD | Deferred to the GSVD child issue |
-| wideRhino | `geigen::gsvd(A, B)` plus GSVD helper accessors | GSVD | Deferred to the GSVD child issue |
+| PEIP | `geigen::gsvd(A, B)` plus GSVD helper accessors | GSVD | Partially covered for real dense GSVD; complex/sparse GSVD and exported helper aliases remain in the GSVD child issue |
+| wideRhino | `geigen::gsvd(A, B)` plus GSVD helper accessors | GSVD | Partially covered for real dense GSVD; complex/sparse GSVD and exported helper aliases remain in the GSVD child issue |
 
 No current CRAN reverse dependency scanned here directly called
 `geigen::gqz()` or `geigen::gevalues()`. They remain in the migration bank
@@ -77,14 +77,17 @@ depend on `geigen`. It covers:
   planner labels.
 - `gqz()` / `gevalues()` migration to `generalized_schur()`, `values()`, and
   `alpha_beta()`.
-- Deferred GSVD migration with no accidental `gsvd` or `generalized_svd`
-  export.
+- Real dense GSVD migration through `generalized_svd()`, including
+  alpha/beta coordinates, reconstruction factors, and no accidental `gsvd`
+  alias export.
 
 `tests/testthat/test-geigen-parity.R` is intentionally excluded from package
 tarballs because `geigen` is archived/optional. When `geigen` is locally
 installed and `NOT_CRAN=true`, it compares eigencore against live
 `geigen::geigen()` and `geigen::gqz()` oracles for dense SPD, dense general,
 dense complex general, sparse SPD oracle comparisons, and QZ/gevalues parity.
+The package-safe GSVD test includes an optional `geigen::gsvd()` alpha/beta
+parity check when geigen is installed.
 
 ## Sparse Migration Boundary
 

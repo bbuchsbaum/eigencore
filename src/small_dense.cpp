@@ -1247,6 +1247,105 @@ extern "C" SEXP eigencore_dense_complex_svd(SEXP A_) {
   return out_;
 }
 
+extern "C" SEXP eigencore_dense_generalized_svd(SEXP A_, SEXP B_) {
+  if (!isReal(A_) || !isReal(B_)) {
+    error("A and B must be double matrices");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimB = getAttrib(B_, R_DimSymbol);
+  if (dimA == R_NilValue || dimB == R_NilValue) {
+    error("A and B must be matrices");
+  }
+  const int m = INTEGER(dimA)[0];
+  const int n = INTEGER(dimA)[1];
+  const int p = INTEGER(dimB)[0];
+  const int nB = INTEGER(dimB)[1];
+  if (m <= 0 || n <= 0 || p <= 0) {
+    error("A and B must have positive dimensions");
+  }
+  if (n != nB) {
+    error("A and B must have the same number of columns");
+  }
+
+  SEXP Awork_ = PROTECT(duplicate(A_));
+  SEXP Bwork_ = PROTECT(duplicate(B_));
+  SEXP k_ = PROTECT(ScalarInteger(0));
+  SEXP l_ = PROTECT(ScalarInteger(0));
+  SEXP alpha_ = PROTECT(allocVector(REALSXP, n));
+  SEXP beta_ = PROTECT(allocVector(REALSXP, n));
+  SEXP U_ = PROTECT(allocMatrix(REALSXP, m, m));
+  SEXP V_ = PROTECT(allocMatrix(REALSXP, p, p));
+  SEXP Q_ = PROTECT(allocMatrix(REALSXP, n, n));
+
+  char jobu = 'U';
+  char jobv = 'V';
+  char jobq = 'Q';
+  int k = 0;
+  int l = 0;
+  int lda = m;
+  int ldb = p;
+  int ldu = m;
+  int ldv = p;
+  int ldq = n;
+  int info = 0;
+  int lwork = 3 * n;
+  if (m > lwork) {
+    lwork = m;
+  }
+  if (p > lwork) {
+    lwork = p;
+  }
+  lwork += n;
+  if (lwork < 1) {
+    lwork = 1;
+  }
+  SEXP work_ = PROTECT(allocVector(REALSXP, lwork));
+  int* iwork = reinterpret_cast<int*>(
+    R_alloc(static_cast<size_t>(n), sizeof(int))
+  );
+
+  F77_CALL(dggsvd)(&jobu, &jobv, &jobq, &m, &n, &p, &k, &l,
+                   REAL(Awork_), &lda, REAL(Bwork_), &ldb,
+                   REAL(alpha_), REAL(beta_), REAL(U_), &ldu,
+                   REAL(V_), &ldv, REAL(Q_), &ldq, REAL(work_),
+                   iwork, &info FCONE FCONE FCONE);
+  if (info != 0) {
+    error("LAPACK dggsvd failed with info=%d", info);
+  }
+  UNPROTECT(1);
+  INTEGER(k_)[0] = k;
+  INTEGER(l_)[0] = l;
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 9));
+  SET_VECTOR_ELT(out_, 0, Awork_);
+  SET_VECTOR_ELT(out_, 1, Bwork_);
+  SET_VECTOR_ELT(out_, 2, k_);
+  SET_VECTOR_ELT(out_, 3, l_);
+  SET_VECTOR_ELT(out_, 4, alpha_);
+  SET_VECTOR_ELT(out_, 5, beta_);
+  SET_VECTOR_ELT(out_, 6, U_);
+  SET_VECTOR_ELT(out_, 7, V_);
+  SET_VECTOR_ELT(out_, 8, Q_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 9));
+  SET_STRING_ELT(names_, 0, mkChar("A_factor"));
+  SET_STRING_ELT(names_, 1, mkChar("B_factor"));
+  SET_STRING_ELT(names_, 2, mkChar("k"));
+  SET_STRING_ELT(names_, 3, mkChar("l"));
+  SET_STRING_ELT(names_, 4, mkChar("alpha"));
+  SET_STRING_ELT(names_, 5, mkChar("beta"));
+  SET_STRING_ELT(names_, 6, mkChar("U"));
+  SET_STRING_ELT(names_, 7, mkChar("V"));
+  SET_STRING_ELT(names_, 8, mkChar("Q"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(11);
+  return out_;
+}
+
+extern "C" SEXP eigencore_dense_complex_generalized_svd(SEXP A_, SEXP B_) {
+  error("native complex GSVD requires ZGGSVD3, which this R LAPACK does not export");
+}
+
 extern "C" SEXP eigencore_tridiagonal_eigen(SEXP alpha_, SEXP beta_) {
   if (!isReal(alpha_) || !isReal(beta_)) {
     error("alpha and beta must be double vectors");

@@ -30,7 +30,7 @@ geigen_migration_bank <- data.frame(
     "eig_partial(A, B = ..., method = shift_invert(), allow_dense_fallback = 'never')",
     "generalized_schur(A, B)",
     "values(x) and alpha_beta(x)",
-    "generalized_svd(A, B) when available"
+    "generalized_svd(A, B)"
   ),
   status = c(
     "covered",
@@ -41,7 +41,7 @@ geigen_migration_bank <- data.frame(
     "covered",
     "covered",
     "covered",
-    "deferred"
+    "partial-real-dense"
   ),
   stringsAsFactors = FALSE
 )
@@ -84,7 +84,7 @@ test_that("migration bank covers the geigen manual and reverse-dep use classes",
   )
   expect_true(any(
     geigen_migration_bank$geigen_function == "gsvd" &
-      geigen_migration_bank$status == "deferred"
+      geigen_migration_bank$status == "partial-real-dense"
   ))
 })
 
@@ -230,14 +230,19 @@ test_that("gqz and gevalues migrate to generalized_schur and accessors", {
   )
 })
 
-test_that("gsvd migration is explicitly deferred, not accidentally exported", {
+test_that("gsvd migration uses generalized_svd while keeping gsvd alias unexported", {
   exports <- getNamespaceExports("eigencore")
+  A <- diag(c(3, 4, 5))
+  B <- diag(c(4, 3, 2))
+
+  fit <- generalized_svd(A, B, tol = 1e-10)
+  coords <- alpha_beta(fit)
 
   expect_false("gsvd" %in% exports)
-  expect_false("generalized_svd" %in% exports)
+  expect_true("generalized_svd" %in% exports)
   expect_equal(
     geigen_migration_bank$status[geigen_migration_bank$geigen_function == "gsvd"],
-    "deferred"
+    "partial-real-dense"
   )
   expect_match(
     geigen_migration_bank$eigencore_surface[
@@ -245,6 +250,10 @@ test_that("gsvd migration is explicitly deferred, not accidentally exported", {
     ],
     "generalized_svd"
   )
+  expect_equal(coords$classification, rep("finite", 3L))
+  expect_equal(sort(unname(values(fit))), sort(c(3 / 4, 4 / 3, 5 / 2)),
+               tolerance = 1e-10)
+  expect_true(certificate(fit)$passed)
 })
 
 test_that("alpha_beta rejects result types without homogeneous coordinates", {

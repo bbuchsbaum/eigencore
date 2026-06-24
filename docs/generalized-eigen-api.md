@@ -20,11 +20,11 @@ The primary public names are eigencore names, not geigen-compatible names:
 - `generalized_schur(A, B, sort = NULL, vectors = TRUE, ...)` is the dense
   QZ/generalized Schur surface. A short `qz()` alias is not part of the
   current public contract; it can be added only after a separate export audit.
-- `alpha_beta(x)` extracts homogeneous generalized eigenvalue coordinates from
-  dense general-pencil and generalized Schur results.
-- `generalized_svd(A, B, ...)` is the planned generalized SVD compatibility
-  surface. It is deferred until the dense generalized eigen and QZ contracts
-  are stable.
+- `alpha_beta(x)` extracts homogeneous generalized coordinates from dense
+  general-pencil, generalized Schur, and generalized SVD results.
+- `generalized_svd(A, B, ...)` is the dense GSVD compatibility surface. The
+  current promoted path is real dense LAPACK GSVD; complex and sparse GSVD
+  remain explicit future scope.
 
 There is no primary `geigen()` export. Migration documentation may map common
 `geigen::geigen()`, `geigen::gqz()`, and `geigen::gsvd()` calls to the names
@@ -100,8 +100,21 @@ QZ results will expose the Schur form separately from eigenvalue accessors:
   dense-pencil result contract.
 - `method`, `plan`, `certificate`, and `warnings`.
 
-GSVD results will define their own field names in the GSVD child issue before
-export.
+GSVD results use their own class and field names rather than the partial-SVD
+result shape:
+
+- `alpha`, `beta`, `values`, and `classification` describe generalized
+  singular values in homogeneous form.
+- `U`, `V`, and `Q` are the orthogonal factors.
+- `D1`, `D2`, `R`, and `zero_R` expose the reconstructable LAPACK GSVD factors:
+  `A = U D1 zero_R t(Q)` and `B = V D2 zero_R t(Q)` for the real dense path.
+- `A_factor` and `B_factor` retain the overwritten LAPACK factor workspaces.
+- `k`, `l`, and `rank = k + l` expose the effective-rank partition.
+- `certificate` records exact Frobenius reconstruction residuals and
+  orthogonality loss for the returned real dense factors.
+
+Complex GSVD fails clearly until a `ZGGSVD3`-equivalent native path is bundled
+or otherwise made available through the eigencore native layer.
 
 ## Planner Labels
 
@@ -131,6 +144,7 @@ full-decomposition labels, distinct from the partial-spectrum labels above:
 - `native dense generalized SPD/Hermitian LAPACK full`
 - `native dense general pencil LAPACK full`
 - `native dense generalized Schur QZ LAPACK full`
+- `native dense real LAPACK GSVD full`
 - `dense LAPACK general eigen oracle (base fallback)`
 
 The last label is intentionally not a native label: the real dense general
@@ -170,11 +184,12 @@ Exported full dense surface:
 
 - `eig_full`
 - `generalized_schur`
+- `generalized_svd`
 - `alpha_beta`
 
-Planned but not yet exported:
+Not yet promoted behind that export:
 
-- `generalized_svd`
+- complex `generalized_svd`
 
 Rejected unless a future audit reopens them:
 

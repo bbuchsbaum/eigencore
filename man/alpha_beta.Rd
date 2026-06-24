@@ -2,12 +2,12 @@
 % Please edit documentation in R/certification.R
 \name{alpha_beta}
 \alias{alpha_beta}
-\title{Extract homogeneous generalized eigenvalue coordinates.}
+\title{Extract homogeneous generalized coordinates.}
 \usage{
 alpha_beta(x, ...)
 }
 \arguments{
-\item{x}{An eigencore generalized dense-pencil or generalized Schur result.}
+\item{x}{An eigencore result with homogeneous \code{alpha} and \code{beta} fields.}
 
 \item{...}{Reserved for future methods.}
 }
@@ -17,9 +17,10 @@ A list containing \code{alpha}, \code{beta}, and any available \code{values},
 }
 \description{
 Generalized dense-pencil and generalized Schur results store eigenvalues in
-homogeneous form as \code{alpha / beta}. \code{alpha_beta()} exposes those coordinates
-along with the finite/infinite/undefined classification computed by
-eigencore.
+homogeneous form as \code{alpha / beta}; generalized SVD results use the same
+alpha/beta convention for generalized singular values. \code{alpha_beta()}
+exposes those coordinates along with the finite/infinite/undefined
+classification computed by eigencore.
 }
 \examples{
 A <- diag(c(2, 3, 0))

@@ -108,6 +108,8 @@ extern "C" SEXP eigencore_csc_right_gram_svd_fast_result(SEXP, SEXP, SEXP, SEXP,
 extern "C" SEXP eigencore_dense_generalized_spd_eigen(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_svd(SEXP);
 extern "C" SEXP eigencore_dense_complex_svd(SEXP);
+extern "C" SEXP eigencore_dense_generalized_svd(SEXP, SEXP);
+extern "C" SEXP eigencore_dense_complex_generalized_svd(SEXP, SEXP);
 extern "C" SEXP eigencore_tridiagonal_solve(SEXP, SEXP, SEXP, SEXP);
 
 static const R_CallMethodDef CallEntries[] = {
@@ -217,6 +219,8 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_dense_generalized_spd_eigen", (DL_FUNC) &eigencore_dense_generalized_spd_eigen, 2},
   {"eigencore_dense_svd", (DL_FUNC) &eigencore_dense_svd, 1},
   {"eigencore_dense_complex_svd", (DL_FUNC) &eigencore_dense_complex_svd, 1},
+  {"eigencore_dense_generalized_svd", (DL_FUNC) &eigencore_dense_generalized_svd, 2},
+  {"eigencore_dense_complex_generalized_svd", (DL_FUNC) &eigencore_dense_complex_generalized_svd, 2},
   {"eigencore_tridiagonal_solve", (DL_FUNC) &eigencore_tridiagonal_solve, 4},
   {NULL, NULL, 0}
 };
