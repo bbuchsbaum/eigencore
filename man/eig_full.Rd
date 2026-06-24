@@ -19,8 +19,8 @@ eig_full(
 
 \item{B}{Optional base dense square matrix for generalized problems.}
 
-\item{structure}{Optional structure descriptor. Use \code{\link[=general]{general()}}
-to force the general-pencil path for dense generalized inputs.}
+\item{structure}{Optional structure descriptor. Use \code{\link[=general]{general()}} to force the
+general-pencil path for dense generalized inputs.}
 
 \item{vectors}{Whether to return right eigenvectors.}
 

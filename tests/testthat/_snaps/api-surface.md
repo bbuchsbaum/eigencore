@@ -21,6 +21,7 @@
       eigs_sym(A, k, which = "LA", opts = list(), ...)
       euclidean(dim, dtype = "double")
       general()
+      generalized_schur(A, B, sort = NULL, vectors = TRUE, ...)
       golub_kahan(max_subspace = NULL, reorthogonalize = TRUE)
       hermitian()
       lanczos(max_subspace = NULL, max_restarts = NULL, block = 1L, reorthogonalize = TRUE)

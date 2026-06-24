@@ -15,6 +15,18 @@
 #'   fallback contract for `eig_full()`.
 #' @param ... Reserved for future options.
 #' @return An `eigencore_eigen_result`.
+#' @examples
+#' A <- diag(c(1, 4, 9))
+#' B <- diag(c(1, 2, 3))
+#' fit <- eig_full(A, B = B)
+#' values(fit)
+#' certificate(fit)$passed
+#'
+#' # Force the dense general-pencil path when alpha/beta diagnostics matter.
+#' pencil <- eig_full(A, B = B, structure = general())
+#' pencil$alpha
+#' pencil$beta
+#' pencil$classification
 #' @export
 eig_full <- function(A, B = NULL, structure = NULL, vectors = TRUE,
                      tol = 1e-8,

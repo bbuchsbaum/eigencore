@@ -15,6 +15,92 @@ void F77_NAME(zhegv)(const La_INT* itype, const char* jobz, const char* uplo,
                      double* rwork, La_INT* info FCLEN FCLEN);
 }
 
+typedef La_LGL (*eigencore_dgges_select_fn)(double*, double*, double*);
+typedef void (*eigencore_dgges_fn)(
+  const char*, const char*, const char*, eigencore_dgges_select_fn,
+  const La_INT*, double*, const La_INT*, double*, const La_INT*, La_INT*,
+  double*, double*, double*, double*, const La_INT*, double*, const La_INT*,
+  double*, const La_INT*, La_LGL*, La_INT* FCLEN FCLEN FCLEN
+);
+
+static double qz_real_scale(double alphar, double alphai, double beta) {
+  double scale = 1.0;
+  const double alpha_mod = hypot(alphar, alphai);
+  const double beta_mod = fabs(beta);
+  if (alpha_mod > scale) {
+    scale = alpha_mod;
+  }
+  if (beta_mod > scale) {
+    scale = beta_mod;
+  }
+  return scale;
+}
+
+static double qz_complex_scale(const Rcomplex* alpha, const Rcomplex* beta) {
+  double scale = 1.0;
+  const double alpha_mod = hypot(alpha->r, alpha->i);
+  const double beta_mod = hypot(beta->r, beta->i);
+  if (alpha_mod > scale) {
+    scale = alpha_mod;
+  }
+  if (beta_mod > scale) {
+    scale = beta_mod;
+  }
+  return scale;
+}
+
+static La_LGL qz_select_real_finite(double* alphar, double* alphai, double* beta) {
+  const double tol = sqrt(DBL_EPSILON) * qz_real_scale(*alphar, *alphai, *beta);
+  return fabs(*beta) > tol ? TRUE : FALSE;
+}
+
+static La_LGL qz_select_real_infinite(double* alphar, double* alphai, double* beta) {
+  const double tol = sqrt(DBL_EPSILON) * qz_real_scale(*alphar, *alphai, *beta);
+  const bool beta_zero = fabs(*beta) <= tol;
+  const bool alpha_zero = hypot(*alphar, *alphai) <= tol;
+  return (beta_zero && !alpha_zero) ? TRUE : FALSE;
+}
+
+static La_LGL qz_select_complex_finite(Rcomplex* alpha, Rcomplex* beta) {
+  const double tol = sqrt(DBL_EPSILON) * qz_complex_scale(alpha, beta);
+  return hypot(beta->r, beta->i) > tol ? TRUE : FALSE;
+}
+
+static La_LGL qz_select_complex_infinite(Rcomplex* alpha, Rcomplex* beta) {
+  const double tol = sqrt(DBL_EPSILON) * qz_complex_scale(alpha, beta);
+  const bool beta_zero = hypot(beta->r, beta->i) <= tol;
+  const bool alpha_zero = hypot(alpha->r, alpha->i) <= tol;
+  return (beta_zero && !alpha_zero) ? TRUE : FALSE;
+}
+
+static eigencore_dgges_select_fn qz_real_selector(int sort_code) {
+  switch (sort_code) {
+  case 0:
+    return NULL;
+  case 1:
+    return qz_select_real_finite;
+  case 2:
+    return qz_select_real_infinite;
+  default:
+    error("unsupported generalized Schur sort code");
+    return NULL;
+  }
+}
+
+static void* qz_complex_selector(int sort_code) {
+  switch (sort_code) {
+  case 0:
+    return NULL;
+  case 1:
+    return reinterpret_cast<void*>(qz_select_complex_finite);
+  case 2:
+    return reinterpret_cast<void*>(qz_select_complex_infinite);
+  default:
+    error("unsupported generalized Schur sort code");
+    return NULL;
+  }
+}
+
 extern "C" SEXP eigencore_dense_symmetric_eigen(SEXP A_) {
   if (!isReal(A_)) {
     error("A must be a double matrix");
@@ -487,6 +573,210 @@ extern "C" SEXP eigencore_dense_complex_generalized_pencil_eigen(SEXP A_, SEXP B
   setAttrib(out_, R_NamesSymbol, names_);
 
   UNPROTECT(5);
+  return out_;
+}
+
+extern "C" SEXP eigencore_dense_generalized_schur(SEXP A_, SEXP B_,
+                                                   SEXP vectors_, SEXP sort_code_) {
+  if (!isReal(A_) || !isReal(B_)) {
+    error("A and B must be double matrices");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimB = getAttrib(B_, R_DimSymbol);
+  if (dimA == R_NilValue || dimB == R_NilValue) {
+    error("A and B must be matrices");
+  }
+  La_INT n = INTEGER(dimA)[0];
+  if (INTEGER(dimA)[1] != n || INTEGER(dimB)[0] != n || INTEGER(dimB)[1] != n) {
+    error("A and B must be square matrices with the same dimension");
+  }
+  const bool want_vectors = asLogical(vectors_) == TRUE;
+  const int sort_code = asInteger(sort_code_);
+  eigencore_dgges_select_fn selector = qz_real_selector(sort_code);
+  char jobvsl = want_vectors ? 'V' : 'N';
+  char jobvsr = want_vectors ? 'V' : 'N';
+  char sort = sort_code == 0 ? 'N' : 'S';
+  La_INT ldvsl = want_vectors ? n : 1;
+  La_INT ldvsr = want_vectors ? n : 1;
+  if (ldvsl < 1) {
+    ldvsl = 1;
+  }
+  if (ldvsr < 1) {
+    ldvsr = 1;
+  }
+
+  SEXP S_ = PROTECT(duplicate(A_));
+  SEXP T_ = PROTECT(duplicate(B_));
+  SEXP alphar_ = PROTECT(allocVector(REALSXP, n));
+  SEXP alphai_ = PROTECT(allocVector(REALSXP, n));
+  SEXP beta_ = PROTECT(allocVector(REALSXP, n));
+  SEXP Q_ = PROTECT(allocMatrix(REALSXP, ldvsl, want_vectors ? n : 1));
+  SEXP Z_ = PROTECT(allocMatrix(REALSXP, ldvsr, want_vectors ? n : 1));
+  La_INT sdim = 0;
+
+  if (n > 0) {
+    La_LGL* bwork = reinterpret_cast<La_LGL*>(
+      R_alloc(static_cast<size_t>(n), sizeof(La_LGL))
+    );
+    La_INT info = 0;
+    La_INT lwork = -1;
+    double work_query = 0.0;
+    eigencore_dgges_fn dgges =
+      reinterpret_cast<eigencore_dgges_fn>(F77_CALL(dgges));
+    dgges(&jobvsl, &jobvsr, &sort, selector, &n, REAL(S_), &n, REAL(T_), &n,
+          &sdim, REAL(alphar_), REAL(alphai_), REAL(beta_), REAL(Q_), &ldvsl,
+          REAL(Z_), &ldvsr, &work_query, &lwork, bwork, &info
+          FCONE FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK dgges workspace query failed with info=%d", info);
+    }
+    lwork = static_cast<La_INT>(work_query);
+    if (lwork < 1) {
+      lwork = 1;
+    }
+    SEXP work_ = PROTECT(allocVector(REALSXP, lwork));
+    std::memcpy(REAL(S_), REAL(A_),
+                sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(n));
+    std::memcpy(REAL(T_), REAL(B_),
+                sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(n));
+    dgges(&jobvsl, &jobvsr, &sort, selector, &n, REAL(S_), &n, REAL(T_), &n,
+          &sdim, REAL(alphar_), REAL(alphai_), REAL(beta_), REAL(Q_), &ldvsl,
+          REAL(Z_), &ldvsr, REAL(work_), &lwork, bwork, &info
+          FCONE FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK dgges failed with info=%d", info);
+    }
+    UNPROTECT(1);
+  }
+
+  SEXP alpha_ = PROTECT(allocVector(CPLXSXP, n));
+  SEXP beta_complex_ = PROTECT(allocVector(CPLXSXP, n));
+  for (La_INT j = 0; j < n; ++j) {
+    COMPLEX(alpha_)[j].r = REAL(alphar_)[j];
+    COMPLEX(alpha_)[j].i = REAL(alphai_)[j];
+    COMPLEX(beta_complex_)[j].r = REAL(beta_)[j];
+    COMPLEX(beta_complex_)[j].i = 0.0;
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 9));
+  SET_VECTOR_ELT(out_, 0, S_);
+  SET_VECTOR_ELT(out_, 1, T_);
+  SET_VECTOR_ELT(out_, 2, want_vectors ? Q_ : R_NilValue);
+  SET_VECTOR_ELT(out_, 3, want_vectors ? Z_ : R_NilValue);
+  SET_VECTOR_ELT(out_, 4, alpha_);
+  SET_VECTOR_ELT(out_, 5, beta_complex_);
+  SET_VECTOR_ELT(out_, 6, alphar_);
+  SET_VECTOR_ELT(out_, 7, alphai_);
+  SET_VECTOR_ELT(out_, 8, ScalarInteger(sdim));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 9));
+  SET_STRING_ELT(names_, 0, mkChar("S"));
+  SET_STRING_ELT(names_, 1, mkChar("T"));
+  SET_STRING_ELT(names_, 2, mkChar("Q"));
+  SET_STRING_ELT(names_, 3, mkChar("Z"));
+  SET_STRING_ELT(names_, 4, mkChar("alpha"));
+  SET_STRING_ELT(names_, 5, mkChar("beta"));
+  SET_STRING_ELT(names_, 6, mkChar("alphar"));
+  SET_STRING_ELT(names_, 7, mkChar("alphai"));
+  SET_STRING_ELT(names_, 8, mkChar("sdim"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(11);
+  return out_;
+}
+
+extern "C" SEXP eigencore_dense_complex_generalized_schur(SEXP A_, SEXP B_,
+                                                           SEXP vectors_,
+                                                           SEXP sort_code_) {
+  if (!isComplex(A_) || !isComplex(B_)) {
+    error("A and B must be complex matrices");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimB = getAttrib(B_, R_DimSymbol);
+  if (dimA == R_NilValue || dimB == R_NilValue) {
+    error("A and B must be matrices");
+  }
+  La_INT n = INTEGER(dimA)[0];
+  if (INTEGER(dimA)[1] != n || INTEGER(dimB)[0] != n || INTEGER(dimB)[1] != n) {
+    error("A and B must be square matrices with the same dimension");
+  }
+  const bool want_vectors = asLogical(vectors_) == TRUE;
+  const int sort_code = asInteger(sort_code_);
+  void* selector = qz_complex_selector(sort_code);
+  char jobvsl = want_vectors ? 'V' : 'N';
+  char jobvsr = want_vectors ? 'V' : 'N';
+  char sort = sort_code == 0 ? 'N' : 'S';
+  La_INT ldvsl = want_vectors ? n : 1;
+  La_INT ldvsr = want_vectors ? n : 1;
+  if (ldvsl < 1) {
+    ldvsl = 1;
+  }
+  if (ldvsr < 1) {
+    ldvsr = 1;
+  }
+
+  SEXP S_ = PROTECT(duplicate(A_));
+  SEXP T_ = PROTECT(duplicate(B_));
+  SEXP alpha_ = PROTECT(allocVector(CPLXSXP, n));
+  SEXP beta_ = PROTECT(allocVector(CPLXSXP, n));
+  SEXP Q_ = PROTECT(allocMatrix(CPLXSXP, ldvsl, want_vectors ? n : 1));
+  SEXP Z_ = PROTECT(allocMatrix(CPLXSXP, ldvsr, want_vectors ? n : 1));
+  La_INT sdim = 0;
+
+  if (n > 0) {
+    La_LGL* bwork = reinterpret_cast<La_LGL*>(
+      R_alloc(static_cast<size_t>(n), sizeof(La_LGL))
+    );
+    double* rwork = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(8 * n), sizeof(double))
+    );
+    La_INT info = 0;
+    La_INT lwork = -1;
+    Rcomplex work_query;
+    F77_CALL(zgges)(&jobvsl, &jobvsr, &sort, selector, &n, COMPLEX(S_), &n,
+                    COMPLEX(T_), &n, &sdim, COMPLEX(alpha_), COMPLEX(beta_),
+                    COMPLEX(Q_), &ldvsl, COMPLEX(Z_), &ldvsr, &work_query,
+                    &lwork, rwork, bwork, &info FCONE FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK zgges workspace query failed with info=%d", info);
+    }
+    lwork = static_cast<La_INT>(work_query.r);
+    if (lwork < 1) {
+      lwork = 1;
+    }
+    SEXP work_ = PROTECT(allocVector(CPLXSXP, lwork));
+    std::memcpy(COMPLEX(S_), COMPLEX(A_),
+                sizeof(Rcomplex) * static_cast<size_t>(n) * static_cast<size_t>(n));
+    std::memcpy(COMPLEX(T_), COMPLEX(B_),
+                sizeof(Rcomplex) * static_cast<size_t>(n) * static_cast<size_t>(n));
+    F77_CALL(zgges)(&jobvsl, &jobvsr, &sort, selector, &n, COMPLEX(S_), &n,
+                    COMPLEX(T_), &n, &sdim, COMPLEX(alpha_), COMPLEX(beta_),
+                    COMPLEX(Q_), &ldvsl, COMPLEX(Z_), &ldvsr, COMPLEX(work_),
+                    &lwork, rwork, bwork, &info FCONE FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK zgges failed with info=%d", info);
+    }
+    UNPROTECT(1);
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 7));
+  SET_VECTOR_ELT(out_, 0, S_);
+  SET_VECTOR_ELT(out_, 1, T_);
+  SET_VECTOR_ELT(out_, 2, want_vectors ? Q_ : R_NilValue);
+  SET_VECTOR_ELT(out_, 3, want_vectors ? Z_ : R_NilValue);
+  SET_VECTOR_ELT(out_, 4, alpha_);
+  SET_VECTOR_ELT(out_, 5, beta_);
+  SET_VECTOR_ELT(out_, 6, ScalarInteger(sdim));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 7));
+  SET_STRING_ELT(names_, 0, mkChar("S"));
+  SET_STRING_ELT(names_, 1, mkChar("T"));
+  SET_STRING_ELT(names_, 2, mkChar("Q"));
+  SET_STRING_ELT(names_, 3, mkChar("Z"));
+  SET_STRING_ELT(names_, 4, mkChar("alpha"));
+  SET_STRING_ELT(names_, 5, mkChar("beta"));
+  SET_STRING_ELT(names_, 6, mkChar("sdim"));
+  setAttrib(out_, R_NamesSymbol, names_);
+
+  UNPROTECT(8);
   return out_;
 }
 

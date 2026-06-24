@@ -16,8 +16,8 @@ The primary public names are eigencore names, not geigen-compatible names:
   dense decomposition surface. It covers standard dense eigenproblems, dense
   generalized SPD/Hermitian problems, and dense general pencils through native
   LAPACK-backed paths.
-- `generalized_schur(A, B, sort = NULL, vectors = TRUE, ...)` is the planned
-  dense QZ/generalized Schur surface. A short `qz()` alias is not part of the
+- `generalized_schur(A, B, sort = NULL, vectors = TRUE, ...)` is the dense
+  QZ/generalized Schur surface. A short `qz()` alias is not part of the
   current public contract; it can be added only after a separate export audit.
 - `generalized_svd(A, B, ...)` is the planned generalized SVD compatibility
   surface. It is deferred until the dense generalized eigen and QZ contracts
@@ -118,6 +118,7 @@ full-decomposition labels, distinct from the partial-spectrum labels above:
 - `native dense complex general LAPACK fallback`
 - `native dense generalized SPD/Hermitian LAPACK full`
 - `native dense general pencil LAPACK full`
+- `native dense generalized Schur QZ LAPACK full`
 - `dense LAPACK general eigen oracle (base fallback)`
 
 The last label is intentionally not a native label: the real dense general
@@ -156,10 +157,10 @@ Accepted current exports for generalized eigen work:
 Exported full dense surface:
 
 - `eig_full`
+- `generalized_schur`
 
 Planned but not yet exported:
 
-- `generalized_schur`
 - `generalized_svd`
 
 Rejected unless a future audit reopens them:
