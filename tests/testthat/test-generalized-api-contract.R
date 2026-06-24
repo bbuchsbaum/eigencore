@@ -29,7 +29,15 @@ test_that("generalized-eigen API contract freezes eigencore naming", {
   expect_contract_contains(contract, "There is no primary `geigen()` export.")
   expect_contract_contains(
     contract,
-    "`eigen_problem(metric = )` remains SPD/Hermitian-metric-only."
+    "`eigen_problem(metric = )` remains SPD/Hermitian-metric-only when the problem"
+  )
+  expect_contract_contains(
+    contract,
+    eigencore:::sparse_general_pencil_diagonal_arnoldi_label()
+  )
+  expect_contract_contains(
+    contract,
+    eigencore:::sparse_general_pencil_unsupported_label()
   )
   # eig_full full-decomposition native labels must stay documented and must
   # match the exact strings returned by the *_label() helpers in R/solve.R.
@@ -122,5 +130,17 @@ test_that("current generalized planner labels match the API contract", {
       k = 2L
     )$method,
     eigencore:::native_tridiagonal_generalized_shift_invert_label()
+  )
+
+  G <- Matrix::sparseMatrix(
+    i = c(1, 1, 2, 3),
+    j = c(1, 2, 2, 3),
+    x = c(4, 1, 2, -1),
+    dims = c(3, 3)
+  )
+  expect_equal(
+    plan_solver(eigen_problem(G, metric = Matrix::Diagonal(3),
+                              structure = general()), k = 2L)$method,
+    eigencore:::sparse_general_pencil_diagonal_arnoldi_label()
   )
 })

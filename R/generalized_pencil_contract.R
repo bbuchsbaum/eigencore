@@ -138,12 +138,22 @@ generalized_pencil_operator_residuals <- function(Aop, Bop, pencil, vectors) {
   if (any(pencil$finite)) {
     idx <- which(pencil$finite)
     V <- vectors[, idx, drop = FALSE]
-    Av <- apply_operator(Aop, V)
-    Bv <- apply_operator(Bop, V)
+    Av <- generalized_pencil_apply_for_residual(Aop, V)
+    Bv <- generalized_pencil_apply_for_residual(Bop, V)
     residual_matrix <- Av - sweep(Bv, 2L, pencil$values[idx], `*`)
     residuals[idx] <- col_norms(residual_matrix)
   }
   residuals
+}
+
+#' @keywords internal
+generalized_pencil_apply_for_residual <- function(op, vectors) {
+  op <- as_operator(op)
+  source <- source_or_null(op) %||% op$metadata$matrix %||% NULL
+  if (is.complex(vectors) && !is.null(source)) {
+    return(as.matrix(as.matrix(source) %*% vectors))
+  }
+  apply_operator(op, vectors)
 }
 
 #' @keywords internal

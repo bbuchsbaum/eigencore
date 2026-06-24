@@ -201,6 +201,12 @@ provenance. Block B-orthogonal Lanczos is covered only inside the native
 dense/diagonal transformed generalized-Lanczos boundary; sparse-CSC block
 promotion is not claimed.
 
+For nonsymmetric sparse pencils with diagonal nonsingular `B`,
+`eig_partial(A, B = B, target = ...)` uses native Arnoldi on the sparse
+transformed operator `B^{-1} A` and certifies the original generalized residual
+`A v - lambda B v`. This is not sparse QZ, and it is not a claim for singular
+or non-diagonal sparse `B`.
+
 ## Shift-Invert
 
 Use `target = nearest(sigma)` or `method = shift_invert(sigma)` when you need
@@ -322,6 +328,7 @@ The V2 CRAN contract requires those cases to remain explicitly labelled.
 | General eigen | `eigs(A, k, which)` or `eigen_problem(..., general())` | You need `LR/SR/LI/SI` target semantics for real-valued inputs; dense, sparse CSC, and real matrix-free callback operators use native Arnoldi compatibility for supported targets. |
 | Partial SVD | `svd_partial(X, rank)` | `golub_kahan()` for explicit GK, `randomized()` for the reference randomized prototype. |
 | Generalized SPD | `eig_partial(A, k, B = B, method = lobpcg())` | You need original generalized residual certification. |
+| Sparse general pencil | `eig_partial(A, k, B = B)` with sparse general `A` and diagonal nonsingular `B` | You need a few generalized eigenpairs from `A x = lambda B x` without sparse QZ or dense fallback. |
 | Interior/shifted eigen | `eig_partial(..., method = shift_invert(sigma))` | Dense standard/generalized, sparse diagonal/symmetric-tridiagonal standard, and tridiagonal generalized cases with diagonal `B` use native shift-invert; general sparse remains reference-labelled with cache provenance. |
 | Structured transforms | `as_operator()`, `center()`, `scale_cols()`, `crossprod_operator()` | You need planner-visible operator provenance without silent sparse densification. |
 

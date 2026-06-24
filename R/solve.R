@@ -132,6 +132,14 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
   if (plan_dispatches_lanczos(plan)) {
     return(solve_eigen_lanczos(a, k, method, tol, maxit, vectors, certify, plan))
   }
+  if (plan_dispatches_sparse_general_pencil_arnoldi(plan)) {
+    return(solve_eigen_sparse_general_pencil_arnoldi(
+      a, k, method, tol, maxit, vectors, certify, plan
+    ))
+  }
+  if (plan_rejects_sparse_general_pencil(plan)) {
+    stop(sparse_general_pencil_unsupported_message(a), call. = FALSE)
+  }
   if (plan_dispatches_arnoldi(plan)) {
     return(solve_eigen_arnoldi(a, k, method, tol, maxit, vectors, certify, plan))
   }
@@ -300,6 +308,16 @@ plan_dispatches_native_tridiagonal_eigen <- function(plan) {
 #' @keywords internal
 plan_dispatches_structured_grid_laplacian_2d <- function(plan) {
   identical(plan$method, structured_grid_laplacian_2d_label())
+}
+
+#' @keywords internal
+plan_dispatches_sparse_general_pencil_arnoldi <- function(plan) {
+  identical(plan$method, sparse_general_pencil_diagonal_arnoldi_label())
+}
+
+#' @keywords internal
+plan_rejects_sparse_general_pencil <- function(plan) {
+  identical(plan$method, sparse_general_pencil_unsupported_label())
 }
 
 #' @keywords internal

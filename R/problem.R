@@ -19,7 +19,7 @@ eigen_problem <- function(A, metric = NULL, structure = NULL, target = largest()
   }
   Bop <- if (is.null(metric)) NULL else as_operator(metric)
   if (!is.null(metric)) {
-    validate_metric_symmetric(metric, Bop)
+    validate_metric_symmetric(metric, Bop, structure = structure)
   }
   problem <- list(
     type = "eigen",
@@ -34,15 +34,16 @@ eigen_problem <- function(A, metric = NULL, structure = NULL, target = largest()
 }
 
 #' @keywords internal
-#' Enforce the metric= SPD/Hermitian contract: a generalized eigenproblem
-#' defined through `metric =` interprets B as a symmetric (real) or Hermitian
-#' (complex) positive-definite metric. General/nonsymmetric right-hand pencils
-#' belong to `eig_full(A, B = ...)`, not `metric =`. Definiteness is enforced
-#' downstream (Cholesky/`dpotrf`); here we reject a non-symmetric/non-Hermitian
-#' B before dispatch so it cannot be silently solved as if symmetric (the
-#' native SPD kernel references only one triangle of B). Matrix-free metrics
-#' with no inspectable matrix are left to the caller's contract.
-validate_metric_symmetric <- function(metric, Bop) {
+#' Enforce the Hermitian metric contract.
+#'
+#' Hermitian generalized eigenproblems interpret `metric =` as an
+#' SPD/Hermitian metric. General-structure problems may use `metric =` as the
+#' right-hand pencil only when a later planner branch explicitly accepts that
+#' sparse partial boundary; unsupported cases fail before any SPD fallback.
+validate_metric_symmetric <- function(metric, Bop, structure) {
+  if (!identical(structure$kind, "hermitian")) {
+    return(invisible(TRUE))
+  }
   src <- if (is.matrix(metric) || inherits(metric, "Matrix")) {
     metric
   } else {
@@ -55,8 +56,9 @@ validate_metric_symmetric <- function(metric, Bop) {
     stop(
       "metric B must be symmetric (real) or Hermitian (complex) for a ",
       "generalized eigenproblem; nonsymmetric or general right-hand pencils ",
-      "are not accepted through metric=. Use eig_full(A, B = ...) for general ",
-      "dense pencils.",
+      "are not accepted through Hermitian metric=. Use structure = general() ",
+      "for supported sparse partial pencil boundaries or eig_full(A, B = ...) ",
+      "for general dense pencils.",
       call. = FALSE
     )
   }
@@ -195,6 +197,11 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
   } else if (has_shift) {
     shift_invert_plan_label(problem, has_metric, is_hermitian,
                              is_dense_source, is_native_csc)
+  } else if (has_metric && !is_hermitian &&
+      sparse_general_pencil_diagonal_arnoldi_supported(problem)) {
+    sparse_general_pencil_diagonal_arnoldi_label()
+  } else if (has_metric && !is_hermitian) {
+    sparse_general_pencil_unsupported_label()
   } else if (has_metric && should_auto_native_generalized_lobpcg(problem, k)) {
     native_generalized_lobpcg_label()
   } else if (has_metric && should_auto_reference_generalized_lobpcg(problem, k)) {
@@ -267,7 +274,11 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
     }
   )
 
-  fallback <- if (grepl("Hermitian Lanczos", chosen, fixed = TRUE) ||
+  fallback <- if (identical(chosen, sparse_general_pencil_diagonal_arnoldi_label())) {
+    "none; sparse general-pencil boundary is explicit"
+  } else if (identical(chosen, sparse_general_pencil_unsupported_label())) {
+    "none; unsupported sparse general-pencil boundary fails before dense fallback"
+  } else if (grepl("Hermitian Lanczos", chosen, fixed = TRUE) ||
     grepl("LOBPCG", chosen, fixed = TRUE)) {
     "dense oracle prototype if unsupported"
   } else {
@@ -284,6 +295,9 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
       identical(chosen, native_generalized_lanczos_label())) {
     controls <- generalized_lanczos_plan_controls(problem, k = k, method = method)
   }
+  if (identical(chosen, sparse_general_pencil_diagonal_arnoldi_label())) {
+    controls <- sparse_general_pencil_arnoldi_plan_controls(problem, k = k)
+  }
   if (identical(chosen, structured_grid_laplacian_2d_label())) {
     controls <- structured_grid_laplacian_2d_controls(problem, k = k)
   }
@@ -298,6 +312,83 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
     fallback = fallback,
     controls = controls
   )
+}
+
+#' @keywords internal
+sparse_general_pencil_diagonal_arnoldi_label <- function() {
+  "native transformed sparse general-pencil Arnoldi (diagonal B)"
+}
+
+#' @keywords internal
+sparse_general_pencil_unsupported_label <- function() {
+  "unsupported sparse general-pencil partial solver"
+}
+
+#' @keywords internal
+sparse_general_pencil_diagonal_values <- function(Bop, require_nonsingular = TRUE) {
+  Bop <- as_operator(Bop)
+  storage <- Bop$metadata$storage %||% NULL
+  values <- NULL
+  if (identical(storage, "ddiMatrix")) {
+    B <- Bop$metadata$matrix
+    values <- if (identical(methods::slot(B, "diag"), "U")) {
+      rep(1, Bop$dim[1L])
+    } else {
+      methods::slot(B, "x")
+    }
+  } else {
+    source <- source_or_null(Bop)
+    if (is.matrix(source) && nrow(source) == ncol(source) &&
+        isTRUE(all(source[row(source) != col(source)] == 0))) {
+      values <- diag(source)
+    }
+  }
+  if (is.null(values)) {
+    return(NULL)
+  }
+  values <- as.numeric(values)
+  if (length(values) != Bop$dim[1L] || any(!is.finite(values))) {
+    return(NULL)
+  }
+  if (isTRUE(require_nonsingular)) {
+    scale <- max(1, abs(values))
+    if (any(abs(values) <= sqrt(.Machine$double.eps) * scale)) {
+      return(NULL)
+    }
+  }
+  values
+}
+
+#' @keywords internal
+sparse_general_pencil_diagonal_arnoldi_supported <- function(problem) {
+  if (is.null(problem$metric) || identical(problem$structure$kind, "hermitian")) {
+    return(FALSE)
+  }
+  if (!reference_arnoldi_target_supported(problem$target)) {
+    return(FALSE)
+  }
+  B_values <- sparse_general_pencil_diagonal_values(problem$metric)
+  if (is.null(B_values)) {
+    return(FALSE)
+  }
+  A_matrix <- problem$A$metadata$matrix %||% NULL
+  inherits(A_matrix, "CsparseMatrix") &&
+    identical(problem$A$metadata$storage %||% NULL, "dgCMatrix")
+}
+
+#' @keywords internal
+sparse_general_pencil_arnoldi_plan_controls <- function(problem, k) {
+  controls <- arnoldi_plan_controls(
+    problem,
+    k = k,
+    chosen = native_refined_arnoldi_label()
+  )
+  controls$transformed_operator <- "B^{-1} A"
+  controls$right_hand_pencil <- TRUE
+  controls$metric_solve <- "nonsingular diagonal B row scaling"
+  controls$certification_policy <- "generalized right residual A * x - lambda * B * x in original coordinates"
+  controls$unsupported_sparse_qz <- TRUE
+  controls
 }
 
 #' @keywords internal

@@ -99,7 +99,9 @@ with an explicit method and, when densification would be unacceptable,
 certificate fields carry the transform, factorization, or metric-solve
 provenance.
 
-Sparse indefinite or nonsymmetric general pencils are not covered by this
-migration bank. They belong to the sparse general-pencil boundary issue, where
-factorized or user-solve `B` semantics must be explicit in planner labels and
-certificates.
+Sparse nonsymmetric general pencils are now covered only for the diagonal
+nonsingular `B` partial boundary: eigencore runs Arnoldi on `B^{-1} A` and
+certifies `A v - lambda B v` in original coordinates. Sparse QZ,
+singular/near-singular `B`, non-diagonal sparse `B`, and factorized/user-solve
+right-hand pencils remain outside this migration bank until their planner
+labels and certificate provenance are explicit.

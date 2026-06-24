@@ -348,6 +348,155 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
 }
 
 #' @keywords internal
+sparse_general_pencil_unsupported_message <- function(problem) {
+  paste(
+    "sparse general-pencil partial support currently requires general structure,",
+    "a sparse dgCMatrix A, and a nonsingular diagonal B so eigencore can run",
+    "Arnoldi on B^{-1} A and certify A * x - lambda * B * x in original coordinates.",
+    "Use eig_full(A, B = ..., structure = general()) or generalized_schur(A, B)",
+    "for dense full general pencils; sparse QZ and arbitrary sparse/factorized",
+    "general pencils are not implemented."
+  )
+}
+
+#' @keywords internal
+sparse_general_pencil_transformed_operator <- function(Aop, Bop) {
+  A_matrix <- Aop$metadata$matrix %||% NULL
+  if (!inherits(A_matrix, "CsparseMatrix")) {
+    stop("sparse general-pencil Arnoldi requires a sparse CSC A.", call. = FALSE)
+  }
+  B_values <- sparse_general_pencil_diagonal_values(Bop)
+  if (is.null(B_values)) {
+    stop(
+      "sparse general-pencil Arnoldi requires a nonsingular finite diagonal B.",
+      call. = FALSE
+    )
+  }
+  if (length(B_values) != Aop$dim[1L]) {
+    stop("A and B must have compatible dimensions.", call. = FALSE)
+  }
+  transformed <- Matrix::Diagonal(x = 1 / B_values) %*%
+    methods::as(A_matrix, "generalMatrix")
+  transformed <- methods::as(transformed, "CsparseMatrix")
+  Cop <- as_operator(transformed)
+  Cop$name <- "B_inverse_A_sparse_general_pencil"
+  Cop$metadata$general_pencil_transform <- list(
+    kind = "diagonal_left_scaling",
+    transformed_operator = "B^{-1} A",
+    materialized_sparse_operator = TRUE,
+    materialized_dense_operator = FALSE,
+    metric_solve = "nonsingular diagonal B row scaling",
+    min_abs_B_diagonal = min(abs(B_values)),
+    max_abs_B_diagonal = max(abs(B_values))
+  )
+  Cop
+}
+
+#' @keywords internal
+solve_eigen_sparse_general_pencil_arnoldi <- function(a, k, method, tol, maxit,
+                                                      vectors, certify, plan) {
+  controls <- plan$controls %||% list()
+  Cop <- sparse_general_pencil_transformed_operator(a$A, a$metric)
+  method_maxit <- maxit %||% controls$max_subspace %||%
+    native_arnoldi_default_max_subspace(a$A$dim[[1L]], k)
+  method_max_restarts <- controls$max_restarts %||% 5L
+  method_extraction <- controls$arnoldi_extraction %||% "refined_ritz"
+
+  iter <- native_arnoldi_general(
+    Cop,
+    k = k,
+    target = a$target,
+    tol = tol,
+    maxit = method_maxit,
+    max_restarts = method_max_restarts,
+    vectors = TRUE,
+    extraction = method_extraction
+  )
+  vals <- iter$values
+  vecs_for_cert <- iter$vectors
+  alpha <- vals
+  beta <- rep(1, length(vals))
+  pencil <- generalized_pencil_values(alpha, beta)
+  cert <- if (isTRUE(certify) && !is.null(vecs_for_cert) &&
+      ncol(vecs_for_cert) > 0L) {
+    certify_generalized_pencil_operator(
+      a$A,
+      a$metric,
+      alpha,
+      beta,
+      vecs_for_cert,
+      tol = tol
+    )
+  } else {
+    empty_certificate(
+      tol,
+      note = if (!isTRUE(certify)) {
+        "sparse general-pencil Arnoldi: certification disabled by caller"
+      } else {
+        "sparse general-pencil Arnoldi: no eigenpairs returned; residual certificate not computed"
+      }
+    )
+  }
+
+  restart <- iter$restart
+  restart$kind <- "native_transformed_sparse_general_pencil_arnoldi"
+  restart$generalized <- TRUE
+  restart$right_hand_pencil <- TRUE
+  restart$native <- TRUE
+  restart$transformed_operator <- "B^{-1} A"
+  restart$transformed_operator_storage <- Cop$metadata$storage %||% NA_character_
+  restart$metric_solve <- "nonsingular diagonal B row scaling"
+  restart$certificate_problem <- "original_generalized_pencil"
+  restart$materialized_dense_operator <- FALSE
+  restart$materialized_sparse_operator <- TRUE
+  restart$general_pencil_transform <- Cop$metadata$general_pencil_transform
+
+  warning_msg <- if (isTRUE(cert$passed)) {
+    "using native transformed sparse general-pencil Arnoldi with diagonal B; original generalized residuals certified"
+  } else {
+    "using native transformed sparse general-pencil Arnoldi with diagonal B; result did not pass original generalized residual certificate"
+  }
+
+  make_eigen_result(
+    values = vals,
+    vectors = if (isTRUE(vectors)) vecs_for_cert else NULL,
+    certificate = cert,
+    iter = iter,
+    requested = k,
+    method_label = plan$method,
+    target_label_value = target_label(a$target),
+    plan = plan,
+    warnings = warning_msg,
+    extras = list(
+      residuals = cert$residuals,
+      backward_error = cert$backward_error,
+      orthogonality = cert$orthogonality,
+      restarts = restart$restart_count,
+      restart = restart,
+      locked = which(cert$converged),
+      generalized = TRUE,
+      right_hand_pencil = TRUE,
+      alpha = pencil$alpha,
+      beta = pencil$beta,
+      classification = pencil$classification,
+      finite = pencil$finite,
+      infinite = pencil$infinite,
+      undefined = pencil$undefined,
+      transform = list(
+        kind = "sparse_general_pencil_diagonal_B",
+        transformed_operator = "B^{-1} A",
+        metric_solve = "nonsingular diagonal B row scaling",
+        certification = list(
+          problem = "original",
+          residual_formula = "A * x - lambda * B * x",
+          transformed_residuals_used = FALSE
+        )
+      )
+    )
+  )
+}
+
+#' @keywords internal
 solve_eigen_grid_laplacian_2d <- function(a, k, tol, vectors, certify, plan) {
   meta <- structured_grid_laplacian_2d_metadata(a$A)
   if (is.null(meta)) {

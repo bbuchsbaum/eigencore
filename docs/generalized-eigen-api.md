@@ -10,8 +10,9 @@ function listed here is already exported.
 The primary public names are eigencore names, not geigen-compatible names:
 
 - `eig_partial(A, B = NULL, ...)` is the existing partial-spectrum surface.
-  `B` denotes a symmetric/Hermitian positive-definite metric for
-  generalized SPD/Hermitian problems.
+  For Hermitian problems, `B` denotes a symmetric/Hermitian positive-definite
+  metric. For general sparse problems, `B` is accepted only on explicitly
+  labelled right-hand-pencil partial boundaries.
 - `eig_full(A, B = NULL, structure = NULL, vectors = TRUE, ...)` is the full
   dense decomposition surface. It covers standard dense eigenproblems, dense
   generalized SPD/Hermitian problems, and dense general pencils through native
@@ -32,22 +33,29 @@ explicitly accepts them.
 
 ## Meaning Of B
 
-`eigen_problem(metric = )` remains SPD/Hermitian-metric-only. The same is true
-for `eig_partial(A, B = ...)`: sparse and operator partial paths interpret `B`
-as a metric defining the generalized problem `A x = lambda B x`, with
+`eigen_problem(metric = )` remains SPD/Hermitian-metric-only when the problem
+structure is Hermitian. The same is true for Hermitian
+`eig_partial(A, B = ...)`: sparse and operator partial paths interpret `B` as a
+metric defining the generalized problem `A x = lambda B x`, with
 B-orthogonality and original-coordinate residual certification.
 
-General right-hand pencils with indefinite, singular, or nonsymmetric `B` are
-not accepted through `metric = `. Those belong to the future dense/full
-surfaces:
+For general-structure partial problems, `B` is a right-hand pencil only when an
+explicit sparse partial solver boundary accepts it. The current supported
+general sparse boundary is:
+
+- sparse `dgCMatrix` `A` with nonsingular diagonal `B`: native Arnoldi on the
+  sparse transformed operator `B^{-1} A`, certified in original coordinates as
+  `A v - lambda B v`.
+
+General dense right-hand pencils remain full-decomposition surfaces:
 
 - `eig_full(A, B = ...)` for dense finite/infinite generalized eigenvalues.
 - `generalized_schur(A, B, ...)` for dense QZ/Schur factors.
 
-Sparse general-pencil partial support is a separate boundary. It can be
-claimed only for explicit transformed/factorized/user-solve configurations
-whose planner labels and certificates state the solve provenance. Arbitrary
-sparse indefinite pencils are not a native production claim.
+Unsupported sparse general-pencil cases fail before dense fallback. That
+includes singular diagonal `B`, non-diagonal sparse `B`, full sparse QZ, and
+factorized/user-solve `B` configurations that do not yet have explicit
+provenance and certificate semantics.
 
 ## Result Contract
 
@@ -111,6 +119,8 @@ changes the implementation boundary:
 - `reference generalized SPD Lanczos shift-invert (user solve)`
 - `reference generalized SPD Lanczos shift-invert (dense QR)`
 - `reference generalized SPD Lanczos shift-invert (sparse LU)`
+- `native transformed sparse general-pencil Arnoldi (diagonal B)`
+- `unsupported sparse general-pencil partial solver`
 
 The dense full decomposition surface `eig_full()` carries its own
 full-decomposition labels, distinct from the partial-spectrum labels above:
@@ -186,3 +196,9 @@ problem can run only by densifying, the planner must reject it or carry a
 reference/oracle label that makes the dense boundary explicit. Test or
 migration oracles may densify small fixtures for comparison, but solver paths
 may not hide that conversion.
+
+Sparse general-pencil partial support is intentionally narrower than dense QZ:
+the current production boundary is nonsingular diagonal `B`, transformed
+Arnoldi on `B^{-1} A`, and a generalized right-residual certificate in original
+coordinates. Sparse QZ, singular/near-singular `B`, and non-diagonal
+factorized/user-solve right-hand pencils remain separate issues.
