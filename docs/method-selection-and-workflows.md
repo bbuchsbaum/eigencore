@@ -189,6 +189,72 @@ The certificate is computed on the original generalized residual
 `A v - lambda B v`, and orthogonality is measured in the `B` inner product
 where appropriate.
 
+### Graph Laplacians And Fiedler Modes
+
+For graph spectral work, keep symmetric problems on the Hermitian/generalized
+SPD route:
+
+```r
+# Standard Laplacian modes: L x = lambda x
+fit <- eigencore::eig_partial(
+  L,
+  k = 2,
+  target = eigencore::smallest(),
+  allow_dense_fallback = "never"
+)
+
+# Normalized or weighted modes: L x = lambda D x
+norm_fit <- eigencore::eig_partial(
+  L,
+  B = D,
+  k = 2,
+  target = eigencore::smallest(),
+  allow_dense_fallback = "never"
+)
+```
+
+Connected graph Laplacians have a zero eigenvalue with the constant vector as
+the nullspace. If you want the Fiedler mode, do not treat `smallest()` as a
+single "skip the zero mode" command. Either request enough pairs and inspect
+the second one, or deflate the known nullspace:
+
+```r
+nullspace <- matrix(1, nrow = nrow(L), ncol = 1)
+fiedler <- eigencore::eig_partial(
+  L,
+  B = D,
+  k = 1,
+  target = eigencore::smallest(),
+  method = eigencore::lobpcg(maxit = 600, constraints = nullspace),
+  allow_dense_fallback = "never"
+)
+
+stopifnot(eigencore::certificate(fiedler)$passed)
+```
+
+Near-null Fiedler modes can need more LOBPCG iterations than ordinary edge
+queries. When a factorized path is available, `shift_invert(sigma)` near zero
+is often the more reliable way to certify the mode:
+
+```r
+near_zero <- eigencore::eig_partial(
+  L,
+  B = D,
+  k = 2,
+  target = eigencore::smallest(),
+  method = eigencore::shift_invert(1e-4),
+  allow_dense_fallback = "never"
+)
+
+stopifnot(eigencore::certificate(near_zero)$passed)
+```
+
+Do not force graph Laplacians through the nonsymmetric sparse general-pencil
+route. If you truly need a general right-hand pencil, build it explicitly with
+`eigen_problem(A, metric = B, structure = general())` and call `solve()`; the
+convenience wrapper `eig_partial()` does not take a `structure = general()`
+argument.
+
 Current limitation: dense generalized `auto()` uses the native dense LAPACK
 fallback. The promoted iterative generalized surface is sparse
 shifted-tridiagonal generalized SPD LOBPCG for largest/smallest targets, with
@@ -201,11 +267,13 @@ provenance. Block B-orthogonal Lanczos is covered only inside the native
 dense/diagonal transformed generalized-Lanczos boundary; sparse-CSC block
 promotion is not claimed.
 
-For nonsymmetric sparse pencils with diagonal nonsingular `B`,
-`eig_partial(A, B = B, target = ...)` uses native Arnoldi on the sparse
+For nonsymmetric sparse pencils with diagonal nonsingular `B`, build an
+explicit general problem with `eigen_problem(A, metric = B, structure =
+general())` and solve it. That route uses native Arnoldi on the sparse
 transformed operator `B^{-1} A` and certifies the original generalized residual
-`A v - lambda B v`. This is not sparse QZ, and it is not a claim for singular
-or non-diagonal sparse `B`.
+`A v - lambda B v`. This is not sparse QZ, it is not the graph-Laplacian
+Fiedler route, and smallest near-null spectra should be treated as ungated
+unless a smallest-specific general-pencil benchmark proves the case.
 
 ## Shift-Invert
 

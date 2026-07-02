@@ -731,3 +731,37 @@ test_that("standard constraints deflate graph Laplacian nullspace", {
   expect_lt(abs(sum(vectors(fit))), 1e-8)
   expect_true(certificate(fit)$passed)
 })
+
+test_that("normalized graph Laplacian Fiedler recipe stays on generalized SPD path", {
+  n <- 40L
+  upper <- Matrix::bandSparse(
+    n,
+    k = c(0, 1),
+    diagonals = list(c(1, rep(2, n - 2L), 1), rep(-1, n - 1L))
+  )
+  L <- Matrix::forceSymmetric(upper, uplo = "U")
+  D <- Matrix::Diagonal(x = c(1, rep(2, n - 2L), 1))
+  nullspace <- matrix(1, n, 1)
+  method <- lobpcg(maxit = 240L, constraints = nullspace)
+
+  fit <- eig_partial(
+    L,
+    B = D,
+    k = 1L,
+    target = smallest(),
+    method = method,
+    seed = 315,
+    tol = 1e-8,
+    allow_dense_fallback = "never"
+  )
+  oracle <- eigencore:::dense_generalized_spd_eigen(as.matrix(L), as.matrix(D))
+  expected <- sort(oracle$values)[[2L]]
+
+  expect_equal(fit$method, eigencore:::native_generalized_lobpcg_label())
+  expect_true(fit$restart$generalized)
+  expect_true(fit$restart$constrained)
+  expect_equal(fit$restart$constraints_rank, 1L)
+  expect_equal(values(fit), expected, tolerance = 1e-8)
+  expect_equal(crossprod(nullspace, as.matrix(D) %*% vectors(fit)), matrix(0, 1, 1), tolerance = 1e-8)
+  expect_certificate_clean(fit)
+})

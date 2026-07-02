@@ -892,6 +892,20 @@ test_that("known limitations match current shift-invert boundary", {
   }
 })
 
+test_that("known limitations keep graph Fiedler off sparse general-pencil route", {
+  limits <- test_path("../../docs/known-limitations.md")
+  skip_if_not(file.exists(limits), "source docs are not available in installed-package checks")
+  text <- paste(readLines(limits, warn = FALSE), collapse = "\n")
+  required <- c(
+    "sparse general-pencil `smallest()` on graph-Laplacian-like near-null spectra is not a promoted Fiedler path",
+    "`native transformed sparse general-pencil Arnoldi`; this label is a",
+    "general-pencil boundary, not graph/Fiedler guidance"
+  )
+  for (needle in required) {
+    expect_true(grepl(needle, text, fixed = TRUE), info = needle)
+  }
+})
+
 test_that("known limitations document complex ABI certificate contract", {
   limits <- test_path("../../docs/known-limitations.md")
   skip_if_not(file.exists(limits), "source docs are not available in installed-package checks")

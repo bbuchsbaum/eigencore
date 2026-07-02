@@ -78,7 +78,11 @@ correctness and migration but are not V2 CRAN production performance claims.
 For shift-invert, dense standard/generalized, sparse diagonal or
 symmetric-tridiagonal standard cases, and tridiagonal `A` with diagonal `B`
 have native labels; general sparse and general sparse diagonal-metric
-generalized cases remain reference-labelled.
+generalized cases remain reference-labelled. For graph/Fiedler work, sparse
+general-pencil `smallest()` on graph-Laplacian-like near-null spectra is not a
+promoted Fiedler path. Sparse general pencils with nonsingular diagonal `B` may
+carry `native transformed sparse general-pencil Arnoldi`; this label is a
+general-pencil boundary, not graph/Fiedler guidance.
 
 ## Release-Hardening Evidence
 
