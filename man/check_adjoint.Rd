@@ -15,6 +15,10 @@ check_adjoint(A, trials = 20, tol = 1e-12, seed = NULL)
 
 \item{seed}{Optional random seed for reproducible trials.}
 }
+\value{
+An \code{eigencore_adjoint_check} list with pass/fail status, tolerance,
+maximum relative error, per-trial errors, and trial count.
+}
 \description{
 Check an operator adjoint identity.
 }

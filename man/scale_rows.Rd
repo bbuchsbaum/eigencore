@@ -13,6 +13,9 @@ scale_rows(A, weights, name = NULL)
 
 \item{name}{Optional label for the scaled operator.}
 }
+\value{
+An \code{eigencore_operator} representing row-wise left scaling of \code{A}.
+}
 \description{
 Scale operator rows.
 }

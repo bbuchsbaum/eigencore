@@ -18,6 +18,11 @@ compatibility and not interpreted directly.}
 
 \item{...}{Additional arguments passed to \code{\link[=solve.eigencore_eigen_problem]{solve.eigencore_eigen_problem()}}.}
 }
+\value{
+A list compatible with \code{RSpectra::eigs_sym()}, including \code{values},
+\code{vectors}, convergence counts, operation counts, certificate diagnostics,
+and eigencore diagnostics.
+}
 \description{
 RSpectra-compatible symmetric eigen shim.
 }

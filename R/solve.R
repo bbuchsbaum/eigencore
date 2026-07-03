@@ -11,6 +11,9 @@
 #' @param seed Optional random seed for stochastic solver components.
 #' @param certify Whether to compute certification diagnostics.
 #' @param allow_dense_fallback Dense fallback policy.
+#' @return An `eigencore_eigen_result` containing computed values, optional
+#'   vectors, certificate diagnostics, method/plan metadata, and convergence
+#'   diagnostics.
 #' @examples
 #' A <- diag(c(5, 4, 3, 2, 1))
 #' A[1, 2] <- A[2, 1] <- 0.1
@@ -47,6 +50,9 @@ eig_partial <- function(A, k, target = largest(), B = NULL, method = auto(),
 #' @param seed Optional random seed for stochastic solver components.
 #' @param certify Whether to compute certification diagnostics.
 #' @param allow_dense_fallback Dense fallback policy.
+#' @return An `eigencore_svd_result` containing singular values, optional left
+#'   and right singular vectors, certificate diagnostics, method/plan metadata,
+#'   and convergence diagnostics.
 #' @examples
 #' set.seed(1)
 #' X <- matrix(rnorm(60), 10, 6)
@@ -86,6 +92,7 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
 #' problem and dispatches here; call `solve()` directly when you want to build
 #' a problem once and reuse or inspect it. Returns a certified partial
 #' eigendecomposition.
+#'
 #' @param a Eigencore eigen problem object.
 #' @param b Unused second argument reserved by the base [solve()] generic.
 #' @param k Number of eigenpairs to compute.
@@ -96,6 +103,7 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
 #' @param certify Whether to compute certification diagnostics.
 #' @param allow_dense_fallback Dense fallback policy.
 #' @param ... Reserved for future solver options.
+#' @return An `eigencore_eigen_result`.
 #' @export
 solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
                                           maxit = NULL, vectors = TRUE,
@@ -162,6 +170,7 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
 #' problem and dispatches here; call `solve()` directly when you want to build
 #' a problem once and reuse or inspect it. Returns a certified partial
 #' singular-value decomposition.
+#'
 #' @param a Eigencore SVD problem object.
 #' @param b Unused second argument reserved by the base [solve()] generic.
 #' @param rank Number of singular values to compute.
@@ -171,6 +180,7 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
 #' @param certify Whether to compute certification diagnostics.
 #' @param allow_dense_fallback Dense fallback policy.
 #' @param ... Reserved for future solver options.
+#' @return An `eigencore_svd_result`.
 #' @export
 solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
                                         vectors = c("both", "left", "right", "none"),

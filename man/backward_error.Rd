@@ -11,6 +11,10 @@ backward_error(x, ...)
 
 \item{...}{Reserved for future methods.}
 }
+\value{
+A numeric vector of per-pair or per-triplet backward-error
+estimates.
+}
 \description{
 Extract backward-error diagnostics.
 }

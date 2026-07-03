@@ -11,6 +11,9 @@ as_operator(x, ...)
 
 \item{...}{Additional arguments passed to methods.}
 }
+\value{
+An \code{eigencore_operator} representation of \code{x}.
+}
 \description{
 Convert an object to an eigencore operator.
 }

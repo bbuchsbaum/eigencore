@@ -13,6 +13,10 @@ scale_cols(A, weights, name = NULL)
 
 \item{name}{Optional label for the scaled operator.}
 }
+\value{
+An \code{eigencore_operator} representing column-wise right scaling of
+\code{A}.
+}
 \description{
 Scale operator columns.
 }

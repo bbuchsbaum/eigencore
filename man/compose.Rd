@@ -13,6 +13,9 @@ compose(A, B, name = NULL)
 
 \item{name}{Optional label for the composed operator.}
 }
+\value{
+An \code{eigencore_operator} representing the composition \code{A \%*\% B}.
+}
 \description{
 Compose two operators.
 }

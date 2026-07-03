@@ -11,6 +11,10 @@ left_vectors(x, ...)
 
 \item{...}{Reserved for future methods.}
 }
+\value{
+A matrix of left singular vectors or left eigenvectors, or \code{NULL}
+when the result does not contain a left-vector field.
+}
 \description{
 For SVD results this returns the left singular vectors \code{U}. For
 nonsymmetric and dense general-pencil eigen results this returns left

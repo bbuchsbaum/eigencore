@@ -35,6 +35,11 @@ svd_partial(
 
 \item{allow_dense_fallback}{Dense fallback policy.}
 }
+\value{
+An \code{eigencore_svd_result} containing singular values, optional left
+and right singular vectors, certificate diagnostics, method/plan metadata,
+and convergence diagnostics.
+}
 \description{
 Compute a partial singular-value decomposition.
 }

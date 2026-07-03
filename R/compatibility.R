@@ -6,6 +6,9 @@
 #' @param opts Compatibility options list; currently accepted for API
 #'   compatibility and not interpreted directly.
 #' @param ... Additional arguments passed to [eig_partial()].
+#' @return A list compatible with `RSpectra::eigs()`, including `values`,
+#'   `vectors`, convergence counts, operation counts, certificate diagnostics,
+#'   and left/right vector fields when available.
 #' @examples
 #' A <- diag(c(5, 4, 3, 2, 1))
 #' A[1, 2] <- 0.5
@@ -37,6 +40,9 @@ eigs <- function(A, k, which = "LM", opts = list(), ...) {
 #' @param opts Compatibility options list; currently accepted for API
 #'   compatibility and not interpreted directly.
 #' @param ... Additional arguments passed to [solve.eigencore_eigen_problem()].
+#' @return A list compatible with `RSpectra::eigs_sym()`, including `values`,
+#'   `vectors`, convergence counts, operation counts, certificate diagnostics,
+#'   and eigencore diagnostics.
 #' @examples
 #' A <- diag(c(5, 4, 3, 2, 1))
 #' res <- eigs_sym(A, k = 2, which = "LA")
@@ -65,6 +71,9 @@ eigs_sym <- function(A, k, which = "LA", opts = list(), ...) {
 #' @param opts Compatibility options list; currently accepted for API
 #'   compatibility and not interpreted directly.
 #' @param ... Additional arguments passed to [svd_partial()].
+#' @return A list compatible with `RSpectra::svds()`, including `d`, optional
+#'   `u` and `v`, convergence counts, operation counts, certificate
+#'   diagnostics, and eigencore diagnostics.
 #' @examples
 #' set.seed(1)
 #' X <- matrix(rnorm(60), 10, 6)

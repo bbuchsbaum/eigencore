@@ -11,6 +11,9 @@ crossprod_operator(A, name = NULL)
 
 \item{name}{Optional label for the cross-product operator.}
 }
+\value{
+A Hermitian \code{eigencore_operator} representing \verb{A^* A}.
+}
 \description{
 Create A^* A as an operator.
 }

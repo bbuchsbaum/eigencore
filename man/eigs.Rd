@@ -18,6 +18,11 @@ compatibility and not interpreted directly.}
 
 \item{...}{Additional arguments passed to \code{\link[=eig_partial]{eig_partial()}}.}
 }
+\value{
+A list compatible with \code{RSpectra::eigs()}, including \code{values},
+\code{vectors}, convergence counts, operation counts, certificate diagnostics,
+and left/right vector fields when available.
+}
 \description{
 RSpectra-compatible eigen shim.
 }

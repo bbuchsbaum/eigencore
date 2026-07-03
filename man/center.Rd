@@ -28,6 +28,9 @@ centering when they cannot be derived without densifying.}
 
 \item{name}{Optional label for the centered operator.}
 }
+\value{
+An \code{eigencore_operator} representing the centered linear map.
+}
 \description{
 Center an operator by rows or columns.
 }

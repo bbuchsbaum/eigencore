@@ -10,6 +10,9 @@
 #'   [hermitian()].
 #' @param name Optional operator label used in plans and diagnostics.
 #' @param metadata Optional list of implementation metadata.
+#' @return An `eigencore_operator` list containing dimensions, apply callbacks,
+#'   scalar type, structure metadata, a display name, and implementation
+#'   metadata.
 #' @examples
 #' A <- diag(c(3, 2, 1))
 #' op <- linear_operator(
@@ -49,6 +52,7 @@ linear_operator <- function(dim, apply, apply_adjoint = NULL, dtype = "double",
 #'
 #' @param x Object to convert.
 #' @param ... Additional arguments passed to methods.
+#' @return An `eigencore_operator` representation of `x`.
 #' @examples
 #' op <- as_operator(diag(c(3, 2, 1)))
 #' op$dim
@@ -128,6 +132,7 @@ stop_if_complex_matrix_input <- function(x) {
 #'
 #' @param x Operator-like object.
 #' @param ... Additional arguments passed to methods.
+#' @return An `eigencore_operator` representing the adjoint map.
 adjoint <- function(x, ...) {
   UseMethod("adjoint")
 }

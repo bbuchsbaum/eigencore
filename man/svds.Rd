@@ -20,6 +20,11 @@ compatibility and not interpreted directly.}
 
 \item{...}{Additional arguments passed to \code{\link[=svd_partial]{svd_partial()}}.}
 }
+\value{
+A list compatible with \code{RSpectra::svds()}, including \code{d}, optional
+\code{u} and \code{v}, convergence counts, operation counts, certificate
+diagnostics, and eigencore diagnostics.
+}
 \description{
 RSpectra-compatible SVD shim.
 }

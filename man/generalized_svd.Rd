@@ -25,9 +25,9 @@ An \code{eigencore_gsvd_result} with fields \code{alpha}, \code{beta}, \code{val
 \code{generalized_svd()} is eigencore's dense GSVD compatibility surface for
 matrix pairs with the same number of columns. The current native path uses
 LAPACK \code{dggsvd} through R's native LAPACK interface, so it requires a linked
-LAPACK that still provides that deprecated routine. Sparse/operator inputs are
-not silently densified, and complex GSVD remains explicit future scope until
-a complex GSVD driver is available through the eigencore native layer.
+LAPACK that still provides that deprecated routine. Sparse/operator inputs
+are not silently densified, and complex GSVD remains explicit future scope
+until a complex GSVD driver is available through the eigencore native layer.
 }
 \examples{
 A <- matrix(c(1, 2, 3, 3, 2, 1), nrow = 2, byrow = TRUE)

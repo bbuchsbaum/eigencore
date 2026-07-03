@@ -11,6 +11,10 @@ vectors(x, ...)
 
 \item{...}{Reserved for future methods.}
 }
+\value{
+A matrix whose columns are computed right eigenvectors, or \code{NULL}
+when vectors were not requested or are unavailable.
+}
 \description{
 Extract eigenvectors.
 }

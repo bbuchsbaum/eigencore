@@ -11,6 +11,11 @@ plan_solver(problem, ...)
 
 \item{...}{Additional planning arguments passed to methods.}
 }
+\value{
+An \code{eigencore_plan} list describing the requested problem, chosen
+method label, target, planner reasons, fallback label, and control
+metadata used by solver dispatch.
+}
 \description{
 Plan a solver for a problem.
 }

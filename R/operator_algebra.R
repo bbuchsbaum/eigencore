@@ -3,6 +3,7 @@
 #' @param A Left operator-like object.
 #' @param B Right operator-like object.
 #' @param name Optional label for the composed operator.
+#' @return An `eigencore_operator` representing the composition `A %*% B`.
 compose <- function(A, B, name = NULL) {
   A <- as_operator(A)
   B <- as_operator(B)
@@ -152,6 +153,7 @@ operator_scale <- function(A, scalar, name = NULL) {
 #' @param A Operator-like object.
 #' @param weights Numeric vector of row weights.
 #' @param name Optional label for the scaled operator.
+#' @return An `eigencore_operator` representing row-wise left scaling of `A`.
 scale_rows <- function(A, weights, name = NULL) {
   A <- as_operator(A)
   weights <- as.numeric(weights)
@@ -194,6 +196,8 @@ scale_rows <- function(A, weights, name = NULL) {
 #' @param A Operator-like object.
 #' @param weights Numeric vector of column weights.
 #' @param name Optional label for the scaled operator.
+#' @return An `eigencore_operator` representing column-wise right scaling of
+#'   `A`.
 scale_cols <- function(A, weights, name = NULL) {
   A <- as_operator(A)
   weights <- as.numeric(weights)
@@ -241,6 +245,7 @@ scale_cols <- function(A, weights, name = NULL) {
 #' @param col_means Optional column means. Required for matrix-free column
 #'   centering when they cannot be derived without densifying.
 #' @param name Optional label for the centered operator.
+#' @return An `eigencore_operator` representing the centered linear map.
 center <- function(A, rows = FALSE, columns = TRUE, row_means = NULL,
                    col_means = NULL, name = NULL) {
   A <- as_operator(A)
@@ -394,6 +399,7 @@ csc_centered_block_apply <- function(A, X, alpha = 1, beta = 0, Y = NULL,
 #' @param validate Whether to check the adjoint identity before marking the
 #'   operator symmetric.
 #' @param tol Relative tolerance for the adjoint check.
+#' @return An `eigencore_operator` with Hermitian structure metadata.
 symmetric_operator <- function(A, validate = TRUE, tol = 1e-10) {
   A <- as_operator(A)
   if (A$dim[1L] != A$dim[2L]) {
@@ -411,6 +417,7 @@ symmetric_operator <- function(A, validate = TRUE, tol = 1e-10) {
 #'
 #' @param A Operator-like object with an adjoint implementation.
 #' @param name Optional label for the cross-product operator.
+#' @return A Hermitian `eigencore_operator` representing `A^* A`.
 crossprod_operator <- function(A, name = NULL) {
   A <- as_operator(A)
   if (is.null(A$apply_adjoint)) {
@@ -443,6 +450,8 @@ crossprod_operator <- function(A, name = NULL) {
 #' @param trials Number of random block trials.
 #' @param tol Relative tolerance for each adjoint identity check.
 #' @param seed Optional random seed for reproducible trials.
+#' @return An `eigencore_adjoint_check` list with pass/fail status, tolerance,
+#'   maximum relative error, per-trial errors, and trial count.
 check_adjoint <- function(A, trials = 20, tol = 1e-12, seed = NULL) {
   A <- as_operator(A)
   if (is.null(A$apply_adjoint)) {

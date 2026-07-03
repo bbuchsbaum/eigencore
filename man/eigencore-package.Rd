@@ -11,7 +11,7 @@ structured matrices, with a numerical certificate attached to every result.
 See \code{\link[=svd_partial]{svd_partial()}}, \code{\link[=eig_partial]{eig_partial()}}, and \code{vignette("eigencore")}.
 }
 \author{
-\strong{Maintainer}: Bradley Buchsbaum \email{brad.buchsbaum@gmail.com}
+\strong{Maintainer}: Bradley Buchsbaum \email{brad.buchsbaum@gmail.com} [copyright holder]
 
 }
 \keyword{internal}

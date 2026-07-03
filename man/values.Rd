@@ -11,6 +11,10 @@ values(x, ...)
 
 \item{...}{Reserved for future methods.}
 }
+\value{
+A numeric or complex vector of computed eigenvalues, singular values,
+or generalized singular values.
+}
 \description{
 Extract computed values.
 }

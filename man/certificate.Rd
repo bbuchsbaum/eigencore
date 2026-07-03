@@ -11,6 +11,10 @@ certificate(x, ...)
 
 \item{...}{Reserved for future methods.}
 }
+\value{
+The \code{eigencore_certificate} object stored on \code{x}, or \code{NULL} if the
+result does not carry a certificate field.
+}
 \description{
 Extract a result certificate.
 }

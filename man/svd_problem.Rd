@@ -15,6 +15,11 @@ svd_problem(A, domain = NULL, codomain = NULL, target = largest())
 
 \item{target}{Eigencore singular-value target descriptor.}
 }
+\value{
+An \code{eigencore_svd_problem} object containing the operator, domain and
+codomain descriptors, and singular-value target consumed by \code{\link[=plan_solver]{plan_solver()}}
+and \code{\link[=solve]{solve()}}.
+}
 \description{
 Define an SVD problem.
 }

@@ -35,6 +35,9 @@
 
 \item{...}{Reserved for future solver options.}
 }
+\value{
+An \code{eigencore_svd_result}.
+}
 \description{
 S3 method that runs the planned solver for an SVD problem built by
 \code{\link[=svd_problem]{svd_problem()}}. Most users call \code{\link[=svd_partial]{svd_partial()}}, which constructs the

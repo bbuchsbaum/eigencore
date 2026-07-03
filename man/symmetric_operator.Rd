@@ -14,6 +14,9 @@ operator symmetric.}
 
 \item{tol}{Relative tolerance for the adjoint check.}
 }
+\value{
+An \code{eigencore_operator} with Hermitian structure metadata.
+}
 \description{
 Mark an operator as symmetric/Hermitian.
 }

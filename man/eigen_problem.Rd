@@ -24,6 +24,11 @@ structure.}
 
 \item{transform}{Optional transform method such as \code{\link[=shift_invert]{shift_invert()}}.}
 }
+\value{
+An \code{eigencore_eigen_problem} object containing the operator, optional
+metric, structure, target, and transform metadata consumed by
+\code{\link[=plan_solver]{plan_solver()}} and \code{\link[=solve]{solve()}}.
+}
 \description{
 Define an eigenproblem.
 }

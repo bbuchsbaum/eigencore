@@ -41,6 +41,11 @@ eig_partial(
 
 \item{allow_dense_fallback}{Dense fallback policy.}
 }
+\value{
+An \code{eigencore_eigen_result} containing computed values, optional
+vectors, certificate diagnostics, method/plan metadata, and convergence
+diagnostics.
+}
 \description{
 Compute a partial eigendecomposition.
 }

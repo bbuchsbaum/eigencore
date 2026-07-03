@@ -6,6 +6,9 @@
 #'   structure.
 #' @param target Eigencore target descriptor.
 #' @param transform Optional transform method such as [shift_invert()].
+#' @return An `eigencore_eigen_problem` object containing the operator, optional
+#'   metric, structure, target, and transform metadata consumed by
+#'   [plan_solver()] and [solve()].
 #' @examples
 #' A <- diag(c(4, 3, 2, 1))
 #' P <- eigen_problem(A, target = largest())
@@ -71,6 +74,9 @@ validate_metric_symmetric <- function(metric, Bop, structure) {
 #' @param domain Optional domain-space descriptor.
 #' @param codomain Optional codomain-space descriptor.
 #' @param target Eigencore singular-value target descriptor.
+#' @return An `eigencore_svd_problem` object containing the operator, domain and
+#'   codomain descriptors, and singular-value target consumed by [plan_solver()]
+#'   and [solve()].
 #' @examples
 #' set.seed(1)
 #' X <- matrix(rnorm(40), 8, 5)
@@ -100,6 +106,9 @@ svd_problem <- function(A, domain = NULL, codomain = NULL, target = largest()) {
 #'
 #' @param problem Eigencore eigen or SVD problem object.
 #' @param ... Additional planning arguments passed to methods.
+#' @return An `eigencore_plan` list describing the requested problem, chosen
+#'   method label, target, planner reasons, fallback label, and control
+#'   metadata used by solver dispatch.
 #' @examples
 #' A <- diag(c(4, 3, 2, 1))
 #' plan <- plan_solver(eigen_problem(A), k = 2)

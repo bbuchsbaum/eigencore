@@ -11,6 +11,11 @@ diagnostics(x, ...)
 
 \item{...}{Reserved for future methods.}
 }
+\value{
+A named list of diagnostic fields, including residuals, backward
+errors, orthogonality diagnostics, iteration counts, method/plan metadata,
+warnings, and any available left-eigenvector diagnostics.
+}
 \description{
 Extract diagnostics.
 }

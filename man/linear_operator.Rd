@@ -32,6 +32,11 @@ the adjoint operator.}
 
 \item{metadata}{Optional list of implementation metadata.}
 }
+\value{
+An \code{eigencore_operator} list containing dimensions, apply callbacks,
+scalar type, structure metadata, a display name, and implementation
+metadata.
+}
 \description{
 Create a block-native linear operator.
 }

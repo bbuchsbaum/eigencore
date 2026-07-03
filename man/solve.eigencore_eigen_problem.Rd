@@ -38,6 +38,9 @@
 
 \item{...}{Reserved for future solver options.}
 }
+\value{
+An \code{eigencore_eigen_result}.
+}
 \description{
 S3 method that runs the planned solver for an eigenproblem built by
 \code{\link[=eigen_problem]{eigen_problem()}}. Most users call \code{\link[=eig_partial]{eig_partial()}}, which constructs the

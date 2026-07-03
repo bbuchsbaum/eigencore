@@ -11,6 +11,9 @@ adjoint(x, ...)
 
 \item{...}{Additional arguments passed to methods.}
 }
+\value{
+An \code{eigencore_operator} representing the adjoint map.
+}
 \description{
 Return the adjoint operator.
 }

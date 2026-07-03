@@ -11,6 +11,10 @@ right_vectors(x, ...)
 
 \item{...}{Reserved for future methods.}
 }
+\value{
+A matrix of right singular vectors or right eigenvectors, or \code{NULL}
+when the result does not contain a right-vector field.
+}
 \description{
 Extract right singular vectors.
 }

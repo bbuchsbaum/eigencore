@@ -2,6 +2,8 @@
 #'
 #' @param x An eigencore result object.
 #' @param ... Reserved for future methods.
+#' @return The `eigencore_certificate` object stored on `x`, or `NULL` if the
+#'   result does not carry a certificate field.
 #' @examples
 #' fit <- eig_partial(diag(c(3, 2, 1)), k = 1, target = largest())
 #' cert <- certificate(fit)
@@ -15,6 +17,9 @@ certificate <- function(x, ...) {
 #'
 #' @param x An eigencore result object.
 #' @param ... Reserved for future methods.
+#' @return A named list of diagnostic fields, including residuals, backward
+#'   errors, orthogonality diagnostics, iteration counts, method/plan metadata,
+#'   warnings, and any available left-eigenvector diagnostics.
 #' @examples
 #' fit <- eig_partial(diag(c(3, 2, 1)), k = 1, target = largest())
 #' d <- diagnostics(fit)
@@ -51,6 +56,8 @@ diagnostics <- function(x, ...) {
 #'
 #' @param x An eigencore result object.
 #' @param ... Reserved for future methods.
+#' @return A numeric or complex vector of computed eigenvalues, singular values,
+#'   or generalized singular values.
 #' @examples
 #' fit <- eig_partial(diag(c(3, 2, 1)), k = 2, target = largest())
 #' values(fit)
@@ -101,6 +108,8 @@ alpha_beta <- function(x, ...) {
 #'
 #' @param x An eigencore eigen result object.
 #' @param ... Reserved for future methods.
+#' @return A matrix whose columns are computed right eigenvectors, or `NULL`
+#'   when vectors were not requested or are unavailable.
 #' @examples
 #' fit <- eig_partial(diag(c(3, 2, 1)), k = 2, target = largest())
 #' dim(vectors(fit))
@@ -118,6 +127,8 @@ vectors <- function(x, ...) {
 #'
 #' @param x An eigencore SVD or eigen result object.
 #' @param ... Reserved for future methods.
+#' @return A matrix of left singular vectors or left eigenvectors, or `NULL`
+#'   when the result does not contain a left-vector field.
 left_vectors <- function(x, ...) {
   result_field(x, c("left_vectors", "u", "U"))
 }
@@ -126,6 +137,8 @@ left_vectors <- function(x, ...) {
 #'
 #' @param x An eigencore SVD or nonsymmetric eigen result object.
 #' @param ... Reserved for future methods.
+#' @return A matrix of right singular vectors or right eigenvectors, or `NULL`
+#'   when the result does not contain a right-vector field.
 right_vectors <- function(x, ...) {
   result_field(x, c("right_vectors", "v", "V", "vectors"))
 }
@@ -167,6 +180,8 @@ residuals.eigencore_certificate <- function(object, ...) {
 #'
 #' @param x An eigencore result object.
 #' @param ... Reserved for future methods.
+#' @return A numeric vector of per-pair or per-triplet backward-error
+#'   estimates.
 backward_error <- function(x, ...) {
   x$backward_error
 }
