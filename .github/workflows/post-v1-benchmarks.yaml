@@ -45,7 +45,6 @@ jobs:
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
-      BENCH_LIB: ${{ runner.temp }}/eigencore-bench-lib
 
     steps:
       - uses: actions/checkout@v4
@@ -60,12 +59,16 @@ jobs:
           needs: none
 
       - name: Install package for installed-gate commands
+        env:
+          BENCH_LIB: ${{ runner.temp }}/eigencore-bench-lib
         run: |
           dir.create(Sys.getenv("BENCH_LIB"), recursive = TRUE, showWarnings = FALSE)
           install.packages(".", repos = NULL, type = "source", lib = Sys.getenv("BENCH_LIB"))
         shell: Rscript {0}
 
       - name: Run post-V1 benchmark profile
+        env:
+          BENCH_LIB: ${{ runner.temp }}/eigencore-bench-lib
         run: |
           TIER="${{ github.event.inputs.tier }}"
           GATES="${{ github.event.inputs.gates }}"
