@@ -1,11 +1,11 @@
-#include <R.h>
-#include <Rinternals.h>
-#include <R_ext/BLAS.h>
-#include <R_ext/Lapack.h>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <stdint.h>
+#include <R.h>
+#include <Rinternals.h>
+#include <R_ext/BLAS.h>
+#include <R_ext/Lapack.h>
 
 struct BasisWorkspace {
   int64_t rows;

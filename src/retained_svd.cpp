@@ -1,13 +1,13 @@
-#include <R.h>
-#include <Rinternals.h>
-#include <R_ext/BLAS.h>
-#include <R_ext/Lapack.h>
 #include <algorithm>
 #include <cmath>
 #include <cfloat>
 #include <cstring>
 #include <utility>
 #include <vector>
+#include <R.h>
+#include <Rinternals.h>
+#include <R_ext/BLAS.h>
+#include <R_ext/Lapack.h>
 #include "eigencore_common.h"
 #include "native_operators.h"
 #include "certificates.h"

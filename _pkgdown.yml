@@ -31,6 +31,7 @@ reference:
   - eig_full
   - svd_partial
   - generalized_schur
+  - generalized_svd
 
 - title: RSpectra-compatible shims
   desc: Drop-in replacements for `RSpectra::eigs()`, `eigs_sym()`, and `svds()`.

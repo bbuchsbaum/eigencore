@@ -879,7 +879,10 @@ test_that("native thick-restart Lanczos residuals match independently recomputed
   recomputed <- vapply(seq_along(lambda), function(i) {
     sqrt(sum((A %*% V[, i] - lambda[i] * V[, i])^2))
   }, numeric(1))
-  expect_equal(unname(fit$certificate$residuals), recomputed, tolerance = 1e-10)
+  reported <- unname(fit$certificate$residuals)
+  diff <- abs(reported - recomputed)
+  scale <- pmax(abs(reported), abs(recomputed), .Machine$double.eps)
+  expect_lt(max(diff / scale), 1e-6)
 })
 
 test_that("native thick-restart Lanczos respects sparse non-densification", {

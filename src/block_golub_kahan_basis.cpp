@@ -1,12 +1,12 @@
-#include <R.h>
-#include <Rinternals.h>
-#include <R_ext/BLAS.h>
-#include <R_ext/Lapack.h>
 #include <cmath>
 #include <cfloat>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#include <R.h>
+#include <Rinternals.h>
+#include <R_ext/BLAS.h>
+#include <R_ext/Lapack.h>
 #include "native_operators.h"
 #include "block_golub_kahan_basis.h"
 

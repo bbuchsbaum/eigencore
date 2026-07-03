@@ -1,13 +1,13 @@
-#include <R.h>
-#include <Rinternals.h>
-#include <R_ext/BLAS.h>
-#include <R_ext/Lapack.h>
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include <R.h>
+#include <Rinternals.h>
+#include <R_ext/BLAS.h>
+#include <R_ext/Lapack.h>
 #include "eigencore_common.h"
 
 static double max_orthogonality_loss_gram(const double* gram, int k) {

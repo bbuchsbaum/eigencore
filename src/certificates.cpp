@@ -1,8 +1,8 @@
+#include <cfloat>
+#include <cmath>
 #include <R.h>
 #include <Rinternals.h>
 #include <R_ext/BLAS.h>
-#include <cfloat>
-#include <cmath>
 #include "native_operators.h"
 #include "certificates.h"
 

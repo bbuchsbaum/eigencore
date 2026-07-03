@@ -1,12 +1,12 @@
-#include <R.h>
-#include <Rinternals.h>
-#include <R_ext/BLAS.h>
-#include <R_ext/Lapack.h>
 #include <cmath>
 #include <cfloat>
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include <R.h>
+#include <Rinternals.h>
+#include <R_ext/BLAS.h>
+#include <R_ext/Lapack.h>
 #include "eigencore_common.h"
 #include "native_operators.h"
 
