@@ -76,24 +76,24 @@ boundary are different claims even if their values agree.
 
 | regime | task | method | median_ms | mem_mb | rel_error | backward_error | residual_check | eigencore_label | status |
 |:---|:---|:---|---:|---:|---:|---:|:---|:---|:---|
-| dense Hermitian | eigen | eigencore | 4.9250 | 1.06700 | 0 | 0 | TRUE | native dense Hermitian LAPACK fallback | ok |
-| dense Hermitian | eigen | RSpectra | 0.4733 | 0.06661 | 0 | 0 | TRUE | NA | ok |
-| dense Hermitian | eigen | base | 2.0020 | 0.42400 | 0 | 0 | TRUE | NA | ok |
-| sparse path Laplacian | eigen | eigencore | 2.6120 | 1.83600 | 0 | 0 | TRUE | native tridiagonal Hermitian shift-invert (factorized Lanczos) | ok |
-| sparse path Laplacian | eigen | RSpectra | 8.0810 | 0.01991 | 0 | 0 | TRUE | NA | ok |
-| sparse path Laplacian | eigen | base | 13.6500 | 3.18800 | 0 | 0 | TRUE | NA | ok |
-| dense low-rank SVD | SVD | eigencore | 1.7230 | 1.30600 | 0 | 0 | TRUE | native certified Gram SVD special case | ok |
-| dense low-rank SVD | SVD | RSpectra | 0.2304 | 0.09405 | 0 | 0 | TRUE | NA | ok |
-| dense low-rank SVD | SVD | irlba | 0.3798 | 0.56060 | 0 | 0 | TRUE | NA | ok |
+| dense Hermitian | eigen | eigencore | 4.6920 | 1.06700 | 0 | 0 | TRUE | native dense Hermitian LAPACK fallback | ok |
+| dense Hermitian | eigen | RSpectra | 0.4705 | 0.06661 | 0 | 0 | TRUE | NA | ok |
+| dense Hermitian | eigen | base | 2.0850 | 0.42400 | 0 | 0 | TRUE | NA | ok |
+| sparse path Laplacian | eigen | eigencore | 2.3920 | 1.83600 | 0 | 0 | TRUE | native tridiagonal Hermitian shift-invert (factorized Lanczos) | ok |
+| sparse path Laplacian | eigen | RSpectra | 7.8570 | 0.01991 | 0 | 0 | TRUE | NA | ok |
+| sparse path Laplacian | eigen | base | 14.5000 | 3.18800 | 0 | 0 | TRUE | NA | ok |
+| dense low-rank SVD | SVD | eigencore | 1.5890 | 1.30600 | 0 | 0 | TRUE | native certified Gram SVD special case | ok |
+| dense low-rank SVD | SVD | RSpectra | 0.2222 | 0.09405 | 0 | 0 | TRUE | NA | ok |
+| dense low-rank SVD | SVD | irlba | 0.3680 | 0.56060 | 0 | 0 | TRUE | NA | ok |
 | dense low-rank SVD | SVD | base | 1.6530 | 0.59420 | 0 | 0 | TRUE | NA | ok |
-| tall sparse SVD | SVD | eigencore | 0.7085 | 0.01904 | 0 | 0 | TRUE | native certified Gram SVD special case | ok |
-| tall sparse SVD | SVD | RSpectra | 0.3916 | 0.02502 | 0 | 0 | TRUE | NA | ok |
-| tall sparse SVD | SVD | irlba | 0.7723 | 0.17600 | 0 | 0 | TRUE | NA | ok |
-| tall sparse SVD | SVD | base | 1.8350 | 0.89790 | 0 | 0 | TRUE | NA | ok |
-| wide sparse SVD | SVD | eigencore | 0.5525 | 0.02358 | 0 | 0 | TRUE | native certified Gram SVD special case | ok |
-| wide sparse SVD | SVD | RSpectra | 0.4707 | 0.02246 | 0 | 0 | TRUE | NA | ok |
-| wide sparse SVD | SVD | irlba | 1.0410 | 0.15420 | 0 | 0 | TRUE | NA | ok |
-| wide sparse SVD | SVD | base | 2.7570 | 0.90980 | 0 | 0 | TRUE | NA | ok |
+| tall sparse SVD | SVD | eigencore | 0.6838 | 0.01904 | 0 | 0 | TRUE | native certified Gram SVD special case | ok |
+| tall sparse SVD | SVD | RSpectra | 0.3542 | 0.02502 | 0 | 0 | TRUE | NA | ok |
+| tall sparse SVD | SVD | irlba | 0.7333 | 0.17600 | 0 | 0 | TRUE | NA | ok |
+| tall sparse SVD | SVD | base | 1.8440 | 0.89790 | 0 | 0 | TRUE | NA | ok |
+| wide sparse SVD | SVD | eigencore | 0.5341 | 0.02358 | 0 | 0 | TRUE | native certified Gram SVD special case | ok |
+| wide sparse SVD | SVD | RSpectra | 0.4172 | 0.02246 | 0 | 0 | TRUE | NA | ok |
+| wide sparse SVD | SVD | irlba | 0.9988 | 0.15420 | 0 | 0 | TRUE | NA | ok |
+| wide sparse SVD | SVD | base | 2.8720 | 0.90980 | 0 | 0 | TRUE | NA | ok |
 
 Smoke benchmark rows with 3 iterations per method. {.table
 style="width:100%;"}
