@@ -11,7 +11,8 @@ generalized_svd(A, B, tol = 1e-08, ...)
 
 \item{B}{Base dense real matrix with \code{p} rows and \code{n} columns.}
 
-\item{tol}{Reconstruction and orthogonality certification tolerance.}
+\item{tol}{Finite non-negative reconstruction and orthogonality
+certification tolerance.}
 
 \item{...}{Reserved for future options.}
 }
@@ -23,9 +24,10 @@ An \code{eigencore_gsvd_result} with fields \code{alpha}, \code{beta}, \code{val
 \description{
 \code{generalized_svd()} is eigencore's dense GSVD compatibility surface for
 matrix pairs with the same number of columns. The current native path uses
-the real LAPACK GSVD routine available through R. Sparse/operator inputs are
+LAPACK \code{dggsvd} through R's native LAPACK interface, so it requires a linked
+LAPACK that still provides that deprecated routine. Sparse/operator inputs are
 not silently densified, and complex GSVD remains explicit future scope until
-a bundled or platform \code{ZGGSVD3}-equivalent native path is available.
+a complex GSVD driver is available through the eigencore native layer.
 }
 \examples{
 A <- matrix(c(1, 2, 3, 3, 2, 1), nrow = 2, byrow = TRUE)

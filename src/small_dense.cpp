@@ -330,6 +330,40 @@ extern "C" SEXP eigencore_dense_complex_general_eigen(SEXP A_) {
   return out_;
 }
 
+// Expand LAPACK packed real eigenvector storage (conjugate pairs occupy two
+// consecutive real columns) into full complex columns. Errors loudly on
+// non-conforming pairing rather than emit a silently wrong real-only vector.
+static void unpack_real_pencil_vectors(const double* packed,
+                                       const double* alphai,
+                                       int n, Rcomplex* out,
+                                       const char* routine) {
+  int j = 0;
+  while (j < n) {
+    if (alphai[j] > 0.0 && j + 1 < n) {
+      for (int row = 0; row < n; ++row) {
+        const double re = packed[row + static_cast<int64_t>(j) * n];
+        const double im = packed[row + static_cast<int64_t>(j + 1) * n];
+        out[row + static_cast<int64_t>(j) * n].r = re;
+        out[row + static_cast<int64_t>(j) * n].i = im;
+        out[row + static_cast<int64_t>(j + 1) * n].r = re;
+        out[row + static_cast<int64_t>(j + 1) * n].i = -im;
+      }
+      j += 2;
+    } else {
+      if (alphai[j] != 0.0) {
+        error("LAPACK %s returned a non-conforming complex eigenvalue at "
+              "index %d without a consecutive conjugate partner", routine, j);
+      }
+      for (int row = 0; row < n; ++row) {
+        out[row + static_cast<int64_t>(j) * n].r =
+          packed[row + static_cast<int64_t>(j) * n];
+        out[row + static_cast<int64_t>(j) * n].i = 0.0;
+      }
+      ++j;
+    }
+  }
+}
+
 extern "C" SEXP eigencore_dense_generalized_pencil_eigen(SEXP A_, SEXP B_) {
   if (!isReal(A_) || !isReal(B_)) {
     error("A and B must be double matrices");
@@ -348,41 +382,77 @@ extern "C" SEXP eigencore_dense_generalized_pencil_eigen(SEXP A_, SEXP B_) {
   SEXP alphai_ = PROTECT(allocVector(REALSXP, n));
   SEXP beta_real_ = PROTECT(allocVector(REALSXP, n));
   SEXP vr_real_ = PROTECT(allocMatrix(REALSXP, n, n));
+  SEXP vl_real_ = PROTECT(allocMatrix(REALSXP, n, n));
+  SEXP rconde_ = PROTECT(allocVector(REALSXP, n));
+  SEXP rcondv_ = PROTECT(allocVector(REALSXP, n));
+  double abnrm = 0.0;
+  double bbnrm = 0.0;
 
   if (n > 0) {
-    char jobvl = 'N';
+    // DGGEVX: balance the pencil ('B' = permute and scale), compute left and
+    // right eigenvectors, and both eigenvalue and eigenvector reciprocal
+    // condition numbers ('B'). abnrm/bbnrm are the one-norms of the balanced
+    // matrices; the R layer uses them for scale-aware alpha/beta
+    // classification.
+    char balanc = 'B';
+    char jobvl = 'V';
     char jobvr = 'V';
-    int ldvl = 1;
+    char sense = 'B';
+    int ldvl = n;
     int ldvr = n;
+    int ilo = 0;
+    int ihi = 0;
     int info = 0;
     int lwork = -1;
-    double vl_dummy = 0.0;
     double work_query = 0.0;
+    double* lscale = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(n), sizeof(double))
+    );
+    double* rscale = reinterpret_cast<double*>(
+      R_alloc(static_cast<size_t>(n), sizeof(double))
+    );
+    int* iwork = reinterpret_cast<int*>(
+      R_alloc(static_cast<size_t>(n) + 6, sizeof(int))
+    );
+    La_LGL* bwork = reinterpret_cast<La_LGL*>(
+      R_alloc(static_cast<size_t>(n), sizeof(La_LGL))
+    );
 
     SEXP Awork_ = PROTECT(duplicate(A_));
     SEXP Bwork_ = PROTECT(duplicate(B_));
-    F77_CALL(dggev)(&jobvl, &jobvr, &n, REAL(Awork_), &n, REAL(Bwork_), &n,
-                    REAL(alphar_), REAL(alphai_), REAL(beta_real_),
-                    &vl_dummy, &ldvl, REAL(vr_real_), &ldvr,
-                    &work_query, &lwork, &info FCONE FCONE);
+    F77_CALL(dggevx)(&balanc, &jobvl, &jobvr, &sense, &n,
+                     REAL(Awork_), &n, REAL(Bwork_), &n,
+                     REAL(alphar_), REAL(alphai_), REAL(beta_real_),
+                     REAL(vl_real_), &ldvl, REAL(vr_real_), &ldvr,
+                     &ilo, &ihi, lscale, rscale, &abnrm, &bbnrm,
+                     REAL(rconde_), REAL(rcondv_),
+                     &work_query, &lwork, iwork, bwork, &info
+                     FCONE FCONE FCONE FCONE);
     if (info != 0) {
-      error("LAPACK dggev workspace query failed with info=%d", info);
+      error("LAPACK dggevx workspace query failed with info=%d", info);
     }
     UNPROTECT(2);
 
     lwork = static_cast<int>(work_query);
+    if (lwork < 6 * n) {
+      lwork = 6 * n;
+    }
     if (lwork < 1) {
       lwork = 1;
     }
     SEXP work_ = PROTECT(allocVector(REALSXP, lwork));
     Awork_ = PROTECT(duplicate(A_));
     Bwork_ = PROTECT(duplicate(B_));
-    F77_CALL(dggev)(&jobvl, &jobvr, &n, REAL(Awork_), &n, REAL(Bwork_), &n,
-                    REAL(alphar_), REAL(alphai_), REAL(beta_real_),
-                    &vl_dummy, &ldvl, REAL(vr_real_), &ldvr,
-                    REAL(work_), &lwork, &info FCONE FCONE);
+    F77_CALL(dggevx)(&balanc, &jobvl, &jobvr, &sense, &n,
+                     REAL(Awork_), &n, REAL(Bwork_), &n,
+                     REAL(alphar_), REAL(alphai_), REAL(beta_real_),
+                     REAL(vl_real_), &ldvl, REAL(vr_real_), &ldvr,
+                     &ilo, &ihi, lscale, rscale, &abnrm, &bbnrm,
+                     REAL(rconde_), REAL(rcondv_),
+                     REAL(work_), &lwork, iwork, bwork, &info
+                     FCONE FCONE FCONE FCONE);
     if (info != 0) {
-      error("LAPACK dggev failed with info=%d", info);
+      error("LAPACK dggevx failed with info=%d", info);
     }
     UNPROTECT(3);
   }
@@ -390,55 +460,39 @@ extern "C" SEXP eigencore_dense_generalized_pencil_eigen(SEXP A_, SEXP B_) {
   SEXP alpha_ = PROTECT(allocVector(CPLXSXP, n));
   SEXP beta_ = PROTECT(allocVector(CPLXSXP, n));
   SEXP vectors_ = PROTECT(allocMatrix(CPLXSXP, n, n));
+  SEXP left_vectors_ = PROTECT(allocMatrix(CPLXSXP, n, n));
   for (int j = 0; j < n; ++j) {
     COMPLEX(alpha_)[j].r = REAL(alphar_)[j];
     COMPLEX(alpha_)[j].i = REAL(alphai_)[j];
     COMPLEX(beta_)[j].r = REAL(beta_real_)[j];
     COMPLEX(beta_)[j].i = 0.0;
   }
-  int j = 0;
-  while (j < n) {
-    if (REAL(alphai_)[j] > 0.0 && j + 1 < n) {
-      for (int row = 0; row < n; ++row) {
-        const double re = REAL(vr_real_)[row + static_cast<int64_t>(j) * n];
-        const double im = REAL(vr_real_)[row + static_cast<int64_t>(j + 1) * n];
-        COMPLEX(vectors_)[row + static_cast<int64_t>(j) * n].r = re;
-        COMPLEX(vectors_)[row + static_cast<int64_t>(j) * n].i = im;
-        COMPLEX(vectors_)[row + static_cast<int64_t>(j + 1) * n].r = re;
-        COMPLEX(vectors_)[row + static_cast<int64_t>(j + 1) * n].i = -im;
-      }
-      j += 2;
-    } else {
-      // alphai[j] == 0 is a real eigenvalue with a real eigenvector. A nonzero
-      // alphai reaching this branch would mean a complex eigenvalue without a
-      // consecutive conjugate partner (an unpaired positive at the last column,
-      // or a negative not consumed by a preceding positive) -- impossible for
-      // conforming LAPACK output. Error loudly rather than emit a silently
-      // wrong real-only vector.
-      if (REAL(alphai_)[j] != 0.0) {
-        error("LAPACK dggev returned a non-conforming complex eigenvalue at "
-              "index %d without a consecutive conjugate partner", j);
-      }
-      for (int row = 0; row < n; ++row) {
-        COMPLEX(vectors_)[row + static_cast<int64_t>(j) * n].r =
-          REAL(vr_real_)[row + static_cast<int64_t>(j) * n];
-        COMPLEX(vectors_)[row + static_cast<int64_t>(j) * n].i = 0.0;
-      }
-      ++j;
-    }
-  }
+  unpack_real_pencil_vectors(REAL(vr_real_), REAL(alphai_), n,
+                             COMPLEX(vectors_), "dggevx");
+  unpack_real_pencil_vectors(REAL(vl_real_), REAL(alphai_), n,
+                             COMPLEX(left_vectors_), "dggevx");
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 3));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 8));
   SET_VECTOR_ELT(out_, 0, alpha_);
   SET_VECTOR_ELT(out_, 1, beta_);
   SET_VECTOR_ELT(out_, 2, vectors_);
-  SEXP names_ = PROTECT(allocVector(STRSXP, 3));
+  SET_VECTOR_ELT(out_, 3, left_vectors_);
+  SET_VECTOR_ELT(out_, 4, ScalarReal(abnrm));
+  SET_VECTOR_ELT(out_, 5, ScalarReal(bbnrm));
+  SET_VECTOR_ELT(out_, 6, rconde_);
+  SET_VECTOR_ELT(out_, 7, rcondv_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 8));
   SET_STRING_ELT(names_, 0, mkChar("alpha"));
   SET_STRING_ELT(names_, 1, mkChar("beta"));
   SET_STRING_ELT(names_, 2, mkChar("vectors"));
+  SET_STRING_ELT(names_, 3, mkChar("left_vectors"));
+  SET_STRING_ELT(names_, 4, mkChar("abnrm"));
+  SET_STRING_ELT(names_, 5, mkChar("bbnrm"));
+  SET_STRING_ELT(names_, 6, mkChar("rconde"));
+  SET_STRING_ELT(names_, 7, mkChar("rcondv"));
   setAttrib(out_, R_NamesSymbol, names_);
 
-  UNPROTECT(9);
+  UNPROTECT(13);
   return out_;
 }
 
@@ -519,15 +573,19 @@ extern "C" SEXP eigencore_dense_complex_generalized_pencil_eigen(SEXP A_, SEXP B
   SEXP alpha_ = PROTECT(allocVector(CPLXSXP, n));
   SEXP beta_ = PROTECT(allocVector(CPLXSXP, n));
   SEXP vectors_ = PROTECT(allocMatrix(CPLXSXP, n, n));
+  SEXP left_vectors_ = PROTECT(allocMatrix(CPLXSXP, n, n));
 
   if (n > 0) {
-    char jobvl = 'N';
+    // ZGGEV with left and right eigenvectors. R's bundled LAPACK subset does
+    // not ship ZGGEVX, so complex pencils get left vectors but no
+    // rconde/rcondv conditioning diagnostics; the R layer documents that
+    // boundary explicitly.
+    char jobvl = 'V';
     char jobvr = 'V';
-    int ldvl = 1;
+    int ldvl = n;
     int ldvr = n;
     int info = 0;
     int lwork = -1;
-    Rcomplex vl_dummy;
     Rcomplex work_query;
     const int lrwork = (8 * n > 1) ? (8 * n) : 1;
     double* rwork = reinterpret_cast<double*>(
@@ -538,7 +596,7 @@ extern "C" SEXP eigencore_dense_complex_generalized_pencil_eigen(SEXP A_, SEXP B
     SEXP Bwork_ = PROTECT(duplicate(B_));
     F77_CALL(zggev)(&jobvl, &jobvr, &n, COMPLEX(Awork_), &n,
                     COMPLEX(Bwork_), &n, COMPLEX(alpha_), COMPLEX(beta_),
-                    &vl_dummy, &ldvl, COMPLEX(vectors_), &ldvr,
+                    COMPLEX(left_vectors_), &ldvl, COMPLEX(vectors_), &ldvr,
                     &work_query, &lwork, rwork, &info FCONE FCONE);
     if (info != 0) {
       error("LAPACK zggev workspace query failed with info=%d", info);
@@ -554,7 +612,7 @@ extern "C" SEXP eigencore_dense_complex_generalized_pencil_eigen(SEXP A_, SEXP B
     Bwork_ = PROTECT(duplicate(B_));
     F77_CALL(zggev)(&jobvl, &jobvr, &n, COMPLEX(Awork_), &n,
                     COMPLEX(Bwork_), &n, COMPLEX(alpha_), COMPLEX(beta_),
-                    &vl_dummy, &ldvl, COMPLEX(vectors_), &ldvr,
+                    COMPLEX(left_vectors_), &ldvl, COMPLEX(vectors_), &ldvr,
                     COMPLEX(work_), &lwork, rwork, &info FCONE FCONE);
     if (info != 0) {
       error("LAPACK zggev failed with info=%d", info);
@@ -562,17 +620,19 @@ extern "C" SEXP eigencore_dense_complex_generalized_pencil_eigen(SEXP A_, SEXP B
     UNPROTECT(3);
   }
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 3));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 4));
   SET_VECTOR_ELT(out_, 0, alpha_);
   SET_VECTOR_ELT(out_, 1, beta_);
   SET_VECTOR_ELT(out_, 2, vectors_);
-  SEXP names_ = PROTECT(allocVector(STRSXP, 3));
+  SET_VECTOR_ELT(out_, 3, left_vectors_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 4));
   SET_STRING_ELT(names_, 0, mkChar("alpha"));
   SET_STRING_ELT(names_, 1, mkChar("beta"));
   SET_STRING_ELT(names_, 2, mkChar("vectors"));
+  SET_STRING_ELT(names_, 3, mkChar("left_vectors"));
   setAttrib(out_, R_NamesSymbol, names_);
 
-  UNPROTECT(5);
+  UNPROTECT(6);
   return out_;
 }
 
@@ -1343,7 +1403,8 @@ extern "C" SEXP eigencore_dense_generalized_svd(SEXP A_, SEXP B_) {
 }
 
 extern "C" SEXP eigencore_dense_complex_generalized_svd(SEXP A_, SEXP B_) {
-  error("native complex GSVD requires ZGGSVD3, which this R LAPACK does not export");
+  error("native complex GSVD requires a complex LAPACK GSVD driver, "
+        "which this R LAPACK interface does not export");
 }
 
 extern "C" SEXP eigencore_tridiagonal_eigen(SEXP alpha_, SEXP beta_) {

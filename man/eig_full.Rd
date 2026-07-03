@@ -33,7 +33,15 @@ fallback contract for \code{eig_full()}.}
 \item{...}{Reserved for future options.}
 }
 \value{
-An \code{eigencore_eigen_result}.
+An \code{eigencore_eigen_result}. Dense general-pencil results
+additionally carry \code{alpha}, \code{beta}, \code{classification},
+\code{classification_policy}, \code{left_vectors} (left generalized eigenvectors
+satisfying \verb{w^H A = lambda w^H B}), and \code{conditioning}. For real pencils
+the decomposition runs through the expert LAPACK driver \code{DGGEVX} with
+balancing, so \code{conditioning} contains reciprocal condition numbers
+\code{rconde}/\code{rcondv} and the balanced pencil norms \code{abnrm}/\code{bbnrm}. Complex
+pencils use \code{ZGGEV} (R's bundled LAPACK subset has no \code{ZGGEVX}), so they
+return left vectors but \code{conditioning$available} is \code{FALSE}.
 }
 \description{
 \code{eig_full()} is the dense/full eigencore surface for standard and

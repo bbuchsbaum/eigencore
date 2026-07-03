@@ -45,6 +45,24 @@ test_that("generalized_schur computes complex dense QZ factors and values", {
   expect_complex_qz_reconstruction(qz, A, B, tolerance = 1e-9)
 })
 
+test_that("generalized_schur handles the empty 0x0 pencil", {
+  A <- matrix(numeric(), 0, 0)
+  B <- matrix(numeric(), 0, 0)
+
+  qz <- generalized_schur(A, B)
+
+  expect_s3_class(qz, "eigencore_generalized_schur_result")
+  expect_equal(dim(qz$S), c(0L, 0L))
+  expect_equal(dim(qz$T), c(0L, 0L))
+  expect_equal(dim(qz$Q), c(0L, 0L))
+  expect_equal(dim(qz$Z), c(0L, 0L))
+  expect_length(qz$alpha, 0L)
+  expect_length(values(qz), 0L)
+  expect_identical(qz$classification, character())
+  expect_identical(qz$sdim, 0L)
+  expect_real_qz_reconstruction(qz, A, B)
+})
+
 test_that("generalized_schur exposes beta-zero classifications", {
   A <- diag(c(2, 3, 0))
   B <- diag(c(1, 0, 0))
@@ -70,6 +88,8 @@ test_that("generalized_schur supports finite/infinite sort classes", {
   expect_equal(finite$classification[[1L]], "finite")
   expect_equal(infinite$sdim, 1L)
   expect_equal(infinite$classification[[1L]], "infinite")
+  expect_real_qz_reconstruction(finite, A, B)
+  expect_real_qz_reconstruction(infinite, A, B)
 })
 
 test_that("generalized_schur validates inputs and rejects unsupported sort predicates", {

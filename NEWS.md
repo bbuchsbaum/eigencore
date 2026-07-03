@@ -20,5 +20,14 @@ First CRAN release.
   same `which` codes and additionally return certificates.
 * Benchmarked against 'RSpectra', 'irlba', and 'PRIMME'; reproduce with
   `Rscript inst/benchmarks/bench-readme.R`.
+* Generalized eigen support: `eig_full()` for dense SPD and general pencils,
+  `generalized_schur()` and `generalized_svd()` for dense QZ/GSVD, partial
+  sparse general pencils with nonsingular diagonal `B` via transformed native
+  Arnoldi, left eigenvectors and conditioning diagnostics on supported dense
+  paths, and `pencil_norm_scaled` alpha/beta classification. Sparse SPD partial
+  paths remain under `eig_partial()` / LOBPCG / B-orthogonal Lanczos; general
+  sparse QZ and non-diagonal sparse `B` are explicit unsupported boundaries.
+  The real dense GSVD path currently requires a linked LAPACK that provides the
+  deprecated `dggsvd` routine.
 * The exported API is stable as of 1.0.0; breaking changes from here follow
   semantic versioning.

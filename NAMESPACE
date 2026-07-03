@@ -1,3 +1,6 @@
+# Hand-maintained public namespace. Do not add a roxygen2-generated header:
+# DESCRIPTION disables the namespace roclet, and export changes must be made
+# here deliberately with matching api-surface coverage.
 useDynLib(eigencore, .registration = TRUE)
 importFrom(methods, is)
 importFrom(stats, residuals)

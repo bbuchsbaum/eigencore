@@ -398,7 +398,7 @@ solve_eigen_sparse_general_pencil_arnoldi <- function(a, k, method, tol, maxit,
   controls <- plan$controls %||% list()
   Cop <- sparse_general_pencil_transformed_operator(a$A, a$metric)
   method_maxit <- maxit %||% controls$max_subspace %||%
-    native_arnoldi_default_max_subspace(a$A$dim[[1L]], k)
+    sparse_general_pencil_default_max_subspace(a$A$dim[[1L]], k)
   method_max_restarts <- controls$max_restarts %||% 5L
   method_extraction <- controls$arnoldi_extraction %||% "refined_ritz"
 

@@ -2,9 +2,9 @@ Package: eigencore
 Title: Certified Partial Eigenvalue and Singular Value Computation
 Version: 1.0.0
 Authors@R: c(
-    person("Bradley", "Buchsbaum", role = c("aut", "cre"), email = "brad.buchsbaum@gmail.com")
+    person("Bradley", "Buchsbaum", role = c("aut", "cre", "cph"), email = "brad.buchsbaum@gmail.com")
   )
-Author: Bradley Buchsbaum [aut, cre]
+Author: Bradley Buchsbaum [aut, cre, cph]
 Maintainer: Bradley Buchsbaum <brad.buchsbaum@gmail.com>
 Description: Computes the top-k singular triplets or eigenpairs of large
     sparse and structured matrices: the computation behind principal component
@@ -17,7 +17,7 @@ Description: Computes the top-k singular triplets or eigenpairs of large
     for the 'RSpectra' interface are included.
 License: MIT + file LICENSE
 Encoding: UTF-8
-Roxygen: list(markdown = TRUE)
+Roxygen: list(markdown = TRUE, roclets = c("rd", "collate"))
 RoxygenNote: 7.3.3
 Depends:
     R (>= 4.1)

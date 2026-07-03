@@ -28,3 +28,4 @@
 ^[.]lintr$
 ^native-perf-audit[.]md$
 ^tests/testthat/test-geigen-parity[.]R$
+^PACKAGES([.](gz|rds))?$

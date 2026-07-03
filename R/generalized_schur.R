@@ -54,12 +54,16 @@ generalized_schur <- function(A, B, sort = NULL, vectors = TRUE, ...) {
   } else {
     native_dense_generalized_schur(A, B, vectors, sort_key$code)
   }
-  generalized_schur_result(raw, vectors = vectors, sort_key = sort_key)
+  generalized_schur_result(raw, vectors = vectors, sort_key = sort_key,
+                           norm_A = norm(A, type = "1"),
+                           norm_B = norm(B, type = "1"))
 }
 
 #' @keywords internal
-generalized_schur_result <- function(raw, vectors, sort_key) {
-  pencil <- generalized_pencil_values(raw$alpha, raw$beta)
+generalized_schur_result <- function(raw, vectors, sort_key,
+                                     norm_A = NULL, norm_B = NULL) {
+  pencil <- generalized_pencil_values(raw$alpha, raw$beta,
+                                      norm_A = norm_A, norm_B = norm_B)
   method <- native_dense_generalized_schur_label()
   n <- nrow(raw$S)
   plan <- list(
@@ -74,10 +78,25 @@ generalized_schur_result <- function(raw, vectors, sort_key) {
       dense = TRUE,
       qz = TRUE,
       sort = sort_key$name,
-      schur_vectors = isTRUE(vectors)
+      schur_vectors = isTRUE(vectors),
+      generalized = TRUE,
+      target_family = "qz_dense",
+      promotion_gate = "qz_dense:generalized_schur",
+      dense_fallback_policy = "none; dense QZ surface is the native path",
+      alpha_beta_semantics = "homogeneous alpha/beta with pencil_norm_scaled classification"
     )
   )
   class(plan) <- "eigencore_plan"
+  Q <- if (isTRUE(vectors)) {
+    if (n == 0L) raw$S else raw$Q
+  } else {
+    NULL
+  }
+  Z <- if (isTRUE(vectors)) {
+    if (n == 0L) raw$S else raw$Z
+  } else {
+    NULL
+  }
   certificate <- empty_certificate(
     sqrt(.Machine$double.eps),
     note = "generalized Schur decomposition returned; per-eigenvector residual certificate not computed"
@@ -85,8 +104,8 @@ generalized_schur_result <- function(raw, vectors, sort_key) {
   out <- list(
     S = raw$S,
     T = raw$T,
-    Q = if (isTRUE(vectors)) raw$Q else NULL,
-    Z = if (isTRUE(vectors)) raw$Z else NULL,
+    Q = Q,
+    Z = Z,
     alpha = raw$alpha,
     beta = raw$beta,
     values = pencil$values,
@@ -94,6 +113,14 @@ generalized_schur_result <- function(raw, vectors, sort_key) {
     finite = pencil$finite,
     infinite = pencil$infinite,
     undefined = pencil$undefined,
+    classification_policy = list(
+      policy = pencil$tolerance_policy,
+      tolerance = pencil$tolerance,
+      alpha_threshold = pencil$alpha_threshold,
+      beta_threshold = pencil$beta_threshold,
+      norm_A = pencil$norm_A,
+      norm_B = pencil$norm_B
+    ),
     sdim = raw$sdim,
     sort = sort_key$name,
     method = method,

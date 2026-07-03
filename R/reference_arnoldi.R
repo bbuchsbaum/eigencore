@@ -214,6 +214,22 @@ native_arnoldi_default_max_subspace <- function(n, k) {
 }
 
 #' @keywords internal
+#' Sparse general-pencil transformed Arnoldi needs a larger Krylov budget than
+#' standard nonsymmetric partial solves: refined Ritz extraction on B^{-1} A
+#' with random starts was flaky at the default 9*k subspace on moderate n.
+sparse_general_pencil_default_max_subspace <- function(n, k) {
+  n <- as.integer(n)
+  k <- as.integer(k)
+  min(
+    n,
+    max(
+      native_arnoldi_default_max_subspace(n, k),
+      min(n, 30L + 5L * (k - 1L))
+    )
+  )
+}
+
+#' @keywords internal
 native_arnoldi_cycle <- function(op, start, m) {
   op <- as_operator(op)
   kind <- native_kernel_kind(op)

@@ -2,15 +2,19 @@
 % Please edit documentation in R/certification.R
 \name{left_vectors}
 \alias{left_vectors}
-\title{Extract left singular vectors.}
+\title{Extract left singular vectors or left eigenvectors.}
 \usage{
 left_vectors(x, ...)
 }
 \arguments{
-\item{x}{An eigencore SVD result object.}
+\item{x}{An eigencore SVD or eigen result object.}
 
 \item{...}{Reserved for future methods.}
 }
 \description{
-Extract left singular vectors.
+For SVD results this returns the left singular vectors \code{U}. For
+nonsymmetric and dense general-pencil eigen results this returns left
+eigenvectors when the solver computed them (for example, the dense
+general-pencil \code{eig_full()} path, which computes left generalized
+eigenvectors satisfying \verb{w^H A = lambda w^H B}).
 }

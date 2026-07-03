@@ -42,7 +42,8 @@ post_v1_gate_manifest <- list(
     "nconv"
   ),
   current_gate_owner_issue_ids = c(
-    "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
+    "bd-01KTE8G6RYE4RD5F6CN7SNKKC6",
+    "bd-01KVWKVFC8QFZSTR6KFQ3MM3NH"
   ),
   gates = list(
     list(
@@ -218,6 +219,46 @@ post_v1_gate_manifest <- list(
         b_orthogonality_passed = TRUE,
         no_sparse_densification = TRUE,
         planner_label_must_not_match = c("reference", "prototype", "oracle")
+      )
+    ),
+    list(
+      id = "post_v1_generalized_eigen_surface",
+      owner_issue = "bd-01KVWKVFC8QFZSTR6KFQ3MM3NH",
+      surface = "generalized_eigen_replacement",
+      script = "inst/benchmarks/bench-generalized-eigen.R",
+      command = paste(
+        "R_LIBS=/tmp/eigencore-bench-lib Rscript",
+        "inst/benchmarks/bench-generalized-eigen.R",
+        "--iterations=3 --strict --save"
+      ),
+      quick_smoke_command = paste(
+        "Rscript inst/benchmarks/bench-generalized-eigen.R",
+        "--quick --iterations=1 --strict"
+      ),
+      long_command = paste(
+        "R_LIBS=/tmp/eigencore-bench-lib Rscript",
+        "inst/benchmarks/bench-generalized-eigen.R",
+        "--iterations=10 --strict --save"
+      ),
+      cases = c(
+        "dense_full_generalized:spd_real",
+        "dense_full_generalized:general_pencil_real",
+        "sparse_general_pencil_partial:diagonal_B_transform",
+        "sparse_general_pencil_partial:unsupported_boundary",
+        "qz_dense:real_unsorted_and_sorted",
+        "gsvd_dense:reconstruction"
+      ),
+      baselines = c("base::eigen", "dense LAPACK oracle"),
+      artifacts = c(
+        "post-v1-generalized-eigen-rows.rds",
+        "post-v1-generalized-eigen-gates.rds"
+      ),
+      thresholds = list(
+        certificate_passed = TRUE,
+        oracle_match = TRUE,
+        no_sparse_densification = TRUE,
+        unsupported_boundary_fails_loud = TRUE,
+        planner_label_must_not_match = c("reference-control")
       )
     ),
     list(

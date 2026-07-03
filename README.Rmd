@@ -231,13 +231,8 @@ The numerics are solid: every shipped solver path is benchmarked against
 RSpectra and PRIMME, covered by an adversarial test suite, and certified on
 every call. Problem classes without a native kernel yet — general matrix-free
 SVD, interior eigenvalues at scale, nonsymmetric Krylov–Schur — are labeled
-`reference` in `fit$method` rather than quietly slow. See
-[`docs/method-selection-and-workflows.md`](docs/method-selection-and-workflows.md)
-for the workflow map,
-[`docs/v1-benchmark-manifest.md`](docs/v1-benchmark-manifest.md) for the
-benchmark inventory, and
-[`docs/known-limitations.md`](docs/known-limitations.md) for current
-boundaries.
+`reference` in `fit$method` rather than quietly slow. The package vignettes
+describe the workflow map, benchmark evidence, and current boundaries.
 
 ## License
 

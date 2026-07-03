@@ -11,7 +11,7 @@
 #include "eigencore_common.h"
 #include "native_operators.h"
 #include "certificates.h"
-#include "projection/golub_kahan_ritz.h"
+#include "golub_kahan_ritz.h"
 #include "scalar_krylov.h"
 #include "block_golub_kahan_basis.h"
 

@@ -187,6 +187,40 @@ test_that("SVD result diagnostics are stable across current public paths", {
   expect_equal(diagnostics(randomized)$restart, randomized$restart)
 })
 
+test_that("result print methods expose concise diagnostic summaries", {
+  eigen_fit <- eig_partial(diag(c(5, 3, 1)), k = 1L)
+  eigen_out <- capture.output(print(eigen_fit))
+  expect_match(eigen_out[[1L]], "Partial eigen decomposition")
+  expect_true(any(grepl("requested: 1", eigen_out, fixed = TRUE)))
+  expect_true(any(grepl("method: native dense Hermitian LAPACK fallback", eigen_out, fixed = TRUE)))
+  expect_true(any(grepl("certificate: passed", eigen_out, fixed = TRUE)))
+
+  restart_fit <- eigen_fit
+  restart_fit$restart <- list(kind = "test_restart")
+  restart_fit$locked <- c(1L, 3L)
+  restart_out <- capture.output(print(restart_fit))
+  expect_true(any(grepl("restart: test_restart", restart_out, fixed = TRUE)))
+  expect_true(any(grepl("locked: 2", restart_out, fixed = TRUE)))
+
+  locking_fit <- restart_fit
+  locking_fit$restart <- list(kind = "test_restart", locking = "hard")
+  locking_out <- capture.output(print(locking_fit))
+  expect_true(any(grepl("restart:test_restart(hard)", locking_out, fixed = TRUE)))
+
+  svd_fit <- svd_partial(diag(c(6, 3, 1)), rank = 1L)
+  svd_out <- capture.output(print(svd_fit))
+  expect_match(svd_out[[1L]], "Partial SVD")
+  expect_true(any(grepl("requested rank: 1", svd_out, fixed = TRUE)))
+  expect_true(any(grepl("certificate: passed", svd_out, fixed = TRUE)))
+
+  gsvd_fit <- generalized_svd(diag(c(3, 4)), diag(c(4, 3)))
+  gsvd_out <- capture.output(print(gsvd_fit))
+  expect_match(gsvd_out[[1L]], "Generalized SVD")
+  expect_true(any(grepl("dimensions: 2 x 2 x 2", gsvd_out, fixed = TRUE)))
+  expect_true(any(grepl("finite values: 2", gsvd_out, fixed = TRUE)))
+  expect_true(any(grepl("certificate: passed", gsvd_out, fixed = TRUE)))
+})
+
 test_that("compatibility shims expose the same diagnostics contract", {
   sym <- eigs_sym(diag(c(5, 3, 1)), k = 2L)
   expect_named(sym, c("values", "vectors", "nconv", "niter", "nops", "certificate", "diagnostics"))

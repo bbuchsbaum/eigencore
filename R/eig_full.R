@@ -14,7 +14,15 @@
 #'   inputs still fail unless a future issue explicitly opens an opt-in dense
 #'   fallback contract for `eig_full()`.
 #' @param ... Reserved for future options.
-#' @return An `eigencore_eigen_result`.
+#' @return An `eigencore_eigen_result`. Dense general-pencil results
+#'   additionally carry `alpha`, `beta`, `classification`,
+#'   `classification_policy`, `left_vectors` (left generalized eigenvectors
+#'   satisfying `w^H A = lambda w^H B`), and `conditioning`. For real pencils
+#'   the decomposition runs through the expert LAPACK driver `DGGEVX` with
+#'   balancing, so `conditioning` contains reciprocal condition numbers
+#'   `rconde`/`rcondv` and the balanced pencil norms `abnrm`/`bbnrm`. Complex
+#'   pencils use `ZGGEV` (R's bundled LAPACK subset has no `ZGGEVX`), so they
+#'   return left vectors but `conditioning$available` is `FALSE`.
 #' @examples
 #' A <- diag(c(1, 4, 9))
 #' B <- diag(c(1, 2, 3))
@@ -133,22 +141,40 @@ eig_full_generalized <- function(A, B, structure, vectors, tol) {
         finite = rep(TRUE, n),
         infinite = rep(FALSE, n),
         undefined = rep(FALSE, n)
+      ),
+      controls_extra = list(
+        generalized = TRUE,
+        target_family = "dense_full_generalized",
+        promotion_gate = "dense_full_generalized:spd",
+        dense_fallback_policy = "none; dense full surface is the native path",
+        alpha_beta_semantics = "all finite; SPD/Hermitian-definite pencil"
       )
     ))
   }
 
-  eig <- if (is.complex(A) || is.complex(B)) {
+  complex_pencil <- is.complex(A) || is.complex(B)
+  eig <- if (complex_pencil) {
     native_dense_complex_generalized_pencil_eigen(A, B)
   } else {
     native_dense_generalized_pencil_eigen(A, B)
   }
-  pencil <- generalized_pencil_values(eig$alpha, eig$beta)
+  # Real pencils go through DGGEVX, which returns one-norms of the balanced
+  # pencil (abnrm/bbnrm) for scale-aware classification plus rconde/rcondv
+  # conditioning diagnostics. R's bundled LAPACK subset has no ZGGEVX, so
+  # complex pencils use ZGGEV with input one-norms for the same
+  # classification policy and no conditioning diagnostics.
+  norm_A <- eig$abnrm %||% norm(A, type = "1")
+  norm_B <- eig$bbnrm %||% norm(B, type = "1")
+  pencil <- generalized_pencil_values(eig$alpha, eig$beta,
+                                      norm_A = norm_A, norm_B = norm_B)
   vecs <- eig$vectors
   cert <- if (isTRUE(vectors)) {
-    certify_dense_generalized_pencil(A, B, eig$alpha, eig$beta, vecs, tol = tol)
+    certify_dense_generalized_pencil(A, B, eig$alpha, eig$beta, vecs, tol = tol,
+                                     norm_A = norm_A, norm_B = norm_B)
   } else {
     empty_certificate(tol, note = "vectors not returned; residual certificate not computed")
   }
+  conditioning <- eig_full_pencil_conditioning(eig, complex_pencil)
   eig_full_result(
     values = pencil$values,
     vectors = if (isTRUE(vectors)) vecs else NULL,
@@ -163,14 +189,61 @@ eig_full_generalized <- function(A, B, structure, vectors, tol) {
       classification = pencil$classification,
       finite = pencil$finite,
       infinite = pencil$infinite,
-      undefined = pencil$undefined
+      undefined = pencil$undefined,
+      classification_policy = list(
+        policy = pencil$tolerance_policy,
+        tolerance = pencil$tolerance,
+        alpha_threshold = pencil$alpha_threshold,
+        beta_threshold = pencil$beta_threshold,
+        norm_A = pencil$norm_A,
+        norm_B = pencil$norm_B
+      ),
+      left_vectors = if (isTRUE(vectors)) eig$left_vectors else NULL,
+      conditioning = conditioning
+    ),
+    controls_extra = list(
+      generalized = TRUE,
+      target_family = "dense_full_generalized",
+      promotion_gate = if (complex_pencil) {
+        "dense_full_generalized:general_pencil_complex"
+      } else {
+        "dense_full_generalized:general_pencil_real"
+      },
+      dense_fallback_policy = "none; dense full surface is the native path",
+      alpha_beta_semantics = paste(
+        "homogeneous alpha/beta with", pencil$tolerance_policy,
+        "classification"
+      ),
+      conditioning_diagnostics = isTRUE(conditioning$available)
     )
   )
 }
 
 #' @keywords internal
+eig_full_pencil_conditioning <- function(eig, complex_pencil) {
+  if (complex_pencil || is.null(eig$rconde)) {
+    return(list(
+      available = FALSE,
+      source = "none",
+      note = paste(
+        "conditioning diagnostics require the expert LAPACK driver;",
+        "R's bundled LAPACK subset provides DGGEVX for real pencils only"
+      )
+    ))
+  }
+  list(
+    available = TRUE,
+    source = "LAPACK dggevx (balanced, sense = 'B')",
+    rconde = eig$rconde,
+    rcondv = eig$rcondv,
+    abnrm = eig$abnrm,
+    bbnrm = eig$bbnrm
+  )
+}
+
+#' @keywords internal
 eig_full_result <- function(values, vectors, certificate, method, n, warnings,
-                            extras = list()) {
+                            extras = list(), controls_extra = list()) {
   problem <- list(type = "eigen", target = largest())
   plan <- new_plan(
     problem = problem,
@@ -178,7 +251,7 @@ eig_full_result <- function(values, vectors, certificate, method, n, warnings,
     method = method,
     reasons = c("full dense eigendecomposition requested through eig_full()"),
     fallback = "none",
-    controls = list(full = TRUE, dense = TRUE)
+    controls = c(list(full = TRUE, dense = TRUE), controls_extra)
   )
   plan$target <- "all"
   make_eigen_result(

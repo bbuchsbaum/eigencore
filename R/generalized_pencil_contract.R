@@ -1,13 +1,24 @@
 #' @keywords internal
+#'
+#' Classify homogeneous generalized eigenvalue pairs.
+#'
+#' Two tolerance policies are supported. The default `per_pair_magnitude`
+#' policy compares each `|alpha|`/`|beta|` against `tol * max(1, |alpha|,
+#' |beta|)`. When `norm_A` and `norm_B` are supplied (LAPACK balanced
+#' one-norms from DGGEVX, or plain one-norms of the input pencil), the
+#' `pencil_norm_scaled` policy compares `|alpha|` against `tol * norm_A` and
+#' `|beta|` against `tol * norm_B` instead. LAPACK guarantees `alpha` is
+#' bounded by (and usually comparable with) `norm(A)` and `beta` by
+#' `norm(B)`, so the norm-scaled policy is invariant under joint rescaling
+#' `(A, B) -> (c A, c B)` and does not misclassify well-defined eigenvalues
+#' of uniformly small pencils as infinite.
 generalized_pencil_values <- function(alpha, beta,
-                                      tol = sqrt(.Machine$double.eps)) {
+                                      tol = sqrt(.Machine$double.eps),
+                                      norm_A = NULL, norm_B = NULL) {
   alpha <- as.vector(alpha)
   beta <- as.vector(beta)
   if (length(alpha) != length(beta)) {
     stop("alpha and beta must have the same length.", call. = FALSE)
-  }
-  if (!length(alpha)) {
-    stop("alpha and beta must contain at least one pair.", call. = FALSE)
   }
   if (length(tol) != 1L || is.na(tol) || tol < 0) {
     stop("tol must be a single non-negative number.", call. = FALSE)
@@ -16,14 +27,28 @@ generalized_pencil_values <- function(alpha, beta,
     stop("alpha and beta must contain finite homogeneous coordinates.", call. = FALSE)
   }
 
-  scale <- pmax(1, Mod(alpha), Mod(beta))
-  alpha_zero <- Mod(alpha) <= tol * scale
-  beta_zero <- Mod(beta) <= tol * scale
+  norm_scaled <- !is.null(norm_A) && !is.null(norm_B) &&
+    is.finite(norm_A) && is.finite(norm_B) && norm_A >= 0 && norm_B >= 0
+  if (norm_scaled) {
+    policy <- "pencil_norm_scaled"
+    alpha_threshold <- tol * norm_A
+    beta_threshold <- tol * norm_B
+    alpha_zero <- Mod(alpha) <= alpha_threshold
+    beta_zero <- Mod(beta) <= beta_threshold
+  } else {
+    policy <- "per_pair_magnitude"
+    scale <- pmax(1, Mod(alpha), Mod(beta))
+    alpha_threshold <- tol * scale
+    beta_threshold <- alpha_threshold
+    alpha_zero <- Mod(alpha) <= alpha_threshold
+    beta_zero <- Mod(beta) <= beta_threshold
+  }
   finite <- !beta_zero
   infinite <- beta_zero & !alpha_zero
   undefined <- beta_zero & alpha_zero
-  classification <- ifelse(finite, "finite",
-                           ifelse(infinite, "infinite", "undefined"))
+  classification <- rep("finite", length(alpha))
+  classification[infinite] <- "infinite"
+  classification[undefined] <- "undefined"
 
   complex_values <- is.complex(alpha) || is.complex(beta)
   values <- if (complex_values) {
@@ -49,7 +74,12 @@ generalized_pencil_values <- function(alpha, beta,
       undefined = undefined,
       alpha_zero = alpha_zero,
       beta_zero = beta_zero,
-      tolerance = tol
+      tolerance = tol,
+      tolerance_policy = policy,
+      alpha_threshold = alpha_threshold,
+      beta_threshold = beta_threshold,
+      norm_A = if (norm_scaled) norm_A else NULL,
+      norm_B = if (norm_scaled) norm_B else NULL
     ),
     class = "eigencore_generalized_pencil_values"
   )
@@ -58,11 +88,13 @@ generalized_pencil_values <- function(alpha, beta,
 #' @keywords internal
 certify_dense_generalized_pencil <- function(A, B, alpha, beta, vectors,
                                              tol = 1e-8,
-                                             beta_tol = sqrt(.Machine$double.eps)) {
+                                             beta_tol = sqrt(.Machine$double.eps),
+                                             norm_A = NULL, norm_B = NULL) {
   A <- as.matrix(A)
   B <- as.matrix(B)
   vectors <- as.matrix(vectors)
-  pencil <- generalized_pencil_values(alpha, beta, tol = beta_tol)
+  pencil <- generalized_pencil_values(alpha, beta, tol = beta_tol,
+                                      norm_A = norm_A, norm_B = norm_B)
   generalized_pencil_validate_dimensions(A, B, vectors, length(pencil$values))
 
   residuals <- generalized_pencil_dense_residuals(A, B, pencil, vectors)

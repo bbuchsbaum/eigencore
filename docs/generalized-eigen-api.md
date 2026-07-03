@@ -23,8 +23,9 @@ The primary public names are eigencore names, not geigen-compatible names:
 - `alpha_beta(x)` extracts homogeneous generalized coordinates from dense
   general-pencil, generalized Schur, and generalized SVD results.
 - `generalized_svd(A, B, ...)` is the dense GSVD compatibility surface. The
-  current promoted path is real dense LAPACK GSVD; complex and sparse GSVD
-  remain explicit future scope.
+  current promoted path is real dense LAPACK `dggsvd`, so it requires a linked
+  LAPACK that provides that deprecated routine. Complex and sparse GSVD remain
+  explicit future scope.
 
 There is no primary `geigen()` export. Migration documentation may map common
 `geigen::geigen()`, `geigen::gqz()`, and `geigen::gsvd()` calls to the names
@@ -73,16 +74,33 @@ use the normal `eigencore_eigen_result` shape:
 - `restart`
 - `transform`, when a spectral transform such as shift-invert is used
 
-General dense-pencil results will extend that shape rather than replace it:
+General dense-pencil results extend that shape rather than replace it:
 
 - `values` is `alpha / beta` where finite.
 - `alpha` and `beta` are always present for general pencils.
 - `classification` records `finite`, `infinite`, or `undefined` per value.
+- `classification_policy` records how those labels were decided (see
+  "Alpha/Beta Classification Tolerance" below).
 - `vectors` contains right generalized eigenvectors when requested.
-- `left_vectors` is present only for paths that compute left generalized
-  eigenvectors.
+- `left_vectors` contains left generalized eigenvectors satisfying
+  `w^H A = lambda w^H B` when the native backend computes them. Both the
+  real (`DGGEVX`) and complex (`ZGGEV`) dense pencil paths compute left
+  vectors; they are dropped when `vectors = FALSE`.
+- `conditioning` carries eigenvalue/eigenvector reciprocal condition
+  numbers when the selected LAPACK routine provides them. The real dense
+  pencil path runs `DGGEVX` with balancing and `sense = 'B'`, so
+  `conditioning` contains `rconde`, `rcondv`, and the balanced pencil
+  one-norms `abnrm`/`bbnrm` with `available = TRUE`. R's bundled LAPACK
+  subset does not ship `ZGGEVX`, so complex pencils report
+  `available = FALSE` with an explanatory note; a conditioning routine for
+  complex pencils requires bundling or linking an expert driver and is
+  explicitly out of scope for the current surface.
 - `certificate` states whether a finite-value right residual
-  `A v - lambda B v` was computed, skipped, or undefined.
+  `A v - lambda B v` was computed, skipped, or undefined. Right-residual
+  certification and conditioning diagnostics are deliberately separate:
+  a passing residual certificate asserts a small backward error, while
+  `conditioning$rconde` near zero warns that the eigenvalue itself is
+  sensitive to perturbations even when the backward error is tiny.
 
 Internal result helpers use `generalized_pencil_values(alpha, beta)` to classify
 homogeneous pairs before any dense full solver result is exposed. Finite pairs
@@ -106,15 +124,16 @@ result shape:
 - `alpha`, `beta`, `values`, and `classification` describe generalized
   singular values in homogeneous form.
 - `U`, `V`, and `Q` are the orthogonal factors.
-- `D1`, `D2`, `R`, and `zero_R` expose the reconstructable LAPACK GSVD factors:
-  `A = U D1 zero_R t(Q)` and `B = V D2 zero_R t(Q)` for the real dense path.
+- `D1`, `D2`, `R`, and `zero_R` expose the reconstructable LAPACK `dggsvd`
+  factors: `A = U D1 zero_R t(Q)` and `B = V D2 zero_R t(Q)` for the real
+  dense path.
 - `A_factor` and `B_factor` retain the overwritten LAPACK factor workspaces.
 - `k`, `l`, and `rank = k + l` expose the effective-rank partition.
 - `certificate` records exact Frobenius reconstruction residuals and
   orthogonality loss for the returned real dense factors.
 
-Complex GSVD fails clearly until a `ZGGSVD3`-equivalent native path is bundled
-or otherwise made available through the eigencore native layer.
+Complex GSVD fails clearly until a complex GSVD driver is bundled or otherwise
+made available through the eigencore native layer.
 
 ## Planner Labels
 
@@ -144,7 +163,7 @@ full-decomposition labels, distinct from the partial-spectrum labels above:
 - `native dense generalized SPD/Hermitian LAPACK full`
 - `native dense general pencil LAPACK full`
 - `native dense generalized Schur QZ LAPACK full`
-- `native dense real LAPACK GSVD full`
+- `native dense real LAPACK dggsvd GSVD full`
 - `dense LAPACK general eigen oracle (base fallback)`
 
 The last label is intentionally not a native label: the real dense general
@@ -156,6 +175,39 @@ kernels.
 Native labels require eigencore-owned native kernels or LAPACK calls routed
 through the native layer. Dense, reference, user-solve, Matrix-factorization,
 and oracle fallbacks must say so in the label and in result provenance.
+The GSVD label intentionally names `dggsvd` because that real dense path is
+not portable to LAPACK builds that omit the deprecated routine.
+
+## Alpha/Beta Classification Tolerance
+
+`generalized_pencil_values(alpha, beta)` labels each homogeneous pair as
+`finite`, `infinite`, or `undefined`. Two tolerance policies exist, and every
+classified result records which one ran in `classification_policy`:
+
+- `pencil_norm_scaled` (dense pencil and QZ surfaces): `|alpha|` is treated
+  as zero when `|alpha| <= tol * norm_A` and `|beta|` when
+  `|beta| <= tol * norm_B`, with `tol = sqrt(.Machine$double.eps)`. For real
+  pencils `norm_A`/`norm_B` are the one-norms of the balanced pencil
+  reported by `DGGEVX` (`abnrm`/`bbnrm`); complex pencils and
+  `generalized_schur()` use one-norms of the input matrices. Because LAPACK
+  returns `alpha` on the scale of `norm(A)` and `beta` on the scale of
+  `norm(B)`, this policy is invariant under joint rescaling
+  `(A, B) -> (c A, c B)` and does not misclassify uniformly small or large
+  pencils. Near-singular `B` has an explicit boundary: an eigenvalue is
+  reported as `infinite` exactly when its `beta` falls below
+  `tol * norm_B`, rather than returned as an untrustworthy enormous finite
+  number.
+- `per_pair_magnitude` (fallback): `tol * max(1, |alpha|, |beta|)` per pair.
+  This is used when no valid pencil norms are available, for example when
+  classifying homogeneous pairs supplied directly by a caller.
+
+`classification_policy` exposes `policy`, `tolerance`, the per-coordinate
+zero thresholds, and the norms used, and `alpha_beta()` passes it through so
+users can audit any classification decision. The QZ `sort = "finite"` /
+`sort = "infinite"` selectors run inside LAPACK's ordering callback where
+pencil norms are not available; they use the per-pair rule for ordering
+only, and the final labels reported on the result always come from the
+norm-scaled policy.
 
 ## Certificate Scale And Provenance
 

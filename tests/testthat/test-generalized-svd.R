@@ -32,6 +32,8 @@ test_that("generalized_svd computes finite real dense GSVD values", {
   expect_s3_class(fit, "eigencore_gsvd_result")
   expect_identical(fit$method, eigencore:::native_dense_generalized_svd_label())
   expect_identical(fit$plan$method, fit$method)
+  expect_match(fit$method, "dggsvd")
+  expect_identical(fit$plan$controls$lapack_driver, "dggsvd")
   expect_false(fit$plan$controls$sparse_densified)
   expect_equal(coords$classification, rep("finite", 3L))
   expect_equal(coords$alpha^2 + coords$beta^2, rep(1, 3L), tolerance = 1e-12)
@@ -39,6 +41,35 @@ test_that("generalized_svd computes finite real dense GSVD values", {
                tolerance = 1e-10)
   expect_true(certificate(fit)$passed)
   expect_gsvd_reconstruction(fit, A, B, tolerance = 1e-10)
+})
+
+test_that("generalized_svd accessors return exact GSVD factors", {
+  A <- diag(c(3, 4, 5))
+  B <- diag(c(4, 3, 2))
+
+  fit <- generalized_svd(A, B, tol = 1e-10)
+
+  expect_equal(left_vectors(fit), fit$U)
+  expect_equal(right_vectors(fit), fit$V)
+  expect_false(identical(left_vectors(fit), fit$undefined))
+  expect_false(identical(right_vectors(fit), fit$values))
+})
+
+test_that("generalized_svd keeps small positive beta values finite", {
+  scale <- 1e8
+  A <- matrix(scale, 1, 1)
+  B <- matrix(1, 1, 1)
+
+  fit <- generalized_svd(A, B, tol = 1e-10)
+  coords <- alpha_beta(fit)
+
+  expect_gt(coords$beta, 0)
+  expect_lt(coords$beta, sqrt(.Machine$double.eps))
+  expect_identical(coords$classification, "finite")
+  expect_true(is.finite(values(fit)))
+  expect_equal(unname(values(fit) / scale), 1, tolerance = 1e-12)
+  expect_true(certificate(fit)$passed)
+  expect_gsvd_reconstruction(fit, A, B, tolerance = 1e-8)
 })
 
 test_that("generalized_svd covers geigen manual rectangular rank layout", {
@@ -87,7 +118,7 @@ test_that("generalized_svd rejects unsupported inputs without densifying", {
   )
   expect_error(
     generalized_svd(matrix(1 + 1i, 1, 1), matrix(1 + 0i, 1, 1)),
-    "native complex GSVD requires ZGGSVD3"
+    "native complex GSVD requires a complex LAPACK GSVD driver"
   )
   expect_error(
     generalized_svd(diag(2), matrix(1, 3, 3)),
@@ -96,5 +127,13 @@ test_that("generalized_svd rejects unsupported inputs without densifying", {
   expect_error(
     generalized_svd(matrix(c(1, NA), 1, 2), matrix(1, 1, 2)),
     "finite"
+  )
+  expect_error(
+    generalized_svd(diag(2), diag(2), tol = Inf),
+    "single finite non-negative"
+  )
+  expect_error(
+    generalized_svd(diag(2), diag(2), tol = NaN),
+    "single finite non-negative"
   )
 })

@@ -335,6 +335,27 @@ test_that("generalized LOBPCG release script gates native contract rows", {
   expect_true(any(grepl("expected_orthogonalization", lines, fixed = TRUE)))
 })
 
+test_that("generalized eigen replacement-surface script gates planner families", {
+  script <- benchmark_file("bench-generalized-eigen.R")
+  expect_true(file.exists(script))
+  lines <- readLines(script, warn = FALSE)
+  expect_true(any(grepl("dense_full_generalized", lines, fixed = TRUE)))
+  expect_true(any(grepl("sparse_general_pencil_partial", lines, fixed = TRUE)))
+  expect_true(any(grepl("qz_dense", lines, fixed = TRUE)))
+  expect_true(any(grepl("gsvd_dense", lines, fixed = TRUE)))
+  expect_true(any(grepl("native_dense_generalized_spd_full_label", lines, fixed = TRUE)))
+  expect_true(any(grepl("native_dense_generalized_pencil_full_label", lines, fixed = TRUE)))
+  expect_true(any(grepl("sparse_general_pencil_diagonal_arnoldi_label", lines, fixed = TRUE)))
+  expect_true(any(grepl("pencil_norm_scaled", lines, fixed = TRUE)))
+  expect_true(any(grepl("left_vectors(fit)", lines, fixed = TRUE)))
+  expect_true(any(grepl("diagonal_B_transform", lines, fixed = TRUE)))
+  expect_true(any(grepl("unsupported_boundary", lines, fixed = TRUE)))
+  expect_true(any(grepl("generalized_schur", lines, fixed = TRUE)))
+  expect_true(any(grepl("generalized_svd", lines, fixed = TRUE)))
+  expect_true(any(grepl("new_gate_row", lines, fixed = TRUE)))
+  expect_true(any(grepl("args$strict", lines, fixed = TRUE)))
+})
+
 test_that("benchmark argument parser keeps dense diagnostics opt-in", {
   skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
 
@@ -477,7 +498,8 @@ test_that("post-V1 benchmark gate manifest covers hard promotion surfaces", {
     "nconv"
   ) %in% manifest$required_metrics))
   current_gate_owners <- c(
-    "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
+    "bd-01KTE8G6RYE4RD5F6CN7SNKKC6",
+    "bd-01KVWKVFC8QFZSTR6KFQ3MM3NH"
   )
   expect_equal(manifest$current_gate_owner_issue_ids, current_gate_owners)
 
@@ -488,6 +510,7 @@ test_that("post-V1 benchmark gate manifest covers hard promotion surfaces", {
     "post_v1_operator_sidecars",
     "post_v1_randomized_svd_hard_surface",
     "post_v1_generalized_preconditioned_surface",
+    "post_v1_generalized_eigen_surface",
     "post_v1_shift_invert_boundaries",
     "post_v1_nonsymmetric_matrix_free_surface"
   ) %in% gate_ids))
@@ -731,6 +754,7 @@ test_that("V2 CRAN benchmark manifest names release benchmark surfaces", {
     "bench-svd-surface.R",
     "bench-randomized-rsvd.R",
     "bench-generalized-lobpcg.R",
+    "bench-generalized-eigen.R",
     "bench-lobpcg-preconditioned.R",
     "bench-shift-invert.R",
     "bench-nonsymmetric.R",
@@ -762,6 +786,7 @@ test_that("contribution methods artifact ties claims to evidence and losses", {
     "bench-svd-surface.R",
     "bench-randomized-rsvd.R",
     "bench-generalized-lobpcg.R",
+    "bench-generalized-eigen.R",
     "bench-shift-invert.R",
     "bench-nonsymmetric.R",
     "docs/rspectra-migration.md",

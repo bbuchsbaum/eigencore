@@ -1423,6 +1423,10 @@ Every exported name is a compatibility commitment. Current NAMESPACE exports
 
 Export discipline:
 
+- **Namespace policy**: `NAMESPACE` is hand-maintained by design. Roxygen is
+  configured for Rd/collate generation only, so `devtools::document()` must not
+  rewrite exports or S3 registrations. Any public-surface change requires a
+  deliberate `NAMESPACE` edit plus the API-surface snapshot/test update.
 - **Keep exported**: `linear_operator`, `as_operator`, `adjoint`, `center`,
   `scale_rows`, `scale_cols`, `compose`, `crossprod_operator`,
   `symmetric_operator`, `check_adjoint`, `eigen_problem`, `svd_problem`,

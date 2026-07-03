@@ -2,13 +2,15 @@
 #'
 #' `generalized_svd()` is eigencore's dense GSVD compatibility surface for
 #' matrix pairs with the same number of columns. The current native path uses
-#' the real LAPACK GSVD routine available through R. Sparse/operator inputs are
-#' not silently densified, and complex GSVD remains explicit future scope until
-#' a bundled or platform `ZGGSVD3`-equivalent native path is available.
+#' LAPACK `dggsvd` through R's native LAPACK interface, so it requires a linked
+#' LAPACK that still provides that deprecated routine. Sparse/operator inputs
+#' are not silently densified, and complex GSVD remains explicit future scope
+#' until a complex GSVD driver is available through the eigencore native layer.
 #'
 #' @param A Base dense real matrix with `m` rows and `n` columns.
 #' @param B Base dense real matrix with `p` rows and `n` columns.
-#' @param tol Reconstruction and orthogonality certification tolerance.
+#' @param tol Finite non-negative reconstruction and orthogonality
+#'   certification tolerance.
 #' @param ... Reserved for future options.
 #' @return An `eigencore_gsvd_result` with fields `alpha`, `beta`, `values`,
 #'   `classification`, `U`, `V`, `Q`, `D1`, `D2`, `R`, `zero_R`, `A_factor`,
@@ -36,9 +38,9 @@ generalized_svd <- function(A, B, tol = 1e-8, ...) {
 
   if (is.complex(A) || is.complex(B)) {
     stop(
-      "native complex GSVD requires ZGGSVD3 or equivalent; this R LAPACK ",
-      "does not export a complex GSVD routine, so complex generalized_svd() ",
-      "is not promoted yet",
+      "native complex GSVD requires a complex LAPACK GSVD driver; this R ",
+      "LAPACK interface does not export one, so complex generalized_svd() is ",
+      "not promoted yet",
       call. = FALSE
     )
   }
@@ -52,7 +54,10 @@ generalized_svd_result <- function(raw, A, B, tol) {
   k <- as.integer(raw$k)
   l <- as.integer(raw$l)
   rank <- k + l
-  pencil <- generalized_pencil_values(raw$alpha, raw$beta)
+  # GSVD structural zero pairs are returned explicitly by LAPACK. Do not use
+  # the generalized-pencil near-zero beta policy here: small positive beta
+  # values are valid large finite generalized singular values.
+  pencil <- generalized_pencil_values(raw$alpha, raw$beta, tol = 0)
   factors <- generalized_svd_factors(raw$A_factor, raw$B_factor, raw$alpha,
                                      raw$beta, k = k, l = l)
   method <- native_dense_generalized_svd_label()
@@ -68,7 +73,14 @@ generalized_svd_result <- function(raw, A, B, tol) {
       dense = TRUE,
       gsvd = TRUE,
       real = TRUE,
-      sparse_densified = FALSE
+      sparse_densified = FALSE,
+      generalized = TRUE,
+      target_family = "gsvd_dense",
+      promotion_gate = "gsvd_dense:real",
+      dense_fallback_policy = "none; dense GSVD surface is the native path",
+      lapack_driver = "dggsvd",
+      lapack_driver_requirement = "linked LAPACK must provide deprecated dggsvd",
+      alpha_beta_semantics = "LAPACK GSVD structural alpha/beta; no near-zero reclassification"
     )
   )
   class(plan) <- "eigencore_plan"
@@ -115,7 +127,7 @@ generalized_svd_result <- function(raw, A, B, tol) {
     target = "all",
     plan = plan,
     certificate = certificate,
-    warnings = "using native dense real LAPACK GSVD full decomposition"
+    warnings = "using native dense real LAPACK dggsvd GSVD full decomposition"
   )
   class(out) <- "eigencore_gsvd_result"
   out
@@ -274,8 +286,9 @@ generalized_svd_validate_dimensions <- function(A, B) {
 
 #' @keywords internal
 generalized_svd_validate_tol <- function(tol) {
-  if (!is.numeric(tol) || length(tol) != 1L || is.na(tol) || tol < 0) {
-    stop("tol must be a single non-negative number.", call. = FALSE)
+  if (!is.numeric(tol) || length(tol) != 1L || is.na(tol) ||
+      !is.finite(tol) || tol < 0) {
+    stop("tol must be a single finite non-negative number.", call. = FALSE)
   }
   invisible(TRUE)
 }
@@ -292,5 +305,5 @@ native_dense_generalized_svd <- function(A, B) {
 
 #' @keywords internal
 native_dense_generalized_svd_label <- function() {
-  "native dense real LAPACK GSVD full"
+  "native dense real LAPACK dggsvd GSVD full"
 }

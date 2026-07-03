@@ -5,7 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <vector>
-#include "projection/golub_kahan_ritz.h"
+#include "golub_kahan_ritz.h"
 
 extern "C" SEXP eigencore_bidiagonal_svd(SEXP alpha_, SEXP beta_);
 

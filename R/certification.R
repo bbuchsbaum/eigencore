@@ -69,7 +69,11 @@ values <- function(x, ...) {
 #' @param x An eigencore result with homogeneous `alpha` and `beta` fields.
 #' @param ... Reserved for future methods.
 #' @return A list containing `alpha`, `beta`, and any available `values`,
-#'   `classification`, `finite`, `infinite`, and `undefined` fields.
+#'   `classification`, `finite`, `infinite`, and `undefined` fields. Results
+#'   that record how the finite/infinite/undefined labels were decided also
+#'   include a `classification_policy` list with the policy name, the
+#'   tolerance, the per-coordinate zero thresholds, and the pencil norms used
+#'   for norm-scaled classification.
 #' @examples
 #' A <- diag(c(2, 3, 0))
 #' B <- diag(c(1, 0, 0))
@@ -84,7 +88,8 @@ alpha_beta <- function(x, ...) {
     )
   }
   out <- list(alpha = x$alpha, beta = x$beta)
-  for (nm in c("values", "classification", "finite", "infinite", "undefined")) {
+  for (nm in c("values", "classification", "finite", "infinite", "undefined",
+               "classification_policy")) {
     if (!is.null(x[[nm]])) {
       out[[nm]] <- x[[nm]]
     }
@@ -103,12 +108,18 @@ vectors <- function(x, ...) {
   x$vectors
 }
 
-#' Extract left singular vectors.
+#' Extract left singular vectors or left eigenvectors.
 #'
-#' @param x An eigencore SVD result object.
+#' For SVD results this returns the left singular vectors `U`. For
+#' nonsymmetric and dense general-pencil eigen results this returns left
+#' eigenvectors when the solver computed them (for example, the dense
+#' general-pencil `eig_full()` path, which computes left generalized
+#' eigenvectors satisfying `w^H A = lambda w^H B`).
+#'
+#' @param x An eigencore SVD or eigen result object.
 #' @param ... Reserved for future methods.
 left_vectors <- function(x, ...) {
-  x$left_vectors %||% x$u
+  result_field(x, c("left_vectors", "u", "U"))
 }
 
 #' Extract right singular vectors.
@@ -116,7 +127,17 @@ left_vectors <- function(x, ...) {
 #' @param x An eigencore SVD or nonsymmetric eigen result object.
 #' @param ... Reserved for future methods.
 right_vectors <- function(x, ...) {
-  x$right_vectors %||% x$v %||% x$vectors
+  result_field(x, c("right_vectors", "v", "V", "vectors"))
+}
+
+result_field <- function(x, names) {
+  for (nm in names) {
+    value <- x[[nm, exact = TRUE]]
+    if (!is.null(value)) {
+      return(value)
+    }
+  }
+  NULL
 }
 
 #' Extract residual diagnostics.

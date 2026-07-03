@@ -12,10 +12,58 @@ test_that("generalized pencil values classify finite infinite and undefined pair
   expect_equal(pencil$finite, c(TRUE, FALSE, FALSE, FALSE))
   expect_equal(pencil$infinite, c(FALSE, TRUE, FALSE, FALSE))
   expect_equal(pencil$undefined, c(FALSE, FALSE, TRUE, TRUE))
-  expect_error(
-    eigencore:::generalized_pencil_values(numeric(), numeric()),
-    "at least one pair"
+  expect_equal(pencil$tolerance_policy, "per_pair_magnitude")
+
+  empty <- eigencore:::generalized_pencil_values(numeric(), numeric())
+  expect_length(empty$values, 0L)
+  expect_identical(empty$classification, character())
+  expect_identical(empty$finite, logical())
+  expect_identical(empty$infinite, logical())
+  expect_identical(empty$undefined, logical())
+})
+
+test_that("norm-scaled pencil classification survives joint rescaling", {
+  # Uniformly tiny pencil: per-pair max(1, |alpha|, |beta|) scaling would
+  # classify every pair as undefined because both coordinates fall below
+  # tol * 1. Norm-scaled classification compares against the pencil norms
+  # instead and keeps the labels of the unscaled pencil.
+  alpha <- c(2, 3, 0) * 1e-12
+  beta <- c(1, 0, 0) * 1e-12
+
+  per_pair <- eigencore:::generalized_pencil_values(alpha, beta, tol = 1e-10)
+  expect_equal(per_pair$classification, rep("undefined", 3L))
+
+  scaled <- eigencore:::generalized_pencil_values(
+    alpha, beta,
+    tol = 1e-10,
+    norm_A = 3e-12, norm_B = 1e-12
   )
+  expect_equal(scaled$classification, c("finite", "infinite", "undefined"))
+  expect_equal(scaled$tolerance_policy, "pencil_norm_scaled")
+  expect_equal(scaled$values[[1L]], 2)
+  expect_equal(scaled$norm_A, 3e-12)
+  expect_equal(scaled$norm_B, 1e-12)
+  expect_true(all(scaled$alpha_threshold >= 0))
+  expect_true(all(scaled$beta_threshold >= 0))
+})
+
+test_that("norm-scaled classification falls back to per-pair for invalid norms", {
+  alpha <- c(2, 0)
+  beta <- c(1, 0)
+
+  for (bad in list(
+    list(norm_A = NULL, norm_B = 1),
+    list(norm_A = NA_real_, norm_B = 1),
+    list(norm_A = Inf, norm_B = 1),
+    list(norm_A = -1, norm_B = 1)
+  )) {
+    pencil <- eigencore:::generalized_pencil_values(
+      alpha, beta,
+      norm_A = bad$norm_A, norm_B = bad$norm_B
+    )
+    expect_equal(pencil$tolerance_policy, "per_pair_magnitude")
+    expect_equal(pencil$classification, c("finite", "undefined"))
+  }
 })
 
 test_that("generalized pencil dense certificate certifies finite pairs only", {

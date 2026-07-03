@@ -152,6 +152,51 @@ test_that("unsupported sparse general pencils fail before dense fallback", {
   )
 })
 
+test_that("sparse general-pencil planner uses a larger Arnoldi subspace budget", {
+  A <- Matrix::sparseMatrix(
+    i = c(1, 1, 2, 3),
+    j = c(1, 2, 2, 3),
+    x = c(4, 1, 2, -1),
+    dims = c(60, 60)
+  )
+  B <- Matrix::Diagonal(x = seq(1, 3, length.out = 60L))
+  plan <- plan_solver(
+    eigen_problem(A, metric = B, structure = general(), target = largest_real()),
+    k = 2L
+  )
+  expect_gte(plan$controls$max_subspace, 35L)
+})
+
+test_that("sparse general-pencil Arnoldi certifies reliably under random starts", {
+  skip_on_cran()
+  sparse_n <- 60L
+  k <- 2L
+  set.seed(104)
+  A <- Matrix::bandSparse(
+    sparse_n,
+    k = c(-1, 0, 1),
+    diagonals = list(
+      rep(-1, sparse_n - 1L),
+      seq(2, 4, length.out = sparse_n),
+      rep(0.5, sparse_n - 1L)
+    )
+  )
+  A <- methods::as(methods::as(A, "generalMatrix"), "CsparseMatrix")
+  B <- Matrix::Diagonal(x = seq(1, 3, length.out = sparse_n))
+  passed <- vapply(seq_len(20L), function(i) {
+    fit <- eig_partial(
+      A,
+      B = B,
+      k = k,
+      target = largest_real(),
+      tol = 1e-9,
+      allow_dense_fallback = "never"
+    )
+    certificate(fit)$passed
+  }, logical(1))
+  expect_true(all(passed))
+})
+
 test_that("Hermitian metric guard still rejects nonsymmetric B", {
   A <- Matrix::Diagonal(3, x = c(1, 4, 9))
   B_nonsym <- Matrix::sparseMatrix(

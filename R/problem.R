@@ -388,6 +388,12 @@ sparse_general_pencil_arnoldi_plan_controls <- function(problem, k) {
   controls$metric_solve <- "nonsingular diagonal B row scaling"
   controls$certification_policy <- "generalized right residual A * x - lambda * B * x in original coordinates"
   controls$unsupported_sparse_qz <- TRUE
+  controls$target_family <- "sparse_general_pencil_partial"
+  controls$promotion_gate <- "sparse_general_pencil_partial:diagonal_B"
+  controls$dense_fallback_policy <- "none; sparse general-pencil boundary is explicit"
+  controls$alpha_beta_semantics <- "finite alpha/beta with beta = 1 from transformed Arnoldi"
+  n <- as.integer(problem$A$dim[1L])
+  controls$max_subspace <- sparse_general_pencil_default_max_subspace(n, k)
   controls
 }
 
