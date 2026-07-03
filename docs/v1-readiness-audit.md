@@ -37,6 +37,7 @@ V2 CRAN readiness means:
 | Package checks clean | `eigencore_1.0.0.tar.gz` tarball result | `LC_ALL=C LANG=C R CMD build /Users/bbuchsbaum/code/eigencore`; `LC_ALL=C LANG=C R CMD check --as-cran --no-manual eigencore_1.0.0.tar.gz` | Green on 2026-07-03 via `rcmdcheck::rcmdcheck(path = ".", args = c("--as-cran", "--no-manual"), build_args = "--no-manual")` after the generalized-eigen release gate and exported-return-value docs: `0 ERROR`, `0 WARNING`, `1 NOTE` for CRAN new submission. |
 | Full test suite clean | `tests/testthat/` | `Rscript -e 'pkgload::load_all("."); testthat::test_dir("tests/testthat", reporter="summary")'`; installed `tests/testthat.R` inside the source-tarball check | Green on 2026-07-03: the full source suite was green after the generalized-eigen gate, and the installed-package `testthat.R` pass in the fresh 1.0.0 CRAN-like check was OK. |
 | Diff hygiene | whole repo | `git diff --check` | Green on 2026-07-03 after release metadata, generalized-eigen docs, benchmark, roxygen, and exported return-value documentation updates. |
+| CRAN remote checks | GitHub Actions, R-hub, win-builder | GitHub Actions status for the release candidate; R-hub Ubuntu release and Windows; win-builder R-release and R-devel email results | GitHub Actions are green for commit 088d3bd: R-CMD-check, lint, coverage, and pkgdown all completed successfully. R-hub run 28686224852 completed successfully for Ubuntu release and Windows. win-builder R-release and R-devel submissions from 088d3bd were accepted on 2026-07-03, and maintainer email results remain the final external cross-platform evidence gate. |
 | Planner honesty | `R/problem.R`, `R/solve.R`, solver result builders, tests | Search method labels; run target/solver tests | Mostly green; nonsymmetric dense/native-CSC Arnoldi compatibility, native matrix-free callback Arnoldi, and remaining reference labels are distinguished. |
 | No silent sparse densification | `R/solve.R`, `R/operator_algebra.R`, shift-invert tests, SVD tests | Dense fallback tests; `allow_dense_fallback = "never"` adversarial tests | Mostly green for current public paths. |
 | Native operator foundation | `R/operator_algebra.R`, `R/operator.R`, `src/native_operators.cpp`, `src/native_operators.h`, `tests/testthat/test-operator-algebra.R` | `test-operator-algebra.R` | Done for explicit built-ins: dense/CSC/diagonal adjoint, scaling, sum, compose, crossprod, dense centering, CSC centering. Matrix-free centering remains callback-boundary policy. |
@@ -130,5 +131,7 @@ Mark the V2 CRAN thread goal complete only after:
 2. The strict benchmark gates for promoted solver families have been rerun from
    a clean installed package.
 3. `R CMD check --no-manual` is green from a fresh tarball.
-4. Mote issues for completed gates are closed or handed off with remaining
+4. win-builder R-release and R-devel maintainer emails are confirmed clean for
+   the same release candidate as the fresh tarball, GitHub Actions, and R-hub.
+5. Mote issues for completed gates are closed or handed off with remaining
    scope recorded.
