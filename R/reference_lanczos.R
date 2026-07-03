@@ -512,11 +512,11 @@ native_tridiagonal_eigen_selected <- function(alpha, beta, k, target) {
 #' @keywords internal
 tridiagonal_matrix <- function(alpha, beta) {
   m <- length(alpha)
-  T <- diag(alpha, m)
+  tridiagonal <- diag(alpha, m)
   if (m > 1L) {
     off <- beta[seq_len(m - 1L)]
-    T[cbind(seq_len(m - 1L), 2:m)] <- off
-    T[cbind(2:m, seq_len(m - 1L))] <- off
+    tridiagonal[cbind(seq_len(m - 1L), 2:m)] <- off
+    tridiagonal[cbind(2:m, seq_len(m - 1L))] <- off
   }
-  T
+  tridiagonal
 }

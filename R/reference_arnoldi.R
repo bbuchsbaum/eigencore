@@ -387,7 +387,7 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
     start <- start / sqrt(sum(start^2))
   }
 
-  kept_history <- history[seq_len(length(Filter(Negate(is.null), history)))]
+  kept_history <- history[seq_along(Filter(Negate(is.null), history))]
   attempt_history <- do.call(rbind, kept_history)
   list(
     values = best$values,
@@ -510,7 +510,7 @@ reference_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
     start <- start / sqrt(sum(start^2))
   }
 
-  kept_history <- history[seq_len(length(Filter(Negate(is.null), history)))]
+  kept_history <- history[seq_along(Filter(Negate(is.null), history))]
   attempt_history <- do.call(rbind, kept_history)
   list(
     values = best$values,
@@ -648,7 +648,7 @@ arnoldi_ritz_from_eigen <- function(op, eigenvalues, eigenvectors, V, m, k, targ
   idx <- idx[seq_len(min(k, length(idx)))]
   values <- eig$values[idx]
   if (!is.null(vectors_override)) {
-    vectors <- vectors_override[, seq_len(length(idx)), drop = FALSE]
+    vectors <- vectors_override[, seq_along(idx), drop = FALSE]
   } else if (isTRUE(vectors_are_ritz)) {
     vectors <- eig$vectors[, idx, drop = FALSE]
   } else {

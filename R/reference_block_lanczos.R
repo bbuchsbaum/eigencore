@@ -193,7 +193,7 @@ reference_block_subspace_iteration_thick_restart_hermitian <- function(op, k, ta
     locking_events = locking_events,
     block = block,
     convergence_history = if (length(history)) do.call(rbind, history) else data.frame(),
-    locked = seq_len(length(locked_values)),
+    locked = seq_along(locked_values),
     restart = list(
       kind = "block_subspace_iteration_thick_restart_reference",
       implemented = TRUE,
