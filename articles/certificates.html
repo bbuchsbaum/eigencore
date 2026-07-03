@@ -106,7 +106,7 @@ fallbacks, and V3 deferrals honest.</p>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   max residual: 1.67046e-07 </span></span>
 <span><span class="co">#&gt;   max backward error: 4.546939e-09 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 2.109424e-15 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 2.664535e-15 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE</span></span></code></pre></div>
 <p>The fields, in order:</p>
@@ -371,7 +371,7 @@ which is what downstream linear-algebra code typically needs.</p>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
 <span><span class="co">#&gt; [1] "frobenius_exact+frobenius_exact"</span></span>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">max_orthogonality_loss</span></span>
-<span><span class="co">#&gt; [1] 2.220446e-15</span></span>
+<span><span class="co">#&gt; [1] 1.776357e-15</span></span>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
 <p>If a B-orthogonality value comes back near machine precision, the
@@ -403,7 +403,7 @@ list with two added fields:</p>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   max residual: 2.683414e-08 </span></span>
 <span><span class="co">#&gt;   max backward error: 7.304167e-10 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 1.554312e-15 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.998401e-15 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE</span></span></code></pre></div>
 <p>Code already written against <code><a href="https://rdrr.io/pkg/RSpectra/man/eigs.html" class="external-link">RSpectra::eigs_sym()</a></code>
