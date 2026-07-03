@@ -207,7 +207,9 @@ no guessing.
 Use **eigencore** for tall or wide sparse SVD (PCA-shaped problems), the
 smallest eigenvalues of banded or structured symmetric operators
 (certified, no mode tuning), centered or scaled or composed operators,
-and anywhere you want the result checked rather than taken on faith.
+dense generalized eigen/QZ/GSVD compatibility work through `eig_full()`,
+`generalized_schur()`, and `generalized_svd()`, and anywhere you want
+the result checked rather than taken on faith.
 
 Use **RSpectra or irlba** for general large sparse problems outside
 those shapes, and RSpectra’s shift-invert mode when raw speed on

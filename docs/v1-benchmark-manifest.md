@@ -1,11 +1,13 @@
 # V2 CRAN Benchmark Manifest
 
-Date: 2026-06-07
+Date: 2026-07-03
 
 This manifest is the runnable benchmark inventory for the V2 CRAN release
 candidate. It is not a release signoff by itself. A row is release-grade only
 when it was run from a clean installed package, saved its result artifacts, and
 passed the strict gate for the promoted solver family.
+`V2 CRAN` is the internal release-boundary name used by the tracker and audit
+files; the package version for this release candidate is `eigencore` 1.0.0.
 
 The companion documentation scope audit is
 `docs/v1-doc-scope-audit.md`. That audit maps user-facing docs, migration

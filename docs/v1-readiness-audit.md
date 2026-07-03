@@ -1,10 +1,12 @@
 # eigencore V2 CRAN Readiness Audit
 
-Date: 2026-06-07
+Date: 2026-07-03
 
 This audit maps the V2 CRAN release objective to concrete artifacts and gates.
 The promoted solver surfaces retain installed-package evidence; remaining
 future work is documented as V3 deferral rather than hidden release debt.
+`V2 CRAN` is the internal release-boundary name used by the tracker and audit
+files; the package version for this release candidate is `eigencore` 1.0.0.
 
 The final stop-rule checklist lives in `docs/v1-completion-audit.md`. Use that
 file before any V2 CRAN completion claim; this audit provides the evidence inventory
@@ -32,9 +34,9 @@ V2 CRAN readiness means:
 | Requirement | Evidence artifact | Verification command or check | Current status |
 |---|---|---|---|
 | PRD scope reconciliation | `prd.json`, `docs/known-limitations.md` | `python -m json.tool prd.json`; search for stale V2 algorithm-expansion language; inspect `release_strategy.v2_cran_release`, `v2_scope`, `v3_scope`, `post_v1_tracker_map`, and milestone `current_status` fields | Green when `prd.json` defines V2 as the CRAN release boundary, moves nonessential solver expansion to V3, qualifies the central product claim, and preserves current-status text for milestones 5-9. |
-| Package checks clean | `R CMD check --no-manual` tarball result | `LC_ALL=C LANG=C R CMD build /Users/bbuchsbaum/code/eigencore`; `LC_ALL=C LANG=C R CMD check --as-cran --no-manual eigencore_0.2.0.tar.gz` | Green on 2026-06-07 via `rcmdcheck::rcmdcheck(path = ".", args = c("--as-cran", "--no-manual"), build_args = "--no-manual")`: `0 ERROR`, `0 WARNING`, `1 NOTE` for CRAN new submission. |
-| Full test suite clean | `tests/testthat/` | `Rscript -e 'pkgload::load_all("."); testthat::test_dir("tests/testthat", reporter="summary")'` | Green on 2026-06-07 via `devtools::test()`: `0 FAIL`, `0 WARN`, `0 SKIP`, `3660 PASS`. |
-| Diff hygiene | whole repo | `git diff --check` | Green on 2026-06-07 after release metadata, docs, benchmark, and roxygen updates. |
+| Package checks clean | `eigencore_1.0.0.tar.gz` tarball result | `LC_ALL=C LANG=C R CMD build /Users/bbuchsbaum/code/eigencore`; `LC_ALL=C LANG=C R CMD check --as-cran --no-manual eigencore_1.0.0.tar.gz` | Green on 2026-07-03 via `rcmdcheck::rcmdcheck(path = ".", args = c("--as-cran", "--no-manual"), build_args = "--no-manual")` after the generalized-eigen release gate and exported-return-value docs: `0 ERROR`, `0 WARNING`, `1 NOTE` for CRAN new submission. |
+| Full test suite clean | `tests/testthat/` | `Rscript -e 'pkgload::load_all("."); testthat::test_dir("tests/testthat", reporter="summary")'`; installed `tests/testthat.R` inside the source-tarball check | Green on 2026-07-03: the full source suite was green after the generalized-eigen gate, and the installed-package `testthat.R` pass in the fresh 1.0.0 CRAN-like check was OK. |
+| Diff hygiene | whole repo | `git diff --check` | Green on 2026-07-03 after release metadata, generalized-eigen docs, benchmark, roxygen, and exported return-value documentation updates. |
 | Planner honesty | `R/problem.R`, `R/solve.R`, solver result builders, tests | Search method labels; run target/solver tests | Mostly green; nonsymmetric dense/native-CSC Arnoldi compatibility, native matrix-free callback Arnoldi, and remaining reference labels are distinguished. |
 | No silent sparse densification | `R/solve.R`, `R/operator_algebra.R`, shift-invert tests, SVD tests | Dense fallback tests; `allow_dense_fallback = "never"` adversarial tests | Mostly green for current public paths. |
 | Native operator foundation | `R/operator_algebra.R`, `R/operator.R`, `src/native_operators.cpp`, `src/native_operators.h`, `tests/testthat/test-operator-algebra.R` | `test-operator-algebra.R` | Done for explicit built-ins: dense/CSC/diagonal adjoint, scaling, sum, compose, crossprod, dense centering, CSC centering. Matrix-free centering remains callback-boundary policy. |

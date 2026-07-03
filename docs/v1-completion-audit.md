@@ -1,10 +1,12 @@
 # eigencore V2 CRAN Completion Audit
 
-Last refreshed: 2026-06-07
+Last refreshed: 2026-07-03
 
 This is the final stop-rule checklist for the active V2 CRAN release goal. It
 preserves the scoped V1 evidence base but treats completion as a CRAN release
 candidate gate, not a broad solver-expansion milestone.
+`V2 CRAN` is the internal release-boundary name used by the tracker and audit
+files; the package version for this release candidate is `eigencore` 1.0.0.
 
 ## Objective
 
@@ -29,9 +31,9 @@ true at the same time:
 
 | Requirement | Primary artifact | Required evidence | Current state |
 |---|---|---|---|
-| Clean package checks | `eigencore_0.2.0.tar.gz` and `eigencore.Rcheck/` | `LC_ALL=C LANG=C R CMD build /Users/bbuchsbaum/code/eigencore`; `LC_ALL=C LANG=C R CMD check --as-cran --no-manual eigencore_0.2.0.tar.gz` | Green on 2026-06-07 via `rcmdcheck::rcmdcheck(path = ".", args = c("--as-cran", "--no-manual"), build_args = "--no-manual")`: `0 ERROR`, `0 WARNING`, `1 NOTE` for CRAN new submission. |
-| Full test suite | `tests/testthat/` | `Rscript -e 'pkgload::load_all("."); testthat::test_dir("tests/testthat", reporter="summary")'` | Green on 2026-06-07 via `devtools::test()`: `0 FAIL`, `0 WARN`, `0 SKIP`, `3660 PASS`. |
-| Diff hygiene | whole repo | `git diff --check` | Green on 2026-06-07 after release metadata, docs, benchmark, and roxygen updates. |
+| Clean package checks | `eigencore_1.0.0.tar.gz` and fresh `eigencore.Rcheck/` output | `LC_ALL=C LANG=C R CMD build /Users/bbuchsbaum/code/eigencore`; `LC_ALL=C LANG=C R CMD check --as-cran --no-manual eigencore_1.0.0.tar.gz` | Green on 2026-07-03 via `rcmdcheck::rcmdcheck(path = ".", args = c("--as-cran", "--no-manual"), build_args = "--no-manual")` after the generalized-eigen release gate and exported-return-value docs: `0 ERROR`, `0 WARNING`, `1 NOTE` for CRAN new submission. |
+| Full test suite | `tests/testthat/` | `Rscript -e 'pkgload::load_all("."); testthat::test_dir("tests/testthat", reporter="summary")'`; installed `tests/testthat.R` inside the source-tarball check | Green on 2026-07-03: the full source suite was green after the generalized-eigen gate, and the installed-package `testthat.R` pass in the fresh 1.0.0 CRAN-like check was OK. |
+| Diff hygiene | whole repo | `git diff --check` | Green on 2026-07-03 after release metadata, generalized-eigen docs, benchmark, roxygen, and exported return-value documentation updates. |
 | Planner honesty | `R/problem.R`, `R/solve.R`, result diagnostics, solver tests | Every nonnative public path has reference/oracle/fallback labels; no production claim points to an R prototype. | Mostly covered for current paths; re-audit after any solver promotion. |
 | Native operator foundation | `R/operator_algebra.R`, `src/native_operators.cpp`, `tests/testthat/test-operator-algebra.R` | Built-in dense/CSC/diagonal transforms preserve native provenance without sparse densification. | Green for explicit built-ins; matrix-free centering remains an honest callback boundary. |
 | G1 Hermitian native gate | `inst/benchmarks/bench-native-hermitian-gate.R` | Clean installed strict gate and saved artifacts. | Green for the promoted structured-tridiagonal default. Installed strict `path_laplacian:1000` on 2026-06-05 certified `20/20` with the native selected tridiagonal solver, median `0.00799s`, memory `579696` bytes, `6.15x` speed versus RSpectra, `1.07x` memory versus the best reference, and `22.58x` parity versus PRIMME. |

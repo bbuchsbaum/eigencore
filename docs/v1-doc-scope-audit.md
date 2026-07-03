@@ -1,10 +1,12 @@
 # V2 CRAN Documentation Scope Audit
 
-Date: 2026-06-07
+Date: 2026-07-03
 
 This audit maps the V2 CRAN documentation requirement to concrete files. The
 file name is retained because existing benchmark smoke tests and release notes
 refer to it as the documentation-scope artifact.
+`V2 CRAN` is the internal release-boundary name used by the tracker and audit
+files; the package version for this release candidate is `eigencore` 1.0.0.
 
 This audit is the documentation-scope companion to the solver and benchmark
 evidence named in `docs/v1-readiness-audit.md` and
@@ -16,7 +18,7 @@ evidence named in `docs/v1-readiness-audit.md` and
 |---|---|---|
 | README and quick start | `README.md`, `README.Rmd` | First-contact examples, planner labels, certificate shape, V2 CRAN scope, and current public surface. |
 | Vignettes | `vignettes/eigencore.Rmd`, `vignettes/certificates.Rmd` | Longer usage path and certificate/diagnostic explanation exercised by package build/check. |
-| Migration and limits | `docs/rspectra-migration.md`, `docs/known-limitations.md` | RSpectra compatibility contract, unsupported paths, and honest fallback labels. |
+| Migration and limits | `docs/rspectra-migration.md`, `docs/geigen-replacement-audit.md`, `docs/generalized-eigen-api.md`, `docs/known-limitations.md` | RSpectra and geigen compatibility contracts, unsupported paths, and honest fallback labels. |
 | Method selection | `docs/method-selection-and-workflows.md` | User-facing guidance for eigen, SVD, generalized, shift-invert, operator, and certificate workflows. |
 | Release evidence | `docs/v1-readiness-audit.md`, `docs/v1-benchmark-manifest.md`, `benchmarks/RELEASES.md` | Gate inventory, installed benchmark commands, saved-artifact expectations, and current blocker record. |
 | Native design notes | `docs/native-lobpcg.md`, `docs/native-generalized-spd-lobpcg.md`, `docs/native-block-lanczos.md`, `docs/hegelsvd_svd_acceleration.md` | Design contracts and implementation notes for native solver work. |
@@ -31,6 +33,7 @@ evidence named in `docs/v1-readiness-audit.md` and
 | Partial Hermitian eigen | `README.md`, `docs/method-selection-and-workflows.md`, `docs/native-block-lanczos.md`, `docs/v1-readiness-audit.md` | Covered with the green structured-tridiagonal G1 default and explicit block-Lanczos diagnostic caveat. |
 | Partial SVD and randomized SVD | `README.md`, `docs/method-selection-and-workflows.md`, `docs/hegelsvd_svd_acceleration.md`, `docs/v1-benchmark-manifest.md` | Covered with the green H promoted surface, scoped I dense release gate, and sparse randomized controller contract. Final examples must avoid broad randomized performance claims beyond the exact-low-rank release row. Dense QR randomized control is native for largest-target dense double requests, and sparse CSC QR randomized control is native with a certificate/provenance contract; sparse speed, matrix-free, LU/none, slow-decay, and broader adaptive randomized regimes remain diagnostic or reference-labelled. |
 | Generalized SPD and LOBPCG | `docs/method-selection-and-workflows.md`, `docs/native-generalized-spd-lobpcg.md`, `docs/native-lobpcg.md`, `docs/v1-readiness-audit.md` | Covered for current native LOBPCG slices, native dense/diagonal transformed generalized Lanczos, the explicit block transformed generalized Lanczos contract, and the sparse-CSC generalized Lanczos reference boundary; sparse-CSC block promotion remains unclaimed. |
+| Generalized eigen replacement | `README.md`, `README.Rmd`, `docs/generalized-eigen-api.md`, `docs/geigen-replacement-audit.md`, `docs/known-limitations.md`, `docs/v1-benchmark-manifest.md` | Covered for dense full generalized pencils through `eig_full()`, dense QZ through `generalized_schur()`, real dense GSVD through `generalized_svd()`, sparse diagonal-`B` partial general pencils, and explicit unsupported sparse/complex boundaries. |
 | Shift-invert | `docs/method-selection-and-workflows.md`, `docs/rspectra-migration.md`, `docs/v1-readiness-audit.md`, `docs/v1-benchmark-manifest.md` | Covered for the scoped V1 surface. Dense standard/generalized, diagonal and symmetric-tridiagonal standard, and tridiagonal generalized-with-diagonal-B native labels are documented; general sparse standard and general sparse diagonal-generalized remain reference-labelled as the honest V1 boundary. |
 | Nonsymmetric eigen | `docs/method-selection-and-workflows.md`, `docs/known-limitations.md`, `docs/v1-readiness-audit.md`, `docs/v1-benchmark-manifest.md` | Covered for the scoped V1 compatibility surface plus the dense/sparse CSC refined-Ritz tranche. Dense and sparse CSC operators use native Arnoldi-cycle/native-refined-Ritz labels with restart controls; real matrix-free callback operators use the native callback Arnoldi/native-projected-Ritz label. Adjoint-capable rows expose left vectors with separate left-residual and biorthogonality diagnostics. Base complex dense inputs use native dense complex LAPACK labels; full Krylov-Schur or harmonic/interior extraction, matrix-free refined extraction, and native complex sparse/operator inputs remain future scope. |
 | Operator algebra and no densification | `docs/method-selection-and-workflows.md`, `docs/v1-readiness-audit.md` | Covered for explicit built-ins; matrix-free centering remains callback-boundary policy. |
@@ -63,7 +66,7 @@ Rscript -e 'pkgload::load_all("."); testthat::test_file("tests/testthat/test-ben
 Rscript -e 'pkgload::load_all("."); testthat::test_dir("tests/testthat", reporter = "summary")'
 git diff --check
 R CMD build .
-LC_ALL=C LANG=C R CMD check --no-manual eigencore_0.2.0.tar.gz
+LC_ALL=C LANG=C R CMD check --as-cran --no-manual eigencore_1.0.0.tar.gz
 Rscript inst/validation/native-smoke.R --load-all
 ```
 
