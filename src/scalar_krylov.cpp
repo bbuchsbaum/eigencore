@@ -64,17 +64,20 @@ static int lanczos_convergence_estimate(const double* alpha,
     return 0;
   }
 
-  double* diag = static_cast<double*>(std::calloc(static_cast<size_t>(iter), sizeof(double)));
-  double* offdiag = (iter > 1)
-    ? static_cast<double*>(std::calloc(static_cast<size_t>(iter - 1), sizeof(double)))
+  const size_t iter_len = static_cast<size_t>(iter);
+  const size_t offdiag_len = (iter > 1) ? iter_len - 1U : 0U;
+  const size_t work_len = 2U * offdiag_len;
+  double* diag = static_cast<double*>(std::calloc(iter_len, sizeof(double)));
+  double* offdiag = (offdiag_len > 0U)
+    ? static_cast<double*>(std::calloc(offdiag_len, sizeof(double)))
     : nullptr;
-  double* z = static_cast<double*>(std::calloc(static_cast<size_t>(iter) * iter, sizeof(double)));
-  double* work = (iter > 1)
-    ? static_cast<double*>(std::calloc(static_cast<size_t>(2 * iter - 2), sizeof(double)))
+  double* z = static_cast<double*>(std::calloc(iter_len * iter_len, sizeof(double)));
+  double* work = (work_len > 0U)
+    ? static_cast<double*>(std::calloc(work_len, sizeof(double)))
     : nullptr;
   int* selected = static_cast<int*>(std::calloc(static_cast<size_t>((k < iter) ? k : iter), sizeof(int)));
   if (diag == nullptr || z == nullptr || selected == nullptr ||
-      (iter > 1 && (offdiag == nullptr || work == nullptr))) {
+      (offdiag_len > 0U && (offdiag == nullptr || work == nullptr))) {
     std::free(diag);
     std::free(offdiag);
     std::free(z);
@@ -86,7 +89,7 @@ static int lanczos_convergence_estimate(const double* alpha,
   for (int i = 0; i < iter; ++i) {
     diag[i] = alpha[i];
   }
-  for (int i = 0; i < iter - 1; ++i) {
+  for (size_t i = 0; i < offdiag_len; ++i) {
     offdiag[i] = beta[i];
   }
 
