@@ -1,0 +1,444 @@
+# eigencore
+
+**eigencore** computes the top-*k* singular triplets or eigenpairs of a
+large sparse or structured matrix in R — the computation behind PCA on
+big sparse data, spectral embeddings, LSA, and low-rank approximation.
+It runs on native C++ kernels and attaches a numerical certificate to
+every result, so you know the answer is right, not just that the solver
+stopped.
+
+If you use **RSpectra**, **irlba**, or **PRIMME** for these problems,
+eigencore does the same job and adds two things:
+
+1.  **Every result is checked.** Each call returns residuals, a
+    backward-error bound, orthogonality loss, and a single
+    `passed`/`failed` flag. When a bound can only be estimated, the
+    certificate says so instead of passing.
+2.  **Centering and scaling without densifying.** Centering a sparse
+    matrix for PCA normally forces a dense copy. eigencore solves the
+    centered (or scaled, or composed) problem directly — the dense
+    matrix is never formed.
+
+On PCA-shaped sparse SVD problems it is also 1.6×–24× faster than
+RSpectra, irlba, and PRIMME (see [Benchmarks](#benchmarks)).
+
+## Installation
+
+``` r
+
+# install.packages("pak")
+pak::pak("bbuchsbaum/eigencore")
+```
+
+## Quick start
+
+The top 10 singular triplets of a 100,000 × 500 sparse matrix — the core
+computation in sparse PCA and LSA:
+
+``` r
+
+library(eigencore)
+library(Matrix)
+
+set.seed(2)
+A <- as(rsparsematrix(100000, 500, density = 0.002), "dgCMatrix")
+
+fit <- svd_partial(A, rank = 10, target = largest())
+fit
+#> Partial SVD
+#>   requested rank: 10 
+#>   converged rank: 10 
+#>   method: native certified Gram SVD special case 
+#>   target: largest 
+#>   max residual: 1.388377e-14 
+#>   max backward error: 4.392928e-17 
+#>   max orthogonality loss: 1.776357e-15 
+#>   norm bound: frobenius_exact 
+#>   scale estimated: FALSE 
+#>   certificate: passed
+```
+
+The printout names the kernel that ran, gives the worst residual,
+backward error, and orthogonality loss across the returned triplets, and
+shows the certificate passed with an exact norm bound. The solve takes
+15 ms — 1.6× faster than RSpectra, 9× faster than irlba, 2.7× faster
+than PRIMME (see [Benchmarks](#benchmarks)).
+
+![The ten largest singular values highlighted in blue against the full
+500-point singular spectrum of A in
+grey.](reference/figures/README-scree-1.png)
+
+## Certificates
+
+An iterative solver can stop early, miss a cluster, or lose
+orthogonality and still return plausible-looking numbers. RSpectra,
+irlba, and PRIMME hand you vectors and values; checking them is your
+problem. eigencore checks both singular relations (`||A v - sigma u||`
+and `||A^T u - sigma v||`) and hands you the evidence:
+
+``` r
+
+fit$certificate
+#> eigencore certificate
+#>   passed: TRUE 
+#>   tolerance: 1e-08 
+#>   type: residual_backward_error 
+#>   norm bound: frobenius_exact 
+#>   scale estimated: FALSE 
+#>   max residual: 1.388377e-14 
+#>   max backward error: 4.392928e-17 
+#>   max orthogonality loss: 1.776357e-15 
+#>   orthogonality tolerance: 1.490116e-08 
+#>   orthogonality required: TRUE
+```
+
+When the check cannot be made exact, the certificate says so. For a
+**column-centered** sparse matrix the only cheap norm bound is a
+stochastic estimate, so eigencore returns the singular values but sets
+`passed = FALSE` and tells you why:
+
+``` r
+
+cen <- svd_partial(center(A, columns = TRUE), rank = 5, target = largest())
+
+cen$certificate$passed
+#> [1] FALSE
+cen$certificate$norm_bound_type
+#> [1] "frobenius_hutchinson_estimate"
+cen$certificate$notes
+#> [1] "certificate scale uses a stochastic norm estimate; passed is withheld"
+```
+
+You decide whether an estimated bound is good enough for your analysis.
+Other solvers don’t give you the choice — they return the same numbers
+with no flag.
+
+## Center and scale without densifying
+
+A dense centered copy of `A` would occupy **400 MB**; the sparse
+original is a few MB.
+[`center()`](https://bbuchsbaum.github.io/eigencore/reference/center.md)
+gives you the centered map as an *operator*, and the solver works
+through it directly:
+
+``` r
+
+A_centered <- center(A, columns = TRUE)        # a 100000 x 500 operator, not a matrix
+svd_partial(A_centered, rank = 5, target = largest())$d
+#> [1] 17.23701 16.65319 16.60961 16.48647 16.44760
+```
+
+Build operators with
+[`linear_operator()`](https://bbuchsbaum.github.io/eigencore/reference/linear_operator.md),
+combine them with
+[`compose()`](https://bbuchsbaum.github.io/eigencore/reference/compose.md),
+[`crossprod_operator()`](https://bbuchsbaum.github.io/eigencore/reference/crossprod_operator.md),
+[`scale_cols()`](https://bbuchsbaum.github.io/eigencore/reference/scale_cols.md),
+[`center()`](https://bbuchsbaum.github.io/eigencore/reference/center.md),
+and friends. The planner picks the kernel from the structure;
+[`plan_solver()`](https://bbuchsbaum.github.io/eigencore/reference/plan_solver.md)
+shows the choice before you commit to a long solve:
+
+``` r
+
+plan_solver(svd_problem(A_centered, target = largest()), rank = 5)$method
+#> [1] "native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary)"
+```
+
+## Smallest eigenvalues of a symmetric operator
+
+The same interface handles symmetric eigenproblems. Here is a sparse
+second-difference operator (a 1-D graph Laplacian) of size 20,000,
+asking for its **smallest** eigenvalues — the hard end of the spectrum
+for iterative solvers:
+
+``` r
+
+n <- 20000
+L <- bandSparse(n, n, k = c(-1, 0, 1),
+                diagonals = list(rep(-1, n - 1), rep(2, n), rep(-1, n - 1)))
+L <- as(L, "dgCMatrix")
+
+eig <- eig_partial(L, k = 8, target = smallest())
+eig
+#> Partial eigen decomposition
+#>   requested: 8
+#>   converged: 8
+#>   method: native tridiagonal Hermitian shift-invert (factorized Lanczos)
+#>   target: smallest
+#>   restart: native_tridiagonal_shift_invert_lanczos
+#>   locked: 0
+#>   max residual: 9.026588e-10
+#>   max backward error: 2.605773e-12
+#>   max orthogonality loss: 6.439294e-15
+#>   norm bound: frobenius_metadata+identity_exact
+#>   scale estimated: FALSE
+#>   certificate: passed
+```
+
+eigencore solves this in 31 ms, certificate passed. The same call
+through RSpectra’s default mode (`which = "SA"`) does not converge on
+this matrix — 0 of 8 eigenvalues after 2.7 s. RSpectra is fast here if
+you know to switch it to shift-invert mode (`sigma = 0` solves it in 13
+ms); eigencore makes that choice for you and certifies the result. The
+exact spectrum is known in closed form, so the answer can be checked
+directly:
+
+![The eight smallest eigenvalues highlighted in blue at the bottom of
+the full analytic spectrum of the 20,000-point 1-D Laplacian shown in
+grey.](reference/figures/README-spectrum-1.png)
+
+## Benchmarks
+
+Median wall-clock time. eigencore’s column includes computing the
+certificate; the baseline columns are solve only. Reproduce with
+`Rscript inst/benchmarks/bench-readme.R`.
+
+| Problem (all certified `passed` by eigencore) | eigencore | vs RSpectra | vs irlba | vs PRIMME |
+|----|----|----|----|----|
+| Tall sparse SVD, 100000 × 500, k = 10 | 15 ms | **1.6× faster** | **9.1× faster** | **2.7× faster** |
+| Wide sparse SVD, 500 × 100000, k = 10 | 12 ms | **12.0× faster** | **24.1× faster** | **14.0× faster** |
+| Banded Hermitian, smallest, n = 20000, k = 8 | 31 ms | see note¹ | — | — |
+
+_(R 4.5.1 · aarch64-apple-darwin20 · RSpectra 0.16.2 / irlba 2.3.7 / PRIMME 3.2.6. The SVD rows also allocate ~6–8× less memory than irlba. Rerun the script for numbers on your machine and BLAS.)
+
+_(¹ RSpectra’s default mode (`which = "SA"`) returns 0 of 8 eigenvalues on this matrix after 2.7 s. Its shift-invert mode (`sigma = 0`) solves it in 13 ms — faster than eigencore — if you know to reach for it. eigencore picks the method itself and certifies the result.)
+
+The SVD speedups come from a certified Gram kernel for tall/wide sparse
+problems whose small dimension is ≤ 512 (≤ 1024 for wide matrices).
+Outside that — a tall SVD with more than 512 columns, or a general
+sparse matrix like a 2-D-grid Laplacian — RSpectra is currently 2–6.5×
+faster on the cases we measure, narrowing to parity on the larger grid
+(n = 40,000). `fit$method` always names the path that ran, so there is
+no guessing.
+
+## When to use what
+
+Use **eigencore** for tall or wide sparse SVD (PCA-shaped problems), the
+smallest eigenvalues of banded or structured symmetric operators
+(certified, no mode tuning), centered or scaled or composed operators,
+dense generalized eigen/QZ/GSVD compatibility work through
+[`eig_full()`](https://bbuchsbaum.github.io/eigencore/reference/eig_full.md),
+[`generalized_schur()`](https://bbuchsbaum.github.io/eigencore/reference/generalized_schur.md),
+and
+[`generalized_svd()`](https://bbuchsbaum.github.io/eigencore/reference/generalized_svd.md),
+and anywhere you want the result checked rather than taken on faith.
+
+Use **RSpectra or irlba** for general large sparse problems outside
+those shapes, and RSpectra’s shift-invert mode when raw speed on
+smallest or interior eigenvalues matters more than a certificate.
+Switching in either direction is a one-line change, because eigencore
+ships drop-in wrappers with the same arguments:
+
+``` r
+
+res <- eigs_sym(L, k = 8, which = "SA")
+res$values
+#> [1] 2.467154e-08 9.868617e-08 2.220439e-07 3.947447e-07 6.167886e-07
+#> [6] 8.881755e-07 1.208906e-06 1.578979e-06
+res$certificate$passed
+#> [1] TRUE
+```
+
+[`eigs()`](https://bbuchsbaum.github.io/eigencore/reference/eigs.md),
+[`eigs_sym()`](https://bbuchsbaum.github.io/eigencore/reference/eigs_sym.md),
+and [`svds()`](https://bbuchsbaum.github.io/eigencore/reference/svds.md)
+accept the same `which` codes as RSpectra (`"LM"`, `"SM"`, `"LA"`,
+`"SA"`, `"LR"`, `"SR"`, `"LI"`, `"SI"`, `"BE"`) and additionally return
+a certificate.
+
+## Learning more
+
+[`vignette("eigencore", package = "eigencore")`](https://bbuchsbaum.github.io/eigencore/articles/eigencore.md)
+is the guided tour.
+[`vignette("certificates", package = "eigencore")`](https://bbuchsbaum.github.io/eigencore/articles/certificates.md)
+explains how to read the numerical evidence and what to do when a check
+fails.
+
+## Status
+
+eigencore 1.0.0 is headed for CRAN. The exported API is stable — it is
+frozen by a snapshot test, and breaking changes follow semantic
+versioning from here. The numerics are solid: every shipped solver path
+is benchmarked against RSpectra and PRIMME, covered by an adversarial
+test suite, and certified on every call. Problem classes without a
+native kernel yet — general matrix-free SVD, interior eigenvalues at
+scale, nonsymmetric Krylov–Schur — are labeled `reference` in
+`fit$method` rather than quietly slow. The package vignettes describe
+the workflow map, benchmark evidence, and current boundaries.
+
+## License
+
+MIT © Bradley Buchsbaum.
+
+# Package index
+
+## User entry points
+
+High-level functions for partial eigenvalue and SVD computation.
+
+- [`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md)
+  : Compute a partial eigendecomposition.
+- [`eig_full()`](https://bbuchsbaum.github.io/eigencore/reference/eig_full.md)
+  : Compute a full dense eigendecomposition
+- [`svd_partial()`](https://bbuchsbaum.github.io/eigencore/reference/svd_partial.md)
+  : Compute a partial singular-value decomposition.
+- [`generalized_schur()`](https://bbuchsbaum.github.io/eigencore/reference/generalized_schur.md)
+  : Compute a dense generalized Schur decomposition
+- [`generalized_svd()`](https://bbuchsbaum.github.io/eigencore/reference/generalized_svd.md)
+  : Compute a dense generalized singular value decomposition
+
+## RSpectra-compatible shims
+
+Drop-in replacements for
+[`RSpectra::eigs()`](https://rdrr.io/pkg/RSpectra/man/eigs.html),
+[`eigs_sym()`](https://bbuchsbaum.github.io/eigencore/reference/eigs_sym.md),
+and
+[`svds()`](https://bbuchsbaum.github.io/eigencore/reference/svds.md).
+
+- [`eigs()`](https://bbuchsbaum.github.io/eigencore/reference/eigs.md) :
+  RSpectra-compatible eigen shim.
+- [`eigs_sym()`](https://bbuchsbaum.github.io/eigencore/reference/eigs_sym.md)
+  : RSpectra-compatible symmetric eigen shim.
+- [`svds()`](https://bbuchsbaum.github.io/eigencore/reference/svds.md) :
+  RSpectra-compatible SVD shim.
+
+## Problems and planning
+
+Build problem descriptors and inspect the solver plan.
+
+- [`eigen_problem()`](https://bbuchsbaum.github.io/eigencore/reference/eigen_problem.md)
+  : Define an eigenproblem.
+- [`svd_problem()`](https://bbuchsbaum.github.io/eigencore/reference/svd_problem.md)
+  : Define an SVD problem.
+- [`plan_solver()`](https://bbuchsbaum.github.io/eigencore/reference/plan_solver.md)
+  : Plan a solver for a problem.
+- [`solve(`*`<eigencore_eigen_problem>`*`)`](https://bbuchsbaum.github.io/eigencore/reference/solve.eigencore_eigen_problem.md)
+  : Solve a planned eigenproblem.
+- [`solve(`*`<eigencore_svd_problem>`*`)`](https://bbuchsbaum.github.io/eigencore/reference/solve.eigencore_svd_problem.md)
+  : Solve a planned SVD problem.
+
+## Operators
+
+Block-native linear operators and operator algebra.
+
+- [`linear_operator()`](https://bbuchsbaum.github.io/eigencore/reference/linear_operator.md)
+  : Create a block-native linear operator.
+- [`as_operator()`](https://bbuchsbaum.github.io/eigencore/reference/as_operator.md)
+  : Convert an object to an eigencore operator.
+- [`adjoint()`](https://bbuchsbaum.github.io/eigencore/reference/adjoint.md)
+  : Return the adjoint operator.
+- [`check_adjoint()`](https://bbuchsbaum.github.io/eigencore/reference/check_adjoint.md)
+  : Check an operator adjoint identity.
+- [`compose()`](https://bbuchsbaum.github.io/eigencore/reference/compose.md)
+  : Compose two operators.
+- [`crossprod_operator()`](https://bbuchsbaum.github.io/eigencore/reference/crossprod_operator.md)
+  : Create A^\* A as an operator.
+- [`symmetric_operator()`](https://bbuchsbaum.github.io/eigencore/reference/symmetric_operator.md)
+  : Mark an operator as symmetric/Hermitian.
+- [`scale_cols()`](https://bbuchsbaum.github.io/eigencore/reference/scale_cols.md)
+  : Scale operator columns.
+- [`scale_rows()`](https://bbuchsbaum.github.io/eigencore/reference/scale_rows.md)
+  : Scale operator rows.
+- [`center()`](https://bbuchsbaum.github.io/eigencore/reference/center.md)
+  : Center an operator by rows or columns.
+
+## Targets
+
+Selectors describing which part of the spectrum you want.
+
+- [`largest()`](https://bbuchsbaum.github.io/eigencore/reference/largest.md)
+  : Target the largest algebraic values.
+- [`smallest()`](https://bbuchsbaum.github.io/eigencore/reference/smallest.md)
+  : Target the smallest algebraic values.
+- [`largest_magnitude()`](https://bbuchsbaum.github.io/eigencore/reference/largest_magnitude.md)
+  : Target the largest values by magnitude.
+- [`smallest_magnitude()`](https://bbuchsbaum.github.io/eigencore/reference/smallest_magnitude.md)
+  : Target the smallest values by magnitude.
+- [`largest_real()`](https://bbuchsbaum.github.io/eigencore/reference/largest_real.md)
+  : Target the largest real part.
+- [`smallest_real()`](https://bbuchsbaum.github.io/eigencore/reference/smallest_real.md)
+  : Target the smallest real part.
+- [`largest_imaginary()`](https://bbuchsbaum.github.io/eigencore/reference/largest_imaginary.md)
+  : Target the largest imaginary part.
+- [`smallest_imaginary()`](https://bbuchsbaum.github.io/eigencore/reference/smallest_imaginary.md)
+  : Target the smallest imaginary part.
+- [`both_ends()`](https://bbuchsbaum.github.io/eigencore/reference/both_ends.md)
+  : Target both algebraic ends.
+- [`nearest()`](https://bbuchsbaum.github.io/eigencore/reference/nearest.md)
+  : Target values nearest a shift.
+
+## Methods
+
+Solver families and method descriptors.
+
+- [`auto()`](https://bbuchsbaum.github.io/eigencore/reference/auto.md) :
+  Automatic solver choice.
+- [`lanczos()`](https://bbuchsbaum.github.io/eigencore/reference/lanczos.md)
+  : Hermitian Lanczos method descriptor.
+- [`lobpcg()`](https://bbuchsbaum.github.io/eigencore/reference/lobpcg.md)
+  : LOBPCG method descriptor.
+- [`golub_kahan()`](https://bbuchsbaum.github.io/eigencore/reference/golub_kahan.md)
+  : Golub-Kahan bidiagonalization method descriptor.
+- [`randomized()`](https://bbuchsbaum.github.io/eigencore/reference/randomized.md)
+  : Randomized SVD method descriptor.
+- [`shift_invert()`](https://bbuchsbaum.github.io/eigencore/reference/shift_invert.md)
+  : Shift-invert method descriptor.
+
+## Preconditioners
+
+Preconditioner factories for iterative solvers.
+
+- [`shifted_cholesky_preconditioner()`](https://bbuchsbaum.github.io/eigencore/reference/shifted_cholesky_preconditioner.md)
+  : Shifted Cholesky preconditioner.
+- [`shifted_diagonal_preconditioner()`](https://bbuchsbaum.github.io/eigencore/reference/shifted_diagonal_preconditioner.md)
+  : Shifted diagonal preconditioner.
+- [`shifted_tridiagonal_preconditioner()`](https://bbuchsbaum.github.io/eigencore/reference/shifted_tridiagonal_preconditioner.md)
+  : Shifted tridiagonal preconditioner.
+
+## Spaces and structure tags
+
+- [`euclidean()`](https://bbuchsbaum.github.io/eigencore/reference/euclidean.md)
+  : Euclidean vector space descriptor.
+- [`hermitian()`](https://bbuchsbaum.github.io/eigencore/reference/hermitian.md)
+  : Hermitian/symmetric operator structure descriptor.
+- [`general()`](https://bbuchsbaum.github.io/eigencore/reference/general.md)
+  : General operator structure descriptor.
+
+## Results, certificates, diagnostics
+
+Inspecting solver output and the numerical evidence.
+
+- [`certificate()`](https://bbuchsbaum.github.io/eigencore/reference/certificate.md)
+  : Extract a result certificate.
+- [`residuals(`*`<eigencore_eigen_result>`*`)`](https://bbuchsbaum.github.io/eigencore/reference/residuals.md)
+  [`residuals(`*`<eigencore_svd_result>`*`)`](https://bbuchsbaum.github.io/eigencore/reference/residuals.md)
+  [`residuals(`*`<eigencore_certificate>`*`)`](https://bbuchsbaum.github.io/eigencore/reference/residuals.md)
+  : Extract residual diagnostics.
+- [`backward_error()`](https://bbuchsbaum.github.io/eigencore/reference/backward_error.md)
+  : Extract backward-error diagnostics.
+- [`values()`](https://bbuchsbaum.github.io/eigencore/reference/values.md)
+  : Extract computed values.
+- [`alpha_beta()`](https://bbuchsbaum.github.io/eigencore/reference/alpha_beta.md)
+  : Extract homogeneous generalized coordinates.
+- [`vectors()`](https://bbuchsbaum.github.io/eigencore/reference/vectors.md)
+  : Extract eigenvectors.
+- [`left_vectors()`](https://bbuchsbaum.github.io/eigencore/reference/left_vectors.md)
+  : Extract left singular vectors or left eigenvectors.
+- [`right_vectors()`](https://bbuchsbaum.github.io/eigencore/reference/right_vectors.md)
+  : Extract right singular vectors.
+- [`diagnostics()`](https://bbuchsbaum.github.io/eigencore/reference/diagnostics.md)
+  : Extract diagnostics.
+
+# Articles
+
+### Get started
+
+- [Get started with
+  eigencore](https://bbuchsbaum.github.io/eigencore/articles/eigencore.md):
+- [Certificates: reading the numerical
+  evidence](https://bbuchsbaum.github.io/eigencore/articles/certificates.md):
+- [Migrating from
+  geigen](https://bbuchsbaum.github.io/eigencore/articles/geigen-migration.md):
+- [Benchmarking eigencore against established
+  solvers](https://bbuchsbaum.github.io/eigencore/articles/benchmarks.md):
