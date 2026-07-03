@@ -8,13 +8,6 @@
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
 
-extern "C" {
-void F77_NAME(zhegv)(const La_INT* itype, const char* jobz, const char* uplo,
-                     La_INT* n, Rcomplex* a, La_INT* lda, Rcomplex* b,
-                     La_INT* ldb, double* w, Rcomplex* work, La_INT* lwork,
-                     double* rwork, La_INT* info FCLEN FCLEN);
-}
-
 typedef La_LGL (*eigencore_dgges_select_fn)(double*, double*, double*);
 typedef void (*eigencore_dgges_fn)(
   const char*, const char*, const char*, eigencore_dgges_select_fn,
@@ -514,34 +507,61 @@ extern "C" SEXP eigencore_dense_complex_generalized_hpd_eigen(SEXP A_, SEXP B_) 
   SEXP vectors_ = PROTECT(duplicate(A_));
   SEXP Bwork_ = PROTECT(duplicate(B_));
   if (n > 0) {
-    int itype = 1;
     char jobz = 'V';
     char uplo = 'U';
     int info = 0;
+    // Windows R does not export zhegv. Reduce B = U^H U to a standard
+    // Hermitian problem C = U^-H A U^-1, then back-transform vectors.
+    F77_CALL(zpotrf)(&uplo, &n, COMPLEX(Bwork_), &n, &info FCONE);
+    if (info != 0) {
+      error("LAPACK zpotrf failed for generalized Hermitian B with info=%d", info);
+    }
+
+    Rcomplex one;
+    one.r = 1.0;
+    one.i = 0.0;
+    char side = 'L';
+    char transa = 'C';
+    char diag = 'N';
+    F77_CALL(ztrsm)(&side, &uplo, &transa, &diag, &n, &n, &one,
+                    COMPLEX(Bwork_), &n, COMPLEX(vectors_), &n
+                    FCONE FCONE FCONE FCONE);
+    side = 'R';
+    transa = 'N';
+    F77_CALL(ztrsm)(&side, &uplo, &transa, &diag, &n, &n, &one,
+                    COMPLEX(Bwork_), &n, COMPLEX(vectors_), &n
+                    FCONE FCONE FCONE FCONE);
+
     int lwork = -1;
     Rcomplex work_query;
     const int lrwork = (3 * n - 2 > 1) ? (3 * n - 2) : 1;
     double* rwork = reinterpret_cast<double*>(
       R_alloc(static_cast<size_t>(lrwork), sizeof(double))
     );
-    F77_CALL(zhegv)(&itype, &jobz, &uplo, &n, COMPLEX(vectors_), &n,
-                    COMPLEX(Bwork_), &n, REAL(values_), &work_query,
-                    &lwork, rwork, &info FCONE FCONE);
+    F77_CALL(zheev)(&jobz, &uplo, &n, COMPLEX(vectors_), &n, REAL(values_),
+                    &work_query, &lwork, rwork, &info FCONE FCONE);
     if (info != 0) {
-      error("LAPACK zhegv workspace query failed with info=%d", info);
+      error("LAPACK zheev workspace query failed for generalized Hermitian "
+            "transform with info=%d", info);
     }
     lwork = static_cast<int>(work_query.r);
     if (lwork < 1) {
       lwork = 1;
     }
     SEXP work_ = PROTECT(allocVector(CPLXSXP, lwork));
-    F77_CALL(zhegv)(&itype, &jobz, &uplo, &n, COMPLEX(vectors_), &n,
-                    COMPLEX(Bwork_), &n, REAL(values_), COMPLEX(work_),
-                    &lwork, rwork, &info FCONE FCONE);
+    F77_CALL(zheev)(&jobz, &uplo, &n, COMPLEX(vectors_), &n, REAL(values_),
+                    COMPLEX(work_), &lwork, rwork, &info FCONE FCONE);
     if (info != 0) {
-      error("LAPACK zhegv failed with info=%d", info);
+      error("LAPACK zheev failed for generalized Hermitian transform "
+            "with info=%d", info);
     }
     UNPROTECT(1);
+
+    side = 'L';
+    transa = 'N';
+    F77_CALL(ztrsm)(&side, &uplo, &transa, &diag, &n, &n, &one,
+                    COMPLEX(Bwork_), &n, COMPLEX(vectors_), &n
+                    FCONE FCONE FCONE FCONE);
   }
 
   SEXP out_ = PROTECT(allocVector(VECSXP, 2));
