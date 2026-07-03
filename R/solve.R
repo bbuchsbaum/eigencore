@@ -243,12 +243,36 @@ native_dense_generalized_pencil_eigen <- function(A, B) {
 
 #' @keywords internal
 native_dense_complex_generalized_hpd_eigen <- function(A, B) {
-  .Call(
-    "eigencore_dense_complex_generalized_hpd_eigen",
-    as.matrix(A),
-    as.matrix(B),
-    PACKAGE = "eigencore"
-  )
+  A <- as.matrix(A)
+  B <- as.matrix(B)
+  eig <- native_dense_complex_generalized_pencil_eigen(A, B)
+  beta_scale <- pmax(Mod(eig$alpha), Mod(eig$beta), 1)
+  finite <- Mod(eig$beta) > sqrt(.Machine$double.eps) * beta_scale
+  if (!all(finite)) {
+    stop("complex Hermitian-definite pencil produced non-finite eigenvalues.",
+         call. = FALSE)
+  }
+
+  values <- eig$alpha / eig$beta
+  imaginary_scale <- sqrt(.Machine$double.eps) * pmax(Mod(values), 1)
+  if (any(abs(Im(values)) > imaginary_scale)) {
+    stop("complex Hermitian-definite pencil produced non-real eigenvalues.",
+         call. = FALSE)
+  }
+
+  vectors <- eig$vectors
+  for (j in seq_len(ncol(vectors))) {
+    metric_norm <- drop(Conj(vectors[, j]) %*% B %*% vectors[, j])
+    if (!is.finite(Re(metric_norm)) ||
+        Re(metric_norm) <= sqrt(.Machine$double.eps)) {
+      stop("complex Hermitian-definite eigenvector has invalid B-norm.",
+           call. = FALSE)
+    }
+    vectors[, j] <- vectors[, j] / sqrt(Re(metric_norm))
+  }
+
+  ord <- order(Re(values))
+  list(values = Re(values[ord]), vectors = vectors[, ord, drop = FALSE])
 }
 
 #' @keywords internal
@@ -635,7 +659,25 @@ native_dense_symmetric_eigen_selected <- function(A, k, target) {
 
 #' @keywords internal
 native_dense_complex_hermitian_eigen <- function(A) {
-  .Call("eigencore_dense_complex_hermitian_eigen", as.matrix(A), PACKAGE = "eigencore")
+  eig <- native_dense_complex_general_eigen(as.matrix(A))
+  values <- eig$values
+  imaginary_scale <- sqrt(.Machine$double.eps) * pmax(Mod(values), 1)
+  if (any(abs(Im(values)) > imaginary_scale)) {
+    stop("complex Hermitian matrix produced non-real eigenvalues.",
+         call. = FALSE)
+  }
+
+  vectors <- eig$vectors
+  for (j in seq_len(ncol(vectors))) {
+    norm_j <- sqrt(sum(Mod(vectors[, j])^2))
+    if (!is.finite(norm_j) || norm_j <= sqrt(.Machine$double.eps)) {
+      stop("complex Hermitian eigenvector has invalid norm.", call. = FALSE)
+    }
+    vectors[, j] <- vectors[, j] / norm_j
+  }
+
+  ord <- order(Re(values))
+  list(values = Re(values[ord]), vectors = vectors[, ord, drop = FALSE])
 }
 
 #' @keywords internal

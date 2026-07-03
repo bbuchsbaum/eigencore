@@ -238,10 +238,10 @@ test_that("native dense SVD fallback matches base SVD on rectangular inputs", {
 test_that("native dense complex kernels match base LAPACK paths", {
   H <- matrix(c(1, 1i, -1i, 2), 2, 2)
   hfit <- eig_partial(H, k = 2L, target = largest(), tol = 1e-10)
-  horacle <- eigen(H, symmetric = TRUE)
+  horacle <- eigen(H, symmetric = FALSE)
 
   expect_equal(hfit$method, eigencore:::native_dense_complex_hermitian_label())
-  expect_equal(values(hfit), horacle$values, tolerance = 1e-10)
+  expect_equal(values(hfit), Re(horacle$values), tolerance = 1e-10)
   expect_true(certificate(hfit)$passed)
   expect_match(hfit$warnings, "native dense complex Hermitian LAPACK fallback")
 

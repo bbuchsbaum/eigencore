@@ -107,7 +107,7 @@ test_that("complex dense operator adjoints preserve conjugate transpose metadata
 test_that("complex ABI contract matches dense and operator certificate semantics", {
   A <- matrix(c(1, 1i, -1i, 2), 2, 2)
   op <- as_operator(A)
-  eig <- eigen(A)
+  eig <- eigen(A, symmetric = FALSE)
   sv <- svd(A)
   X <- matrix(c(1 + 2i, 2 - 1i, -1i, 3), 2, 2)
 

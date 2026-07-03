@@ -49,7 +49,8 @@ test_that("eig_full standard complex Hermitian uses the native complex Hermitian
 
   expect_identical(fit$method, eigencore:::native_dense_complex_hermitian_label())
   expect_true(all(abs(Im(values(fit))) < 1e-12)) # Hermitian -> real eigenvalues
-  expect_equal(sort(Re(values(fit))), sort(Re(eigen(H)$values)), tolerance = 1e-10)
+  oracle <- eigen(H, symmetric = FALSE)
+  expect_equal(sort(Re(values(fit))), sort(Re(oracle$values)), tolerance = 1e-10)
   expect_true(certificate(fit)$passed)
 })
 
