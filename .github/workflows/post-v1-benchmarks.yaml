@@ -1,4 +1,13 @@
+name: post-v1-benchmarks.yaml
+
 on:
+  push:
+    branches: [main, master]
+    paths:
+      - ".github/workflows/post-v1-benchmarks.yaml"
+      - "docs/post-v1-benchmark-gates.md"
+      - "inst/benchmarks/**"
+      - "tests/testthat/test-bench-smoke.R"
   workflow_dispatch:
     inputs:
       tier:
@@ -18,12 +27,19 @@ on:
   schedule:
     - cron: "17 8 * * 1"
 
-name: post-v1-benchmarks.yaml
-
 permissions: read-all
 
 jobs:
+  validate-post-v1-benchmark-workflow:
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate benchmark workflow trigger
+        run: echo "Post-V1 benchmarks run on schedule or workflow_dispatch."
+
   post-v1-benchmarks:
+    if: ${{ github.event_name != 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
