@@ -36,7 +36,7 @@ cert
 #>   scale estimated: FALSE 
 #>   max residual: 1.67046e-07 
 #>   max backward error: 4.546939e-09 
-#>   max orthogonality loss: 2.664535e-15 
+#>   max orthogonality loss: 2.109424e-15 
 #>   orthogonality tolerance: 1.490116e-08 
 #>   orthogonality required: TRUE
 ```
@@ -284,7 +284,7 @@ fit_gen <- eig_partial(A, k = 5, target = largest(), B = B,
 fit_gen$certificate$norm_bound_type
 #> [1] "frobenius_exact+frobenius_exact"
 fit_gen$certificate$max_orthogonality_loss
-#> [1] 1.776357e-15
+#> [1] 2.220446e-15
 fit_gen$certificate$passed
 #> [1] TRUE
 ```
@@ -318,7 +318,7 @@ res$certificate
 #>   scale estimated: FALSE 
 #>   max residual: 2.683414e-08 
 #>   max backward error: 7.304167e-10 
-#>   max orthogonality loss: 1.998401e-15 
+#>   max orthogonality loss: 1.554312e-15 
 #>   orthogonality tolerance: 1.490116e-08 
 #>   orthogonality required: TRUE
 ```
