@@ -222,8 +222,7 @@ and `"BE"`.
 
 - `vignette("certificates")` is the deep dive on reading the numerical
   evidence — what each field means and what to do when a check fails.
-- The package reference, organised by topic, lives in the
-  [reference index](../reference/index.html).
+- Run `help(package = "eigencore")` to browse the installed help index.
 - `?certificate` documents the certificate fields in detail.
 - `?plan_solver` explains how operator structure, target, and method
   combine to choose a kernel.
