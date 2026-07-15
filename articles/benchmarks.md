@@ -69,18 +69,24 @@ each case.
 
 ### Elapsed time
 
-The entries are median milliseconds; lower values are better. The
-`lowest_median` column reports the smallest value in each row.
+The entries are median solver-call milliseconds; lower values are
+better. An eigencore solver call includes its native certificate. The
+external calls do not, and the shared residual check used elsewhere in
+this vignette runs after the timer. These smoke timings therefore
+describe call overhead, not a common time-to-certified-answer. The
+installed benchmark scripts report both raw solver time and a common
+eigencore-certified total. The `lowest_median` column is selected from
+unrounded measurements and reports the smallest value in each row.
 
 | case                  | lowest median | eigencore | RSpectra |   irlba | base R |
 |:----------------------|:--------------|----------:|---------:|--------:|-------:|
-| dense Hermitian       | RSpectra      |    4.8560 |   0.4853 | not run |  1.935 |
-| sparse path Laplacian | eigencore     |    2.4790 |   8.1690 | not run | 12.730 |
-| dense low-rank SVD    | RSpectra      |    1.6560 |   0.2516 |  0.3612 |  1.619 |
-| tall sparse SVD       | RSpectra      |    0.6996 |   0.3862 |  0.7643 |  1.792 |
-| wide sparse SVD       | RSpectra      |    0.5485 |   0.4925 |  1.0270 |  2.844 |
+| dense Hermitian       | RSpectra      |    1.6080 |   0.4697 | not run |  2.105 |
+| sparse path Laplacian | eigencore     |    2.4110 |   7.9610 | not run | 13.810 |
+| dense low-rank SVD    | RSpectra      |    1.5830 |   0.2256 |  0.3615 |  1.699 |
+| tall sparse SVD       | RSpectra      |    0.5371 |   0.3700 |  0.7712 |  1.850 |
+| wide sparse SVD       | RSpectra      |    0.5463 |   0.4213 |  1.0060 |  3.362 |
 
-Median elapsed time in milliseconds from 3 iterations per method.
+Median solver-call time in milliseconds from 3 iterations per method.
 {.table style="width:100%;"}
 
 In this render, eigencore recorded the lowest median in **1 of 5**
@@ -100,25 +106,36 @@ problem and certify the resulting triplets in the original coordinates.
 If the smaller dimension stays bounded while the long dimension grows,
 the Gram eigensolve retains the same dimension while iterative methods
 perform more expensive matrix-vector products. A crossover is therefore
-plausible and is measured by the installed-package benchmark, not by the
-tiny rows above.
+plausible. The installed large endpoint cases show that eigencore can
+win in this regime, but those endpoints do not locate a crossover
+because their dimensions, density, rank, and random fixture all change
+together. The controlled mode of `bench-svd-gram-cutoff.R` fixes the
+small side, rank, density, and a nested sparse fixture while varying
+only the long side, and reports raw solver and common certified-total
+ratios separately.
+
+In the 2026-07-15 installed five-iteration sweep with small side 90, the
+certified-total ratio crossed above one by long side 5,000 in both
+orientations. The raw-call ratio crossed there for the wide case and by
+25,000 for the tall case. These are machine-specific release
+measurements, not a universal crossover constant.
 
 This does not mean that increasing either matrix dimension helps. The
 current planner limits the smaller dimension to 512 for tall matrices
 and 1024 for wide matrices, and also checks aspect ratio, requested-rank
 fraction, and a memory budget. The repository’s cutoff evidence is mixed
 outside the core regime: increasing the smaller side can remove the
-advantage, particularly for tall matrices. The current full benchmark
+advantage, particularly for tall matrices. The current full endpoint
 cases are `100000 x 500` and its transpose; see the [benchmark
 manifest](https://github.com/bbuchsbaum/eigencore/blob/main/docs/v1-benchmark-manifest.md)
 for the installed evidence and exact commands.
 
-The larger benchmark scripts recompute eigencore certificates for
-external results. If an external row fails the requested certificate,
-its elapsed time is not a time-to-certified-answer comparison. That
-failure should not be read as a general claim that the external package
-is slower; rerun it with matched tolerances before drawing that
-conclusion.
+The larger benchmark scripts pass the requested tolerance to RSpectra
+and irlba, then recompute eigencore certificates for all external
+results. They retain both raw solver time and common time through
+certification. A row that still fails the requested certificate is
+excluded from time-to-certified-answer claims rather than being treated
+as a slow certified result.
 
 ### Allocated memory
 
@@ -127,11 +144,11 @@ do not measure peak resident memory.
 
 | case                  | eigencore | RSpectra |   irlba | base R |
 |:----------------------|----------:|---------:|--------:|-------:|
-| dense Hermitian       |   1.06800 |  0.06661 | not run | 0.4240 |
-| sparse path Laplacian |   1.83700 |  0.01991 | not run | 3.1880 |
-| dense low-rank SVD    |   1.30600 |  0.09405 |  0.5606 | 0.5942 |
-| tall sparse SVD       |   0.01904 |  0.02502 |  0.1760 | 0.8979 |
-| wide sparse SVD       |   0.02359 |  0.02246 |  0.1542 | 0.9098 |
+| dense Hermitian       |   1.07900 |  0.06661 | not run | 0.4240 |
+| sparse path Laplacian |   1.84800 |  0.01991 | not run | 3.1880 |
+| dense low-rank SVD    |   1.31200 |  0.09405 |  0.5606 | 0.5942 |
+| tall sparse SVD       |   0.01906 |  0.02502 |  0.1760 | 0.8979 |
+| wide sparse SVD       |   0.02361 |  0.02246 |  0.1542 | 0.9098 |
 
 Allocated memory in megabytes. {.table}
 

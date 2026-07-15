@@ -174,11 +174,17 @@ in each case.</p>
 <div class="section level3">
 <h3 id="elapsed-time">Elapsed time<a class="anchor" aria-label="anchor" href="#elapsed-time"></a>
 </h3>
-<p>The entries are median milliseconds; lower values are better. The
-<code>lowest_median</code> column reports the smallest value in each
-row.</p>
+<p>The entries are median solver-call milliseconds; lower values are
+better. An eigencore solver call includes its native certificate. The
+external calls do not, and the shared residual check used elsewhere in
+this vignette runs after the timer. These smoke timings therefore
+describe call overhead, not a common time-to-certified-answer. The
+installed benchmark scripts report both raw solver time and a common
+eigencore-certified total. The <code>lowest_median</code> column is
+selected from unrounded measurements and reports the smallest value in
+each row.</p>
 <table style="width:100%;" class="table">
-<caption>Median elapsed time in milliseconds from 3 iterations per
+<caption>Median solver-call time in milliseconds from 3 iterations per
 method.</caption>
 <colgroup>
 <col width="31%">
@@ -200,42 +206,42 @@ method.</caption>
 <tr class="odd">
 <td align="left">dense Hermitian</td>
 <td align="left">RSpectra</td>
-<td align="right">4.8560</td>
-<td align="right">0.4853</td>
+<td align="right">1.6080</td>
+<td align="right">0.4697</td>
 <td align="right">not run</td>
-<td align="right">1.935</td>
+<td align="right">2.105</td>
 </tr>
 <tr class="even">
 <td align="left">sparse path Laplacian</td>
 <td align="left">eigencore</td>
-<td align="right">2.4790</td>
-<td align="right">8.1690</td>
+<td align="right">2.4110</td>
+<td align="right">7.9610</td>
 <td align="right">not run</td>
-<td align="right">12.730</td>
+<td align="right">13.810</td>
 </tr>
 <tr class="odd">
 <td align="left">dense low-rank SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">1.6560</td>
-<td align="right">0.2516</td>
-<td align="right">0.3612</td>
-<td align="right">1.619</td>
+<td align="right">1.5830</td>
+<td align="right">0.2256</td>
+<td align="right">0.3615</td>
+<td align="right">1.699</td>
 </tr>
 <tr class="even">
 <td align="left">tall sparse SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">0.6996</td>
-<td align="right">0.3862</td>
-<td align="right">0.7643</td>
-<td align="right">1.792</td>
+<td align="right">0.5371</td>
+<td align="right">0.3700</td>
+<td align="right">0.7712</td>
+<td align="right">1.850</td>
 </tr>
 <tr class="odd">
 <td align="left">wide sparse SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">0.5485</td>
-<td align="right">0.4925</td>
-<td align="right">1.0270</td>
-<td align="right">2.844</td>
+<td align="right">0.5463</td>
+<td align="right">0.4213</td>
+<td align="right">1.0060</td>
+<td align="right">3.362</td>
 </tr>
 </tbody>
 </table>
@@ -256,22 +262,32 @@ Gram problem and certify the resulting triplets in the original
 coordinates. If the smaller dimension stays bounded while the long
 dimension grows, the Gram eigensolve retains the same dimension while
 iterative methods perform more expensive matrix-vector products. A
-crossover is therefore plausible and is measured by the
-installed-package benchmark, not by the tiny rows above.</p>
+crossover is therefore plausible. The installed large endpoint cases
+show that eigencore can win in this regime, but those endpoints do not
+locate a crossover because their dimensions, density, rank, and random
+fixture all change together. The controlled mode of
+<code>bench-svd-gram-cutoff.R</code> fixes the small side, rank,
+density, and a nested sparse fixture while varying only the long side,
+and reports raw solver and common certified-total ratios separately.</p>
+<p>In the 2026-07-15 installed five-iteration sweep with small side 90,
+the certified-total ratio crossed above one by long side 5,000 in both
+orientations. The raw-call ratio crossed there for the wide case and by
+25,000 for the tall case. These are machine-specific release
+measurements, not a universal crossover constant.</p>
 <p>This does not mean that increasing either matrix dimension helps. The
 current planner limits the smaller dimension to 512 for tall matrices
 and 1024 for wide matrices, and also checks aspect ratio, requested-rank
 fraction, and a memory budget. The repository’s cutoff evidence is mixed
 outside the core regime: increasing the smaller side can remove the
-advantage, particularly for tall matrices. The current full benchmark
+advantage, particularly for tall matrices. The current full endpoint
 cases are <code>100000 x 500</code> and its transpose; see the <a href="https://github.com/bbuchsbaum/eigencore/blob/main/docs/v1-benchmark-manifest.md" class="external-link">benchmark
 manifest</a> for the installed evidence and exact commands.</p>
-<p>The larger benchmark scripts recompute eigencore certificates for
-external results. If an external row fails the requested certificate,
-its elapsed time is not a time-to-certified-answer comparison. That
-failure should not be read as a general claim that the external package
-is slower; rerun it with matched tolerances before drawing that
-conclusion.</p>
+<p>The larger benchmark scripts pass the requested tolerance to RSpectra
+and irlba, then recompute eigencore certificates for all external
+results. They retain both raw solver time and common time through
+certification. A row that still fails the requested certificate is
+excluded from time-to-certified-answer claims rather than being treated
+as a slow certified result.</p>
 </div>
 <div class="section level3">
 <h3 id="allocated-memory">Allocated memory<a class="anchor" aria-label="anchor" href="#allocated-memory"></a>
@@ -290,35 +306,35 @@ They do not measure peak resident memory.</p>
 <tbody>
 <tr class="odd">
 <td align="left">dense Hermitian</td>
-<td align="right">1.06800</td>
+<td align="right">1.07900</td>
 <td align="right">0.06661</td>
 <td align="right">not run</td>
 <td align="right">0.4240</td>
 </tr>
 <tr class="even">
 <td align="left">sparse path Laplacian</td>
-<td align="right">1.83700</td>
+<td align="right">1.84800</td>
 <td align="right">0.01991</td>
 <td align="right">not run</td>
 <td align="right">3.1880</td>
 </tr>
 <tr class="odd">
 <td align="left">dense low-rank SVD</td>
-<td align="right">1.30600</td>
+<td align="right">1.31200</td>
 <td align="right">0.09405</td>
 <td align="right">0.5606</td>
 <td align="right">0.5942</td>
 </tr>
 <tr class="even">
 <td align="left">tall sparse SVD</td>
-<td align="right">0.01904</td>
+<td align="right">0.01906</td>
 <td align="right">0.02502</td>
 <td align="right">0.1760</td>
 <td align="right">0.8979</td>
 </tr>
 <tr class="odd">
 <td align="left">wide sparse SVD</td>
-<td align="right">0.02359</td>
+<td align="right">0.02361</td>
 <td align="right">0.02246</td>
 <td align="right">0.1542</td>
 <td align="right">0.9098</td>
