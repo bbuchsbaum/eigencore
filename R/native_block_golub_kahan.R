@@ -1,7 +1,7 @@
 # Native block Golub-Kahan SVD wrappers.
 # Production wrappers around the C++ retained-cycle / cycle / fit kernels.
 # Moved out of reference_block_golub_kahan.R (which is now reserved for the
-# oracle/prototype reference path per AGENTS.md).
+# oracle/prototype reference path under the repository solver-layering policy).
 
 #' @keywords internal
 native_block_golub_kahan_ritz <- function(V, AV, rank, target = largest(),

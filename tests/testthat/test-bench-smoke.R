@@ -870,36 +870,28 @@ test_that("V2 CRAN documentation scope audit names required doc surfaces", {
   expect_true(any(grepl("documentation-scope companion", lines, fixed = TRUE)))
 })
 
-test_that("prd defines V2 as CRAN release and moves hard solver expansion to V3", {
-  prd <- test_path("../../prd.json")
-  skip_if_not(file.exists(prd), "source PRD is not available in installed-package checks")
-  text <- paste(readLines(prd, warn = FALSE), collapse = "\n")
+test_that("tracked release docs define the V2 boundary and V3 deferrals", {
+  docs <- c(
+    test_path("../../docs/v1-readiness-audit.md"),
+    test_path("../../docs/known-limitations.md"),
+    test_path("../../docs/contribution-methods-artifact.md")
+  )
+  skip_if_not(all(file.exists(docs)), "source docs are not available in installed-package checks")
+  text <- paste(unlist(lapply(docs, readLines, warn = FALSE)), collapse = "\n")
   required <- c(
-    "\"release_strategy\"",
-    "\"v2_cran_release\"",
-    "Ship eigencore V2 as the first CRAN release",
-    "V2 is a release-hardening and publication boundary",
-    "\"v2_scope\"",
-    "\"release_name\": \"V2 CRAN release\"",
-    "\"v3_scope\"",
+    "Treat V2 as the CRAN release boundary",
+    "future work is documented as V3 deferral rather than hidden release debt",
     "Jacobi-Davidson",
-    "full nonsymmetric Krylov-Schur workflows",
+    "full nonsymmetric Krylov-Schur",
     "scalable sparse/matrix-free interior SVD",
     "native general sparse LU ownership",
-    "native complex sparse/operator kernels",
-    "GraphBLAS-style sparse kernels",
-    "optional SLEPc/PETSc plugin",
-    "automatic adapters for broad matrix ecosystems"
+    "complex sparse/operator kernels",
+    "GraphBLAS/GPU/distributed/SLEPc/PRIMME plugins",
+    "broad matrix ecosystem adapters"
   )
   for (needle in required) {
     expect_true(grepl(needle, text, fixed = TRUE), info = needle)
   }
-  v2_pos <- regexpr("\"v2_scope\"", text, fixed = TRUE)[[1]]
-  v3_pos <- regexpr("\"v3_scope\"", text, fixed = TRUE)[[1]]
-  jd_pos <- regexpr("Jacobi-Davidson", text, fixed = TRUE)[[1]]
-  expect_gt(v2_pos, 0)
-  expect_gt(v3_pos, v2_pos)
-  expect_gt(jd_pos, v3_pos)
 })
 
 test_that("known limitations match current shift-invert boundary", {

@@ -18,3 +18,8 @@ vendor/
 PACKAGES
 PACKAGES.gz
 PACKAGES.rds
+
+# Local agent guidance and internal planning
+AGENTS.md
+CLAUDE.md
+planning/

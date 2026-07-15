@@ -497,7 +497,7 @@ source_or_null <- function(A) {
 #' source that operator_algebra is allowed to fold and rethread through
 #' metadata$source. Sparse, integer, or non-matrix inputs must collapse
 #' the fold to NULL so downstream certification helpers don't silently
-#' as.matrix() a huge product (NN-3 in AGENTS.md).
+#' as.matrix() a huge product, preserving the no-silent-densification policy.
 is_dense_double_matrix <- function(x) {
   !is.null(x) && is.matrix(x) && is.double(x) && !inherits(x, "Matrix")
 }

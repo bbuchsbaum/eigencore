@@ -3,7 +3,7 @@
 Date: 2026-06-07
 
 This document is the contribution-facing package of the V2 CRAN release
-evidence. It does not replace `prd.json`, `docs/v1-readiness-audit.md`, or
+evidence. It complements `docs/v1-readiness-audit.md` and
 `docs/v1-benchmark-manifest.md`; it turns the preserved V1/V2 evidence into a
 methods story with explicit losses, non-promoted boundaries, and V3 deferrals.
 
@@ -172,7 +172,7 @@ names. The table below is the contribution-level interpretation.
   dense/CSC/diagonal transforms preserve native provenance and no-densification
   guarantees, while matrix-free SVD, nonsymmetric Arnoldi, and generalized-B
   callback rows pass the strict sidecar gate. Broader ecosystem adapters remain
-  deliberately deferred in `prd.json`.
+  deliberately deferred beyond the scoped release surface.
 - `bd-01KTEH5SRWDHXBZXK5CPHBT6G2`: nonsymmetric left eigenvectors and
   biorthogonal certificates are complete for adjoint-capable Arnoldi paths.
   Dense, sparse CSC, and matrix-free operators with `apply_adjoint` now expose

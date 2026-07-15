@@ -23,9 +23,9 @@ V2 CRAN readiness means:
    centered, scaled, summed, composed, and crossprod transforms without silent
    sparse densification.
 4. Production Hermitian, SVD, randomized SVD, generalized SPD, shift-invert,
-   and nonsymmetric surfaces meet their PRD gates before promotion.
+   and nonsymmetric surfaces meet their release gates before promotion.
 5. Certificates, target taxonomy, result fields, and RSpectra-compatible shims
-   remain consistent with the PRD.
+   remain consistent with the documented release scope.
 6. Release hardening includes full tests, CRAN-like checks, benchmark reports,
    docs, migration guidance, known-limitations documentation, and mote handoff.
 
@@ -33,7 +33,7 @@ V2 CRAN readiness means:
 
 | Requirement | Evidence artifact | Verification command or check | Current status |
 |---|---|---|---|
-| PRD scope reconciliation | `prd.json`, `docs/known-limitations.md` | `python -m json.tool prd.json`; search for stale V2 algorithm-expansion language; inspect `release_strategy.v2_cran_release`, `v2_scope`, `v3_scope`, `post_v1_tracker_map`, and milestone `current_status` fields | Green when `prd.json` defines V2 as the CRAN release boundary, moves nonessential solver expansion to V3, qualifies the central product claim, and preserves current-status text for milestones 5-9. |
+| Release-scope reconciliation | `docs/known-limitations.md`, `docs/v1-completion-audit.md` | Search tracked release docs for stale V2 algorithm-expansion language; inspect the V2 boundary, V3 deferrals, stop rules, and current gate status | Green when tracked release docs define V2 as the CRAN release boundary, move nonessential solver expansion to V3, qualify the central product claim, and preserve the release stop rules. |
 | Package checks clean | `eigencore_1.0.0.tar.gz` tarball result | `LC_ALL=C LANG=C R CMD build /Users/bbuchsbaum/code/eigencore`; `LC_ALL=C LANG=C R CMD check --as-cran --no-manual eigencore_1.0.0.tar.gz` | Green on 2026-07-03 via `rcmdcheck::rcmdcheck(path = ".", args = c("--as-cran", "--no-manual"), build_args = "--no-manual")` after the generalized-eigen release gate and exported-return-value docs: `0 ERROR`, `0 WARNING`, `1 NOTE` for CRAN new submission. |
 | Full test suite clean | `tests/testthat/` | `Rscript -e 'pkgload::load_all("."); testthat::test_dir("tests/testthat", reporter="summary")'`; installed `tests/testthat.R` inside the source-tarball check | Green on 2026-07-03: the full source suite was green after the generalized-eigen gate, and the installed-package `testthat.R` pass in the fresh 1.0.0 CRAN-like check was OK. |
 | Diff hygiene | whole repo | `git diff --check` | Green on 2026-07-03 after release metadata, generalized-eigen docs, benchmark, roxygen, and exported return-value documentation updates. |
@@ -97,8 +97,8 @@ V2 CRAN readiness means:
   provenance. `auto()` nearest-sigma planning now uses an implicit
   `shift_invert(sigma)` transform where supported and fails loudly for
   matrix-free/unfactorized inputs without a solve. General sparse native LU and
-  native ownership of user-supplied solve functions are explicit PRD non-goals
-  unless a future PRD reopens them.
+  native ownership of user-supplied solve functions are explicit release
+  non-goals unless a future scope revision reopens them.
 - Nonsymmetric: dense and sparse CSC paths have a native Arnoldi cycle with
   native refined Ritz extraction, while real matrix-free callback paths keep
   native projected Ritz extraction with wired restart controls. The 2026-06-05
@@ -127,7 +127,7 @@ V2 CRAN readiness means:
 Mark the V2 CRAN thread goal complete only after:
 
 1. Every row above is either green with fresh evidence or explicitly scoped out
-   by a revised PRD.
+   by a tracked release-scope revision.
 2. The strict benchmark gates for promoted solver families have been rerun from
    a clean installed package.
 3. `R CMD check --no-manual` is green from a fresh tarball.
