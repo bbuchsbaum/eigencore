@@ -1,7 +1,5 @@
 <urlset xmlns = 'http://www.sitemaps.org/schemas/sitemap/0.9'>
 <url><loc>https://bbuchsbaum.github.io/eigencore/404.html</loc></url>
-<url><loc>https://bbuchsbaum.github.io/eigencore/AGENTS.html</loc></url>
-<url><loc>https://bbuchsbaum.github.io/eigencore/CLAUDE.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/LICENSE-text.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/articles/benchmarks.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/articles/certificates.html</loc></url>
@@ -10,11 +8,7 @@
 <url><loc>https://bbuchsbaum.github.io/eigencore/articles/index.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/authors.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/index.html</loc></url>
-<url><loc>https://bbuchsbaum.github.io/eigencore/mission.html</loc></url>
-<url><loc>https://bbuchsbaum.github.io/eigencore/native-perf-audit.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/news/index.html</loc></url>
-<url><loc>https://bbuchsbaum.github.io/eigencore/plan_v1.html</loc></url>
-<url><loc>https://bbuchsbaum.github.io/eigencore/plan_v2_streaming_svd.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/adjoint.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/alpha_beta.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/as_operator.html</loc></url>
@@ -82,6 +76,5 @@
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/validate_svd_accuracy.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/values.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/vectors.html</loc></url>
-<url><loc>https://bbuchsbaum.github.io/eigencore/vision.html</loc></url>
 </urlset>
 

@@ -20,7 +20,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.0.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.0.0.9000</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -164,7 +164,7 @@ There is no silent dispatch.</p>
 <span><span class="co">#&gt;   locked: 5 </span></span>
 <span><span class="co">#&gt;   max residual: 1.67046e-07 </span></span>
 <span><span class="co">#&gt;   max backward error: 4.546939e-09 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 2.109424e-15 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.776357e-15 </span></span>
 <span><span class="co">#&gt;   norm bound: frobenius_exact+identity_exact </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
@@ -178,7 +178,7 @@ There is no silent dispatch.</p>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   max residual: 1.67046e-07 </span></span>
 <span><span class="co">#&gt;   max backward error: 4.546939e-09 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 2.109424e-15 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.776357e-15 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE</span></span></code></pre></div>
 <p>A passing certificate means: every requested pair has</p>
@@ -239,9 +239,9 @@ which is exactly why a certificate matters.</p>
 <span><span class="co">#&gt;   target: largest </span></span>
 <span><span class="co">#&gt;   restart: lobpcg </span></span>
 <span><span class="co">#&gt;   locked: 5 </span></span>
-<span><span class="co">#&gt;   max residual: 2.71427e-08 </span></span>
-<span><span class="co">#&gt;   max backward error: 1.961324e-10 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 1.554312e-15 </span></span>
+<span><span class="co">#&gt;   max residual: 9.243565e-09 </span></span>
+<span><span class="co">#&gt;   max backward error: 7.47322e-11 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.44329e-15 </span></span>
 <span><span class="co">#&gt;   norm bound: frobenius_exact+frobenius_exact </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
@@ -264,9 +264,9 @@ both <code>A</code> and <code>B</code>.</p>
 <span><span class="co">#&gt;   converged rank: 5 </span></span>
 <span><span class="co">#&gt;   method: native certified Gram SVD special case </span></span>
 <span><span class="co">#&gt;   target: largest </span></span>
-<span><span class="co">#&gt;   max residual: 1.150887e-15 </span></span>
-<span><span class="co">#&gt;   max backward error: 8.059933e-18 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 4.440892e-16 </span></span>
+<span><span class="co">#&gt;   max residual: 1.359395e-15 </span></span>
+<span><span class="co">#&gt;   max backward error: 9.520164e-18 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 5.689893e-16 </span></span>
 <span><span class="co">#&gt;   norm bound: frobenius_exact </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
@@ -310,9 +310,9 @@ adding <code>certificate</code> and <code>diagnostics</code>:</p>
 <span><span class="co">#&gt;   type: residual_backward_error </span></span>
 <span><span class="co">#&gt;   norm bound: frobenius_exact+identity_exact </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
-<span><span class="co">#&gt;   max residual: 2.074432e-09 </span></span>
-<span><span class="co">#&gt;   max backward error: 5.646538e-11 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 2.220446e-15 </span></span>
+<span><span class="co">#&gt;   max residual: 2.074433e-09 </span></span>
+<span><span class="co">#&gt;   max backward error: 5.646539e-11 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 8.881784e-16 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE</span></span></code></pre></div>
 <p><code><a href="../reference/eigs.html">eigs()</a></code>, <code><a href="../reference/eigs_sym.html">eigs_sym()</a></code>, and <code><a href="../reference/svds.html">svds()</a></code>
@@ -356,7 +356,7 @@ native operator implementation.</li>
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.0.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
     </footer>
