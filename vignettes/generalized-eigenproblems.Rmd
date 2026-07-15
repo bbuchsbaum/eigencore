@@ -1,0 +1,237 @@
+---
+title: Generalized eigenvalue problems with eigencore
+output:
+  rmarkdown::html_vignette:
+    toc: yes
+    toc_depth: 2.0
+    css: albers.css
+    includes:
+      in_header: albers-header.html
+params:
+  family: lapis
+  preset: homage
+resource_files:
+- albers.css
+- albers.js
+- albers-header.html
+- fonts
+
+vignette: |
+  %\VignetteIndexEntry{Generalized eigenvalue problems with eigencore}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE
+)
+library(eigencore)
+library(Matrix)
+```
+
+```{r albers-classes, echo=FALSE, results='asis'}
+cat(sprintf(
+  paste0(
+    '<script>document.addEventListener("DOMContentLoaded",function(){',
+    'document.body.classList.remove("palette-red","palette-lapis","palette-ochre","palette-teal","palette-green","palette-violet","preset-homage","preset-interaction","preset-study","preset-structural","preset-adobe","preset-midnight");',
+    'document.body.classList.add("palette-%s","preset-%s");',
+    '});</script>'
+  ),
+  params$family,
+  params$preset
+))
+```
+
+A generalized eigenvalue problem asks for nonzero vectors $x$ and scalars
+$\lambda$ satisfying
+
+$$
+A x = \lambda B x.
+$$
+
+The second matrix $B$ may define a positive-definite metric, or it may be part
+of a more general matrix pencil. eigencore supports both cases, along with
+partial solves when you need only a few eigenpairs and QZ decompositions when
+you need the full structure of a dense pencil.
+
+## Start with a positive-definite metric
+
+When `A` is symmetric (or Hermitian) and `B` is symmetric positive definite,
+pass `B` directly to `eig_full()`. The returned vectors are normalized in the
+$B$ metric.
+
+```{r dense-spd}
+A <- diag(c(2, 8, 18))
+B <- diag(c(1, 2, 3))
+
+fit <- eig_full(A, B = B)
+values(fit)
+certificate(fit)$passed
+```
+
+Here the generalized eigenvalues are 2, 4, and 6: each diagonal entry of `A`
+is divided by the corresponding entry of `B`.
+
+```{r validate-dense-spd, include=FALSE}
+stopifnot(
+  isTRUE(certificate(fit)$passed),
+  isTRUE(all.equal(sort(Re(values(fit))), c(2, 4, 6)))
+)
+```
+
+## Compute only part of the spectrum
+
+Use `eig_partial()` when you need only a few eigenpairs. A target such as
+`smallest()` states which part of the spectrum to compute.
+
+```{r partial-spd}
+part <- eig_partial(A, B = B, k = 2, target = smallest())
+values(part)
+part$method
+certificate(part)$passed
+```
+
+```{r validate-partial-spd, include=FALSE}
+stopifnot(
+  isTRUE(certificate(part)$passed),
+  isTRUE(all.equal(sort(Re(values(part))), c(2, 4), tolerance = 1e-7))
+)
+```
+
+The main choice is the structure of the problem and how much of its spectrum
+you need:
+
+| Problem | Function |
+| --- | --- |
+| Symmetric/Hermitian `A` with positive-definite `B`, full spectrum | `eig_full(A, B = B)` |
+| Symmetric/Hermitian `A` with positive-definite `B`, partial spectrum | `eig_partial(A, B = B, k = ...)` |
+| Dense general pencil | `eig_full(A, B = B, structure = general())` |
+| Dense generalized Schur decomposition | `generalized_schur(A, B)` |
+
+## Handle a dense general pencil
+
+Use `structure = general()` when `B` is indefinite, singular, nonsymmetric, or
+when the pair does not satisfy the symmetric/Hermitian positive-definite
+contract. This path represents eigenvalues by homogeneous coordinates
+$(\alpha, \beta)$, where a finite eigenvalue is $\alpha / \beta$.
+
+```{r dense-general}
+A_general <- matrix(c(1, 4, 2, 3), 2, 2)
+B_general <- matrix(c(2, 1, 0, -1), 2, 2)
+
+pencil <- eig_full(A_general, B = B_general, structure = general())
+values(pencil)
+alpha_beta(pencil)$classification
+certificate(pencil)$passed
+```
+
+```{r validate-dense-general, include=FALSE}
+stopifnot(
+  isTRUE(certificate(pencil)$passed),
+  all(alpha_beta(pencil)$classification == "finite")
+)
+```
+
+Homogeneous coordinates are especially useful when `B` is singular. eigencore
+classifies finite, infinite, and undefined eigenvalues instead of forcing every
+pair into an ordinary numeric ratio.
+
+```{r singular-pencil}
+singular <- eig_full(
+  diag(c(2, 3, 0)),
+  B = diag(c(1, 0, 0)),
+  structure = general()
+)
+
+alpha_beta(singular)$classification
+certificate(singular)$failed_indices
+```
+
+```{r validate-singular-pencil, include=FALSE}
+stopifnot(identical(
+  sort(alpha_beta(singular)$classification),
+  sort(c("finite", "infinite", "undefined"))
+))
+```
+
+## Use QZ when you need the Schur form
+
+`generalized_schur()` computes a dense generalized Schur, or QZ,
+decomposition. Use `values()` for the finite ratios and `alpha_beta()` when you
+need the homogeneous coordinates or finite/infinite classification.
+
+```{r qz}
+qz <- generalized_schur(A_general, B_general)
+values(qz)
+alpha_beta(qz)$classification
+qz$method
+```
+
+```{r validate-qz, include=FALSE}
+stopifnot(
+  length(values(qz)) == 2L,
+  all(alpha_beta(qz)$classification == "finite")
+)
+```
+
+For pencils with singular `B`, `sort = "finite"` or `sort = "infinite"` moves
+the requested class to the leading part of the decomposition.
+
+```{r qz-sort}
+qz_singular <- generalized_schur(
+  diag(c(2, 3, 0)),
+  diag(c(1, 0, 0)),
+  sort = "infinite"
+)
+alpha_beta(qz_singular)$classification
+```
+
+## Keep sparse partial problems sparse
+
+Sparse symmetric/Hermitian problems with a positive-definite metric use
+`eig_partial()`. Set `allow_dense_fallback = "never"` when preserving sparsity
+is a hard requirement.
+
+```{r sparse-partial}
+A_sparse <- Diagonal(x = c(1, 4, 9, 16, 25, 36))
+B_sparse <- Diagonal(x = c(1, 2, 3, 4, 5, 6))
+
+sparse_fit <- eig_partial(
+  A_sparse,
+  B = B_sparse,
+  k = 3,
+  target = smallest(),
+  method = lanczos(max_subspace = 6),
+  allow_dense_fallback = "never"
+)
+
+values(sparse_fit)
+sparse_fit$method
+certificate(sparse_fit)$passed
+```
+
+```{r validate-sparse-partial, include=FALSE}
+stopifnot(
+  isTRUE(certificate(sparse_fit)$passed),
+  isTRUE(all.equal(
+    sort(Re(values(sparse_fit))), c(1, 2, 3), tolerance = 1e-7
+  ))
+)
+```
+
+Full-spectrum functions accept base dense matrices and reject sparse or
+operator inputs rather than silently converting them to dense storage.
+
+## A note for older code
+
+The retired `geigen` package exposed related operations, but eigencore is not a
+namespace-compatible replacement. When maintaining older code, translate the
+mathematical operation: use `eig_full()` for a full generalized eigensolve,
+`generalized_schur()` for QZ, and `alpha_beta()` to inspect homogeneous
+eigenvalue coordinates.
+
+For more on result validation, see `vignette("certificates")`.
