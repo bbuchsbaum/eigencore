@@ -1843,6 +1843,9 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
           native$implicit_lanczos_max_backward_error %||% NA_real_,
         native_implicit_normal_lanczos_iterations =
           native$implicit_lanczos_iterations %||% 0L,
+        explicit_gram_retry_used =
+          !identical(native$eigensolver %||% "", "implicit_normal_lanczos") &&
+            (native$implicit_lanczos_iterations %||% 0L) > 0L,
         native_gram_krylov_iterations =
           native$gram_krylov_iterations %||% 0L,
         normal_operator_implicit =
@@ -1938,6 +1941,9 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
               native$implicit_lanczos_max_backward_error %||% NA_real_,
             native_implicit_normal_lanczos_iterations =
               native$implicit_lanczos_iterations %||% 0L,
+            explicit_gram_retry_used =
+              !identical(native$eigensolver %||% "", "implicit_normal_lanczos") &&
+                (native$implicit_lanczos_iterations %||% 0L) > 0L,
             native_gram_krylov_iterations =
               native$gram_krylov_iterations %||% 0L,
             normal_operator_implicit =
@@ -2050,7 +2056,7 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
       gram_side = if (n <= m) "right" else "left",
       gram_dimension = min(m, n),
       native_gram_kernel = if (n <= m) "materialized_right_gram" else "materialized_left_gram",
-      native_gram_eigensolver = "native_dense_symmetric_eigen",
+      native_gram_eigensolver = small$eigensolver,
       materialized_gram = TRUE,
       zero_singular_completion = any(!nz),
       zero_singular_threshold = zero_tol,
@@ -2072,7 +2078,8 @@ gram_svd_eigen_slice <- function(gram, rank, target) {
     if (!is.null(selected)) {
       return(list(
         values = selected$values,
-        vectors = selected$vectors
+        vectors = selected$vectors,
+        eigensolver = "lapack_dsyevr_selected"
       ))
     }
   }
@@ -2081,7 +2088,8 @@ gram_svd_eigen_slice <- function(gram, rank, target) {
   idx <- idx[seq_len(min(rank, length(idx)))]
   list(
     values = eig$values[idx],
-    vectors = eig$vectors[, idx, drop = FALSE]
+    vectors = eig$vectors[, idx, drop = FALSE],
+    eigensolver = "lapack_dsyev_full"
   )
 }
 

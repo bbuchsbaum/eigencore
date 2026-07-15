@@ -1185,8 +1185,15 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   return out_;
 }
 
-extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
-                                             SEXP dim_, SEXP rank_, SEXP tol_) {
+static SEXP eigencore_csc_right_gram_svd_impl(
+    SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP rank_, SEXP tol_,
+    int allow_implicit_lanczos,
+    double prior_gram_seconds,
+    double prior_eigensolve_seconds,
+    double prior_vector_form_seconds,
+    double prior_diagnostics_seconds,
+    double prior_implicit_max_backward_error,
+    int prior_implicit_iterations) {
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
     error("invalid CSC inputs");
   }
@@ -1205,10 +1212,10 @@ extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   const double* Ax = REAL(x_);
 
   auto stage_timer = native_timer_now();
-  double stage_gram_seconds = 0.0;
-  double stage_eigensolve_seconds = 0.0;
-  double stage_vector_form_seconds = 0.0;
-  double stage_diagnostics_seconds = 0.0;
+  double stage_gram_seconds = prior_gram_seconds;
+  double stage_eigensolve_seconds = prior_eigensolve_seconds;
+  double stage_vector_form_seconds = prior_vector_form_seconds;
+  double stage_diagnostics_seconds = prior_diagnostics_seconds;
 
   double frob2 = 0.0;
   for (int idx = 0; idx < Ap[n]; ++idx) {
@@ -1221,20 +1228,21 @@ extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   std::vector<double> values_work(static_cast<size_t>(n), 0.0);
   SEXP v_ = PROTECT(allocMatrix(REALSXP, n, rank));
   int used_implicit_lanczos = 0;
-  int implicit_lanczos_iterations = 0;
-  double implicit_lanczos_max_backward_error = R_PosInf;
+  int implicit_lanczos_iterations = prior_implicit_iterations;
+  double implicit_lanczos_max_backward_error =
+    prior_implicit_max_backward_error;
   const char* lapack_eigensolver = "lapack_dsyevr";
 
   SEXP implicit_option_ = Rf_GetOption1(Rf_install("eigencore.csc_right_normal_lanczos_attempt"));
-  const int attempt_implicit_lanczos =
-    (implicit_option_ == R_NilValue) ? TRUE : (asLogical(implicit_option_) == TRUE);
+  const int attempt_implicit_lanczos = allow_implicit_lanczos &&
+    (asLogical(implicit_option_) == TRUE);
   if (attempt_implicit_lanczos && n <= 128 && rank <= 16) {
     stage_timer = native_timer_now();
     used_implicit_lanczos = csc_implicit_right_normal_lanczos_attempt(
       Ai, Ap, Ax, m, n, rank, tol, norm_A, values_work.data(), REAL(v_),
       &implicit_lanczos_iterations, &implicit_lanczos_max_backward_error
     );
-    stage_eigensolve_seconds = native_timer_elapsed(stage_timer);
+    stage_eigensolve_seconds += native_timer_elapsed(stage_timer);
   }
 
   if (!used_implicit_lanczos) {
@@ -1279,7 +1287,7 @@ extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
         }
       }
     }
-    stage_gram_seconds = native_timer_elapsed(stage_timer);
+    stage_gram_seconds += native_timer_elapsed(stage_timer);
 
     stage_timer = native_timer_now();
     std::vector<double> work_matrix(static_cast<size_t>(n) * static_cast<size_t>(n));
@@ -1321,7 +1329,7 @@ extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
         REAL(v_)[rpos] = tmp_vec;
       }
     }
-    stage_eigensolve_seconds = native_timer_elapsed(stage_timer);
+    stage_eigensolve_seconds += native_timer_elapsed(stage_timer);
   }
 
   stage_timer = native_timer_now();
@@ -1350,7 +1358,7 @@ extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
       REAL(u_)[row + static_cast<int64_t>(scol) * m] *= inv_sigma;
     }
   }
-  stage_vector_form_seconds = native_timer_elapsed(stage_timer);
+  stage_vector_form_seconds += native_timer_elapsed(stage_timer);
 
   stage_timer = native_timer_now();
   SEXP left_ = PROTECT(allocVector(REALSXP, rank));
@@ -1456,7 +1464,36 @@ extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
     }
     implicit_lanczos_max_backward_error = max_backward;
   }
-  stage_diagnostics_seconds = native_timer_elapsed(stage_timer);
+  stage_diagnostics_seconds += native_timer_elapsed(stage_timer);
+
+  if (used_implicit_lanczos) {
+    int certificate_passed = TRUE;
+    for (int scol = 0; scol < rank; ++scol) {
+      if (LOGICAL(converged_)[scol] != TRUE) {
+        certificate_passed = FALSE;
+        break;
+      }
+    }
+    const double orth_tol = std::max(tol, sqrt(DBL_EPSILON));
+    if (REAL(orth_)[0] > orth_tol || REAL(orth_)[1] > orth_tol) {
+      certificate_passed = FALSE;
+    }
+    if (!certificate_passed) {
+      const double failed_implicit_max_backward_error =
+        implicit_lanczos_max_backward_error;
+      const int failed_implicit_iterations = implicit_lanczos_iterations;
+      UNPROTECT(11);
+      return eigencore_csc_right_gram_svd_impl(
+        i_, p_, x_, dim_, rank_, tol_, FALSE,
+        stage_gram_seconds,
+        stage_eigensolve_seconds,
+        stage_vector_form_seconds,
+        stage_diagnostics_seconds,
+        failed_implicit_max_backward_error,
+        failed_implicit_iterations
+      );
+    }
+  }
 
   SEXP diagnostics_ = PROTECT(allocVector(VECSXP, 7));
   SET_VECTOR_ELT(diagnostics_, 0, left_);
@@ -1521,6 +1558,14 @@ extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(22);
   return out_;
+}
+
+extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
+                                             SEXP dim_, SEXP rank_, SEXP tol_) {
+  return eigencore_csc_right_gram_svd_impl(
+    i_, p_, x_, dim_, rank_, tol_, TRUE,
+    0.0, 0.0, 0.0, 0.0, R_PosInf, 0
+  );
 }
 
 static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
@@ -1653,9 +1698,13 @@ static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
   SET_VECTOR_ELT(controls_, 2, ScalarInteger(gram_max_dimension));
   SET_VECTOR_ELT(controls_, 3, ScalarReal(0.5));
   SET_VECTOR_ELT(controls_, 4, ScalarLogical(TRUE));
-  SET_VECTOR_ELT(controls_, 5, mkString("smaller Gram matrix only"));
+  SET_VECTOR_ELT(controls_, 5, mkString(
+    "smaller Gram matrix by default; implicit normal operator only by explicit opt-in"
+  ));
   SET_VECTOR_ELT(controls_, 6, mkString("certification-gated"));
-  SET_VECTOR_ELT(controls_, 7, mkString("native Golub-Kahan if original-coordinate certificate is weaker"));
+  SET_VECTOR_ELT(controls_, 7, mkString(
+    "opt-in implicit candidate retries explicit Gram; native Golub-Kahan if still uncertified"
+  ));
   SET_VECTOR_ELT(controls_, 8, mkString("both"));
   SET_VECTOR_ELT(controls_, 9, ScalarLogical(TRUE));
   SET_VECTOR_ELT(controls_, 10, ScalarInteger(m > n ? m : n));
@@ -1673,7 +1722,9 @@ static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
   SET_STRING_ELT(reasons_, 0, mkChar("target: largest"));
   SET_STRING_ELT(reasons_, 1, mkChar("rectangular SVD problem"));
   SET_STRING_ELT(reasons_, 2, mkChar("adjoint is available"));
-  SET_STRING_ELT(reasons_, 3, mkChar("small rectangular sparse problem: materializes the smaller Gram matrix as an explicit certified special case"));
+  SET_STRING_ELT(reasons_, 3, mkChar(
+    "bounded smaller-side normal problem with exact original-coordinate certification; explicit Gram is the production default"
+  ));
   SET_STRING_ELT(reasons_, 4, mkChar("built-in sparse CSC operator has native block apply"));
   SET_STRING_ELT(reasons_, 5, mkChar("direct svd_partial() fast path avoids S3 dispatch overhead"));
 
@@ -1683,7 +1734,9 @@ static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
   SET_VECTOR_ELT(plan_, 2, mkString("native certified Gram SVD special case"));
   SET_VECTOR_ELT(plan_, 3, mkString("largest"));
   SET_VECTOR_ELT(plan_, 4, reasons_);
-  SET_VECTOR_ELT(plan_, 5, mkString("native Golub-Kahan if Gram special case is disabled or uncertified"));
+  SET_VECTOR_ELT(plan_, 5, mkString(
+    "opt-in implicit candidate retries explicit Gram; native Golub-Kahan if Gram remains uncertified"
+  ));
   SET_VECTOR_ELT(plan_, 6, controls_);
   SEXP plan_names_ = PROTECT(allocVector(STRSXP, 7));
   const char* plan_names[] = {
@@ -1696,7 +1749,7 @@ static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
   SET_STRING_ELT(plan_class_, 0, mkChar("eigencore_plan"));
   setAttrib(plan_, R_ClassSymbol, plan_class_);
 
-  SEXP restart_ = PROTECT(allocVector(VECSXP, 24));
+  SEXP restart_ = PROTECT(allocVector(VECSXP, 25));
   SET_VECTOR_ELT(restart_, 0, mkString("gram_svd_special_case"));
   SET_VECTOR_ELT(restart_, 1, ScalarLogical(TRUE));
   SET_VECTOR_ELT(restart_, 2, ScalarLogical(TRUE));
@@ -1721,7 +1774,14 @@ static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
   SET_VECTOR_ELT(restart_, 21, ScalarString(NA_STRING));
   SET_VECTOR_ELT(restart_, 22, ScalarLogical(all_converged && orth_passed));
   SET_VECTOR_ELT(restart_, 23, ScalarReal(max_backward));
-  SEXP restart_names_ = PROTECT(allocVector(STRSXP, 24));
+  SET_VECTOR_ELT(
+    restart_, 24,
+    ScalarLogical(
+      strcmp(CHAR(STRING_ELT(eigensolver_, 0)), "implicit_normal_lanczos") != 0 &&
+      INTEGER(implicit_iter_)[0] > 0
+    )
+  );
+  SEXP restart_names_ = PROTECT(allocVector(STRSXP, 25));
   const char* restart_names[] = {
     "kind", "implemented", "native", "gram_side", "gram_dimension",
     "native_gram_kernel", "native_gram_eigensolver",
@@ -1733,9 +1793,10 @@ static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
     "zero_singular_threshold", "certificate_reuses_gram_sides",
     "certified_in_original_coordinates", "fallback_attempted",
     "fallback_used", "fallback_method", "fallback_error",
-    "gram_certificate_passed", "gram_max_backward_error"
+    "gram_certificate_passed", "gram_max_backward_error",
+    "explicit_gram_retry_used"
   };
-  for (int i = 0; i < 24; ++i) SET_STRING_ELT(restart_names_, i, mkChar(restart_names[i]));
+  for (int i = 0; i < 25; ++i) SET_STRING_ELT(restart_names_, i, mkChar(restart_names[i]));
   setAttrib(restart_, R_NamesSymbol, restart_names_);
 
   SEXP out_ = PROTECT(allocVector(VECSXP, 19));

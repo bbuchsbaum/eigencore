@@ -4,6 +4,7 @@ source("inst/benchmarks/_helpers.R")
 
 raw_args <- commandArgs(trailingOnly = TRUE)
 args <- benchmark_args(raw_args)
+crossover_mode <- "--crossover" %in% raw_args
 
 gram_max_arg <- benchmark_arg_value(raw_args, "--gram-max=")
 gram_max <- if (is.null(gram_max_arg)) {
@@ -24,7 +25,6 @@ iterations <- if (is.na(args$iterations)) {
 methods <- args$methods %||% c(
   "eigencore",
   "RSpectra",
-  "PRIMME",
   "irlba",
   if (args$quick) "base"
 )
@@ -72,7 +72,53 @@ wide_gram_cutoff_case <- function(case, m, n, density, rank, seed,
   tall
 }
 
-cases <- if (args$quick) {
+controlled_crossover_cases <- function(quick = FALSE) {
+  small_side <- 90L
+  rank <- 5L
+  density <- 0.003
+  long_sides <- if (isTRUE(quick)) c(600L, 5000L) else {
+    c(600L, 5000L, 25000L, 100000L)
+  }
+  max_long <- max(long_sides)
+  tall_max <- tall_skinny_sparse(
+    max_long,
+    small_side,
+    density = density,
+    seed = 9501L
+  )
+  unlist(lapply(long_sides, function(long_side) {
+    tall <- tall_max[seq_len(long_side), , drop = FALSE]
+    suffix <- sprintf("%06d", long_side)
+    list(
+      list(
+        case = paste0("tall_fixed90_long", suffix),
+        id = paste0("tall_fixed90_long", suffix, ":", long_side, "x", small_side),
+        A = tall,
+        rank = rank,
+        small_side = small_side,
+        long_side = long_side,
+        orientation = "tall",
+        density = density,
+        base_meaningful = isTRUE(quick)
+      ),
+      list(
+        case = paste0("wide_fixed90_long", suffix),
+        id = paste0("wide_fixed90_long", suffix, ":", small_side, "x", long_side),
+        A = Matrix::t(tall),
+        rank = rank,
+        small_side = small_side,
+        long_side = long_side,
+        orientation = "wide",
+        density = density,
+        base_meaningful = isTRUE(quick)
+      )
+    )
+  }), recursive = FALSE)
+}
+
+cases <- if (isTRUE(crossover_mode)) {
+  controlled_crossover_cases(quick = args$quick)
+} else if (args$quick) {
   list(
     gram_cutoff_case("tall_sparse_600", 1200L, 600L, 0.004, 4L, 9201L, TRUE),
     wide_gram_cutoff_case("wide_sparse_600", 600L, 1200L, 0.004, 4L, 9202L, TRUE),
@@ -190,6 +236,13 @@ rows <- lapply(seq_along(cases), function(i) {
   out$n <- ncol(case$A)
   out$rank <- case$rank
   out$small_side <- case$small_side
+  out$long_side <- case$long_side %||% max(nrow(case$A), ncol(case$A))
+  out$orientation <- case$orientation %||% if (nrow(case$A) >= ncol(case$A)) {
+    "tall"
+  } else {
+    "wide"
+  }
+  out$benchmark_mode <- if (isTRUE(crossover_mode)) "controlled_crossover" else "gram_cutoff"
   out$gram_max_dimension <- gram_max
   out$input_density <- case$density
   out
@@ -227,6 +280,12 @@ gates <- if (isTRUE(can_evaluate_gates)) {
     gate$n <- ncol(case$A)
     gate$rank <- case$rank
     gate$small_side <- case$small_side
+    gate$long_side <- case$long_side %||% max(nrow(case$A), ncol(case$A))
+    gate$orientation <- case$orientation %||% if (nrow(case$A) >= ncol(case$A)) {
+      "tall"
+    } else {
+      "wide"
+    }
     gate$gram_max_dimension <- gram_max
     gate
   })
@@ -281,13 +340,75 @@ contracts <- do.call(rbind, contracts)
 row.names(contracts) <- NULL
 print(contracts)
 
+crossover_summary <- if (isTRUE(crossover_mode)) {
+  do.call(rbind, lapply(cases, function(case) {
+    case_rows <- result[result$case == case$case, , drop = FALSE]
+    subject_row <- case_rows[case_rows$method == gate_subject, , drop = FALSE]
+    reference_rows <- case_rows[
+      case_rows$method != gate_subject &
+        !case_rows$method %in% svd_internal_methods() &
+        case_rows$certificate_passed &
+        case_rows$nconv >= case$rank,
+      ,
+      drop = FALSE
+    ]
+    if (nrow(subject_row) != 1L || !nrow(reference_rows)) {
+      return(data.frame(
+        case = case$case,
+        orientation = case$orientation,
+        long_side = case$long_side,
+        small_side = case$small_side,
+        rank = case$rank,
+        best_certified_reference = NA_character_,
+        raw_speed_ratio = NA_real_,
+        certified_total_speed_ratio = NA_real_,
+        stringsAsFactors = FALSE
+      ))
+    }
+    best <- reference_rows[which.min(reference_rows$median), , drop = FALSE]
+    data.frame(
+      case = case$case,
+      orientation = case$orientation,
+      long_side = case$long_side,
+      small_side = case$small_side,
+      rank = case$rank,
+      best_certified_reference = best$method,
+      raw_speed_ratio = best$raw_solver_median / subject_row$raw_solver_median,
+      certified_total_speed_ratio = best$median / subject_row$median,
+      stringsAsFactors = FALSE
+    )
+  }))
+} else {
+  data.frame()
+}
+row.names(crossover_summary) <- NULL
+print(crossover_summary)
+
+crossover_evidence <- if (isTRUE(crossover_mode)) {
+  svd_crossover_evidence_contract(
+    result,
+    crossover_summary,
+    subject = gate_subject
+  )
+} else {
+  data.frame()
+}
+print(crossover_evidence)
+
 policy <- data.frame(
   subject = gate_subject,
   gram_max_dimension = gram_max,
   cases = paste(contracts$case, collapse = ","),
   contracts_passed = all(contracts$passed),
   reference_gates_passed = if (nrow(gates)) all(gates$passed) else FALSE,
-  recommendation = if (all(contracts$passed) && nrow(gates) && all(gates$passed)) {
+  crossover_evidence_passed = if (isTRUE(crossover_mode)) {
+    isTRUE(crossover_evidence$passed)
+  } else {
+    NA
+  },
+  recommendation = if (isTRUE(crossover_mode)) {
+    "controlled_crossover_evidence"
+  } else if (all(contracts$passed) && nrow(gates) && all(gates$passed)) {
     "raise_cutoff_candidate"
   } else {
     "keep_current_cutoff_or_collect_more_evidence"
@@ -297,17 +418,24 @@ policy <- data.frame(
 print(policy)
 
 if (args$save) {
-  message("saved rows: ", save_benchmark_result(result, "svd-gram-cutoff-rows"))
-  message("saved gates: ", save_benchmark_result(gates, "svd-gram-cutoff-gates"))
+  artifact_prefix <- if (isTRUE(crossover_mode)) "svd-crossover" else "svd-gram-cutoff"
+  message("saved rows: ", save_benchmark_result(result, paste0(artifact_prefix, "-rows")))
+  message("saved gates: ", save_benchmark_result(gates, paste0(artifact_prefix, "-gates")))
   message(
     "saved memory diagnostics: ",
-    save_benchmark_result(memory_diagnostics, "svd-gram-cutoff-memory")
+    save_benchmark_result(memory_diagnostics, paste0(artifact_prefix, "-memory"))
   )
   message(
     "saved contracts: ",
-    save_benchmark_result(contracts, "svd-gram-cutoff-contracts")
+    save_benchmark_result(contracts, paste0(artifact_prefix, "-contracts"))
   )
-  message("saved policy: ", save_benchmark_result(policy, "svd-gram-cutoff-policy"))
+  message("saved policy: ", save_benchmark_result(policy, paste0(artifact_prefix, "-policy")))
+  if (isTRUE(crossover_mode)) {
+    message(
+      "saved crossover summary: ",
+      save_benchmark_result(crossover_summary, "svd-crossover-summary")
+    )
+  }
 }
 
 if (args$strict) {
@@ -316,5 +444,22 @@ if (args$strict) {
   }
   if (!all(contracts$passed)) {
     stop("Gram cutoff strict mode failed certification/provenance contract.", call. = FALSE)
+  }
+  if (isTRUE(crossover_mode) && !isTRUE(crossover_evidence$passed)) {
+    required_fields <- c(
+      "external_references_certified",
+      "summary_complete",
+      "orientations_complete",
+      "certified_total_sampled_crossover"
+    )
+    failed <- required_fields[
+      !vapply(crossover_evidence[required_fields], isTRUE, logical(1))
+    ]
+    stop(
+      "Gram cutoff strict crossover evidence failed: ",
+      paste(failed, collapse = ", "),
+      ".",
+      call. = FALSE
+    )
   }
 }

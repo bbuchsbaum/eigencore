@@ -677,6 +677,22 @@ run_irlba_lbd_normal_scout_method <- function(A, rank, tol, seed = NULL,
 }
 
 #' @keywords internal
+run_rspectra_svd_method <- function(A, rank, tol, solver = RSpectra::svds) {
+  solver(
+    A,
+    k = rank,
+    nu = rank,
+    nv = rank,
+    opts = list(tol = tol, maxitr = 1000L)
+  )
+}
+
+#' @keywords internal
+run_irlba_svd_method <- function(A, rank, tol, solver = irlba::irlba) {
+  solver(A, nv = rank, nu = rank, tol = tol)
+}
+
+#' @keywords internal
 run_svd_method <- function(method, A, rank, tol, seed = NULL) {
   switch(
     method,
@@ -947,8 +963,8 @@ run_svd_method <- function(method, A, rank, tol, seed = NULL) {
         values = decomp$d[idx]
       )
     },
-    RSpectra = RSpectra::svds(A, k = rank),
-    irlba = irlba::irlba(A, nv = rank, nu = rank),
+    RSpectra = run_rspectra_svd_method(A, rank = rank, tol = tol),
+    irlba = run_irlba_svd_method(A, rank = rank, tol = tol),
     rsvd = rsvd::rsvd(A, k = rank, nu = rank, nv = rank),
     stop("Unsupported SVD benchmark method: ", method, call. = FALSE)
   )

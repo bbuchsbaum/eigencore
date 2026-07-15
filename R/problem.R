@@ -642,7 +642,7 @@ plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ..
     "rectangular SVD problem",
     if (!is.null(problem$A$apply_adjoint)) "adjoint is available" else "adjoint is missing",
     if (identical(chosen, "native certified Gram SVD special case")) {
-      "small rectangular sparse problem: materializes the smaller Gram matrix as an explicit certified special case"
+      "bounded smaller-side normal problem with exact original-coordinate certification; explicit Gram is the production default"
     } else if (identical(chosen, native_retained_golub_kahan_diagnostic_label())) {
       "sparse explicit operator uses diagnostic native retained block Golub-Kahan with thick restart; not production-promoted"
     } else if (identical(chosen, native_matrix_free_golub_kahan_label()) ||
@@ -661,7 +661,10 @@ plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ..
     operator_kernel_reason(problem$A)
   )
   fallback <- if (identical(chosen, "native certified Gram SVD special case")) {
-    "native Golub-Kahan if Gram special case is disabled or uncertified"
+    paste(
+      "opt-in implicit candidate retries explicit Gram;",
+      "native Golub-Kahan if Gram remains uncertified"
+    )
   } else if (identical(chosen, native_matrix_free_golub_kahan_label()) ||
       identical(chosen, native_matrix_free_smallest_golub_kahan_label()) ||
       identical(chosen, native_matrix_free_interior_golub_kahan_label())) {

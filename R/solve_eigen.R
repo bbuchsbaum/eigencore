@@ -546,15 +546,29 @@ solve_eigen_grid_laplacian_2d <- function(a, k, tol, vectors, certify, plan) {
 solve_eigen_native_dense_hermitian <- function(a, k, tol, vectors, certify,
                                                 allow_dense_fallback, plan) {
   A <- materialize_dense_fallbacks(list(A = a$A), allow = allow_dense_fallback)$A
+  target_kind <- if (inherits(a$target, "eigencore_target")) {
+    a$target$kind
+  } else {
+    "largest"
+  }
+  selected_range <- !is.complex(A) && k < nrow(A) &&
+    target_kind %in% c("largest", "smallest")
   eig <- if (is.complex(A)) {
     native_dense_complex_hermitian_eigen(A)
+  } else if (selected_range) {
+    native_dense_symmetric_eigen_selected(A, k, a$target)
   } else {
     native_dense_symmetric_eigen(A)
   }
-  idx <- order_indices(eig$values, a$target)
-  idx <- idx[seq_len(min(k, length(idx)))]
-  vals <- eig$values[idx]
-  vecs <- if (vectors) eig$vectors[, idx, drop = FALSE] else NULL
+  if (selected_range) {
+    vals <- eig$values
+    vecs <- if (vectors) eig$vectors else NULL
+  } else {
+    idx <- order_indices(eig$values, a$target)
+    idx <- idx[seq_len(min(k, length(idx)))]
+    vals <- eig$values[idx]
+    vecs <- if (vectors) eig$vectors[, idx, drop = FALSE] else NULL
+  }
   cert <- if (certify && !is.null(vecs)) {
     certify_eigen(A, vals, vecs, tol = tol)
   } else {
@@ -571,9 +585,30 @@ solve_eigen_native_dense_hermitian <- function(a, k, tol, vectors, certify,
     plan = plan,
     warnings = if (identical(plan$method, native_dense_complex_hermitian_label())) {
       "using native dense complex Hermitian LAPACK fallback; iterative engine not yet implemented"
+    } else if (selected_range) {
+      "using native dense Hermitian LAPACK fallback (selected-range dsyevr); iterative engine not yet implemented"
     } else {
       "using native dense Hermitian LAPACK fallback; iterative engine not yet implemented"
-    }
+    },
+    extras = list(
+      restart = list(
+        kind = "dense_hermitian_lapack",
+        implemented = TRUE,
+        native = TRUE,
+        eigensolver = if (is.complex(A)) {
+          "native_dense_complex_hermitian"
+        } else if (selected_range) {
+          "lapack_dsyevr_selected"
+        } else {
+          "lapack_dsyev_full"
+        },
+        selected_range = selected_range,
+        selected_count = if (selected_range) length(vals) else NA_integer_,
+        full_dimension = nrow(A),
+        materialized_dense_operator = TRUE,
+        certified_in_original_coordinates = isTRUE(certify) && !is.null(vecs)
+      )
+    )
   )
 }
 

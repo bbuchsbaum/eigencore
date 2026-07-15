@@ -117,7 +117,6 @@ svd_surface_default_methods <- function(args) {
     "eigencore_golub_kahan",
     "eigencore_randomized",
     "RSpectra",
-    "PRIMME",
     "irlba",
     "rsvd",
     "base"
@@ -148,7 +147,6 @@ svd_surface_default_methods <- function(args) {
       "eigencore_block_golub_kahan_retained_cached",
       "eigencore_block_golub_kahan_retained_deflated",
       "RSpectra",
-      "PRIMME",
       "irlba",
       "rsvd",
       "base"
@@ -203,6 +201,82 @@ svd_internal_methods <- function() {
     "eigencore_block_golub_kahan_retained_cached",
     "eigencore_block_golub_kahan_retained_deflated",
     "eigencore_randomized"
+  )
+}
+
+svd_crossover_evidence_contract <- function(rows, summary,
+                                            subject = "eigencore",
+                                            orientations = c("tall", "wide")) {
+  required_row_fields <- c(
+    "case", "method", "rank", "certificate_passed", "nconv"
+  )
+  required_summary_fields <- c(
+    "case", "orientation", "long_side", "best_certified_reference",
+    "raw_speed_ratio", "certified_total_speed_ratio"
+  )
+  missing_fields <- c(
+    setdiff(required_row_fields, names(rows)),
+    setdiff(required_summary_fields, names(summary))
+  )
+  if (length(missing_fields)) {
+    stop(
+      "crossover evidence is missing required fields: ",
+      paste(unique(missing_fields), collapse = ", "),
+      call. = FALSE
+    )
+  }
+
+  subject_cases <- unique(rows$case[rows$method == subject])
+  external <- rows[
+    rows$method != subject & !rows$method %in% svd_internal_methods(),
+    ,
+    drop = FALSE
+  ]
+  external_certified <- nrow(external) > 0L && all(
+    !is.na(external$certificate_passed) & external$certificate_passed &
+      !is.na(external$nconv) & external$nconv >= external$rank
+  )
+  summary_complete <- length(subject_cases) > 0L &&
+    nrow(summary) == length(subject_cases) &&
+    identical(sort(as.character(summary$case)), sort(as.character(subject_cases))) &&
+    all(!is.na(summary$best_certified_reference)) &&
+    all(nzchar(summary$best_certified_reference)) &&
+    all(is.finite(summary$raw_speed_ratio) & summary$raw_speed_ratio > 0) &&
+    all(
+      is.finite(summary$certified_total_speed_ratio) &
+        summary$certified_total_speed_ratio > 0
+    )
+  orientations_complete <- all(orientations %in% unique(summary$orientation))
+
+  sampled_crossover <- function(field) {
+    orientations_complete && all(vapply(orientations, function(orientation) {
+      slice <- summary[summary$orientation == orientation, , drop = FALSE]
+      slice <- slice[order(slice$long_side), , drop = FALSE]
+      if (nrow(slice) < 2L) {
+        return(FALSE)
+      }
+      ratios <- slice[[field]]
+      faster <- which(ratios > 1)
+      any(vapply(faster, function(index) {
+        index > 1L && any(ratios[seq_len(index - 1L)] <= 1)
+      }, logical(1)))
+    }, logical(1)))
+  }
+
+  raw_crossover <- summary_complete && sampled_crossover("raw_speed_ratio")
+  certified_crossover <- summary_complete &&
+    sampled_crossover("certified_total_speed_ratio")
+  data.frame(
+    subject = subject,
+    external_reference_rows = nrow(external),
+    external_references_certified = external_certified,
+    summary_complete = summary_complete,
+    orientations_complete = orientations_complete,
+    raw_sampled_crossover = raw_crossover,
+    certified_total_sampled_crossover = certified_crossover,
+    passed = external_certified && summary_complete &&
+      orientations_complete && certified_crossover,
+    stringsAsFactors = FALSE
   )
 }
 
@@ -1695,6 +1769,8 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
         result_restart_numeric(fit, "native_implicit_normal_lanczos_max_backward_error"),
       native_implicit_normal_lanczos_iterations =
         result_restart_integer(fit, "native_implicit_normal_lanczos_iterations"),
+      explicit_gram_retry_used =
+        result_restart_logical(fit, "explicit_gram_retry_used"),
       fallback_max_backward_error = result_restart_numeric(fit, "fallback_max_backward_error"),
       preconditioner_kind = result_preconditioner_field(fit, "kind"),
       preconditioner_native = result_preconditioner_field(fit, "native"),

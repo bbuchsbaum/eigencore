@@ -3,10 +3,11 @@
 # bench-readme.R — reproduces the comparison table shown in README.Rmd.
 #
 # This is a transparent, self-contained head-to-head against the partial-solver
-# baselines a user would otherwise reach for (RSpectra, irlba, PRIMME). It uses
-# only the *public* eigencore API, and it times eigencore's full certified call
-# (solve + certificate) against the baselines' bare solve — i.e. eigencore is
-# doing strictly more work in every row. Numbers are machine/BLAS dependent;
+# baselines a user would otherwise reach for (RSpectra and irlba). It uses
+# only the *public* eigencore API. The README table reports eigencore's full
+# certified call. Optional console ratios compare that call with external raw
+# solver calls at matched tolerance; they are labelled raw diagnostics and are
+# not time-to-certified-answer claims. Numbers are machine/BLAS dependent;
 # rerun locally to get your own.
 #
 #   Rscript inst/benchmarks/bench-readme.R
@@ -21,7 +22,6 @@ suppressMessages({
 })
 have_rspectra <- requireNamespace("RSpectra", quietly = TRUE)
 have_irlba    <- requireNamespace("irlba", quietly = TRUE)
-have_primme   <- requireNamespace("PRIMME", quietly = TRUE)
 
 ITERS <- 5L
 
@@ -43,38 +43,44 @@ speedx <- function(base, ref) if (is.finite(base) && is.finite(ref) && ref > 0) 
 memx   <- function(base, ref) if (is.finite(base) && is.finite(ref) && ref > 0) sprintf("%.1f×", base / ref) else "—"
 
 rows <- list()
-record <- function(label, eig_fit, ec, rs = NULL, ir = NULL, pr = NULL) {
+record <- function(label, eig_fit, ec, rs = NULL, ir = NULL) {
   rows[[length(rows) + 1L]] <<- data.frame(
     problem = label,
     method  = eig_fit$method,
     passed  = isTRUE(eig_fit$certificate$passed),
     norm_bound = eig_fit$certificate$norm_bound_type,
     eigencore_ms = ec$t * 1000,
-    rspectra_x = if (!is.null(rs)) rs$t / ec$t else NA_real_,
-    irlba_x    = if (!is.null(ir)) ir$t / ec$t else NA_real_,
-    primme_x   = if (!is.null(pr)) pr$t / ec$t else NA_real_,
-    irlba_mem_x = if (!is.null(ir)) ir$mem / ec$mem else NA_real_,
+    rspectra_raw_ratio = if (!is.null(rs)) rs$t / ec$t else NA_real_,
+    irlba_raw_ratio    = if (!is.null(ir)) ir$t / ec$t else NA_real_,
+    irlba_raw_mem_ratio = if (!is.null(ir)) ir$mem / ec$mem else NA_real_,
     stringsAsFactors = FALSE
   )
   cat(sprintf("\n[%s]\n  path: %s | cert passed=%s (%s)\n",
               label, eig_fit$method, isTRUE(eig_fit$certificate$passed),
               eig_fit$certificate$norm_bound_type))
   cat(sprintf("  eigencore : %s\n", ms(ec$t)))
-  if (!is.null(rs)) cat(sprintf("  RSpectra  : %s   (eigencore %s faster)\n", ms(rs$t), speedx(rs$t, ec$t)))
-  if (!is.null(ir)) cat(sprintf("  irlba     : %s   (eigencore %s faster, %s less memory)\n", ms(ir$t), speedx(ir$t, ec$t), memx(ir$mem, ec$mem)))
-  if (!is.null(pr)) cat(sprintf("  PRIMME    : %s   (eigencore %s faster)\n", ms(pr$t), speedx(pr$t, ec$t)))
+  if (!is.null(rs)) cat(sprintf("  RSpectra raw: %s   (raw/eigencore-certified ratio %s)\n", ms(rs$t), speedx(rs$t, ec$t)))
+  if (!is.null(ir)) cat(sprintf("  irlba raw   : %s   (raw/eigencore-certified ratio %s, raw memory ratio %s)\n", ms(ir$t), speedx(ir$t, ec$t), memx(ir$mem, ec$mem)))
 }
 
 set.seed(11)
 
 ## ---- Tall/wide sparse SVD: the certified Gram special case ----------------
 svd_case <- function(label, M, r = 10L) {
-  fit <- svd_partial(M, rank = r, target = largest())
-  ec <- timeit(svd_partial(M, rank = r, target = largest()))
-  rs <- if (have_rspectra) timeit(RSpectra::svds(M, k = r)) else NULL
-  ir <- if (have_irlba)    timeit(irlba::irlba(M, nv = r)) else NULL
-  pr <- if (have_primme)   timeit(PRIMME::svds(M, NSvals = r)) else NULL
-  record(label, fit, ec, rs, ir, pr)
+  tol <- 1e-8
+  fit <- svd_partial(M, rank = r, target = largest(), tol = tol)
+  ec <- timeit(svd_partial(M, rank = r, target = largest(), tol = tol))
+  rs <- if (have_rspectra) {
+    timeit(RSpectra::svds(
+      M,
+      k = r,
+      nu = r,
+      nv = r,
+      opts = list(tol = tol, maxitr = 1000L)
+    ))
+  } else NULL
+  ir <- if (have_irlba) timeit(irlba::irlba(M, nv = r, nu = r, tol = tol)) else NULL
+  record(label, fit, ec, rs, ir)
 }
 svd_case("Tall sparse SVD  100000 x 500, k=10",
          as(rsparsematrix(100000, 500, density = 0.002), "dgCMatrix"))
@@ -128,17 +134,15 @@ cat(sprintf("  densify-then-solve allocation      : %.0f MB  (%.1fx more)\n",
 ## ---- Markdown table for the README ----------------------------------------
 tab <- do.call(rbind, rows)
 cat("\n\n================= README table (markdown) =================\n\n")
-cat("| Problem (all certified by eigencore) | eigencore | vs RSpectra | vs irlba | vs PRIMME |\n")
-cat("|---|---|---|---|---|\n")
+cat("| Problem (all certified by eigencore) | eigencore | vs RSpectra raw | vs irlba raw |\n")
+cat("|---|---|---|---|\n")
 for (i in seq_len(nrow(tab))) {
-  cat(sprintf("| %s | %s | %s | %s | %s |\n",
+  cat(sprintf("| %s | %s | %s | %s |\n",
               tab$problem[i], ms(tab$eigencore_ms[i] / 1000),
-              if (is.finite(tab$rspectra_x[i])) sprintf("%.1f× faster", tab$rspectra_x[i]) else "—",
-              if (is.finite(tab$irlba_x[i])) sprintf("%.1f× faster", tab$irlba_x[i]) else "—",
-              if (is.finite(tab$primme_x[i])) sprintf("%.1f× faster", tab$primme_x[i]) else "—"))
+              if (is.finite(tab$rspectra_raw_ratio[i])) sprintf("%.1f×", tab$rspectra_raw_ratio[i]) else "—",
+              if (is.finite(tab$irlba_raw_ratio[i])) sprintf("%.1f×", tab$irlba_raw_ratio[i]) else "—"))
 }
 cat("\nR ", as.character(getRversion()), " | ",
     R.version$platform, " | ",
     "RSpectra ", if (have_rspectra) as.character(packageVersion("RSpectra")) else "NA",
-    ", irlba ", if (have_irlba) as.character(packageVersion("irlba")) else "NA",
-    ", PRIMME ", if (have_primme) as.character(packageVersion("PRIMME")) else "NA", "\n", sep = "")
+    ", irlba ", if (have_irlba) as.character(packageVersion("irlba")) else "NA", "\n", sep = "")

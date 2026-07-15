@@ -1124,6 +1124,12 @@ test_that("SVD surface H candidate preset selects production eigencore subject",
   expect_false("eigencore_irlba_lbd_retained_bpro_block_guarded" %in% default_methods)
   expect_false("eigencore_block_golub_kahan_retained" %in% default_methods)
   expect_false("eigencore_block_golub_kahan_retained_cached" %in% default_methods)
+  expect_false("PRIMME" %in% default_methods)
+
+  h_candidate_methods <- svd_surface_default_methods(
+    benchmark_args("--h-candidate")
+  )
+  expect_false("PRIMME" %in% h_candidate_methods)
 
   args <- benchmark_args("--subject=eigencore_golub_kahan_projected")
   methods <- svd_surface_default_methods(args)
@@ -1552,6 +1558,119 @@ test_that("SVD benchmark rows audit raw and eigencore-certified reference timing
   expect_true(all(rows$certificate_passed))
   expect_true(all(is.finite(rows$max_left_residual)))
   expect_true(all(is.finite(rows$max_right_residual)))
+})
+
+test_that("SVD external adapters pass the requested tolerance to solver APIs", {
+  A <- diag(c(4, 3, 2, 1))
+  tol <- 3e-7
+  seen <- new.env(parent = emptyenv())
+
+  eigencore:::run_rspectra_svd_method(
+    A,
+    rank = 2L,
+    tol = tol,
+    solver = function(A, k, nu, nv, opts) {
+      seen$rspectra <- list(A = A, k = k, nu = nu, nv = nv, opts = opts)
+      "rspectra-result"
+    }
+  )
+  eigencore:::run_irlba_svd_method(
+    A,
+    rank = 2L,
+    tol = tol,
+    solver = function(A, nv, nu, tol) {
+      seen$irlba <- list(A = A, nv = nv, nu = nu, tol = tol)
+      "irlba-result"
+    }
+  )
+
+  expect_identical(seen$rspectra$A, A)
+  expect_identical(seen$rspectra$k, 2L)
+  expect_identical(seen$rspectra$nu, 2L)
+  expect_identical(seen$rspectra$nv, 2L)
+  expect_identical(
+    seen$rspectra$opts,
+    list(tol = tol, maxitr = 1000L)
+  )
+  expect_identical(seen$irlba$A, A)
+  expect_identical(seen$irlba$nv, 2L)
+  expect_identical(seen$irlba$nu, 2L)
+  expect_identical(seen$irlba$tol, tol)
+})
+
+test_that("matched reference SVD results certify at the requested tolerance", {
+  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_if_not_installed("RSpectra")
+  skip_if_not_installed("irlba")
+
+  set.seed(1907)
+  A <- Matrix::rsparsematrix(1200L, 90L, density = 0.03)
+  for (method in c("RSpectra", "irlba")) {
+    fit <- eigencore:::run_svd_method(
+      method,
+      A,
+      rank = 5L,
+      tol = 1e-8,
+      seed = 1907L
+    )
+    cert <- eigencore:::certify_svd(
+      A,
+      fit$d,
+      fit$u,
+      fit$v,
+      tol = 1e-8
+    )
+    expect_true(cert$passed, info = method)
+    expect_lte(cert$max_backward_error, 1e-8)
+  }
+})
+
+test_that("strict SVD crossover evidence requires certified sampled transitions", {
+  helper_path <- benchmark_file("_helpers.R")
+  source(helper_path)
+
+  cases <- c("tall600", "tall5000", "wide600", "wide5000")
+  rows <- do.call(rbind, lapply(cases, function(case) {
+    data.frame(
+      case = case,
+      method = c("eigencore", "RSpectra", "irlba"),
+      rank = 5L,
+      certificate_passed = TRUE,
+      nconv = 5L,
+      stringsAsFactors = FALSE
+    )
+  }))
+  summary <- data.frame(
+    case = cases,
+    orientation = c("tall", "tall", "wide", "wide"),
+    long_side = c(600L, 5000L, 600L, 5000L),
+    best_certified_reference = "RSpectra",
+    raw_speed_ratio = c(0.5, 0.8, 0.6, 2.0),
+    certified_total_speed_ratio = c(0.7, 1.2, 0.8, 3.0),
+    stringsAsFactors = FALSE
+  )
+
+  contract <- svd_crossover_evidence_contract(rows, summary)
+  expect_true(contract$external_references_certified)
+  expect_true(contract$summary_complete)
+  expect_true(contract$orientations_complete)
+  expect_false(contract$raw_sampled_crossover)
+  expect_true(contract$certified_total_sampled_crossover)
+  expect_true(contract$passed)
+
+  uncertified <- rows
+  uncertified$certificate_passed[
+    uncertified$case == "wide5000" & uncertified$method == "irlba"
+  ] <- FALSE
+  expect_false(
+    svd_crossover_evidence_contract(uncertified, summary)$passed
+  )
+
+  no_transition <- summary
+  no_transition$certified_total_speed_ratio <- c(1.1, 1.2, 1.3, 1.4)
+  expect_false(
+    svd_crossover_evidence_contract(rows, no_transition)$passed
+  )
 })
 
 test_that("tiny Gram eigensolver benchmark compares native backends", {

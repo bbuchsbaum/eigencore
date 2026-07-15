@@ -17,6 +17,14 @@ they are machine-dependent.
 ## Unreleased
 
 - Benchmark plumbing added.
+- Real dense Hermitian requests already routed to the LAPACK fallback now use
+  selected-range `dsyevr` for partial algebraic largest/smallest targets,
+  while full-spectrum, magnitude-target, and complex requests retain their
+  existing full solvers. Results record `lapack_dsyevr_selected` versus
+  `lapack_dsyev_full` provenance. On the installed 120-by-120, k=6 release
+  fixture, selected `dsyevr` reduced the kernel median from about 1.47 ms to
+  0.47 ms; the complete certified eigencore call was about 0.66 ms and matched
+  certified RSpectra total within measurement noise.
 - Native operator provenance now survives `adjoint()` for built-in dense,
   CSC, and diagonal operators. The adjoint wrapper continues to use the native
   parent apply closures, records `fused = "adjoint"`, preserves
@@ -291,29 +299,43 @@ they are machine-dependent.
   Cases have stable ids such as `tall_sparse:600x90` and
   `tall_sparse:100000x500`, `--cases=` accepts either the stable id or the case
   name, and each selected row prints progress before entering the expensive
-  method loop. The executable H candidate gate now defaults back to the promoted
+  method loop. The executable H candidate gate defaults to the promoted
   `eigencore` SVD path, while retained BPRO and block-GK rows remain diagnostic
-  comparators. A final release-hardening strict quick rerun on
-  `tall_sparse:600x90` and `wide_sparse:90x600` proved that fixture too noisy
-  for signoff: both rows certified and passed memory, but the tall speed ratio
-  fell to about `0.991x`, below the `1.1x` gate. The final H signoff is
-  therefore the installed non-quick command
-  `R_LIBS_USER=/tmp/eigencore-bench-lib Rscript inst/benchmarks/bench-svd-surface.R --iterations=1 --h-candidate --methods=eigencore,RSpectra,PRIMME --cases=tall_sparse,wide_sparse --subject=eigencore --strict --save`.
-  That run saved `20260605-svd-surface-rows.rds`,
-  `20260605-svd-surface-gates.rds`,
-  `20260605-svd-surface-memory.rds`, and
-  `20260605-svd-projected-stop-comparison.rds`. It certifies `20/20` triplets
-  on `tall_sparse` (`100000 x 500`) and `wide_sparse` (`500 x 100000`), uses
-  the bounded native Gram special case with `native_gram_eigensolver =
-  "lapack_dsyevr"` and `materialized_gram = TRUE`, and passes speed/memory:
-  `3.849574x` speed and `2.049985x` memory on tall, `9.882995x` speed and
-  `2.049985x` memory on wide, versus the best certified references. Retained
-  BPRO remains benchmark-visible but speed/memory-red.
+  comparators. The benchmark harness now passes the requested tolerance to
+  both RSpectra and irlba before recomputing eigencore certificates, and it
+  keeps raw solver timing separate from common time through certification.
+  Fresh installed 2026-07-15 evidence used
+  `R_LIBS=/tmp/eigencore-precran-lib Rscript inst/benchmarks/bench-svd-surface.R --iterations=3 --h-candidate --methods=eigencore,RSpectra,irlba --cases=tall_sparse,wide_sparse --subject=eigencore --strict --save`.
+  It saved `20260715-svd-surface-rows.rds`,
+  `20260715-svd-surface-gates.rds`,
+  `20260715-svd-surface-memory.rds`, and
+  `20260715-svd-projected-stop-comparison.rds`. Every method certifies `20/20`
+  triplets on `tall_sparse` (`100000 x 500`) and `wide_sparse`
+  (`500 x 100000`). Eigencore uses the bounded explicit smaller-Gram special
+  case with `native_gram_eigensolver = "lapack_dsyevr"`,
+  `materialized_gram = TRUE`, and no fallback, and passes certified-total
+  speed/memory versus RSpectra at `2.16x` / `2.05x` tall and
+  `7.18x` / `2.15x` wide. Retained BPRO remains benchmark-visible but
+  speed/memory-red.
+- The 2026-07-15 installed controlled crossover sweep used
+  `bench-svd-gram-cutoff.R --crossover --iterations=5` with small side 90,
+  rank 5, density 0.003, and nested sparse fixtures at long sides
+  600/5,000/25,000/100,000 in both orientations. It saved
+  `20260715-svd-crossover-{rows,gates,memory,contracts,policy,summary}.rds`.
+  Every method passed the matched certificate. Certified-total ratios versus
+  RSpectra first exceed one at 5,000 (`1.19x` tall, `3.88x` wide); raw solver
+  ratios first exceed one at 25,000 tall (`1.62x`) and 5,000 wide (`2.71x`).
+  At 100,000 the raw/certified ratios are `1.61x` / `2.97x` tall and
+  `18.91x` / `21.51x` wide. This controlled evidence replaces any claim that
+  differently parameterized endpoint cases locate a crossover.
 - The native CSC Gram fast-result path covers both tall/right-Gram and
   wide/left-Gram special cases. It builds the certificate, plan, restart
   diagnostics, and classed SVD result in native code only when the Gram
-  certificate already passes; failed Gram certificates still return to the
-  existing Golub-Kahan fallback. The final H gate uses this bounded Gram surface
+  certificate already passes. The right-normal Lanczos probe is now opt-in,
+  matching the left-normal probe. If an opt-in implicit candidate fails the
+  exact original-coordinate certificate, the native portfolio preserves its
+  iterations/backward error and retries the budgeted explicit Gram solve before
+  the existing Golub-Kahan fallback. The final H gate uses this bounded Gram surface
   at non-quick sizes. Broader retained BPRO/block-GK and matrix-free SVD remain
   diagnostic/future-scope paths rather than promoted V1 release claims.
 - The randomized-rsvd benchmark now uses the shared case-filter/progress

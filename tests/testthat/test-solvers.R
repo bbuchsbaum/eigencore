@@ -7,6 +7,8 @@ test_that("eig_partial returns certified eigenpairs", {
   expect_equal(fit$nconv, 2)
   expect_equal(fit$plan$method, "native dense Hermitian LAPACK fallback")
   expect_equal(fit$method, "native dense Hermitian LAPACK fallback")
+  expect_identical(fit$restart$eigensolver, "lapack_dsyevr_selected")
+  expect_true(fit$restart$selected_range)
 })
 
 test_that("native dense Hermitian fallback matches base eigen ordering", {
@@ -19,6 +21,22 @@ test_that("native dense Hermitian fallback matches base eigen ordering", {
   expect_equal(values(fit), sort(oracle$values)[1:3], tolerance = 1e-10)
   expect_true(certificate(fit)$passed)
   expect_match(fit$warnings, "native dense Hermitian LAPACK fallback")
+  expect_identical(fit$restart$eigensolver, "lapack_dsyevr_selected")
+  expect_true(fit$restart$selected_range)
+})
+
+test_that("native dense Hermitian full and magnitude requests retain full dsyev", {
+  A <- diag(c(-8, 5, 3, 2))
+  full <- eig_partial(A, k = 4, target = largest())
+  magnitude <- eig_partial(A, k = 2, target = largest_magnitude())
+
+  expect_identical(full$restart$eigensolver, "lapack_dsyev_full")
+  expect_false(full$restart$selected_range)
+  expect_identical(magnitude$restart$eigensolver, "lapack_dsyev_full")
+  expect_false(magnitude$restart$selected_range)
+  expect_equal(values(magnitude), c(-8, 5))
+  expect_true(certificate(full)$passed)
+  expect_true(certificate(magnitude)$passed)
 })
 
 test_that("auto routes large dense partial Hermitian problems to native Lanczos", {

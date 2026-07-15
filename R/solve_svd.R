@@ -211,6 +211,9 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
         native$implicit_lanczos_max_backward_error %||% NA_real_,
       native_implicit_normal_lanczos_iterations =
         native$implicit_lanczos_iterations %||% 0L,
+      explicit_gram_retry_used =
+        !identical(native$eigensolver %||% "", "implicit_normal_lanczos") &&
+          (native$implicit_lanczos_iterations %||% 0L) > 0L,
       native_gram_krylov_iterations =
         native$gram_krylov_iterations %||% 0L,
       normal_operator_implicit =
@@ -323,6 +326,9 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
       native$implicit_lanczos_max_backward_error %||% NA_real_,
     native_implicit_normal_lanczos_iterations =
       native$implicit_lanczos_iterations %||% 0L,
+    explicit_gram_retry_used =
+      !identical(native$eigensolver %||% "", "implicit_normal_lanczos") &&
+        (native$implicit_lanczos_iterations %||% 0L) > 0L,
     native_gram_krylov_iterations =
       native$gram_krylov_iterations %||% 0L,
     normal_operator_implicit =
@@ -382,11 +388,14 @@ native_gram_svd_fast_plan <- function(op, rank, target) {
       paste0("target: ", target_label(target)),
       "rectangular SVD problem",
       "adjoint is available",
-      "small rectangular sparse problem: materializes the smaller Gram matrix as an explicit certified special case",
+      "bounded smaller-side normal problem with exact original-coordinate certification; explicit Gram is the production default",
       "built-in sparse CSC operator has native block apply",
       "direct svd_partial() fast path avoids S3 dispatch overhead"
     ),
-    fallback = "native Golub-Kahan if Gram special case is disabled or uncertified",
+    fallback = paste(
+      "opt-in implicit candidate retries explicit Gram;",
+      "native Golub-Kahan if Gram remains uncertified"
+    ),
     controls = controls
   )
 }
@@ -409,11 +418,14 @@ native_gram_svd_fast_plan_from_dims <- function(dims, rank, target) {
       paste0("target: ", target_label(target)),
       "rectangular SVD problem",
       "adjoint is available",
-      "small rectangular sparse problem: materializes the smaller Gram matrix as an explicit certified special case",
+      "bounded smaller-side normal problem with exact original-coordinate certification; explicit Gram is the production default",
       "built-in sparse CSC operator has native block apply",
       "direct svd_partial() fast path avoids S3 dispatch overhead"
     ),
-    fallback = "native Golub-Kahan if Gram special case is disabled or uncertified",
+    fallback = paste(
+      "opt-in implicit candidate retries explicit Gram;",
+      "native Golub-Kahan if Gram remains uncertified"
+    ),
     controls = controls
   )
 }

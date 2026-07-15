@@ -70,7 +70,7 @@ test_that("matrix-free operator with adjoint runs the native callback Golub-Kaha
   expect_equal(fit$d, oracle$d[1:4], tolerance = 1e-6)
 })
 
-test_that("tall-skinny sparse SVD certifies its top triplets", {
+test_that("tall-skinny sparse SVD defaults to the explicit right Gram solve", {
   set.seed(104)
   m <- 200L; n <- 40L
   M <- Matrix::rsparsematrix(m, n, density = 0.05)
@@ -80,9 +80,10 @@ test_that("tall-skinny sparse SVD certifies its top triplets", {
   expect_identical(fit$restart$gram_side, "right")
   expect_identical(fit$restart$native_gram_kernel, "csc_right_gram")
   expect_true(isTRUE(fit$fastpath_native_result))
-  expect_identical(fit$restart$native_gram_eigensolver, "implicit_normal_lanczos")
-  expect_true(fit$restart$normal_operator_implicit)
-  expect_false(fit$restart$materialized_gram)
+  expect_identical(fit$restart$native_gram_eigensolver, "lapack_dsyevr")
+  expect_false(fit$restart$normal_operator_implicit)
+  expect_true(fit$restart$materialized_gram)
+  expect_false(fit$restart$explicit_gram_retry_used)
   expect_true(all(c("gram", "eigensolve", "vector_form", "diagnostics") %in%
                     names(fit$stage_seconds)))
   expect_true(all(is.finite(fit$stage_seconds)))
@@ -330,7 +331,7 @@ test_that("smallest tall sparse CSC SVD uses native Gram production boundary", {
   expect_equal(fit$restart$kind, "gram_svd_special_case")
   expect_equal(fit$restart$gram_side, "right")
   expect_equal(fit$restart$native_gram_kernel, "materialized_right_gram")
-  expect_equal(fit$restart$native_gram_eigensolver, "native_dense_symmetric_eigen")
+  expect_equal(fit$restart$native_gram_eigensolver, "lapack_dsyev_full")
   expect_true(fit$restart$materialized_gram)
   expect_certificate_clean(fit)
 })
@@ -1316,7 +1317,7 @@ test_that("tall sparse implicit right-normal Lanczos uses bounded restarted work
   expect_certificate_clean(fit)
 })
 
-test_that("tall sparse implicit right-normal Lanczos falls back when exact certificate fails", {
+test_that("failed tall implicit right-normal candidate retries explicit Gram", {
   old_options <- options(eigencore.csc_right_normal_lanczos_attempt = TRUE)
   on.exit(options(old_options), add = TRUE)
   set.seed(1907)
@@ -1324,8 +1325,12 @@ test_that("tall sparse implicit right-normal Lanczos falls back when exact certi
 
   fit <- svd_partial(M, rank = 5L, target = largest(), tol = 1e-8, seed = 1907)
 
-  expect_identical(fit$method, "native prototype Golub-Kahan fallback from Gram SVD")
-  expect_true(fit$restart$fallback_used)
+  expect_identical(fit$method, "native certified Gram SVD special case")
+  expect_identical(fit$restart$native_gram_eigensolver, "lapack_dsyevr")
+  expect_true(fit$restart$explicit_gram_retry_used)
+  expect_gt(fit$restart$native_implicit_normal_lanczos_iterations, 0L)
+  expect_false(fit$restart$fallback_attempted)
+  expect_false(fit$restart$fallback_used)
   expect_certificate_clean(fit)
 })
 

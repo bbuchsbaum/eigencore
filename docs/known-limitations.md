@@ -1,6 +1,6 @@
 # Known V2 CRAN Release Boundaries
 
-Date: 2026-06-07
+Date: 2026-07-15
 
 This file records current user-facing limitations and future-scope boundaries
 for the V2 CRAN release surface. The authoritative release gate map remains
@@ -30,6 +30,16 @@ that every adjacent future solver is complete.
 | Nonsymmetric eigen | Dense and sparse CSC cases with supported real/imaginary/magnitude targets use a native Arnoldi cycle with native refined Ritz extraction, a wired restart budget, best-attempt retention, right-residual certification, and adjoint-capable left eigenvectors with biorthogonality diagnostics. Real matrix-free callback cases keep the native callback Arnoldi cycle with native projected Ritz extraction and the same certification/restart boundary. Full Krylov-Schur or harmonic/interior extraction, matrix-free refined extraction, and native complex sparse/operator paths remain future scope; matrix-free operators without `apply_adjoint` remain right-only with an explicit warning. |
 | Complex-valued inputs | Base complex dense matrices use native dense complex LAPACK labels for Hermitian eigen, general eigen, and SVD calls, and base complex dense operators use native `zgemm` block apply with exact residual/backward-error certificates. Complex matrix-free solver operators fail with actionable future-scope messages, but exact-norm complex callbacks can be certified directly. Complex-valued `Matrix`/sparse inputs and broader complex sparse/matrix-free operator kernels remain future scope and are rejected rather than silently coerced. Real-valued matrices may still return complex eigenpairs through the `eigs()` compatibility path. |
 | Matrix-free operators | Supported through callback boundaries. The real nonsymmetric Arnoldi callback path and real matrix-free SVD callback path have native callback labels and sidecar gates; callback-driven paths remain separate from built-in native kernels unless a gate explicitly promotes them. |
+
+For the tall/right-Gram SVD path, explicit Gram plus selected `dsyevr` is the
+production default. The implicit right-normal Lanczos probe is opt-in; if its
+exact original-coordinate certificate fails, eigencore retries the budgeted
+explicit Gram solve before Golub-Kahan and records both the failed implicit
+work and the final eigensolver. A controlled installed 2026-07-15 sweep with
+small side 90 found certified-total crossover versus RSpectra by long side
+5,000 in both orientations, but raw tall-call crossover only by 25,000. These
+measurements do not override the independent small-side materialization gates
+or imply one universal crossover threshold.
 
 ## Dense Fallback And Sparse Memory
 

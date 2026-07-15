@@ -290,9 +290,13 @@ metric_table <- function(rows, metric, digits = 4L) {
 timing_table <- function(rows) {
   out <- metric_table(rows, "median_ms")
   method_columns <- setdiff(names(out), "regime")
-  out$lowest_median <- vapply(seq_len(nrow(out)), function(i) {
-    values <- unlist(out[i, method_columns], use.names = TRUE)
-    names(values)[which.min(values)]
+  out$lowest_median <- vapply(out$regime, function(regime) {
+    current <- rows[
+      rows$regime == regime & rows$status == "ok",
+      c("method", "median_ms"),
+      drop = FALSE
+    ]
+    current$method[[which.min(current$median_ms)]]
   }, character(1))
   out[, c("regime", "lowest_median", method_columns)]
 }
@@ -399,8 +403,14 @@ stopifnot(all(is.finite(benchmark_rows$backward_error[benchmark_rows$status == "
 
 ### Elapsed time
 
-The entries are median milliseconds; lower values are better. The
-`lowest_median` column reports the smallest value in each row.
+The entries are median solver-call milliseconds; lower values are better. An
+eigencore solver call includes its native certificate. The external calls do
+not, and the shared residual check used elsewhere in this vignette runs after
+the timer. These smoke timings therefore describe call overhead, not a common
+time-to-certified-answer. The installed benchmark scripts report both raw
+solver time and a common eigencore-certified total. The `lowest_median` column
+is selected from unrounded measurements and reports the smallest value in each
+row.
 
 ```{r timing-table, eval = benchmark_ready, echo = FALSE}
 timing_rows <- timing_table(benchmark_rows)
@@ -408,7 +418,7 @@ knitr::kable(
   timing_rows,
   col.names = c("case", "lowest median", "eigencore", "RSpectra", "irlba", "base R"),
   align = c("l", "l", "r", "r", "r", "r"),
-  caption = paste("Median elapsed time in milliseconds from",
+  caption = paste("Median solver-call time in milliseconds from",
                   benchmark_iterations, "iterations per method.")
 )
 ```
@@ -437,24 +447,35 @@ For a highly rectangular sparse SVD, eigencore can form the smaller Gram
 problem and certify the resulting triplets in the original coordinates. If the
 smaller dimension stays bounded while the long dimension grows, the Gram
 eigensolve retains the same dimension while iterative methods perform more
-expensive matrix-vector products. A crossover is therefore plausible and is
-measured by the installed-package benchmark, not by the tiny rows above.
+expensive matrix-vector products. A crossover is therefore plausible. The
+installed large endpoint cases show that eigencore can win in this regime, but
+those endpoints do not locate a crossover because their dimensions, density,
+rank, and random fixture all change together. The controlled mode of
+`bench-svd-gram-cutoff.R` fixes the small side, rank, density, and a nested
+sparse fixture while varying only the long side, and reports raw solver and
+common certified-total ratios separately.
+
+In the 2026-07-15 installed five-iteration sweep with small side 90, the
+certified-total ratio crossed above one by long side 5,000 in both
+orientations. The raw-call ratio crossed there for the wide case and by 25,000
+for the tall case. These are machine-specific release measurements, not a
+universal crossover constant.
 
 This does not mean that increasing either matrix dimension helps. The current
 planner limits the smaller dimension to 512 for tall matrices and 1024 for
 wide matrices, and also checks aspect ratio, requested-rank fraction, and a
 memory budget. The repository's cutoff evidence is mixed outside the core
 regime: increasing the smaller side can remove the advantage, particularly for
-tall matrices. The current full benchmark cases are `100000 x 500` and its
+tall matrices. The current full endpoint cases are `100000 x 500` and its
 transpose; see the
 [benchmark manifest](https://github.com/bbuchsbaum/eigencore/blob/main/docs/v1-benchmark-manifest.md)
 for the installed evidence and exact commands.
 
-The larger benchmark scripts recompute eigencore certificates for external
-results. If an external row fails the requested certificate, its elapsed time
-is not a time-to-certified-answer comparison. That failure should not be read
-as a general claim that the external package is slower; rerun it with matched
-tolerances before drawing that conclusion.
+The larger benchmark scripts pass the requested tolerance to RSpectra and
+irlba, then recompute eigencore certificates for all external results. They
+retain both raw solver time and common time through certification. A row that
+still fails the requested certificate is excluded from time-to-certified-answer
+claims rather than being treated as a slow certified result.
 
 ### Allocated memory
 

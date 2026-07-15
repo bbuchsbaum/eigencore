@@ -99,6 +99,7 @@
       plan
       requested
       residuals
+      restart
       target
       values
       vectors
