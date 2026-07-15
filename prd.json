@@ -29,6 +29,22 @@
         "Benchmark claims are limited to rows with time-to-certified-answer, certificate, memory, and provenance evidence.",
         "All V2_CRAN tracker issues are closed and the mote board has no open V2_CRAN blockers."
       ]
+    },
+    "v2_1_downstream_enablement": {
+      "objective": "Ship a narrowly scoped public initial-subspace seam for certified standard Hermitian continuation after the eigencore 1.0.0 CRAN line is frozen and submitted.",
+      "release_order": "The 1.0.0 CRAN candidate remains isolated on release/1.0.0 at v1.0.0-rc1. V2.1 implementation begins only after the existing CRAN-submission tracker gate closes and targets the post-CRAN development line.",
+      "scope_policy": "V2.1 may expose existing native dense/CSC Hermitian Lanczos start-block capability with a stable public contract, fresh current-operator certificates, explicit planner/result provenance, adversarial validation, and benchmark-visible operator-column accounting. It does not include reusable solver checkpoints, recurrence reuse across changed operators, cached operator-action reuse, broad matrix-free promotion, or new solver families.",
+      "downstream_driver": "The traceratio package repeatedly solves A - rho B through exported eigencore APIs and currently must label KS-ITR runs cold/restarted because no public initial-subspace argument exists.",
+      "acceptance": [
+        "eig_partial() and solve.eigencore_eigen_problem() accept initial_subspace = NULL without changing cold behavior when it is absent.",
+        "At least the supported standard real Hermitian native dense and sparse CSC Lanczos paths consume a validated user-supplied starting subspace without densifying the operator.",
+        "Unsupported planner paths reject initial_subspace explicitly rather than ignoring it or relabeling a reference path as production.",
+        "Every warm solve recomputes projected quantities, residuals, orthogonality, and a fresh certificate for the current operator.",
+        "Diagnostics report start provenance, supplied/accepted/rejected/augmented columns, operator block calls, operator columns, and certification operator columns while preserving matvecs for compatibility.",
+        "Adversarial tests cover badly scaled, duplicate, rank-deficient, zero-overlap, and partially overlapping starts against independent dense oracles.",
+        "A reproducible non-quick A - rho B sequence benchmark compares cold and warm time and operator columns to a common certified answer before any performance claim is made.",
+        "The traceratio adapter can consume the exported API without eigencore::: access and retains honest cold/reference labels for unsupported matrix-free cases."
+      ]
     }
   },
   "v1_ambition": "Replace RSpectra for most production use cases, beat it on speed/correctness diagnostics, and establish a more mathematically expressive foundation than SciPy-style sparse linear algebra.",
@@ -445,7 +461,7 @@
     "high_level_api": {
       "functions": {
         "eig_partial": {
-          "signature": "eig_partial(A, k, target = largest(), B = NULL, method = auto(), tol = 1e-8, maxit = NULL, vectors = TRUE, seed = NULL, certify = TRUE)"
+          "signature": "eig_partial(A, k, target = largest(), B = NULL, method = auto(), tol = 1e-8, maxit = NULL, vectors = TRUE, seed = NULL, certify = TRUE, allow_dense_fallback = c(\"auto\", \"never\", \"always\"), initial_subspace = NULL)"
         },
         "svd_partial": {
           "signature": "svd_partial(A, rank, target = largest(), method = auto(), tol = 1e-8, vectors = c(\"both\", \"left\", \"right\", \"none\"), seed = NULL, certify = TRUE)"
@@ -457,6 +473,40 @@
         "fit <- eig_partial(A, B = M, k = 20, target = nearest(0), method = shift_invert(sigma = 0))",
         "fit <- svd_partial(X, rank = 100)",
         "fit <- svd_partial(X, rank = 100, method = randomized(oversample = 20, n_iter = 2))"
+      ]
+    },
+    "initial_subspace_contract": {
+      "status": "scoped_post_cran_v2_1",
+      "public_arguments": [
+        "eig_partial(..., initial_subspace = NULL)",
+        "solve.eigencore_eigen_problem(..., initial_subspace = NULL)"
+      ],
+      "supported_first_boundary": "Standard real Hermitian native Lanczos for explicit dense double and sparse CSC operators on planner paths that explicitly declare initial-subspace support.",
+      "validation": [
+        "row dimension matches the operator domain",
+        "entries are finite numeric values",
+        "numerical rank and accepted width satisfy the chosen method contract",
+        "orthonormalization occurs at the solver boundary",
+        "rejected or missing directions are augmented deterministically under the documented seed policy"
+      ],
+      "certificate_semantics": "The initial subspace is only a starting hint. Projected quantities, residuals, orthogonality, convergence status, and certificate are recomputed for the current operator on every solve.",
+      "planner_policy": "Plans declare whether initial_subspace is supported. A non-NULL value on an unsupported path is an actionable error; it is never ignored, silently densified, or used to promote a reference/oracle solver label.",
+      "diagnostic_minimum": [
+        "start provenance",
+        "supplied start columns",
+        "accepted start columns",
+        "rejected start columns",
+        "augmented start columns",
+        "operator block calls",
+        "operator columns",
+        "certification operator columns"
+      ],
+      "v2_1_non_goals": [
+        "reusable restart-space or checkpoint objects",
+        "reusing Lanczos recurrences or locked convergence claims across changed operators",
+        "reusing cached operator actions across changed operators",
+        "native matrix-free, generalized, Arnoldi, LOBPCG, or SVD warm-start promotion",
+        "automatic performance or planner promotion from warm-start availability alone"
       ]
     },
     "problem_object_api": {
@@ -1380,6 +1430,20 @@
     ],
     "acceptance_theme": "V2 is ready only when the package can be built and checked as a CRAN release candidate, with every public claim tied to current certificate/provenance/test/benchmark evidence."
   },
+  "v2_1_scope": {
+    "release_name": "V2.1 downstream enablement",
+    "objective": "Unblock certified basis-only spectral continuation for traceratio and similar downstream packages without reopening the eigencore 1.0.0 CRAN candidate or importing hard V3 solver expansion.",
+    "release_boundary": "Development occurs from main at version 1.0.0.9000 after release/1.0.0 and v1.0.0-rc1 are frozen at commit 62dffdf. The implementation tracker items remain blocked until the 1.0.0 CRAN-submission gate closes.",
+    "release_surfaces": [
+      "public initial_subspace argument",
+      "standard real Hermitian native dense and sparse CSC Lanczos",
+      "fresh current-operator certification",
+      "warm-start provenance and minimal operator-column work accounting",
+      "cold-versus-warm spectral-sequence benchmark",
+      "traceratio exported-API integration evidence"
+    ],
+    "acceptance_theme": "A user-supplied basis may accelerate a supported solve but never weakens planner honesty, current-operator certification, sparse memory policy, or benchmark discipline."
+  },
   "v3_scope": {
     "algorithmic_additions": [
       "Jacobi-Davidson",
@@ -1390,7 +1454,7 @@
       "scalable sparse/matrix-free interior SVD",
       "smallest SVD with stronger methods",
       "polynomial/Chebyshev filtering",
-      "warm starts and continuation",
+      "reusable restart spaces and broad matrix-free/generalized continuation",
       "dynamic rank selection"
     ],
     "product_additions": [

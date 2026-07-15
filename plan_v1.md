@@ -632,6 +632,7 @@ Working status against the sequenced milestones:
 | L | scoped V1 gate green | Dense standard, dense generalized-SPD, diagonal standard, sparse symmetric-tridiagonal standard, and sparse/diagonal tridiagonal generalized shift-invert have native factorized Lanczos hot loops and original-problem certification. Fresh installed 2026-06-05 `bench-shift-invert.R --iterations=1 --strict --save` evidence passes all eight native/reference contract rows, including sparse-LU and user-solve boundaries. General sparse standard, general sparse/diagonal-metric generalized SPD, and user-supplied solve shift-invert remain honest reference paths rather than native production claims. |
 | M | done for path-Laplacian release surface | Native shifted-tridiagonal standard Hermitian LOBPCG passes the non-quick strict preconditioned gate on path Laplacians `n = 200, 1000, 2000`, `k = 5`; broader non-Laplacian preconditioned Hermitian policy remains future scope. |
 | N | green pending final handoff command reruns | V1 audit, benchmark manifest, completion audit, RSpectra migration, method/workflow selection, known-boundaries docs, doc scope audit, README/vignette refresh, reusable native smoke artifact, and curated release evidence exist. Final release hardening is the validation rerun plus mote closure, not an unresolved solver gate. |
+| O | cataloged; blocked until 1.0.0 CRAN submission | Post-CRAN V2.1 adds a scoped public `initial_subspace` seam for supported standard real Hermitian native dense/CSC Lanczos paths, with fresh certificates, planner/result provenance, adversarial starts, operator-column accounting, and a `traceratio` sequence benchmark. Reusable restart objects and broad matrix-free/generalized continuation remain V3. |
 
 PRD truth check:
 
@@ -717,6 +718,44 @@ PRD truth check:
   not yet complete at native production-solver level.
 - **Inspectable automation:** mostly true; new solver work must continue to
   update `plan_solver()`, dispatch, result diagnostics, and benchmarks together.
+
+### Post-CRAN V2.1 downstream-enablement tranche
+
+The 1.0.0 CRAN candidate is isolated from this work. Branch
+`release/1.0.0` and annotated tag `v1.0.0-rc1` point to commit `62dffdf`;
+CRAN tarballs must be built only from that release line. `main` moved to
+version `1.0.0.9000` at commit `ad0adb6`. Release-only fixes are
+forward-ported to `main`, while no warm-start implementation commit may enter
+`release/1.0.0`.
+
+Milestone O begins only after the existing 1.0.0 CRAN-submission mote gate is
+closed. Its first public boundary is deliberately narrow:
+
+1. Add `initial_subspace = NULL` to `eig_partial()` and
+   `solve.eigencore_eigen_problem()` without changing cold behavior when it is
+   absent.
+2. Support only planner-declared standard real Hermitian native Lanczos paths
+   for explicit dense double and sparse CSC operators in the first promoted
+   tranche. Unsupported paths must reject the argument rather than ignore it,
+   densify the operator, or acquire a production label.
+3. Validate dimension, finiteness, numerical rank, and method width;
+   orthonormalize at the solver boundary; and augment rejected or missing
+   directions deterministically under the documented seed policy.
+4. Treat the supplied subspace only as a starting hint. Every solve rebuilds
+   projected quantities and recomputes residuals, orthogonality, convergence,
+   and a fresh certificate for the current operator.
+5. Record start provenance, supplied/accepted/rejected/augmented columns,
+   operator block calls, operator columns, and certification operator columns,
+   while preserving `matvecs` for compatibility.
+6. Gate any performance language on a reproducible non-quick `A - rho B`
+   sequence benchmark measured as wall time and operator columns to a common
+   certified answer, including a deliberate overlap-loss adversary and an
+   exported-API `traceratio` integration row.
+
+Reusable restart/checkpoint objects, recurrence or locked-state reuse across a
+changed operator, cached operator-action reuse, native matrix-free warm-start
+promotion, and generalized/Arnoldi/LOBPCG/SVD reuse remain V3 work. Milestone O
+does not reopen or delay Milestone N.
 
 Primary attack surfaces, in order:
 
@@ -1488,10 +1527,13 @@ explicitly documented as not yet G1-complete.
 | L | Shift-invert with user solve / factorization cache            | Smallest/interior works on at least one real Laplacian     |
 | M | Standard symmetric LOBPCG refinements                         | Graph Laplacian test converges with fewer iterations      |
 | N | Release hardening: vignettes, migration guide, CRAN/sanitizer | All PRD acceptance criteria + §9 gates green               |
+| O | Post-CRAN public Hermitian initial-subspace seam              | Exported dense/CSC native path, fresh certificates, adversarial bank, operator-column diagnostics, and `traceratio` sequence gate green |
 
 A–E are *prerequisites* to any native solver work. F–M are the engine; G0 is
 only the scalar Hermitian staging checkpoint, and G1 is the full Hermitian
-block/performance milestone. N is the release.
+block/performance milestone. N is the 1.0.0 CRAN release. O is a separate
+post-CRAN V2.1 tranche and cannot begin solver implementation until N's
+submission gate closes.
 
 ## 11. Things to preserve exactly
 
