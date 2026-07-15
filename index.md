@@ -43,15 +43,15 @@ A <- as(rsparsematrix(100000, 500, density = 0.002), "dgCMatrix")
 fit <- svd_partial(A, rank = 10, target = largest())
 fit
 #> Partial SVD
-#>   requested rank: 10 
-#>   converged rank: 10 
-#>   method: native certified Gram SVD special case 
-#>   target: largest 
-#>   max residual: 1.388377e-14 
-#>   max backward error: 4.392928e-17 
-#>   max orthogonality loss: 1.776357e-15 
-#>   norm bound: frobenius_exact 
-#>   scale estimated: FALSE 
+#>   requested rank: 10
+#>   converged rank: 10
+#>   method: native certified Gram SVD special case
+#>   target: largest
+#>   max residual: 1.414065e-14
+#>   max backward error: 4.474206e-17
+#>   max orthogonality loss: 1.554312e-15
+#>   norm bound: frobenius_exact
+#>   scale estimated: FALSE
 #>   certificate: passed
 ```
 
@@ -77,15 +77,15 @@ the evidence:
 
 fit$certificate
 #> eigencore certificate
-#>   passed: TRUE 
-#>   tolerance: 1e-08 
-#>   type: residual_backward_error 
-#>   norm bound: frobenius_exact 
-#>   scale estimated: FALSE 
-#>   max residual: 1.388377e-14 
-#>   max backward error: 4.392928e-17 
-#>   max orthogonality loss: 1.776357e-15 
-#>   orthogonality tolerance: 1.490116e-08 
+#>   passed: TRUE
+#>   tolerance: 1e-08
+#>   type: residual_backward_error
+#>   norm bound: frobenius_exact
+#>   scale estimated: FALSE
+#>   max residual: 1.414065e-14
+#>   max backward error: 4.474206e-17
+#>   max orthogonality loss: 1.554312e-15
+#>   orthogonality tolerance: 1.490116e-08
 #>   orthogonality required: TRUE
 ```
 
@@ -166,9 +166,9 @@ eig
 #>   target: smallest
 #>   restart: native_tridiagonal_shift_invert_lanczos
 #>   locked: 0
-#>   max residual: 9.026588e-10
-#>   max backward error: 2.605773e-12
-#>   max orthogonality loss: 6.439294e-15
+#>   max residual: 9.026589e-10
+#>   max backward error: 2.605774e-12
+#>   max orthogonality loss: 4.884981e-15
 #>   norm bound: frobenius_metadata+identity_exact
 #>   scale estimated: FALSE
 #>   certificate: passed
@@ -203,6 +203,17 @@ whose small dimension is ≤ 512 (≤ 1024 for wide matrices). Other shapes
 may select different paths with different costs. `fit$method` always
 names the path that ran, making the relevant implementation boundary
 visible.
+
+That path has fixed work associated with solving the smaller Gram
+problem and constructing a certified result. On the tiny examples used
+in documentation smoke tests, this overhead can dominate and `RSpectra`
+or `irlba` may finish sooner. As the long dimension grows while the
+smaller dimension remains within the planner boundary, the same path can
+cross over and become faster. This is a shape-specific effect, not a
+claim that eigencore becomes faster whenever a matrix gets larger; the
+[benchmark
+vignette](https://bbuchsbaum.github.io/eigencore/articles/benchmarks.html)
+explains the comparison and its limits.
 
 ## When to use what
 

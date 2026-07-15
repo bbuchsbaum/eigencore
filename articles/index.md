@@ -8,5 +8,5 @@
   evidence](https://bbuchsbaum.github.io/eigencore/articles/certificates.md):
 - [Generalized eigenvalue problems with
   eigencore](https://bbuchsbaum.github.io/eigencore/articles/generalized-eigenproblems.md):
-- [Benchmarking eigencore against established
-  solvers](https://bbuchsbaum.github.io/eigencore/articles/benchmarks.md):
+- [Benchmark smoke
+  tests](https://bbuchsbaum.github.io/eigencore/articles/benchmarks.md):

@@ -5,13 +5,13 @@
 <meta charset="utf-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-<title>Benchmarking eigencore against established solvers • eigencore</title>
+<title>Benchmark smoke tests • eigencore</title>
 <script src="../lightswitch.js"></script><script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <link href="../deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
 <script src="../deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="../deps/font-awesome-6.5.2/css/all.min.css" rel="stylesheet">
 <link href="../deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
 <script src="../deps/headroom-0.11.0/headroom.min.js"></script><script src="../deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="../deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="../deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="../deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="../deps/search-1.0.0/fuse.min.js"></script><script src="../deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="../pkgdown.js"></script><link href="../extra.css" rel="stylesheet">
-<script src="../extra.js"></script><meta property="og:title" content="Benchmarking eigencore against established solvers">
+<script src="../extra.js"></script><meta property="og:title" content="Benchmark smoke tests">
 </head>
 <body>
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
@@ -36,7 +36,7 @@
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
 <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="../articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
-    <li><a class="dropdown-item" href="../articles/benchmarks.html">Benchmarking eigencore against established solvers</a></li>
+    <li><a class="dropdown-item" href="../articles/benchmarks.html">Benchmark smoke tests</a></li>
   </ul>
 </li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
@@ -68,7 +68,7 @@
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
 
-      <h1>Benchmarking eigencore against established solvers</h1>
+      <h1>Benchmark smoke tests</h1>
             
       
       <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/vignettes/benchmarks.Rmd" class="external-link"><code>vignettes/benchmarks.Rmd</code></a></small>
@@ -77,25 +77,20 @@
 
     
     
-<script>document.addEventListener("DOMContentLoaded",function(){document.body.classList.remove("palette-red","palette-lapis","palette-ochre","palette-teal","palette-green","palette-violet","preset-homage","preset-interaction","preset-study","preset-structural","preset-adobe","preset-midnight");document.body.classList.add("palette-lapis","preset-homage");});</script><p>Benchmarks are trust work. They tell you whether a solver is fast
-enough, whether it returns the same numerical slice as established
-tools, and whether the returned vectors actually satisfy the equations
-they claim to solve.</p>
-<p>This vignette runs a compact comparison suite against
-<code>RSpectra</code>, base R, and <code>irlba</code>. It uses small
-problems so the article can be rebuilt on a laptop. Treat the tables as
-a reproducible smoke comparison, not as a release-speed claim. For
-promotion-grade evidence, use the installed-package benchmark gates at
-the end of the vignette.</p>
+<script>document.addEventListener("DOMContentLoaded",function(){document.body.classList.remove("palette-red","palette-lapis","palette-ochre","palette-teal","palette-green","palette-violet","preset-homage","preset-interaction","preset-study","preset-structural","preset-adobe","preset-midnight");document.body.classList.add("palette-lapis","preset-homage");});</script><p>This vignette runs five small eigenvalue and SVD cases with
+eigencore, <code>RSpectra</code>, <code>irlba</code>, and base R. The
+matrices are intentionally small and each method is timed three times so
+the article remains practical to rebuild. Results describe one render on
+one machine; they are not evidence of package rankings or scaling
+behavior.</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://bbuchsbaum.github.io/eigencore/">eigencore</a></span><span class="op">)</span></span></code></pre></div>
 <div class="section level2">
-<h2 id="what-should-be-compared">What should be compared?<a class="anchor" aria-label="anchor" href="#what-should-be-compared"></a>
+<h2 id="what-is-included">What is included?<a class="anchor" aria-label="anchor" href="#what-is-included"></a>
 </h2>
-<p>A useful benchmark suite needs more than one matrix. Dense and sparse
-inputs exercise different planner decisions, and SVD has different
-baselines than Hermitian eigenproblems. The smoke suite below covers
-five regimes:</p>
+<p>Dense and sparse inputs exercise different code paths, and SVD has
+different comparison methods than Hermitian eigenproblems. The smoke
+suite covers these five cases:</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">benchmark_regimes</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
 <span>  regime <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span></span>
@@ -153,14 +148,13 @@ five regimes:</p>
 </tr>
 </tbody>
 </table>
-<p>Base R is included as a truth-oriented reference. For sparse matrices
-it intentionally densifies via <code><a href="https://rdrr.io/r/base/matrix.html" class="external-link">as.matrix()</a></code>, so it is useful
-at small sizes but not a fair large-sparse production baseline.
-<code>irlba</code> is included for SVD rows, where it is a standard
-partial-SVD comparator.</p>
+<p>Base R supplies the dense reference values. For sparse matrices it
+converts the input with <code><a href="https://rdrr.io/r/base/matrix.html" class="external-link">as.matrix()</a></code>, so its timing and
+memory results apply only to these small cases. <code>irlba</code>
+appears only in the SVD cases.</p>
 </div>
 <div class="section level2">
-<h2 id="how-are-the-rows-judged">How are the rows judged?<a class="anchor" aria-label="anchor" href="#how-are-the-rows-judged"></a>
+<h2 id="what-is-recorded">What is recorded?<a class="anchor" aria-label="anchor" href="#what-is-recorded"></a>
 </h2>
 <p>Each row records four things:</p>
 <ul>
@@ -171,295 +165,291 @@ values;</li>
 <li>an explicit residual/backward-error check on the returned
 vectors.</li>
 </ul>
-<p>For eigencore rows, the table also reports the planner label that
-ran. That label matters: a native row, a dense fallback, and a reference
-boundary are different claims even if their values agree.</p>
+<p>For eigencore, the planner label identifies the implementation used
+in each case.</p>
 </div>
 <div class="section level2">
-<h2 id="run-the-smoke-comparison">Run the smoke comparison<a class="anchor" aria-label="anchor" href="#run-the-smoke-comparison"></a>
+<h2 id="results-from-this-render">Results from this render<a class="anchor" aria-label="anchor" href="#results-from-this-render"></a>
 </h2>
+<div class="section level3">
+<h3 id="elapsed-time">Elapsed time<a class="anchor" aria-label="anchor" href="#elapsed-time"></a>
+</h3>
+<p>The entries are median milliseconds; lower values are better. The
+<code>lowest_median</code> column reports the smallest value in each
+row.</p>
 <table style="width:100%;" class="table">
-<caption>Smoke benchmark rows with 3 iterations per method.</caption>
+<caption>Median elapsed time in milliseconds from 3 iterations per
+method.</caption>
 <colgroup>
-<col width="13%">
-<col width="3%">
-<col width="6%">
-<col width="6%">
-<col width="4%">
-<col width="6%">
-<col width="9%">
-<col width="9%">
-<col width="37%">
-<col width="4%">
+<col width="31%">
+<col width="20%">
+<col width="14%">
+<col width="12%">
+<col width="11%">
+<col width="10%">
 </colgroup>
 <thead><tr class="header">
-<th align="left">regime</th>
-<th align="left">task</th>
-<th align="left">method</th>
-<th align="right">median_ms</th>
-<th align="right">mem_mb</th>
-<th align="right">rel_error</th>
-<th align="right">backward_error</th>
-<th align="left">residual_check</th>
-<th align="left">eigencore_label</th>
+<th align="left">case</th>
+<th align="left">lowest median</th>
+<th align="right">eigencore</th>
+<th align="right">RSpectra</th>
+<th align="right">irlba</th>
+<th align="right">base R</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">dense Hermitian</td>
+<td align="left">RSpectra</td>
+<td align="right">4.8560</td>
+<td align="right">0.4853</td>
+<td align="right">not run</td>
+<td align="right">1.935</td>
+</tr>
+<tr class="even">
+<td align="left">sparse path Laplacian</td>
+<td align="left">eigencore</td>
+<td align="right">2.4790</td>
+<td align="right">8.1690</td>
+<td align="right">not run</td>
+<td align="right">12.730</td>
+</tr>
+<tr class="odd">
+<td align="left">dense low-rank SVD</td>
+<td align="left">RSpectra</td>
+<td align="right">1.6560</td>
+<td align="right">0.2516</td>
+<td align="right">0.3612</td>
+<td align="right">1.619</td>
+</tr>
+<tr class="even">
+<td align="left">tall sparse SVD</td>
+<td align="left">RSpectra</td>
+<td align="right">0.6996</td>
+<td align="right">0.3862</td>
+<td align="right">0.7643</td>
+<td align="right">1.792</td>
+</tr>
+<tr class="odd">
+<td align="left">wide sparse SVD</td>
+<td align="left">RSpectra</td>
+<td align="right">0.5485</td>
+<td align="right">0.4925</td>
+<td align="right">1.0270</td>
+<td align="right">2.844</td>
+</tr>
+</tbody>
+</table>
+<p>In this render, eigencore recorded the lowest median in <strong>1 of
+5</strong> cases. The result is mixed, and the sub-millisecond rows are
+especially sensitive to setup overhead and run-to-run noise.</p>
+</div>
+<div class="section level3">
+<h3 id="why-can-larger-cases-look-different">Why can larger cases look different?<a class="anchor" aria-label="anchor" href="#why-can-larger-cases-look-different"></a>
+</h3>
+<p>The smoke cases above are small enough that fixed work matters:
+dispatch, result construction, certification, and the dense eigensolve
+for a bounded Gram matrix can be a substantial fraction of total time.
+They are useful for checking behavior, but they are poor evidence about
+scaling.</p>
+<p>For a highly rectangular sparse SVD, eigencore can form the smaller
+Gram problem and certify the resulting triplets in the original
+coordinates. If the smaller dimension stays bounded while the long
+dimension grows, the Gram eigensolve retains the same dimension while
+iterative methods perform more expensive matrix-vector products. A
+crossover is therefore plausible and is measured by the
+installed-package benchmark, not by the tiny rows above.</p>
+<p>This does not mean that increasing either matrix dimension helps. The
+current planner limits the smaller dimension to 512 for tall matrices
+and 1024 for wide matrices, and also checks aspect ratio, requested-rank
+fraction, and a memory budget. The repository’s cutoff evidence is mixed
+outside the core regime: increasing the smaller side can remove the
+advantage, particularly for tall matrices. The current full benchmark
+cases are <code>100000 x 500</code> and its transpose; see the <a href="https://github.com/bbuchsbaum/eigencore/blob/main/docs/v1-benchmark-manifest.md" class="external-link">benchmark
+manifest</a> for the installed evidence and exact commands.</p>
+<p>The larger benchmark scripts recompute eigencore certificates for
+external results. If an external row fails the requested certificate,
+its elapsed time is not a time-to-certified-answer comparison. That
+failure should not be read as a general claim that the external package
+is slower; rerun it with matched tolerances before drawing that
+conclusion.</p>
+</div>
+<div class="section level3">
+<h3 id="allocated-memory">Allocated memory<a class="anchor" aria-label="anchor" href="#allocated-memory"></a>
+</h3>
+<p>These values are megabytes allocated during the timed expression.
+They do not measure peak resident memory.</p>
+<table class="table">
+<caption>Allocated memory in megabytes.</caption>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="right">eigencore</th>
+<th align="right">RSpectra</th>
+<th align="right">irlba</th>
+<th align="right">base R</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">dense Hermitian</td>
+<td align="right">1.06800</td>
+<td align="right">0.06661</td>
+<td align="right">not run</td>
+<td align="right">0.4240</td>
+</tr>
+<tr class="even">
+<td align="left">sparse path Laplacian</td>
+<td align="right">1.83700</td>
+<td align="right">0.01991</td>
+<td align="right">not run</td>
+<td align="right">3.1880</td>
+</tr>
+<tr class="odd">
+<td align="left">dense low-rank SVD</td>
+<td align="right">1.30600</td>
+<td align="right">0.09405</td>
+<td align="right">0.5606</td>
+<td align="right">0.5942</td>
+</tr>
+<tr class="even">
+<td align="left">tall sparse SVD</td>
+<td align="right">0.01904</td>
+<td align="right">0.02502</td>
+<td align="right">0.1760</td>
+<td align="right">0.8979</td>
+</tr>
+<tr class="odd">
+<td align="left">wide sparse SVD</td>
+<td align="right">0.02359</td>
+<td align="right">0.02246</td>
+<td align="right">0.1542</td>
+<td align="right">0.9098</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="numerical-checks">Numerical checks<a class="anchor" aria-label="anchor" href="#numerical-checks"></a>
+</h3>
+<p>The summary below reports the largest error observed across the
+methods in each case. Timing should be ignored for any case that has a
+failed method or residual check.</p>
+<table style="width:100%;" class="table">
+<caption>Numerical checks across all methods in each case.</caption>
+<colgroup>
+<col width="23%">
+<col width="20%">
+<col width="20%">
+<col width="20%">
+<col width="16%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="center">methods completed</th>
+<th align="right">max relative error</th>
+<th align="right">max backward error</th>
+<th align="left">residual checks</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">dense Hermitian</td>
+<td align="center">3/3</td>
+<td align="right">2.77e-15</td>
+<td align="right">1.57e-11</td>
+<td align="left">all pass</td>
+</tr>
+<tr class="even">
+<td align="left">sparse path Laplacian</td>
+<td align="center">3/3</td>
+<td align="right">8.33e-15</td>
+<td align="right">8.45e-10</td>
+<td align="left">all pass</td>
+</tr>
+<tr class="odd">
+<td align="left">dense low-rank SVD</td>
+<td align="center">4/4</td>
+<td align="right">1.33e-15</td>
+<td align="right">2.52e-15</td>
+<td align="left">all pass</td>
+</tr>
+<tr class="even">
+<td align="left">tall sparse SVD</td>
+<td align="center">4/4</td>
+<td align="right">3.36e-15</td>
+<td align="right">1.49e-10</td>
+<td align="left">all pass</td>
+</tr>
+<tr class="odd">
+<td align="left">wide sparse SVD</td>
+<td align="center">4/4</td>
+<td align="right">3.94e-15</td>
+<td align="right">6.71e-10</td>
+<td align="left">all pass</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="eigencore-planner-paths">Eigencore planner paths<a class="anchor" aria-label="anchor" href="#eigencore-planner-paths"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="23%">
+<col width="68%">
+<col width="7%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="left">planner label</th>
 <th align="left">status</th>
 </tr></thead>
 <tbody>
 <tr class="odd">
 <td align="left">dense Hermitian</td>
-<td align="left">eigen</td>
-<td align="left">eigencore</td>
-<td align="right">5.1010</td>
-<td align="right">1.06800</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
 <td align="left">native dense Hermitian LAPACK fallback</td>
 <td align="left">ok</td>
 </tr>
 <tr class="even">
-<td align="left">dense Hermitian</td>
-<td align="left">eigen</td>
-<td align="left">RSpectra</td>
-<td align="right">0.4686</td>
-<td align="right">0.06661</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
-<td align="left">NA</td>
-<td align="left">ok</td>
-</tr>
-<tr class="odd">
-<td align="left">dense Hermitian</td>
-<td align="left">eigen</td>
-<td align="left">base</td>
-<td align="right">2.1410</td>
-<td align="right">0.42400</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
-<td align="left">NA</td>
-<td align="left">ok</td>
-</tr>
-<tr class="even">
 <td align="left">sparse path Laplacian</td>
-<td align="left">eigen</td>
-<td align="left">eigencore</td>
-<td align="right">2.9440</td>
-<td align="right">1.83700</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
 <td align="left">native tridiagonal Hermitian shift-invert (factorized
 Lanczos)</td>
 <td align="left">ok</td>
 </tr>
 <tr class="odd">
-<td align="left">sparse path Laplacian</td>
-<td align="left">eigen</td>
-<td align="left">RSpectra</td>
-<td align="right">7.7960</td>
-<td align="right">0.01991</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
-<td align="left">NA</td>
-<td align="left">ok</td>
-</tr>
-<tr class="even">
-<td align="left">sparse path Laplacian</td>
-<td align="left">eigen</td>
-<td align="left">base</td>
-<td align="right">14.2000</td>
-<td align="right">3.18800</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
-<td align="left">NA</td>
-<td align="left">ok</td>
-</tr>
-<tr class="odd">
 <td align="left">dense low-rank SVD</td>
-<td align="left">SVD</td>
-<td align="left">eigencore</td>
-<td align="right">1.8950</td>
-<td align="right">1.30600</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
-<td align="left">native certified Gram SVD special case</td>
-<td align="left">ok</td>
-</tr>
-<tr class="even">
-<td align="left">dense low-rank SVD</td>
-<td align="left">SVD</td>
-<td align="left">RSpectra</td>
-<td align="right">0.2579</td>
-<td align="right">0.09405</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
-<td align="left">NA</td>
-<td align="left">ok</td>
-</tr>
-<tr class="odd">
-<td align="left">dense low-rank SVD</td>
-<td align="left">SVD</td>
-<td align="left">irlba</td>
-<td align="right">0.3995</td>
-<td align="right">0.56060</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
-<td align="left">NA</td>
-<td align="left">ok</td>
-</tr>
-<tr class="even">
-<td align="left">dense low-rank SVD</td>
-<td align="left">SVD</td>
-<td align="left">base</td>
-<td align="right">1.8310</td>
-<td align="right">0.59420</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
-<td align="left">NA</td>
-<td align="left">ok</td>
-</tr>
-<tr class="odd">
-<td align="left">tall sparse SVD</td>
-<td align="left">SVD</td>
-<td align="left">eigencore</td>
-<td align="right">0.7848</td>
-<td align="right">0.01904</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
 <td align="left">native certified Gram SVD special case</td>
 <td align="left">ok</td>
 </tr>
 <tr class="even">
 <td align="left">tall sparse SVD</td>
-<td align="left">SVD</td>
-<td align="left">RSpectra</td>
-<td align="right">0.3545</td>
-<td align="right">0.02502</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
-<td align="left">NA</td>
-<td align="left">ok</td>
-</tr>
-<tr class="odd">
-<td align="left">tall sparse SVD</td>
-<td align="left">SVD</td>
-<td align="left">irlba</td>
-<td align="right">0.7806</td>
-<td align="right">0.17600</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
-<td align="left">NA</td>
-<td align="left">ok</td>
-</tr>
-<tr class="even">
-<td align="left">tall sparse SVD</td>
-<td align="left">SVD</td>
-<td align="left">base</td>
-<td align="right">2.0930</td>
-<td align="right">0.89790</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
-<td align="left">NA</td>
-<td align="left">ok</td>
-</tr>
-<tr class="odd">
-<td align="left">wide sparse SVD</td>
-<td align="left">SVD</td>
-<td align="left">eigencore</td>
-<td align="right">0.5928</td>
-<td align="right">0.02359</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
 <td align="left">native certified Gram SVD special case</td>
 <td align="left">ok</td>
 </tr>
-<tr class="even">
-<td align="left">wide sparse SVD</td>
-<td align="left">SVD</td>
-<td align="left">RSpectra</td>
-<td align="right">0.4269</td>
-<td align="right">0.02246</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
-<td align="left">NA</td>
-<td align="left">ok</td>
-</tr>
 <tr class="odd">
 <td align="left">wide sparse SVD</td>
-<td align="left">SVD</td>
-<td align="left">irlba</td>
-<td align="right">1.0640</td>
-<td align="right">0.15420</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
-<td align="left">NA</td>
-<td align="left">ok</td>
-</tr>
-<tr class="even">
-<td align="left">wide sparse SVD</td>
-<td align="left">SVD</td>
-<td align="left">base</td>
-<td align="right">3.5270</td>
-<td align="right">0.90980</td>
-<td align="right">0</td>
-<td align="right">0</td>
-<td align="left">TRUE</td>
-<td align="left">NA</td>
+<td align="left">native certified Gram SVD special case</td>
 <td align="left">ok</td>
 </tr>
 </tbody>
 </table>
-<div class="figure" style="text-align: center">
-<img src="benchmarks_files/figure-html/benchmark-plot-1.png" class="r-plt" alt="Bar chart of median elapsed time in milliseconds by benchmark regime and solver method." width="96%"><p class="caption">
-Elapsed-time smoke comparison by regime and method. These small rows are
-useful for detecting obvious regressions and method-selection surprises,
-but they are not release-grade speed evidence.
-</p>
 </div>
-<p>Read the table from right to left. First, <code>status</code> should
-be <code>"ok"</code> and <code>residual_check</code> should be
-<code>TRUE</code>; otherwise the elapsed time is not a useful
-time-to-answer measurement. Next, <code>rel_error</code> should be near
-machine precision or solver tolerance. Only then does
-<code>median_ms</code> become meaningful.</p>
-<p>For eigencore, inspect <code>eigencore_label</code> before
-interpreting speed. A native sparse path and a dense LAPACK fallback
-both may be correct, but they support different scaling claims.</p>
 </div>
 <div class="section level2">
-<h2 id="what-this-smoke-vignette-does-not-prove">What this smoke vignette does not prove<a class="anchor" aria-label="anchor" href="#what-this-smoke-vignette-does-not-prove"></a>
+<h2 id="limits-of-this-comparison">Limits of this comparison<a class="anchor" aria-label="anchor" href="#limits-of-this-comparison"></a>
 </h2>
 <p>The rows above are deliberately small. They keep the vignette
 runnable, and they catch obvious problems: wrong target, broken sparse
 handling, missing vectors, certification drift, and large timing
 regressions. They do not prove large-scale speed claims.</p>
 <p>For larger sparse matrices, base R is a truth oracle only while
-<code>as.matrix(A)</code> is affordable. The production question is
-whether eigencore beats certified partial solvers without silently
-densifying. That requires installed-package runs, larger fixtures, saved
-artifacts, and memory evidence.</p>
+<code>as.matrix(A)</code> is affordable. Studying scaling and memory
+behavior requires installed-package runs, larger fixtures, repeated
+measurements, and saved artifacts.</p>
 </div>
 <div class="section level2">
-<h2 id="run-promotion-grade-benchmarks">Run promotion-grade benchmarks<a class="anchor" aria-label="anchor" href="#run-promotion-grade-benchmarks"></a>
+<h2 id="run-the-larger-benchmark-scripts">Run the larger benchmark scripts<a class="anchor" aria-label="anchor" href="#run-the-larger-benchmark-scripts"></a>
 </h2>
-<p>Use the <code>inst/benchmarks</code> scripts when you need evidence
-suitable for a release note, paper, or solver-promotion decision. Run
-them from an installed package, not from a mutable source tree:</p>
+<p>The scripts under <code>inst/benchmarks</code> run larger cases with
+stricter checks and saved outputs. Run them from an installed package
+rather than a mutable source tree:</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL <span class="at">--library</span><span class="op">=</span>/tmp/eigencore-bench-lib .</span>
 <span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a><span class="va">R_LIBS</span><span class="op">=</span>/tmp/eigencore-bench-lib <span class="dt">\</span></span>
 <span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a>  <span class="ex">Rscript</span> inst/benchmarks/bench-native-hermitian-gate.R <span class="dt">\</span></span>
@@ -473,12 +463,11 @@ meaningful:</p>
 <span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a>  <span class="at">--methods</span><span class="op">=</span>eigencore,RSpectra,irlba,base <span class="dt">\</span></span>
 <span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a>  <span class="at">--cases</span><span class="op">=</span>tall_sparse,wide_sparse <span class="dt">\</span></span>
 <span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a>  <span class="at">--subject</span><span class="op">=</span>eigencore <span class="at">--strict</span> <span class="at">--save</span></span></code></pre></div>
-<p>Those scripts add the release-grade pieces this vignette
-intentionally keeps small: strict pass/fail gates, larger sparse
-fixtures, saved RDS artifacts, memory ratios, and planner-provenance
-checks. Use <code>docs/v1-benchmark-manifest.md</code> for the current
-release-gate inventory and <code>docs/post-v1-benchmark-gates.md</code>
-for future-promotion gates.</p>
+<p>Those scripts add strict pass/fail gates, larger sparse fixtures,
+saved RDS artifacts, memory ratios, and planner-provenance checks. Use
+<code>docs/v1-benchmark-manifest.md</code> for the current release-gate
+inventory and <code>docs/post-v1-benchmark-gates.md</code> for
+future-promotion gates.</p>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>

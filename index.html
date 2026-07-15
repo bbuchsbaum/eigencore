@@ -40,7 +40,7 @@
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
 <li><a class="dropdown-item" href="articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
-    <li><a class="dropdown-item" href="articles/benchmarks.html">Benchmarking eigencore against established solvers</a></li>
+    <li><a class="dropdown-item" href="articles/benchmarks.html">Benchmark smoke tests</a></li>
   </ul>
 </li>
 <li class="nav-item"><a class="nav-link" href="reference/index.html">Reference</a></li>
@@ -99,15 +99,15 @@
 <span><span class="va">fit</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/svd_partial.html">svd_partial</a></span><span class="op">(</span><span class="va">A</span>, rank <span class="op">=</span> <span class="fl">10</span>, target <span class="op">=</span> <span class="fu"><a href="reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="va">fit</span></span>
 <span><span class="co">#&gt; Partial SVD</span></span>
-<span><span class="co">#&gt;   requested rank: 10 </span></span>
-<span><span class="co">#&gt;   converged rank: 10 </span></span>
-<span><span class="co">#&gt;   method: native certified Gram SVD special case </span></span>
-<span><span class="co">#&gt;   target: largest </span></span>
-<span><span class="co">#&gt;   max residual: 1.388377e-14 </span></span>
-<span><span class="co">#&gt;   max backward error: 4.392928e-17 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 1.776357e-15 </span></span>
-<span><span class="co">#&gt;   norm bound: frobenius_exact </span></span>
-<span><span class="co">#&gt;   scale estimated: FALSE </span></span>
+<span><span class="co">#&gt;   requested rank: 10</span></span>
+<span><span class="co">#&gt;   converged rank: 10</span></span>
+<span><span class="co">#&gt;   method: native certified Gram SVD special case</span></span>
+<span><span class="co">#&gt;   target: largest</span></span>
+<span><span class="co">#&gt;   max residual: 1.414065e-14</span></span>
+<span><span class="co">#&gt;   max backward error: 4.474206e-17</span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.554312e-15</span></span>
+<span><span class="co">#&gt;   norm bound: frobenius_exact</span></span>
+<span><span class="co">#&gt;   scale estimated: FALSE</span></span>
 <span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
 <p>The printout names the kernel that ran, gives the worst residual, backward error, and orthogonality loss across the returned triplets, and shows the certificate passed with an exact norm bound. This problem uses the native certified Gram path; see <a href="#benchmarks">Benchmarks</a> for a reproducible timing on the development machine.</p>
 <p><img src="reference/figures/README-scree-1.png" alt="The ten largest singular values highlighted in blue against the full 500-point singular spectrum of A in grey." width="100%"></p>
@@ -119,15 +119,15 @@
 <div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">fit</span><span class="op">$</span><span class="va">certificate</span></span>
 <span><span class="co">#&gt; eigencore certificate</span></span>
-<span><span class="co">#&gt;   passed: TRUE </span></span>
-<span><span class="co">#&gt;   tolerance: 1e-08 </span></span>
-<span><span class="co">#&gt;   type: residual_backward_error </span></span>
-<span><span class="co">#&gt;   norm bound: frobenius_exact </span></span>
-<span><span class="co">#&gt;   scale estimated: FALSE </span></span>
-<span><span class="co">#&gt;   max residual: 1.388377e-14 </span></span>
-<span><span class="co">#&gt;   max backward error: 4.392928e-17 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 1.776357e-15 </span></span>
-<span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
+<span><span class="co">#&gt;   passed: TRUE</span></span>
+<span><span class="co">#&gt;   tolerance: 1e-08</span></span>
+<span><span class="co">#&gt;   type: residual_backward_error</span></span>
+<span><span class="co">#&gt;   norm bound: frobenius_exact</span></span>
+<span><span class="co">#&gt;   scale estimated: FALSE</span></span>
+<span><span class="co">#&gt;   max residual: 1.414065e-14</span></span>
+<span><span class="co">#&gt;   max backward error: 4.474206e-17</span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.554312e-15</span></span>
+<span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08</span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE</span></span></code></pre></div>
 <p>When the check cannot be made exact, the certificate says so. For a <strong>column-centered</strong> sparse matrix the only cheap norm bound is a stochastic estimate, so eigencore returns the singular values but sets <code>passed = FALSE</code> and tells you why:</p>
 <div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
@@ -173,9 +173,9 @@
 <span><span class="co">#&gt;   target: smallest</span></span>
 <span><span class="co">#&gt;   restart: native_tridiagonal_shift_invert_lanczos</span></span>
 <span><span class="co">#&gt;   locked: 0</span></span>
-<span><span class="co">#&gt;   max residual: 9.026588e-10</span></span>
-<span><span class="co">#&gt;   max backward error: 2.605773e-12</span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 6.439294e-15</span></span>
+<span><span class="co">#&gt;   max residual: 9.026589e-10</span></span>
+<span><span class="co">#&gt;   max backward error: 2.605774e-12</span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 4.884981e-15</span></span>
 <span><span class="co">#&gt;   norm bound: frobenius_metadata+identity_exact</span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE</span></span>
 <span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
@@ -217,6 +217,7 @@
 </table>
 <p><sub>Measured with R 4.5.1 on aarch64-apple-darwin20. Timings depend on the processor, BLAS/LAPACK, package versions, sparsity pattern, and workload; rerun the script before making performance decisions.</sub></p>
 <p>The SVD rows use a bounded Gram kernel for tall or wide sparse problems whose small dimension is ≤ 512 (≤ 1024 for wide matrices). Other shapes may select different paths with different costs. <code>fit$method</code> always names the path that ran, making the relevant implementation boundary visible.</p>
+<p>That path has fixed work associated with solving the smaller Gram problem and constructing a certified result. On the tiny examples used in documentation smoke tests, this overhead can dominate and <code>RSpectra</code> or <code>irlba</code> may finish sooner. As the long dimension grows while the smaller dimension remains within the planner boundary, the same path can cross over and become faster. This is a shape-specific effect, not a claim that eigencore becomes faster whenever a matrix gets larger; the <a href="https://bbuchsbaum.github.io/eigencore/articles/benchmarks.html">benchmark vignette</a> explains the comparison and its limits.</p>
 </div>
 <div class="section level2">
 <h2 id="when-to-use-what">When to use what<a class="anchor" aria-label="anchor" href="#when-to-use-what"></a>
