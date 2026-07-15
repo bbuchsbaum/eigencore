@@ -6,7 +6,7 @@
   eigencore](https://bbuchsbaum.github.io/eigencore/articles/eigencore.md):
 - [Certificates: reading the numerical
   evidence](https://bbuchsbaum.github.io/eigencore/articles/certificates.md):
-- [Migrating from
-  geigen](https://bbuchsbaum.github.io/eigencore/articles/geigen-migration.md):
+- [Generalized eigenvalue problems with
+  eigencore](https://bbuchsbaum.github.io/eigencore/articles/generalized-eigenproblems.md):
 - [Benchmarking eigencore against established
   solvers](https://bbuchsbaum.github.io/eigencore/articles/benchmarks.md):

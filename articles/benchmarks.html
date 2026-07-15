@@ -35,7 +35,7 @@
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
 <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
-    <li><a class="dropdown-item" href="../articles/geigen-migration.html">Migrating from geigen</a></li>
+    <li><a class="dropdown-item" href="../articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
     <li><a class="dropdown-item" href="../articles/benchmarks.html">Benchmarking eigencore against established solvers</a></li>
   </ul>
 </li>
@@ -209,7 +209,7 @@ boundary are different claims even if their values agree.</p>
 <td align="left">dense Hermitian</td>
 <td align="left">eigen</td>
 <td align="left">eigencore</td>
-<td align="right">4.9090</td>
+<td align="right">5.1010</td>
 <td align="right">1.06800</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -221,7 +221,7 @@ boundary are different claims even if their values agree.</p>
 <td align="left">dense Hermitian</td>
 <td align="left">eigen</td>
 <td align="left">RSpectra</td>
-<td align="right">0.4669</td>
+<td align="right">0.4686</td>
 <td align="right">0.06661</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -233,7 +233,7 @@ boundary are different claims even if their values agree.</p>
 <td align="left">dense Hermitian</td>
 <td align="left">eigen</td>
 <td align="left">base</td>
-<td align="right">2.5540</td>
+<td align="right">2.1410</td>
 <td align="right">0.42400</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -245,7 +245,7 @@ boundary are different claims even if their values agree.</p>
 <td align="left">sparse path Laplacian</td>
 <td align="left">eigen</td>
 <td align="left">eigencore</td>
-<td align="right">2.4550</td>
+<td align="right">2.9440</td>
 <td align="right">1.83700</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -258,7 +258,7 @@ Lanczos)</td>
 <td align="left">sparse path Laplacian</td>
 <td align="left">eigen</td>
 <td align="left">RSpectra</td>
-<td align="right">7.8040</td>
+<td align="right">7.7960</td>
 <td align="right">0.01991</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -270,7 +270,7 @@ Lanczos)</td>
 <td align="left">sparse path Laplacian</td>
 <td align="left">eigen</td>
 <td align="left">base</td>
-<td align="right">15.4900</td>
+<td align="right">14.2000</td>
 <td align="right">3.18800</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -282,7 +282,7 @@ Lanczos)</td>
 <td align="left">dense low-rank SVD</td>
 <td align="left">SVD</td>
 <td align="left">eigencore</td>
-<td align="right">1.6220</td>
+<td align="right">1.8950</td>
 <td align="right">1.30600</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -294,7 +294,7 @@ Lanczos)</td>
 <td align="left">dense low-rank SVD</td>
 <td align="left">SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">0.4649</td>
+<td align="right">0.2579</td>
 <td align="right">0.09405</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -306,7 +306,7 @@ Lanczos)</td>
 <td align="left">dense low-rank SVD</td>
 <td align="left">SVD</td>
 <td align="left">irlba</td>
-<td align="right">0.5039</td>
+<td align="right">0.3995</td>
 <td align="right">0.56060</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -318,7 +318,7 @@ Lanczos)</td>
 <td align="left">dense low-rank SVD</td>
 <td align="left">SVD</td>
 <td align="left">base</td>
-<td align="right">2.2460</td>
+<td align="right">1.8310</td>
 <td align="right">0.59420</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -330,7 +330,7 @@ Lanczos)</td>
 <td align="left">tall sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">eigencore</td>
-<td align="right">0.7256</td>
+<td align="right">0.7848</td>
 <td align="right">0.01904</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -342,7 +342,7 @@ Lanczos)</td>
 <td align="left">tall sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">0.3784</td>
+<td align="right">0.3545</td>
 <td align="right">0.02502</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -354,7 +354,7 @@ Lanczos)</td>
 <td align="left">tall sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">irlba</td>
-<td align="right">0.7419</td>
+<td align="right">0.7806</td>
 <td align="right">0.17600</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -366,7 +366,7 @@ Lanczos)</td>
 <td align="left">tall sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">base</td>
-<td align="right">2.5460</td>
+<td align="right">2.0930</td>
 <td align="right">0.89790</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -378,7 +378,7 @@ Lanczos)</td>
 <td align="left">wide sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">eigencore</td>
-<td align="right">0.5547</td>
+<td align="right">0.5928</td>
 <td align="right">0.02359</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -390,7 +390,7 @@ Lanczos)</td>
 <td align="left">wide sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">0.4485</td>
+<td align="right">0.4269</td>
 <td align="right">0.02246</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -402,7 +402,7 @@ Lanczos)</td>
 <td align="left">wide sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">irlba</td>
-<td align="right">1.0110</td>
+<td align="right">1.0640</td>
 <td align="right">0.15420</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -414,7 +414,7 @@ Lanczos)</td>
 <td align="left">wide sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">base</td>
-<td align="right">4.2920</td>
+<td align="right">3.5270</td>
 <td align="right">0.90980</td>
 <td align="right">0</td>
 <td align="right">0</td>

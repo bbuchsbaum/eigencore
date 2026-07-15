@@ -5,8 +5,8 @@ articles:
   benchmarks: benchmarks.html
   certificates: certificates.html
   eigencore: eigencore.html
-  geigen-migration: geigen-migration.html
-last_built: 2026-07-15T15:53Z
+  generalized-eigenproblems: generalized-eigenproblems.html
+last_built: 2026-07-15T16:08Z
 urls:
   reference: https://bbuchsbaum.github.io/eigencore/reference
   article: https://bbuchsbaum.github.io/eigencore/articles
