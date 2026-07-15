@@ -285,7 +285,8 @@ accept the same `which` codes as `RSpectra` — `"LM"`, `"SM"`, `"LA"`,
 - [`vignette("certificates")`](https://bbuchsbaum.github.io/eigencore/articles/certificates.md)
   is the deep dive on reading the numerical evidence — what each field
   means and what to do when a check fails.
-- Run [`help(package = "eigencore")`](https://rdrr.io/pkg/eigencore/man)
+- Run
+  [`help(package = "eigencore")`](https://bbuchsbaum.github.io/eigencore/reference)
   to browse the installed help index.
 - [`?certificate`](https://bbuchsbaum.github.io/eigencore/reference/certificate.md)
   documents the certificate fields in detail.

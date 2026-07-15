@@ -10,7 +10,8 @@
 <link href="../deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
 <script src="../deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="../deps/font-awesome-6.5.2/css/all.min.css" rel="stylesheet">
 <link href="../deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
-<script src="../deps/headroom-0.11.0/headroom.min.js"></script><script src="../deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="../deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="../deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="../deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="../deps/search-1.0.0/fuse.min.js"></script><script src="../deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="../pkgdown.js"></script><meta property="og:title" content="Benchmarking eigencore against established solvers">
+<script src="../deps/headroom-0.11.0/headroom.min.js"></script><script src="../deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="../deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="../deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="../deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="../deps/search-1.0.0/fuse.min.js"></script><script src="../deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="../pkgdown.js"></script><link href="../extra.css" rel="stylesheet">
+<script src="../extra.js"></script><meta property="og:title" content="Benchmarking eigencore against established solvers">
 </head>
 <body>
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
@@ -53,6 +54,7 @@
     <li><button class="dropdown-item" data-bs-theme-value="auto"><span class="fa fa-adjust"></span> Auto</button></li>
   </ul>
 </li>
+<li class="nav-item"><a class="external-link nav-link" href="https://github.com/bbuchsbaum/eigencore/" aria-label="GitHub"><span class="fa fab fa-github fa-lg"></span></a></li>
       </ul>
 </div>
 
@@ -69,13 +71,13 @@
       <h1>Benchmarking eigencore against established solvers</h1>
             
       
-
+      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/vignettes/benchmarks.Rmd" class="external-link"><code>vignettes/benchmarks.Rmd</code></a></small>
       <div class="d-none name"><code>benchmarks.Rmd</code></div>
     </div>
 
     
     
-<p>Benchmarks are trust work. They tell you whether a solver is fast
+<script>document.addEventListener("DOMContentLoaded",function(){document.body.classList.remove("palette-red","palette-lapis","palette-ochre","palette-teal","palette-green","palette-violet","preset-homage","preset-interaction","preset-study","preset-structural","preset-adobe","preset-midnight");document.body.classList.add("palette-lapis","preset-homage");});</script><p>Benchmarks are trust work. They tell you whether a solver is fast
 enough, whether it returns the same numerical slice as established
 tools, and whether the returned vectors actually satisfy the equations
 they claim to solve.</p>
@@ -86,7 +88,7 @@ a reproducible smoke comparison, not as a release-speed claim. For
 promotion-grade evidence, use the installed-package benchmark gates at
 the end of the vignette.</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va">eigencore</span><span class="op">)</span></span></code></pre></div>
+<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://bbuchsbaum.github.io/eigencore/">eigencore</a></span><span class="op">)</span></span></code></pre></div>
 <div class="section level2">
 <h2 id="what-should-be-compared">What should be compared?<a class="anchor" aria-label="anchor" href="#what-should-be-compared"></a>
 </h2>
@@ -207,7 +209,7 @@ boundary are different claims even if their values agree.</p>
 <td align="left">dense Hermitian</td>
 <td align="left">eigen</td>
 <td align="left">eigencore</td>
-<td align="right">4.7690</td>
+<td align="right">4.9090</td>
 <td align="right">1.06800</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -219,7 +221,7 @@ boundary are different claims even if their values agree.</p>
 <td align="left">dense Hermitian</td>
 <td align="left">eigen</td>
 <td align="left">RSpectra</td>
-<td align="right">0.4562</td>
+<td align="right">0.4669</td>
 <td align="right">0.06661</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -231,7 +233,7 @@ boundary are different claims even if their values agree.</p>
 <td align="left">dense Hermitian</td>
 <td align="left">eigen</td>
 <td align="left">base</td>
-<td align="right">2.0950</td>
+<td align="right">2.5540</td>
 <td align="right">0.42400</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -243,7 +245,7 @@ boundary are different claims even if their values agree.</p>
 <td align="left">sparse path Laplacian</td>
 <td align="left">eigen</td>
 <td align="left">eigencore</td>
-<td align="right">2.5050</td>
+<td align="right">2.4550</td>
 <td align="right">1.83700</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -256,7 +258,7 @@ Lanczos)</td>
 <td align="left">sparse path Laplacian</td>
 <td align="left">eigen</td>
 <td align="left">RSpectra</td>
-<td align="right">7.8010</td>
+<td align="right">7.8040</td>
 <td align="right">0.01991</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -268,7 +270,7 @@ Lanczos)</td>
 <td align="left">sparse path Laplacian</td>
 <td align="left">eigen</td>
 <td align="left">base</td>
-<td align="right">13.7100</td>
+<td align="right">15.4900</td>
 <td align="right">3.18800</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -280,7 +282,7 @@ Lanczos)</td>
 <td align="left">dense low-rank SVD</td>
 <td align="left">SVD</td>
 <td align="left">eigencore</td>
-<td align="right">1.5510</td>
+<td align="right">1.6220</td>
 <td align="right">1.30600</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -292,7 +294,7 @@ Lanczos)</td>
 <td align="left">dense low-rank SVD</td>
 <td align="left">SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">0.2721</td>
+<td align="right">0.4649</td>
 <td align="right">0.09405</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -304,7 +306,7 @@ Lanczos)</td>
 <td align="left">dense low-rank SVD</td>
 <td align="left">SVD</td>
 <td align="left">irlba</td>
-<td align="right">0.3890</td>
+<td align="right">0.5039</td>
 <td align="right">0.56060</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -316,7 +318,7 @@ Lanczos)</td>
 <td align="left">dense low-rank SVD</td>
 <td align="left">SVD</td>
 <td align="left">base</td>
-<td align="right">1.6890</td>
+<td align="right">2.2460</td>
 <td align="right">0.59420</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -328,7 +330,7 @@ Lanczos)</td>
 <td align="left">tall sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">eigencore</td>
-<td align="right">0.7053</td>
+<td align="right">0.7256</td>
 <td align="right">0.01904</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -340,7 +342,7 @@ Lanczos)</td>
 <td align="left">tall sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">0.3717</td>
+<td align="right">0.3784</td>
 <td align="right">0.02502</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -352,7 +354,7 @@ Lanczos)</td>
 <td align="left">tall sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">irlba</td>
-<td align="right">0.7240</td>
+<td align="right">0.7419</td>
 <td align="right">0.17600</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -364,7 +366,7 @@ Lanczos)</td>
 <td align="left">tall sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">base</td>
-<td align="right">1.8440</td>
+<td align="right">2.5460</td>
 <td align="right">0.89790</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -376,7 +378,7 @@ Lanczos)</td>
 <td align="left">wide sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">eigencore</td>
-<td align="right">0.5423</td>
+<td align="right">0.5547</td>
 <td align="right">0.02359</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -388,7 +390,7 @@ Lanczos)</td>
 <td align="left">wide sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">0.4109</td>
+<td align="right">0.4485</td>
 <td align="right">0.02246</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -400,7 +402,7 @@ Lanczos)</td>
 <td align="left">wide sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">irlba</td>
-<td align="right">0.9993</td>
+<td align="right">1.0110</td>
 <td align="right">0.15420</td>
 <td align="right">0</td>
 <td align="right">0</td>
@@ -412,7 +414,7 @@ Lanczos)</td>
 <td align="left">wide sparse SVD</td>
 <td align="left">SVD</td>
 <td align="left">base</td>
-<td align="right">3.3350</td>
+<td align="right">4.2920</td>
 <td align="right">0.90980</td>
 <td align="right">0</td>
 <td align="right">0</td>
