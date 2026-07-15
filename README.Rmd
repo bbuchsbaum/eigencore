@@ -183,6 +183,15 @@ small dimension is ≤ 512 (≤ 1024 for wide matrices). Other shapes may select
 different paths with different costs. `fit$method` always names the path that
 ran, making the relevant implementation boundary visible.
 
+That path has fixed work associated with solving the smaller Gram problem and
+constructing a certified result. On the tiny examples used in documentation
+smoke tests, this overhead can dominate and `RSpectra` or `irlba` may finish
+sooner. As the long dimension grows while the smaller dimension remains within
+the planner boundary, the same path can cross over and become faster. This is a
+shape-specific effect, not a claim that eigencore becomes faster whenever a
+matrix gets larger; the [benchmark vignette](https://bbuchsbaum.github.io/eigencore/articles/benchmarks.html)
+explains the comparison and its limits.
+
 ## When to use what
 
 Use **eigencore** for tall or wide sparse SVD (PCA-shaped problems), the

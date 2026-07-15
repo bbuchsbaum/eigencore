@@ -1,5 +1,5 @@
 ---
-title: Benchmarking eigencore against established solvers
+title: Benchmark smoke tests
 output:
   rmarkdown::html_vignette:
     toc: yes
@@ -17,7 +17,7 @@ resource_files:
 - fonts
 
 vignette: |
-  %\VignetteIndexEntry{Benchmarking eigencore against established solvers}
+  %\VignetteIndexEntry{Benchmark smoke tests}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -42,6 +42,7 @@ benchmark_ready <- all(vapply(
   quietly = TRUE
 ))
 benchmark_iterations <- 3L
+options(knitr.kable.NA = "not run")
 ```
 
 ```{r albers-classes, echo=FALSE, results='asis'}
@@ -270,44 +271,64 @@ svd_rows <- function(name, A, rank = 6L, tol = 1e-8, seed = 1L,
   do.call(rbind, rows)
 }
 
-plot_time_summary <- function(rows) {
-  ok <- rows[rows$status == "ok", , drop = FALSE]
-  labels <- paste(ok$regime, ok$method, sep = "\n")
-  colors <- c(eigencore = "#2166ac", RSpectra = "#b2182b", irlba = "#1b7837", base = "grey55")
-  op <- par(mar = c(9, 4.5, 1, 1))
-  on.exit(par(op))
-  barplot(
-    ok$median_ms,
-    names.arg = labels,
-    las = 2,
-    col = colors[ok$method],
-    border = NA,
-    ylab = "median elapsed time (ms)",
-    cex.names = 0.68
-  )
-  legend("topright", names(colors), fill = colors, border = NA, bty = "n", cex = 0.85)
+metric_table <- function(rows, metric, digits = 4L) {
+  regimes <- unique(rows$regime)
+  methods <- c("eigencore", "RSpectra", "irlba", "base")
+  out <- data.frame(regime = regimes, check.names = FALSE)
+
+  for (method in methods) {
+    out[[method]] <- vapply(regimes, function(regime) {
+      keep <- rows$regime == regime & rows$method == method & rows$status == "ok"
+      if (!any(keep)) NA_real_ else rows[[metric]][which(keep)[1L]]
+    }, numeric(1))
+    out[[method]] <- signif(out[[method]], digits)
+  }
+
+  out
+}
+
+timing_table <- function(rows) {
+  out <- metric_table(rows, "median_ms")
+  method_columns <- setdiff(names(out), "regime")
+  out$lowest_median <- vapply(seq_len(nrow(out)), function(i) {
+    values <- unlist(out[i, method_columns], use.names = TRUE)
+    names(values)[which.min(values)]
+  }, character(1))
+  out[, c("regime", "lowest_median", method_columns)]
+}
+
+quality_table <- function(rows) {
+  regimes <- unique(rows$regime)
+  do.call(rbind, lapply(regimes, function(regime) {
+    current <- rows[rows$regime == regime, , drop = FALSE]
+    ok <- current[current$status == "ok", , drop = FALSE]
+    data.frame(
+      regime = regime,
+      successful_methods = sprintf("%d/%d", nrow(ok), nrow(current)),
+      max_relative_error = formatC(max(ok$rel_error), format = "e", digits = 2),
+      max_backward_error = formatC(max(ok$backward_error), format = "e", digits = 2),
+      residual_checks = if (all(ok$residual_check)) "all pass" else "one or more fail",
+      stringsAsFactors = FALSE
+    )
+  }))
 }
 ```
 
-Benchmarks are trust work. They tell you whether a solver is fast enough,
-whether it returns the same numerical slice as established tools, and whether
-the returned vectors actually satisfy the equations they claim to solve.
-
-This vignette runs a compact comparison suite against `RSpectra`, base R, and
-`irlba`. It uses small problems so the article can be rebuilt on a laptop.
-Treat the tables as a reproducible smoke comparison, not as a release-speed
-claim. For promotion-grade evidence, use the installed-package benchmark gates
-at the end of the vignette.
+This vignette runs five small eigenvalue and SVD cases with eigencore,
+`RSpectra`, `irlba`, and base R. The matrices are intentionally small and each
+method is timed three times so the article remains practical to rebuild.
+Results describe one render on one machine; they are not evidence of package
+rankings or scaling behavior.
 
 ```{r setup}
 library(eigencore)
 ```
 
-## What should be compared?
+## What is included?
 
-A useful benchmark suite needs more than one matrix. Dense and sparse inputs
-exercise different planner decisions, and SVD has different baselines than
-Hermitian eigenproblems. The smoke suite below covers five regimes:
+Dense and sparse inputs exercise different code paths, and SVD has different
+comparison methods than Hermitian eigenproblems. The smoke suite covers these
+five cases:
 
 ```{r regimes}
 benchmark_regimes <- data.frame(
@@ -329,12 +350,11 @@ benchmark_regimes <- data.frame(
 knitr::kable(benchmark_regimes)
 ```
 
-Base R is included as a truth-oriented reference. For sparse matrices it
-intentionally densifies via `as.matrix()`, so it is useful at small sizes but
-not a fair large-sparse production baseline. `irlba` is included for SVD rows,
-where it is a standard partial-SVD comparator.
+Base R supplies the dense reference values. For sparse matrices it converts
+the input with `as.matrix()`, so its timing and memory results apply only to
+these small cases. `irlba` appears only in the SVD cases.
 
-## How are the rows judged?
+## What is recorded?
 
 Each row records four things:
 
@@ -343,11 +363,10 @@ Each row records four things:
 - relative error against a dense base truth for the requested values;
 - an explicit residual/backward-error check on the returned vectors.
 
-For eigencore rows, the table also reports the planner label that ran. That
-label matters: a native row, a dense fallback, and a reference boundary are
-different claims even if their values agree.
+For eigencore, the planner label identifies the implementation used in each
+case.
 
-## Run the smoke comparison
+## Results from this render
 
 ```{r build-cases, eval = benchmark_ready, include = FALSE}
 set.seed(1001)
@@ -378,35 +397,114 @@ stopifnot(all(is.finite(benchmark_rows$rel_error[benchmark_rows$status == "ok"])
 stopifnot(all(is.finite(benchmark_rows$backward_error[benchmark_rows$status == "ok"])))
 ```
 
-```{r benchmark-table, eval = benchmark_ready, echo = FALSE}
-display_rows <- benchmark_rows
-display_rows$median_ms <- signif(display_rows$median_ms, 4)
-display_rows$mem_mb <- signif(display_rows$mem_mb, 4)
-display_rows$rel_error <- signif(display_rows$rel_error, 3)
-display_rows$backward_error <- signif(display_rows$backward_error, 3)
+### Elapsed time
+
+The entries are median milliseconds; lower values are better. The
+`lowest_median` column reports the smallest value in each row.
+
+```{r timing-table, eval = benchmark_ready, echo = FALSE}
+timing_rows <- timing_table(benchmark_rows)
 knitr::kable(
-  display_rows[, c("regime", "task", "method", "median_ms", "mem_mb",
-                   "rel_error", "backward_error", "residual_check",
-                   "eigencore_label", "status")],
-  caption = paste("Smoke benchmark rows with", benchmark_iterations,
-                  "iterations per method.")
+  timing_rows,
+  col.names = c("case", "lowest median", "eigencore", "RSpectra", "irlba", "base R"),
+  align = c("l", "l", "r", "r", "r", "r"),
+  caption = paste("Median elapsed time in milliseconds from",
+                  benchmark_iterations, "iterations per method.")
 )
 ```
 
-```{r benchmark-plot, eval = benchmark_ready, echo = FALSE, fig.cap = "Elapsed-time smoke comparison by regime and method. These small rows are useful for detecting obvious regressions and method-selection surprises, but they are not release-grade speed evidence.", fig.alt = "Bar chart of median elapsed time in milliseconds by benchmark regime and solver method."}
-plot_time_summary(benchmark_rows)
+```{r timing-summary, eval = benchmark_ready, echo = FALSE, results = 'asis'}
+eigencore_lowest <- sum(timing_rows$lowest_median == "eigencore")
+cat(sprintf(
+  paste0(
+    "In this render, eigencore recorded the lowest median in **%d of %d** ",
+    "cases. The result is mixed, and the sub-millisecond rows are especially ",
+    "sensitive to setup overhead and run-to-run noise."
+  ),
+  eigencore_lowest,
+  nrow(timing_rows)
+))
 ```
 
-Read the table from right to left. First, `status` should be `"ok"` and
-`residual_check` should be `TRUE`; otherwise the elapsed time is not a useful
-time-to-answer measurement. Next, `rel_error` should be near machine precision
-or solver tolerance. Only then does `median_ms` become meaningful.
+### Why can larger cases look different?
 
-For eigencore, inspect `eigencore_label` before interpreting speed. A native
-sparse path and a dense LAPACK fallback both may be correct, but they support
-different scaling claims.
+The smoke cases above are small enough that fixed work matters: dispatch,
+result construction, certification, and the dense eigensolve for a bounded
+Gram matrix can be a substantial fraction of total time. They are useful for
+checking behavior, but they are poor evidence about scaling.
 
-## What this smoke vignette does not prove
+For a highly rectangular sparse SVD, eigencore can form the smaller Gram
+problem and certify the resulting triplets in the original coordinates. If the
+smaller dimension stays bounded while the long dimension grows, the Gram
+eigensolve retains the same dimension while iterative methods perform more
+expensive matrix-vector products. A crossover is therefore plausible and is
+measured by the installed-package benchmark, not by the tiny rows above.
+
+This does not mean that increasing either matrix dimension helps. The current
+planner limits the smaller dimension to 512 for tall matrices and 1024 for
+wide matrices, and also checks aspect ratio, requested-rank fraction, and a
+memory budget. The repository's cutoff evidence is mixed outside the core
+regime: increasing the smaller side can remove the advantage, particularly for
+tall matrices. The current full benchmark cases are `100000 x 500` and its
+transpose; see the
+[benchmark manifest](https://github.com/bbuchsbaum/eigencore/blob/main/docs/v1-benchmark-manifest.md)
+for the installed evidence and exact commands.
+
+The larger benchmark scripts recompute eigencore certificates for external
+results. If an external row fails the requested certificate, its elapsed time
+is not a time-to-certified-answer comparison. That failure should not be read
+as a general claim that the external package is slower; rerun it with matched
+tolerances before drawing that conclusion.
+
+### Allocated memory
+
+These values are megabytes allocated during the timed expression. They do not
+measure peak resident memory.
+
+```{r memory-table, eval = benchmark_ready, echo = FALSE}
+memory_rows <- metric_table(benchmark_rows, "mem_mb")
+knitr::kable(
+  memory_rows,
+  col.names = c("case", "eigencore", "RSpectra", "irlba", "base R"),
+  align = c("l", "r", "r", "r", "r"),
+  caption = "Allocated memory in megabytes."
+)
+```
+
+### Numerical checks
+
+The summary below reports the largest error observed across the methods in
+each case. Timing should be ignored for any case that has a failed method or
+residual check.
+
+```{r quality-table, eval = benchmark_ready, echo = FALSE}
+quality_rows <- quality_table(benchmark_rows)
+knitr::kable(
+  quality_rows,
+  col.names = c("case", "methods completed", "max relative error",
+                "max backward error", "residual checks"),
+  align = c("l", "c", "r", "r", "l"),
+  caption = "Numerical checks across all methods in each case."
+)
+```
+
+### Eigencore planner paths
+
+```{r planner-table, eval = benchmark_ready, echo = FALSE}
+planner_rows <- benchmark_rows[
+  benchmark_rows$method == "eigencore",
+  c("regime", "eigencore_label", "status"),
+  drop = FALSE
+]
+rownames(planner_rows) <- NULL
+knitr::kable(
+  planner_rows,
+  col.names = c("case", "planner label", "status"),
+  align = c("l", "l", "l")
+)
+```
+
+## Limits of this comparison
 
 The rows above are deliberately small. They keep the vignette runnable, and
 they catch obvious problems: wrong target, broken sparse handling, missing
@@ -414,15 +512,14 @@ vectors, certification drift, and large timing regressions. They do not prove
 large-scale speed claims.
 
 For larger sparse matrices, base R is a truth oracle only while `as.matrix(A)`
-is affordable. The production question is whether eigencore beats certified
-partial solvers without silently densifying. That requires installed-package
-runs, larger fixtures, saved artifacts, and memory evidence.
+is affordable. Studying scaling and memory behavior requires installed-package
+runs, larger fixtures, repeated measurements, and saved artifacts.
 
-## Run promotion-grade benchmarks
+## Run the larger benchmark scripts
 
-Use the `inst/benchmarks` scripts when you need evidence suitable for a release
-note, paper, or solver-promotion decision. Run them from an installed package,
-not from a mutable source tree:
+The scripts under `inst/benchmarks` run larger cases with stricter checks and
+saved outputs. Run them from an installed package rather than a mutable source
+tree:
 
 ```sh
 R CMD INSTALL --library=/tmp/eigencore-bench-lib .
@@ -443,8 +540,7 @@ R_LIBS=/tmp/eigencore-bench-lib \
   --subject=eigencore --strict --save
 ```
 
-Those scripts add the release-grade pieces this vignette intentionally keeps
-small: strict pass/fail gates, larger sparse fixtures, saved RDS artifacts,
-memory ratios, and planner-provenance checks. Use
+Those scripts add strict pass/fail gates, larger sparse fixtures, saved RDS
+artifacts, memory ratios, and planner-provenance checks. Use
 `docs/v1-benchmark-manifest.md` for the current release-gate inventory and
 `docs/post-v1-benchmark-gates.md` for future-promotion gates.
