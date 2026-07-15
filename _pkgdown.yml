@@ -1,28 +1,28 @@
 url: https://bbuchsbaum.github.io/eigencore/
-
 destination: pkgdown_site
-
 template:
   bootstrap: 5
-  light-switch: true
+  light-switch: yes
   bslib:
-    primary: "#0054AD"
+    primary: '#0054AD'
     border-radius: 0.5rem
     btn-border-radius: 0.25rem
-
+  package: albersdown
 home:
   title: eigencore — Certified Partial Spectral Computation in R
-  description: >
-    A native engine for certified partial eigenvalue and singular-value
-    computation in R. Faster than RSpectra/PRIMME on its core workloads, and
-    every result carries residuals, backward error, orthogonality loss, and an
-    inspectable solver plan.
-
+  description: |
+    Partial eigenvalue and singular-value computation in R with result certificates and inspectable solver plans.
 navbar:
   structure:
-    left:  [intro, articles, reference, news]
-    right: [search, lightswitch, github]
-
+    left:
+    - intro
+    - articles
+    - reference
+    - news
+    right:
+    - search
+    - lightswitch
+    - github
 reference:
 - title: User entry points
   desc: High-level functions for partial eigenvalue and SVD computation.
@@ -32,14 +32,12 @@ reference:
   - svd_partial
   - generalized_schur
   - generalized_svd
-
 - title: RSpectra-compatible shims
   desc: Drop-in replacements for `RSpectra::eigs()`, `eigs_sym()`, and `svds()`.
   contents:
   - eigs
   - eigs_sym
   - svds
-
 - title: Problems and planning
   desc: Build problem descriptors and inspect the solver plan.
   contents:
@@ -48,7 +46,6 @@ reference:
   - plan_solver
   - solve.eigencore_eigen_problem
   - solve.eigencore_svd_problem
-
 - title: Operators
   desc: Block-native linear operators and operator algebra.
   contents:
@@ -62,7 +59,6 @@ reference:
   - scale_cols
   - scale_rows
   - center
-
 - title: Targets
   desc: Selectors describing which part of the spectrum you want.
   contents:
@@ -76,7 +72,6 @@ reference:
   - smallest_imaginary
   - both_ends
   - nearest
-
 - title: Methods
   desc: Solver families and method descriptors.
   contents:
@@ -86,20 +81,17 @@ reference:
   - golub_kahan
   - randomized
   - shift_invert
-
 - title: Preconditioners
   desc: Preconditioner factories for iterative solvers.
   contents:
   - shifted_cholesky_preconditioner
   - shifted_diagonal_preconditioner
   - shifted_tridiagonal_preconditioner
-
 - title: Spaces and structure tags
   contents:
   - euclidean
   - hermitian
   - general
-
 - title: Results, certificates, diagnostics
   desc: Inspecting solver output and the numerical evidence.
   contents:
@@ -112,7 +104,6 @@ reference:
   - left_vectors
   - right_vectors
   - diagnostics
-
 articles:
 - title: Get started
   navbar: ~

@@ -1,6 +1,7 @@
 .omc/
 .mote/
 .claude/
+.albersdown.bak/
 repomix-output.txt
 *.tar.gz
 *.Rcheck/

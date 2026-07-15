@@ -6,24 +6,21 @@
 **eigencore** computes the top-*k* singular triplets or eigenpairs of a
 large sparse or structured matrix in R — the computation behind PCA on
 big sparse data, spectral embeddings, LSA, and low-rank approximation.
-It runs on native C++ kernels and attaches a numerical certificate to
-every result, so you know the answer is right, not just that the solver
-stopped.
 
-If you use **RSpectra**, **irlba**, or **PRIMME** for these problems,
-eigencore does the same job and adds two things:
+eigencore focuses on two things:
 
 1.  **Every result is checked.** Each call returns residuals, a
     backward-error bound, orthogonality loss, and a single
     `passed`/`failed` flag. When a bound can only be estimated, the
     certificate says so instead of passing.
-2.  **Centering and scaling without densifying.** Centering a sparse
-    matrix for PCA normally forces a dense copy. eigencore solves the
-    centered (or scaled, or composed) problem directly — the dense
-    matrix is never formed.
+2.  **Centering and scaling without densifying.** Explicitly centering a
+    sparse matrix for PCA can require a dense copy. eigencore solves the
+    centered (or scaled, or composed) problem as an operator, without
+    forming that copy.
 
-On PCA-shaped sparse SVD problems it is also 1.6×–24× faster than
-RSpectra, irlba, and PRIMME (see [Benchmarks](#benchmarks)).
+Supported structured problems run through fast native kernels. The
+[Benchmarks](#benchmarks) section provides reproducible single-machine
+timings without treating them as cross-package rankings.
 
 ## Installation
 
@@ -61,19 +58,19 @@ fit
 
 The printout names the kernel that ran, gives the worst residual,
 backward error, and orthogonality loss across the returned triplets, and
-shows the certificate passed with an exact norm bound. The solve takes
-15 ms — 1.6× faster than RSpectra, 9× faster than irlba, 2.7× faster
-than PRIMME (see [Benchmarks](#benchmarks)).
+shows the certificate passed with an exact norm bound. This problem uses
+the native certified Gram path; see [Benchmarks](#benchmarks) for a
+reproducible timing on the development machine.
 
 <img src="man/figures/README-scree-1.png" alt="The ten largest singular values highlighted in blue against the full 500-point singular spectrum of A in grey." width="100%" />
 
 ## Certificates
 
 An iterative solver can stop early, miss a cluster, or lose
-orthogonality and still return plausible-looking numbers. RSpectra,
-irlba, and PRIMME hand you vectors and values; checking them is your
-problem. eigencore checks both singular relations (`||A v - sigma u||`
-and `||A^T u - sigma v||`) and hands you the evidence:
+orthogonality and still return plausible-looking numbers. eigencore
+makes validation part of the returned result: it checks both singular
+relations (`||A v - sigma u||` and `||A^T u - sigma v||`) and exposes the
+evidence:
 
 ``` r
 fit$certificate
@@ -107,8 +104,9 @@ cen$certificate$notes
 ```
 
 You decide whether an estimated bound is good enough for your analysis.
-Other solvers don’t give you the choice — they return the same numbers
-with no flag.
+The explicit flag lets downstream code distinguish an exact certificate
+from an estimate without inferring that distinction from solver
+convergence alone.
 
 ## Center and scale without densifying
 
@@ -162,60 +160,50 @@ eig
 #>   certificate: passed
 ```
 
-eigencore solves this in 31 ms, certificate passed. The same call
-through RSpectra’s default mode (`which = "SA"`) does not converge on
-this matrix — 0 of 8 eigenvalues after 2.7 s. RSpectra is fast here if
-you know to switch it to shift-invert mode (`sigma = 0` solves it in 13
-ms); eigencore makes that choice for you and certifies the result. The
-exact spectrum is known in closed form, so the answer can be checked
-directly:
+The planner selects a native tridiagonal shift-invert path and the
+resulting certificate passes. The exact spectrum is known in closed
+form, so the answer can also be checked directly:
 
 <img src="man/figures/README-spectrum-1.png" alt="The eight smallest eigenvalues highlighted in blue at the bottom of the full analytic spectrum of the 20,000-point 1-D Laplacian shown in grey." width="100%" />
 
 ## Benchmarks
 
-Median wall-clock time. eigencore’s column includes computing the
-certificate; the baseline columns are solve only. Reproduce with
+These are median wall-clock times for eigencore on one development
+machine. They include certificate computation and are intended as a
+reproducible performance smoke test, not a cross-package ranking or a
+performance guarantee. Reproduce them with
 `Rscript inst/benchmarks/bench-readme.R`.
 
-| Problem (all certified `passed` by eigencore) | eigencore | vs RSpectra | vs irlba | vs PRIMME |
-|----|----|----|----|----|
-| Tall sparse SVD, 100000 × 500, k = 10 | 15 ms | **1.6× faster** | **9.1× faster** | **2.7× faster** |
-| Wide sparse SVD, 500 × 100000, k = 10 | 12 ms | **12.0× faster** | **24.1× faster** | **14.0× faster** |
-| Banded Hermitian, smallest, n = 20000, k = 8 | 31 ms | see note¹ | — | — |
+| Problem (certificate `passed`) | Median time | Planner path |
+|----|---:|----|
+| Tall sparse SVD, 100000 × 500, k = 10 | 15 ms | native certified Gram SVD special case |
+| Wide sparse SVD, 500 × 100000, k = 10 | 12 ms | native certified Gram SVD special case |
+| Banded Hermitian, smallest, n = 20000, k = 8 | 31 ms | native tridiagonal Hermitian shift-invert |
 
-<sub>R 4.5.1 · aarch64-apple-darwin20 · RSpectra 0.16.2 / irlba 2.3.7 /
-PRIMME 3.2.6. The SVD rows also allocate ~6–8× less memory than irlba.
-Rerun the script for numbers on your machine and BLAS.</sub>
+<sub>Measured with R 4.5.1 on aarch64-apple-darwin20. Timings depend on
+the processor, BLAS/LAPACK, package versions, sparsity pattern, and
+workload; rerun the script before making performance decisions.</sub>
 
-<sub>¹ RSpectra’s default mode (`which = "SA"`) returns 0 of 8
-eigenvalues on this matrix after 2.7 s. Its shift-invert mode
-(`sigma = 0`) solves it in 13 ms — faster than eigencore — if you know
-to reach for it. eigencore picks the method itself and certifies the
-result.</sub>
-
-The SVD speedups come from a certified Gram kernel for tall/wide sparse
-problems whose small dimension is ≤ 512 (≤ 1024 for wide matrices).
-Outside that — a tall SVD with more than 512 columns, or a general
-sparse matrix like a 2-D-grid Laplacian — RSpectra is currently 2–6.5×
-faster on the cases we measure, narrowing to parity on the larger grid
-(n = 40,000). `fit$method` always names the path that ran, so there is
-no guessing.
+The SVD rows use a bounded Gram kernel for tall or wide sparse problems
+whose small dimension is ≤ 512 (≤ 1024 for wide matrices). Other shapes
+may select different paths with different costs. `fit$method` always
+names the path that ran, making the relevant implementation boundary
+visible.
 
 ## When to use what
 
 Use **eigencore** for tall or wide sparse SVD (PCA-shaped problems), the
 smallest eigenvalues of banded or structured symmetric operators
-(certified, no mode tuning), centered or scaled or composed operators,
-dense generalized eigen/QZ/GSVD compatibility work through `eig_full()`,
-`generalized_schur()`, and `generalized_svd()`, and anywhere you want
-the result checked rather than taken on faith.
+(certified, with automatic planner selection), centered or scaled or
+composed operators, dense generalized eigen/QZ/GSVD compatibility work
+through `eig_full()`, `generalized_schur()`, and `generalized_svd()`, and
+workflows where explicit certificate metadata is useful.
 
-Use **RSpectra or irlba** for general large sparse problems outside
-those shapes, and RSpectra’s shift-invert mode when raw speed on
-smallest or interior eigenvalues matters more than a certificate.
-Switching in either direction is a one-line change, because eigencore
-ships drop-in wrappers with the same arguments:
+For workloads outside those structured paths, benchmark the candidate
+packages on your own matrices and hardware rather than assuming any
+implementation will be fastest. Side-by-side evaluation is
+straightforward because eigencore ships RSpectra-compatible wrappers
+with the same arguments:
 
 ``` r
 res <- eigs_sym(L, k = 8, which = "SA")
@@ -240,13 +228,13 @@ the numerical evidence and what to do when a check fails.
 
 eigencore 1.0.0 is headed for CRAN. The exported API is stable — it is
 frozen by a snapshot test, and breaking changes follow semantic
-versioning from here. The numerics are solid: every shipped solver path
-is benchmarked against RSpectra and PRIMME, covered by an adversarial
-test suite, and certified on every call. Problem classes without a
-native kernel yet — general matrix-free SVD, interior eigenvalues at
-scale, nonsymmetric Krylov–Schur — are labeled `reference` in
-`fit$method` rather than quietly slow. The package vignettes describe
-the workflow map, benchmark evidence, and current boundaries.
+versioning from here. Numerical behavior is covered by adversarial and
+reference tests, while solver results expose certificate and planner
+provenance on every call. Problem classes without a native kernel yet —
+general matrix-free SVD, interior eigenvalues at scale, nonsymmetric
+Krylov–Schur — are labeled `reference` in `fit$method`. The package
+vignettes describe the workflow map, benchmark evidence, and current
+boundaries.
 
 ## License
 

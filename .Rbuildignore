@@ -12,6 +12,7 @@
 ^[.]omc$
 ^[.]mote$
 ^[.]claude$
+^[.]albersdown[.]bak$
 ^[.]rcmdcheck_result[.]rds$
 ^[.]github$
 ^README[.]Rmd$
