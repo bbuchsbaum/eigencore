@@ -3,7 +3,7 @@ title: 'Certificates: reading the numerical evidence'
 output:
   rmarkdown::html_vignette:
     toc: yes
-    toc_depth: 2.0
+    toc_depth: 2
     css: albers.css
     includes:
       in_header: albers-header.html
@@ -50,7 +50,9 @@ cat(sprintf(
 ```
 
 ```{r helpers, include = FALSE}
-ec_blue <- "#2166ac"; ec_red <- "#b2182b"; ec_tol <- "#ef8a62"; ec_grey <- "grey78"
+# Shared plotting helper. Kept out of the reader's view: the reader sees
+# the API call and the picture, never the plotting boilerplate.
+ec_blue <- "#2166ac"; ec_red <- "#b2182b"; ec_tol <- "#ef8a62"
 
 # Per-pair backward error as a stem/dot plot, against the tolerance line.
 # Converged pairs are blue, failed pairs red.
@@ -84,10 +86,6 @@ the certificate takes 30 seconds and replaces the usual ritual of
 This vignette walks through the certificate's fields, the three things they
 measure, and what to do when one of them fails.
 
-For the V2 CRAN release, a certificate is not just display metadata. It is the
-evidence boundary that keeps promoted native paths, reference fallbacks, and V3
-deferrals honest.
-
 ```{r setup}
 library(eigencore)
 ```
@@ -104,29 +102,12 @@ cert <- fit$certificate
 cert
 ```
 
-The fields, in order:
+The fields you act on, in order:
 
 - **`passed`** — overall verdict. `TRUE` means every requested pair satisfies
   every check (residual, backward error, orthogonality) and the norm bound
   used to build the scale is exact, not estimated.
 - **`tolerance`** — the user-requested tolerance. Defaults to `1e-8`.
-- **`certificate_type`** — provenance: how the certificate was constructed.
-  `"residual_backward_error"` means residuals are based on direct
-  recomputation or native solver output, scaled by the shared backward-error
-  denominator. `"uncomputed"` means vectors were not requested, so no
-  certificate is possible.
-- **`norm_bound_type`** — what was used as the norm in the scale. Common
-  values:
-  - `frobenius_exact` — the Frobenius norm of an explicit dense matrix.
-  - `frobenius_metadata` — exact Frobenius norm derived from sparse/diagonal
-    metadata.
-  - `identity_exact` — the standard problem `B = I`.
-  - `frobenius_hutchinson_estimate` — a stochastic Hutchinson estimate, used
-    for matrix-free operators that do not expose a norm.
-- **`scale_is_estimate`** — `TRUE` whenever the norm bound is stochastic.
-  When this is `TRUE`, eigencore *withholds* `passed` even if every residual
-  is below tolerance, because the denominator of the backward-error ratio is
-  itself uncertain.
 - **`max_residual`** — the worst absolute residual `||A v - lambda v||` (or
   `||A v - lambda B v||` for generalized problems) across the returned basis.
 - **`max_backward_error`** — the worst residual divided by the labelled scale.
@@ -135,7 +116,13 @@ The fields, in order:
 - **`max_orthogonality_loss`** — the worst entry of `|V* V - I|` (or
   `|V* B V - I|` in B-inner-product problems).
 - **`failed_indices`** — which pairs failed. Empty when `passed = TRUE`.
-- **`notes`** — free-form provenance text, used to explain unusual states.
+
+Two more fields explain *how* the verdict was reached rather than what it
+is: `norm_bound_type` names the scale used to compute backward error, and
+`scale_is_estimate` flags when that scale is itself a stochastic estimate
+rather than an exact bound — the "Withheld" section below shows exactly
+what that means for `passed`. `certificate_type` and `notes` carry
+provenance text for unusual states. `?certificate` documents every field.
 
 The `max_*` fields are summaries. The certificate also keeps the underlying
 *per-pair* vectors (`cert$backward_error`, `cert$converged`), so you can see at
@@ -270,11 +257,22 @@ enough.
 
 ### Withheld: stochastic norm in the denominator
 
+`norm_bound_type` names what the certificate used as the scale in the
+backward-error ratio. The common values, from most to least trustworthy:
+
+- `frobenius_exact` — the Frobenius norm of an explicit dense matrix.
+- `frobenius_metadata` — exact Frobenius norm derived from sparse/diagonal
+  metadata.
+- `identity_exact` — the standard problem `B = I`.
+- `frobenius_hutchinson_estimate` — a stochastic Hutchinson estimate, used
+  for matrix-free operators that do not expose a norm.
+
 A matrix-free operator (one wrapped via `linear_operator()` with no exact norm
-metadata) forces eigencore onto a Hutchinson stochastic estimate of `||A||`.
+metadata) forces eigencore onto that last, stochastic estimate of `||A||`.
 Because the *denominator* of the backward-error ratio is then a sample, not a
 deterministic upper bound, eigencore *withholds* `passed` even if every
-sampled residual ratio is below `tol`:
+sampled residual ratio is below `tol` — this is what `scale_is_estimate`
+flags:
 
 ```{r withheld}
 set.seed(2)
@@ -359,3 +357,11 @@ without changing call sites.
 
 The certificate is the bridge between "I called a solver" and "I have a
 trustworthy partial spectrum." Read it.
+
+## Where to go next
+
+- `vignette("sparse-pca")` shows a realistic withheld certificate in
+  context — centering a sparse matrix trades an exact norm bound for a
+  stochastic one unless you supply metadata yourself.
+- `vignette("eigencore")` and `vignette("generalized-eigenproblems")` cover
+  the workflows that produce the certificates read here.

@@ -1,0 +1,287 @@
+---
+title: PCA on sparse data without densifying
+output:
+  rmarkdown::html_vignette:
+    toc: yes
+    toc_depth: 2
+    css: albers.css
+    includes:
+      in_header: albers-header.html
+params:
+  family: lapis
+  preset: homage
+resource_files:
+- albers.css
+- albers.js
+- albers-header.html
+- fonts
+
+vignette: |
+  %\VignetteIndexEntry{PCA on sparse data without densifying}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup-opts, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 7,
+  fig.height = 4.1,
+  fig.align = "center",
+  out.width = "92%",
+  dpi = 100
+)
+```
+
+```{r albers-classes, echo=FALSE, results='asis'}
+cat(sprintf(
+  paste0(
+    '<script>document.addEventListener("DOMContentLoaded",function(){',
+    'document.body.classList.remove("palette-red","palette-lapis","palette-ochre","palette-teal","palette-green","palette-violet","preset-homage","preset-interaction","preset-study","preset-structural","preset-adobe","preset-midnight");',
+    'document.body.classList.add("palette-%s","preset-%s");',
+    '});</script>'
+  ),
+  params$family,
+  params$preset
+))
+```
+
+```{r helpers, include = FALSE}
+# Shared plotting helper. Kept out of the reader's view: the reader sees
+# the API call and the picture, never the plotting boilerplate.
+ec_blue <- "#2166ac"; ec_grey <- "grey78"
+
+# A computed slice (blue) drawn on top of the full dense spectrum (grey).
+plot_spectrum <- function(all_vals, computed, ylab = "value", main = NULL) {
+  s <- sort(all_vals, decreasing = TRUE)
+  k <- length(computed)
+  op <- par(mar = c(4, 4.6, if (is.null(main)) 1 else 2.4, 1)); on.exit(par(op))
+  plot(seq_along(s), s, pch = 19, cex = 0.4, col = ec_grey, bty = "n",
+       xlab = "rank (largest to smallest)", ylab = ylab, main = main)
+  points(seq_len(k), sort(computed, decreasing = TRUE),
+         pch = 19, cex = 1.2, col = ec_blue)
+  legend("topright", c("full spectrum (dense reference)", "computed by eigencore"),
+         pch = 19, pt.cex = c(0.7, 1.2), col = c(ec_grey, ec_blue),
+         bty = "n", cex = 0.9)
+}
+```
+
+Principal component analysis starts with centering: subtract each column's
+mean before finding directions of maximum variance. For a sparse matrix,
+that one subtraction is the problem. `A - 1 %*% t(col_means)` fills in every
+zero with a small nonzero number, so the matrix that started sparse becomes
+dense before you've computed a single eigenvector.
+
+eigencore solves the *centered* (and optionally scaled) problem as an
+operator, so the subtraction never happens as a stored matrix. This
+vignette builds one sparse dataset, centers and scales it, and computes a
+certified partial SVD without ever forming the dense copy.
+
+```{r setup}
+library(eigencore)
+library(Matrix)
+```
+
+## Build a sparse dataset with a low-rank signal
+
+Simulate the kind of matrix behind collaborative filtering and topic
+models: sparse interaction counts between 2,000 users and 500 items, built
+from five latent factors so a handful of singular vectors should recover
+most of the structure.
+
+```{r simulate-signal}
+set.seed(1)
+m <- 2000L; n <- 500L; k_true <- 5L
+U <- qr.Q(qr(matrix(rnorm(m * k_true), m, k_true)))
+V <- qr.Q(qr(matrix(rnorm(n * k_true), n, k_true)))
+signal <- U %*% diag(seq(8, 4, length.out = k_true)) %*% t(V)
+```
+
+Only 4% of user-item pairs are observed, and the observations are noisy:
+
+```{r simulate-sparsify}
+mask  <- rsparsematrix(m, n, density = 0.04)
+noise <- rsparsematrix(m, n, density = 0.01, rand.x = function(k) rnorm(k, sd = 0.05))
+A <- as((signal * (mask != 0)) + noise, "dgCMatrix")
+dim(A)
+```
+
+```{r simulate-memory, echo = FALSE}
+dense_mb  <- as.numeric(object.size(matrix(0, m, n))) / 1024^2
+sparse_mb <- as.numeric(object.size(A)) / 1024^2
+```
+
+At 2,000 x 500 this is a small matrix, but the storage gap is already
+visible: a dense copy would need `r sprintf("%.1f", dense_mb)` MB, while the
+sparse representation needs `r sprintf("%.2f", sparse_mb)` MB — about
+`r round(dense_mb / sparse_mb)` times less.
+
+## Center without densifying
+
+`center()` wraps `A` in an operator that subtracts column means on the fly,
+computing the means directly from the sparse matrix rather than requiring
+you to supply them.
+
+```{r center}
+Ac <- center(A, columns = TRUE)
+Ac
+```
+
+Pass the centered operator straight to `svd_partial()`, exactly as you
+would the original matrix.
+
+```{r first-svd}
+fit <- svd_partial(Ac, rank = 5, target = largest())
+fit
+```
+
+```{r first-scree, echo = FALSE, fig.cap = "The five largest singular values of the centered matrix (blue) against the full singular spectrum (grey).", fig.alt = "Scatter plot of all 500 singular values sorted descending in grey, with the top five highlighted in blue."}
+dense_centered <- scale(as.matrix(A), center = TRUE, scale = FALSE)
+all_sv <- svd(dense_centered, nu = 0, nv = 0)$d
+plot_spectrum(all_sv, fit$d, ylab = "singular value")
+```
+
+The five leading singular values separate cleanly from the rest of the
+spectrum — exactly what you'd expect from data built around five latent
+factors.
+
+## Read the certificate on a composed operator
+
+`fit$certificate$passed` is `FALSE` here, but look at why before treating
+that as a problem:
+
+```{r composed-certificate}
+fit$certificate$max_backward_error
+fit$certificate$norm_bound_type
+fit$certificate$scale_is_estimate
+```
+
+The residual is tiny — far below the `1e-8` tolerance. What's withheld is
+the *scale*: computing an exact Frobenius norm bound for a centered operator
+would mean a second full pass over the data, so eigencore instead reports a
+stochastic (Hutchinson) estimate and refuses to mark the certificate
+`passed` while that estimate is the only evidence. This is the same honest
+bookkeeping `vignette("certificates")` covers in detail — a composed
+operator trades the exact bound for an estimated one unless you supply
+norm metadata yourself, which the next section shows.
+
+## Does it match what you'd get by densifying?
+
+The whole point of `center()` is that it should be numerically
+indistinguishable from centering the dense matrix directly. Check it:
+
+```{r verify-dense}
+max(abs(sort(fit$d, decreasing = TRUE) - sort(all_sv[1:5], decreasing = TRUE)))
+```
+
+The two agree to machine precision. `dense_centered` above was built only
+to draw the comparison plot and run this check — the eigencore computation
+itself never materialized it.
+
+## Scale columns too
+
+A common next step in PCA preprocessing is scaling each column to unit
+variance, turning a covariance-matrix PCA into a correlation-matrix one.
+Compute the column variances from the sparse matrix and pass them to
+`scale_cols()`, composed with the centering operator you already have:
+
+```{r scale-cols}
+col_var <- Matrix::colMeans(A^2) - Matrix::colMeans(A)^2
+w <- 1 / sqrt(col_var + 1e-6)
+Acs <- scale_cols(Ac, w)
+fit_scaled <- svd_partial(Acs, rank = 5, target = largest())
+fit_scaled$d
+```
+
+`center()` and `scale_cols()` compose freely because both return the same
+`eigencore_operator` type that every solver accepts — there's no separate
+"scaled matrix" object to keep track of.
+
+## What did the planner actually do?
+
+Every solve is preceded by a plan, and you can inspect it directly instead
+of trusting a black box:
+
+```{r plan}
+plan <- plan_solver(svd_problem(Acs), rank = 5, target = largest())
+plan$method
+plan$reasons
+```
+
+Centering and scaling a sparse matrix still fuse into a single native,
+non-densifying construction. But once that composed operator reaches the
+solver, eigencore drives it through a matrix-free Golub-Kahan callback
+cycle rather than a fully block-native kernel — the `reasons` say so
+explicitly rather than leaving you to infer it from timing. `plan_solver()`
+takes the same problem/rank/target arguments as the solve itself, so you
+can always check the plan before paying for the computation.
+
+## Going fully matrix-free
+
+Sometimes there's no matrix at all — just a function that knows how to
+apply `A` and its adjoint. `linear_operator()` wraps arbitrary callbacks the
+same way `center()` wraps a sparse matrix.
+
+```{r matrix-free}
+op <- linear_operator(
+  dim = dim(A),
+  apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+    # Sparse %*% dense returns an S4 dgeMatrix; as.matrix() keeps the
+    # callback's return type consistent with what the native solver expects.
+    Z <- alpha * as.matrix(A %*% X)
+    if (is.null(Y) || beta == 0) Z else Z + beta * Y
+  },
+  apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) {
+    Z <- alpha * as.matrix(crossprod(A, X))
+    if (is.null(Y) || beta == 0) Z else Z + beta * Y
+  },
+  name = "matrix-free A"
+)
+fit_mf <- svd_partial(op, rank = 5, target = largest())
+fit_mf$certificate$norm_bound_type
+```
+
+Without any norm metadata, this is another stochastic-estimate certificate.
+Supply the exact Frobenius norm — cheap to compute once for a sparse
+matrix — and the certificate stops withholding `passed`:
+
+```{r matrix-free-hint}
+op_hinted <- linear_operator(
+  dim = dim(A),
+  apply = op$apply,
+  apply_adjoint = op$apply_adjoint,
+  name = "matrix-free A (exact norm)",
+  metadata = list(frobenius_norm = norm(A, type = "F"))
+)
+fit_hinted <- svd_partial(op_hinted, rank = 5, target = largest())
+fit_hinted$certificate$norm_bound_type
+fit_hinted$certificate$passed
+```
+
+Whether you reach for `center()`/`scale_cols()` or hand-write a
+`linear_operator()`, the certificate always tells you which kind of
+evidence backed the result.
+
+## Why this matters at scale
+
+The 2,000 x 500 example above keeps this vignette fast to build, but the
+memory argument only gets sharper as the matrix grows. A production
+recommender with 5 million users and 200,000 items would need roughly 8 TB
+to store as a dense matrix; the sparse representation, at typical
+interaction densities, fits in a few gigabytes. Densifying to center it
+would defeat the entire point of using a sparse format.
+
+## Where to go next
+
+- `vignette("certificates")` — the deep dive on `passed`, `scale_is_estimate`,
+  and what to do about a withheld certificate.
+- `vignette("eigencore")` — the general get-started workflow: operators,
+  problems, plans, and solves for both eigenproblems and SVD.
+- `vignette("generalized-eigenproblems")` — problems of the form
+  `A v = lambda B v`, including whitened and metric-weighted variants.
+- `?linear_operator` and `?compose` document the full operator algebra,
+  including `crossprod_operator()` for building `A^* A` when an
+  eigenproblem is a more natural fit than an SVD.
