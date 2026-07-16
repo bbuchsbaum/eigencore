@@ -80,11 +80,11 @@ unrounded measurements and reports the smallest value in each row.
 
 | case                  | lowest median | eigencore | RSpectra |   irlba | base R |
 |:----------------------|:--------------|----------:|---------:|--------:|-------:|
-| dense Hermitian       | RSpectra      |    1.6080 |   0.4697 | not run |  2.105 |
-| sparse path Laplacian | eigencore     |    2.4110 |   7.9610 | not run | 13.810 |
-| dense low-rank SVD    | RSpectra      |    1.5830 |   0.2256 |  0.3615 |  1.699 |
-| tall sparse SVD       | RSpectra      |    0.5371 |   0.3700 |  0.7712 |  1.850 |
-| wide sparse SVD       | RSpectra      |    0.5463 |   0.4213 |  1.0060 |  3.362 |
+| dense Hermitian       | RSpectra      |    1.6790 |   0.4872 | not run |  1.949 |
+| sparse path Laplacian | eigencore     |    2.5890 |   8.1770 | not run | 13.080 |
+| dense low-rank SVD    | RSpectra      |    1.6740 |   0.2294 |  0.3818 |  1.620 |
+| tall sparse SVD       | RSpectra      |    0.5592 |   0.3875 |  0.7626 |  1.776 |
+| wide sparse SVD       | RSpectra      |    0.5700 |   0.4754 |  1.0530 |  2.856 |
 
 Median solver-call time in milliseconds from 3 iterations per method.
 {.table style="width:100%;"}
@@ -144,11 +144,11 @@ do not measure peak resident memory.
 
 | case                  | eigencore | RSpectra |   irlba | base R |
 |:----------------------|----------:|---------:|--------:|-------:|
-| dense Hermitian       |   1.07900 |  0.06661 | not run | 0.4240 |
+| dense Hermitian       |   1.07800 |  0.06661 | not run | 0.4240 |
 | sparse path Laplacian |   1.84800 |  0.01991 | not run | 3.1880 |
-| dense low-rank SVD    |   1.31200 |  0.09405 |  0.5606 | 0.5942 |
+| dense low-rank SVD    |   1.31100 |  0.09405 |  0.5606 | 0.5942 |
 | tall sparse SVD       |   0.01906 |  0.02502 |  0.1760 | 0.8979 |
-| wide sparse SVD       |   0.02361 |  0.02246 |  0.1542 | 0.9098 |
+| wide sparse SVD       |   0.02360 |  0.02246 |  0.1542 | 0.9098 |
 
 Allocated memory in megabytes. {.table}
 
