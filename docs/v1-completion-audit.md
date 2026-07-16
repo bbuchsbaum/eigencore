@@ -1,6 +1,6 @@
 # eigencore V2 CRAN Completion Audit
 
-Last refreshed: 2026-07-03
+Last refreshed: 2026-07-15
 
 This is the final stop-rule checklist for the active V2 CRAN release goal. It
 preserves the scoped V1 evidence base but treats completion as a CRAN release
@@ -31,10 +31,10 @@ true at the same time:
 
 | Requirement | Primary artifact | Required evidence | Current state |
 |---|---|---|---|
-| Clean package checks | `eigencore_1.0.0.tar.gz` and fresh `eigencore.Rcheck/` output | `LC_ALL=C LANG=C R CMD build /Users/bbuchsbaum/code/eigencore`; `LC_ALL=C LANG=C R CMD check --as-cran --no-manual eigencore_1.0.0.tar.gz` | Green on 2026-07-03 via `rcmdcheck::rcmdcheck(path = ".", args = c("--as-cran", "--no-manual"), build_args = "--no-manual")` after the generalized-eigen release gate and exported-return-value docs: `0 ERROR`, `0 WARNING`, `1 NOTE` for CRAN new submission. |
-| Full test suite | `tests/testthat/` | `Rscript -e 'pkgload::load_all("."); testthat::test_dir("tests/testthat", reporter="summary")'`; installed `tests/testthat.R` inside the source-tarball check | Green on 2026-07-03: the full source suite was green after the generalized-eigen gate, and the installed-package `testthat.R` pass in the fresh 1.0.0 CRAN-like check was OK. |
-| Diff hygiene | whole repo | `git diff --check` | Green on 2026-07-03 after release metadata, generalized-eigen docs, benchmark, roxygen, and exported return-value documentation updates. |
-| CRAN remote checks | GitHub Actions, R-hub, win-builder maintainer emails | GitHub Actions for the release candidate; `rhub::rhub_check(platforms = c("ubuntu-release", "windows"))`; win-builder R-release and R-devel submissions with `--no-manual` | GitHub Actions are green for commit 088d3bd: R-CMD-check, lint, coverage, and pkgdown all completed successfully. R-hub run 28686224852 completed successfully for Ubuntu release and Windows. win-builder R-release and R-devel submissions from 088d3bd were accepted on 2026-07-03; maintainer email results are still required before closing the CRAN cross-platform gate. |
+| Clean package checks | `eigencore_1.0.0.tar.gz` and fresh `eigencore.Rcheck/` output | `LC_ALL=C LANG=C R CMD build /Users/bbuchsbaum/code/eigencore`; `LC_ALL=C LANG=C R CMD check --as-cran --no-manual eigencore_1.0.0.tar.gz` | Green on 2026-07-15 from a fresh source tarball after the final pre-CRAN solver changes: `0 ERROR`, `0 WARNING`, `1 NOTE` for CRAN new submission. Tarball SHA-256: `cf89c9a273bfef0c1384fa23319391c05b665e498b64eca4203d1572b805951f`. |
+| Full test suite | `tests/testthat/` | `Rscript -e 'pkgload::load_all("."); testthat::test_dir("tests/testthat", reporter="summary")'`; installed `tests/testthat.R` inside the source-tarball check | Green on 2026-07-15: the installed-package `testthat.R` pass in the fresh 1.0.0 CRAN-like check was OK. |
+| Diff hygiene | whole repo | `git diff --check` | Green on 2026-07-15 after the pre-CRAN solver fixes and release-candidate metadata refresh. |
+| CRAN remote checks | GitHub Actions, R-hub, win-builder maintainer emails | GitHub Actions for the release candidate; `rhub::rhub_check(platforms = c("ubuntu-release", "windows"))`; win-builder R-release and R-devel submissions with `--no-manual` | Fresh remote checks are required for the 2026-07-15 candidate. Earlier results do not sign off the new payload; GitHub Actions, R-hub, and win-builder R-release/R-devel must all be rerun against this release candidate before submission. |
 | Planner honesty | `R/problem.R`, `R/solve.R`, result diagnostics, solver tests | Every nonnative public path has reference/oracle/fallback labels; no production claim points to an R prototype. | Mostly covered for current paths; re-audit after any solver promotion. |
 | Native operator foundation | `R/operator_algebra.R`, `src/native_operators.cpp`, `tests/testthat/test-operator-algebra.R` | Built-in dense/CSC/diagonal transforms preserve native provenance without sparse densification. | Green for explicit built-ins; matrix-free centering remains an honest callback boundary. |
 | G1 Hermitian native gate | `inst/benchmarks/bench-native-hermitian-gate.R` | Clean installed strict gate and saved artifacts. | Green for the promoted structured-tridiagonal default. Installed strict `path_laplacian:1000` on 2026-06-05 certified `20/20` with the native selected tridiagonal solver, median `0.00799s`, memory `579696` bytes, `6.15x` speed versus RSpectra, `1.07x` memory versus the best reference, and `22.58x` parity versus PRIMME. |
@@ -54,9 +54,10 @@ true at the same time:
 
 Current decision: **V2 CRAN release candidate pending final validation and mote closure**.
 
-As of 2026-07-03, the remaining final-validation item is external win-builder
-email evidence for the R-release and R-devel submissions from commit 088d3bd.
-GitHub Actions and R-hub have already passed for that candidate.
+As of 2026-07-15, the fresh local source-tarball gate is green. The remaining
+final-validation items are fresh GitHub Actions, R-hub, and win-builder
+R-release/R-devel results for this exact release candidate; earlier remote
+results cover an older package payload and cannot close the gate.
 
 The future solver families remain listed as V3 deferrals; they are not hidden
 release blockers for the scoped CRAN surface.
