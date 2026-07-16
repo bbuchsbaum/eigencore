@@ -3,7 +3,7 @@ title: Generalized eigenvalue problems with eigencore
 output:
   rmarkdown::html_vignette:
     toc: yes
-    toc_depth: 2.0
+    toc_depth: 2
     css: albers.css
     includes:
       in_header: albers-header.html
@@ -27,10 +27,33 @@ knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
   message = FALSE,
-  warning = FALSE
+  warning = FALSE,
+  fig.width = 7,
+  fig.height = 4.1,
+  fig.align = "center",
+  out.width = "92%",
+  dpi = 100
 )
 library(eigencore)
 library(Matrix)
+
+# Shared plotting helper. Kept out of the reader's view: the reader sees
+# the API call and the picture, never the plotting boilerplate.
+ec_blue <- "#2166ac"; ec_grey <- "grey78"
+
+# A computed slice (blue) drawn on top of the full dense spectrum (grey).
+plot_spectrum <- function(all_vals, computed, ylab = "value", main = NULL) {
+  s <- sort(all_vals, decreasing = TRUE)
+  k <- length(computed)
+  op <- par(mar = c(4, 4.6, if (is.null(main)) 1 else 2.4, 1)); on.exit(par(op))
+  plot(seq_along(s), s, pch = 19, cex = 0.4, col = ec_grey, bty = "n",
+       xlab = "rank (largest to smallest)", ylab = ylab, main = main)
+  points(seq_len(k), sort(computed, decreasing = TRUE),
+         pch = 19, cex = 1.2, col = ec_blue)
+  legend("topright", c("full spectrum (dense reference)", "computed by eigencore"),
+         pch = 19, pt.cex = c(0.7, 1.2), col = c(ec_grey, ec_blue),
+         bty = "n", cex = 0.9)
+}
 ```
 
 ```{r albers-classes, echo=FALSE, results='asis'}
@@ -53,10 +76,17 @@ $$
 A x = \lambda B x.
 $$
 
-The second matrix $B$ may define a positive-definite metric, or it may be part
-of a more general matrix pencil. eigencore supports both cases, along with
-partial solves when you need only a few eigenpairs and QZ decompositions when
-you need the full structure of a dense pencil.
+This form shows up whenever a problem needs a metric other than the
+standard inner product: whitened PCA and canonical correlation analysis
+weight by a covariance matrix, linear discriminant analysis weights by a
+within-class scatter matrix, and normalized graph Laplacians weight by a
+degree matrix. In each case `B` is not incidental — solving the plain
+eigenproblem `A x = lambda x` and ignoring `B` gives you the wrong answer.
+
+The second matrix $B$ may define a positive-definite metric, or it may be
+part of a more general matrix pencil. eigencore supports both cases, along
+with partial solves when you need only a few eigenpairs and QZ
+decompositions when you need the full structure of a dense pencil.
 
 ## Start with a positive-definite metric
 
@@ -86,21 +116,38 @@ stopifnot(
 ## Compute only part of the spectrum
 
 Use `eig_partial()` when you need only a few eigenpairs. A target such as
-`smallest()` states which part of the spectrum to compute.
+`smallest()` states which part of the spectrum to compute. Scale the same
+idea up to a diagonal metric problem with 150 pairs, and ask for the 5
+smallest:
 
 ```{r partial-spd}
-part <- eig_partial(A, B = B, k = 2, target = smallest())
-values(part)
+n <- 150
+A_wide <- diag(seq(1, 150, length.out = n))
+B_wide <- diag(seq(1, 2, length.out = n))
+
+part <- eig_partial(A_wide, B = B_wide, k = 5, target = smallest())
+sort(Re(values(part)))
 part$method
 certificate(part)$passed
 ```
 
 ```{r validate-partial-spd, include=FALSE}
+truth_wide <- sort(diag(A_wide) / diag(B_wide))
 stopifnot(
   isTRUE(certificate(part)$passed),
-  isTRUE(all.equal(sort(Re(values(part))), c(2, 4), tolerance = 1e-7))
+  isTRUE(all.equal(sort(Re(values(part))), head(truth_wide, 5), tolerance = 1e-7))
 )
 ```
+
+```{r partial-spd-spectrum, echo = FALSE, fig.cap = "The five smallest generalized eigenvalues (blue) against the full 150-pair spectrum of the pencil (A, B) (grey).", fig.alt = "Scatter plot of 150 generalized eigenvalues sorted descending in grey, with the five smallest highlighted in blue at the bottom-right."}
+plot_spectrum(truth_wide, values(part), ylab = "generalized eigenvalue")
+```
+
+With `n = 150` this computed 5 of 150 pairs. A whitened-PCA or
+normalized-Laplacian problem built from real data routinely has `n` in the
+tens or hundreds of thousands, where a full generalized eigendecomposition
+is not practical — the partial slice, certified, is the only result you can
+afford.
 
 The main choice is the structure of the problem and how much of its spectrum
 you need:
@@ -234,4 +281,8 @@ mathematical operation: use `eig_full()` for a full generalized eigensolve,
 `generalized_schur()` for QZ, and `alpha_beta()` to inspect homogeneous
 eigenvalue coordinates.
 
-For more on result validation, see `vignette("certificates")`.
+## Where to go next
+
+- `vignette("sparse-pca")` covers operators and non-densifying centering for
+  the standard (non-generalized) eigenproblem and SVD.
+- For more on result validation, see `vignette("certificates")`.

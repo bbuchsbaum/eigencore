@@ -1,9 +1,9 @@
 ---
-title: Benchmark smoke tests
+title: "Benchmarks: what we measure and what it means"
 output:
-  rmarkdown::html_vignette:
+  rmarkdown::html_document:
     toc: yes
-    toc_depth: 2.0
+    toc_depth: 2
     css: albers.css
     includes:
       in_header: albers-header.html
@@ -15,12 +15,11 @@ resource_files:
 - albers.js
 - albers-header.html
 - fonts
-
-vignette: |
-  %\VignetteIndexEntry{Benchmark smoke tests}
-  %\VignetteEngine{knitr::rmarkdown}
-  %\VignetteEncoding{UTF-8}
 ---
+
+This is a pkgdown-only article, not a CRAN vignette: it runs `bench::mark()`
+at build time and is intentionally excluded from `R CMD check` (see
+`vignettes/articles/` in `.Rbuildignore`).
 
 ```{r setup-opts, include = FALSE}
 knitr::opts_chunk$set(

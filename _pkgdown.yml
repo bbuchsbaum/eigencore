@@ -109,6 +109,9 @@ articles:
   navbar: ~
   contents:
   - eigencore
+  - sparse-pca
   - certificates
   - generalized-eigenproblems
+- title: Performance
+  contents:
   - benchmarks
