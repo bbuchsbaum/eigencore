@@ -104,9 +104,11 @@ cert
 
 The fields you act on, in order:
 
-- **`passed`** — overall verdict. `TRUE` means every requested pair satisfies
-  every check (residual, backward error, orthogonality) and the norm bound
-  used to build the scale is exact, not estimated.
+- **`passed`** — overall verdict. `TRUE` means every requested pair's backward
+  error is at or below `tolerance`, the required orthogonality check passes,
+  and the norm used to build the scale is exact rather than estimated. The
+  absolute residual is recorded, but it is not compared directly with
+  `tolerance`.
 - **`tolerance`** — the user-requested tolerance. Defaults to `1e-8`.
 - **`max_residual`** — the worst absolute residual `||A v - lambda v||` (or
   `||A v - lambda B v||` for generalized problems) across the returned basis.
@@ -128,7 +130,7 @@ The `max_*` fields are summaries. The certificate also keeps the underlying
 *per-pair* vectors (`cert$backward_error`, `cert$converged`), so you can see at
 a glance whether the whole basis cleared the bar or just barely missed:
 
-```{r anatomy-bars, echo = FALSE, fig.cap = "Per-pair backward error for the five returned eigenpairs. The `max_backward_error` field is simply the height of the tallest stem; `passed` is TRUE because every stem clears the tolerance line.", fig.alt = "Stem plot of backward error for five eigenpairs on a log scale, all falling well below the dashed tolerance line."}
+```{r anatomy-bars, echo = FALSE, fig.cap = "Per-pair backward error for the five returned eigenpairs. The `max_backward_error` field is simply the height of the tallest stem; `passed` is TRUE because every stem falls below the tolerance line.", fig.alt = "Stem plot of backward error for five eigenpairs on a log scale, all falling well below the dashed tolerance line."}
 plot_backward_error(cert)
 ```
 
@@ -204,11 +206,12 @@ fit_pass$certificate$norm_bound_type
 fit_pass$certificate$scale_is_estimate
 ```
 
-This is the easy case. Every residual is below tolerance, orthogonality is
-near machine precision, and the norm bound used to scale the backward error
-is the *exact* Frobenius norm — no stochastic component.
+This is the easy case. Every backward error is below tolerance, orthogonality
+is near machine precision, and the norm used to scale the backward error is
+the *exact* Frobenius norm — no stochastic component. The absolute residuals
+need not themselves be below the dimensionless backward-error tolerance.
 
-### Failed: residual too large
+### Failed: backward error too large
 
 The right-hand panel above is a genuine failure. The smallest eigenvalues of
 `A` sit in a dense cluster just above 1, so they need many more iterations than
@@ -296,10 +299,10 @@ fit_mf$certificate$passed
 fit_mf$certificate$notes
 ```
 
-eigencore does not have a clean Frobenius bound for this operator without
-paying for a full second pass over the matrix, so it falls back to a Hutchinson
-stochastic estimate. The honest output is "all evidence is consistent with
-convergence, but the certificate was not produced by an exact bound."
+This callback operator does not expose exact norm metadata, so eigencore falls
+back to a Hutchinson stochastic estimate. Accordingly, the residual and
+orthogonality checks are consistent with convergence, but `passed` is withheld
+because the certificate scale is estimated rather than exact.
 
 What to do: if you need a hard `passed = TRUE`, switch to a problem class
 where eigencore can carry exact norm metadata (built-in dense / `dgCMatrix`
@@ -349,11 +352,10 @@ without changing call sites.
 | You see                             | What it means                                                            | What to do                                                |
 |-------------------------------------|--------------------------------------------------------------------------|-----------------------------------------------------------|
 | `passed = TRUE`, `scale_is_estimate = FALSE` | Trust the result.                                                         | Use the values/vectors.                                    |
-| `passed = FALSE`, `scale_is_estimate = FALSE`, `failed_indices` non-empty | Some pairs hit `maxit` before converging.                                  | Increase `maxit`, raise `tol`, or request a wider `k`.    |
+| `passed = FALSE`, `scale_is_estimate = FALSE`, `failed_indices` non-empty | Some returned pairs exceed the backward-error tolerance.                    | Inspect convergence history, then consider more iterations, a different tolerance, or a wider `k`. |
 | `passed` withheld, `scale_is_estimate = TRUE` | Norm bound is stochastic; evidence is consistent with convergence.        | Use a problem class with deterministic norm metadata, or run a verification pass. |
 | `max_orthogonality_loss` near `sqrt(eps)` but residuals tiny | Iterative drift; clustered eigenvalues at risk of duplicates.             | Increase `maxit`; check whether there are repeated eigenvalues. |
-| `failed_indices` is the *first* few pairs | Convergence has not started yet.                                          | Almost certainly a `maxit` problem.                       |
-| `failed_indices` is the *last* few pairs | Convergence stalled near the requested cluster.                           | Increase `k`, request a wider window, or use `lobpcg()` with a preconditioner. |
+| `failed_indices` contains particular positions | Those returned pairs missed the tolerance; index position alone does not identify the cause. | Inspect `convergence_history` and the requested target before changing solver controls. |
 
 The certificate is the bridge between "I called a solver" and "I have a
 trustworthy partial spectrum." Read it.
@@ -361,7 +363,8 @@ trustworthy partial spectrum." Read it.
 ## Where to go next
 
 - `vignette("sparse-pca")` shows a realistic withheld certificate in
-  context — centering a sparse matrix trades an exact norm bound for a
-  stochastic one unless you supply metadata yourself.
+  context — the current centered sparse operator does not propagate an exact
+  norm, so certification uses a stochastic estimate unless exact metadata is
+  supplied.
 - `vignette("eigencore")` and `vignette("generalized-eigenproblems")` cover
   the workflows that produce the certificates read here.

@@ -42,13 +42,14 @@ library(Matrix)
 ec_blue <- "#2166ac"; ec_grey <- "grey78"
 
 # A computed slice (blue) drawn on top of the full dense spectrum (grey).
-plot_spectrum <- function(all_vals, computed, ylab = "value", main = NULL) {
+plot_spectrum <- function(all_vals, computed, computed_ranks = seq_along(computed),
+                          ylab = "value", main = NULL) {
   s <- sort(all_vals, decreasing = TRUE)
   k <- length(computed)
   op <- par(mar = c(4, 4.6, if (is.null(main)) 1 else 2.4, 1)); on.exit(par(op))
   plot(seq_along(s), s, pch = 19, cex = 0.4, col = ec_grey, bty = "n",
        xlab = "rank (largest to smallest)", ylab = ylab, main = main)
-  points(seq_len(k), sort(computed, decreasing = TRUE),
+  points(computed_ranks, sort(computed, decreasing = TRUE),
          pch = 19, cex = 1.2, col = ec_blue)
   legend("topright", c("full spectrum (dense reference)", "computed by eigencore"),
          pch = 19, pt.cex = c(0.7, 1.2), col = c(ec_grey, ec_blue),
@@ -140,14 +141,19 @@ stopifnot(
 ```
 
 ```{r partial-spd-spectrum, echo = FALSE, fig.cap = "The five smallest generalized eigenvalues (blue) against the full 150-pair spectrum of the pencil (A, B) (grey).", fig.alt = "Scatter plot of 150 generalized eigenvalues sorted descending in grey, with the five smallest highlighted in blue at the bottom-right."}
-plot_spectrum(truth_wide, values(part), ylab = "generalized eigenvalue")
+plot_spectrum(
+  truth_wide,
+  values(part),
+  computed_ranks = tail(seq_along(truth_wide), length(values(part))),
+  ylab = "generalized eigenvalue"
+)
 ```
 
 With `n = 150` this computed 5 of 150 pairs. A whitened-PCA or
 normalized-Laplacian problem built from real data routinely has `n` in the
 tens or hundreds of thousands, where a full generalized eigendecomposition
-is not practical — the partial slice, certified, is the only result you can
-afford.
+is often not practical and a certified partial slice is the useful result you
+can afford.
 
 The main choice is the structure of the problem and how much of its spectrum
 you need:

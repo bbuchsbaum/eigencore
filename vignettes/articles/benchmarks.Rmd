@@ -79,7 +79,8 @@ eigen_backward_error <- function(A, values, vectors) {
   values <- Re(values)
   vectors <- as.matrix(vectors)
   residual <- A_dense %*% vectors - vectors %*% diag(values, nrow = length(values))
-  scale <- fro_norm(A_dense) + abs(values)
+  vector_norm <- sqrt(colSums(abs(vectors)^2))
+  scale <- (fro_norm(A_dense) + abs(values)) * vector_norm
   max(sqrt(colSums(abs(residual)^2)) / pmax(scale, .Machine$double.eps))
 }
 
@@ -91,7 +92,7 @@ svd_backward_error <- function(A, d, u, v) {
   left_residual <- A_dense %*% v - u %*% diag(d, nrow = length(d))
   right_residual <- t(A_dense) %*% u - v %*% diag(d, nrow = length(d))
   residual <- sqrt(colSums(abs(left_residual)^2) + colSums(abs(right_residual)^2))
-  max(residual / pmax(fro_norm(A_dense) + d, .Machine$double.eps))
+  max(residual / pmax(fro_norm(A_dense), .Machine$double.eps))
 }
 
 bench_eval <- function(expr, iterations = benchmark_iterations) {

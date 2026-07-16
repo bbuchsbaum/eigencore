@@ -144,9 +144,10 @@ all_sv <- svd(dense_centered, nu = 0, nv = 0)$d
 plot_spectrum(all_sv, fit$d, ylab = "singular value")
 ```
 
-The five leading singular values separate cleanly from the rest of the
-spectrum — exactly what you'd expect from data built around five latent
-factors.
+The five requested singular values occupy the leading edge of the spectrum,
+although the fifth-to-sixth gap is modest after masking and noise. This example
+checks the non-densifying computation rather than claiming reliable recovery
+of the five simulated factors.
 
 ## Read the certificate on a composed operator
 
@@ -159,14 +160,14 @@ fit$certificate$norm_bound_type
 fit$certificate$scale_is_estimate
 ```
 
-The residual is tiny — far below the `1e-8` tolerance. What's withheld is
-the *scale*: computing an exact Frobenius norm bound for a centered operator
-would mean a second full pass over the data, so eigencore instead reports a
-stochastic (Hutchinson) estimate and refuses to mark the certificate
-`passed` while that estimate is the only evidence. This is the same honest
-bookkeeping `vignette("certificates")` covers in detail — a composed
-operator trades the exact bound for an estimated one unless you supply
-norm metadata yourself, which the next section shows.
+The backward error is tiny — far below the `1e-8` tolerance. What's withheld
+is the *scale*: the current centered sparse operator does not propagate an
+exact Frobenius norm, so eigencore reports a stochastic (Hutchinson) estimate
+and refuses to mark the certificate `passed` while that estimate is the only
+evidence. This is the certificate bookkeeping `vignette("certificates")`
+covers in detail. It is a current metadata limitation, not a mathematical
+requirement of centering; supplying exact norm metadata gives a deterministic
+certificate scale.
 
 ## Does it match what you'd get by densifying?
 
@@ -183,17 +184,26 @@ itself never materialized it.
 
 ## Scale columns too
 
-A common next step in PCA preprocessing is scaling each column to unit
+A common next step in PCA preprocessing is scaling each column to unit sample
 variance, turning a covariance-matrix PCA into a correlation-matrix one.
-Compute the column variances from the sparse matrix and pass them to
-`scale_cols()`, composed with the centering operator you already have:
+Compute the sample variances from the sparse matrix and pass the inverse
+standard deviations to `scale_cols()`, composed with the centering operator
+you already have:
 
 ```{r scale-cols}
-col_var <- Matrix::colMeans(A^2) - Matrix::colMeans(A)^2
-w <- 1 / sqrt(col_var + 1e-6)
+col_var <- (Matrix::colSums(A^2) - m * Matrix::colMeans(A)^2) / (m - 1)
+w <- 1 / sqrt(col_var)
 Acs <- scale_cols(Ac, w)
 fit_scaled <- svd_partial(Acs, rank = 5, target = largest())
 fit_scaled$d
+```
+
+```{r validate-scale-cols, include = FALSE}
+stopifnot(
+  all(is.finite(col_var)),
+  all(col_var > 0),
+  max(abs(col_var * w^2 - 1)) < 1e-12
+)
 ```
 
 `center()` and `scale_cols()` compose freely because both return the same
@@ -211,13 +221,14 @@ plan$method
 plan$reasons
 ```
 
-Centering and scaling a sparse matrix still fuse into a single native,
-non-densifying construction. But once that composed operator reaches the
-solver, eigencore drives it through a matrix-free Golub-Kahan callback
-cycle rather than a fully block-native kernel — the `reasons` say so
-explicitly rather than leaving you to infer it from timing. `plan_solver()`
-takes the same problem/rank/target arguments as the solve itself, so you
-can always check the plan before paying for the computation.
+Centering and scaling remain non-densifying, but they are not currently one
+fully fused native operator. The centered sparse apply is native; the scaling
+layer composes through an R-level operator apply. The solver therefore drives
+the result through a matrix-free Golub-Kahan callback cycle rather than a
+fully block-native kernel — the `reasons` make that boundary explicit.
+`plan_solver()` takes the same problem/rank/target arguments as the solve, so
+you can inspect the intended primary route before paying for the computation;
+the result diagnostics record any fallback that actually occurs.
 
 ## Going fully matrix-free
 
@@ -270,9 +281,10 @@ evidence backed the result.
 The 2,000 x 500 example above keeps this vignette fast to build, but the
 memory argument only gets sharper as the matrix grows. A production
 recommender with 5 million users and 200,000 items would need roughly 8 TB
-to store as a dense matrix; the sparse representation, at typical
-interaction densities, fits in a few gigabytes. Densifying to center it
-would defeat the entire point of using a sparse format.
+to store as a dense double matrix. At densities from 0.01% to 0.05%, the
+sparse value and row-index arrays alone require roughly 1.2 to 6 GB, before
+format overhead. Densifying to center it would defeat the point of using a
+sparse format.
 
 ## Where to go next
 

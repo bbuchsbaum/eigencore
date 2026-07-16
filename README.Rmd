@@ -218,9 +218,16 @@ additionally return a certificate.
 
 ## Learning more
 
-`vignette("eigencore", package = "eigencore")` is the guided tour.
-`vignette("certificates", package = "eigencore")` explains how to read the
-numerical evidence and what to do when a check fails.
+- [Get started with eigencore](vignettes/eigencore.Rmd) — the guided tour
+  through partial eigenvalue and SVD workflows.
+- [PCA on sparse data without densifying](vignettes/sparse-pca.Rmd) — centered,
+  scaled, and matrix-free sparse PCA.
+- [Reading certificates](vignettes/certificates.Rmd) — residuals, backward
+  errors, orthogonality, and withheld verdicts.
+- [Generalized eigenvalue problems](vignettes/generalized-eigenproblems.Rmd) —
+  positive-definite metrics, dense pencils, QZ, and sparse partial solves.
+- [Benchmarks](vignettes/articles/benchmarks.Rmd) — reproducible comparisons,
+  planner paths, and the limits of the timing evidence.
 
 ## Status
 

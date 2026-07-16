@@ -106,8 +106,9 @@ plot_spectrum(all_vals, fit$values, ylab = "eigenvalue")
 ```
 
 With `n = 200` this computed 5 of 200 pairs. In a production problem with
-`n = 1e6`, computing the full spectrum is impossible — the *partial* result
-is the only result, which is exactly why a certificate matters.
+`n = 1e6`, storing all eigenvectors and computing the full spectrum is usually
+impractical; a certified partial result is often the useful result you can
+afford.
 
 ## Generalized SPD eigenproblem (`A v = lambda B v`)
 
@@ -121,8 +122,10 @@ fit_gen <- eig_partial(A, k = 5, target = largest(), B = B,
 fit_gen
 ```
 
-The certificate's residual is `||A v - lambda B v|| / (||A|| + |lambda| ||B||)`,
-and orthogonality is measured in the `B`-inner product where appropriate. See
+The absolute residual is `||A v - lambda B v||`. The certificate divides that
+quantity by `||A|| + |lambda| ||B||` (and the vector norm, when needed) to form
+the backward error used for convergence. Orthogonality is measured in the
+`B`-inner product where appropriate. See
 `vignette("generalized-eigenproblems")` for dense pencils, singular `B`, and
 the QZ decomposition.
 
@@ -197,9 +200,10 @@ spectral target (`largest()`, `smallest()`, `nearest()`, ...).
 P <- eigen_problem(A, structure = hermitian(), target = largest())
 ```
 
-**3. Plans.** `plan_solver()` chooses a method and tells you *exactly*
-which kernel will run, before you pay for the computation. There is no
-silent dispatch.
+**3. Plans.** `plan_solver()` reports the primary method selected from the
+problem's current structure, target, and policy, together with any allowed
+fallback. It is an inspection object, not an executable or frozen plan:
+certification can still trigger a recorded fallback while solving.
 
 ```{r plan}
 plan <- plan_solver(P, k = 5)
@@ -207,8 +211,9 @@ plan
 ```
 
 **4. Solve.** `solve()` on a problem is what `eig_partial()` calls
-internally — reach for it when you've already built a `plan` or `problem`
-you want to reuse.
+internally. Reuse the problem object when you want to solve it again. Inspect
+the returned `method`, warnings, and restart diagnostics to see the route that
+actually ran.
 
 ```{r solve}
 same_fit <- solve(P, k = 5)
