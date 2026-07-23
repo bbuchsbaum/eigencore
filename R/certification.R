@@ -49,6 +49,9 @@ diagnostics <- function(x, ...) {
   if (!is.null(x$start_source)) {
     out$start_source <- x$start_source
     out$initial_subspace <- x$initial_subspace
+    out$operator_block_calls <- x$operator_block_calls
+    out$operator_columns <- x$operator_columns
+    out$certification_operator_columns <- x$certification_operator_columns
   }
   if (!is.null(x$left_eigenvectors)) {
     out$left_eigenvectors <- x$left_eigenvectors

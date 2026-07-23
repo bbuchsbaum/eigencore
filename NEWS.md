@@ -11,17 +11,19 @@
   and when the accepted rank exceeds the block width the block is a seeded
   random rotation of the full accepted basis, so every supplied direction
   contributes generic weight (a k-column continuation subspace handed to a
-  scalar method warm-starts all k targets, not just the first). The start is
-  treated only as a hint — every solve recomputes projected quantities,
-  residuals, orthogonality, convergence, and a fresh current-operator
-  certificate. `initial_subspace = NULL` (the default) preserves the cold
-  random start exactly. Supplying it on any other planned path (generalized,
-  shift-invert, dense fallback) is an explicit error rather than a silently
-  ignored or densified request. Results and `diagnostics()` report start
-  provenance (`start_source` plus supplied/accepted/rejected/augmented and
-  `compressed` fields). This is the downstream-enablement surface for spectral
-  continuation (e.g. repeated `A - rho * B` sequences); reusable restart-state
-  objects and generalized/transformed warm-start promotion remain future work.
+  scalar method warm-starts all k targets, not just the first). Rank detection
+  is invariant to column scaling, and the fitted start block is orthonormal.
+  The start is treated only as a hint — every solve recomputes projected
+  quantities, residuals, orthogonality, convergence, and a fresh
+  current-operator certificate. A fully supplied subspace already invariant at
+  the requested tolerance is discarded to a cold start: residual certification
+  proves eigenpair accuracy, not that an invariant block contains the requested
+  extremal pairs. `initial_subspace = NULL` preserves cold behavior exactly.
+  Unsupported generalized, shift-invert, and dense-fallback plans error.
+  Results, plans, and `diagnostics()` report start provenance plus exact
+  operator block calls, operator columns, and certification columns. Reusable
+  restart-state objects and generalized/transformed promotion remain future
+  work.
 
 ## Performance
 

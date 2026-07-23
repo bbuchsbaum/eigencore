@@ -55,6 +55,8 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
   q <- q / q_norm
 
   nops <- 0L
+  certification_block_calls <- 0L
+  certification_operator_columns <- 0L
   final <- NULL
   iterations <- 0L
   reorth_workspace <- basis_workspace(n, maxit, 1L)
@@ -80,6 +82,10 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
     if (j >= k) {
       final <- reference_lanczos_ritz(op, Q[, seq_len(j), drop = FALSE], alpha[seq_len(j)],
                                       beta[seq_len(j)], k, target, tol)
+      certification_block_calls <- certification_block_calls +
+        final$certification_operator_block_calls
+      certification_operator_columns <- certification_operator_columns +
+        final$certification_operator_columns
       if (all(final$certificate$converged)) {
         break
       }
@@ -96,12 +102,19 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
     final <- reference_lanczos_ritz(op, Q[, seq_len(iterations), drop = FALSE],
                                     alpha[seq_len(iterations)], beta[seq_len(iterations)],
                                     k, target, tol)
+    certification_block_calls <- certification_block_calls +
+      final$certification_operator_block_calls
+    certification_operator_columns <- certification_operator_columns +
+      final$certification_operator_columns
   }
   if (!isTRUE(vectors)) {
     final$vectors <- NULL
   }
   final$iterations <- iterations
   final$matvecs <- nops
+  final$operator_block_calls <- nops + certification_block_calls
+  final$operator_columns <- nops + certification_operator_columns
+  final$certification_operator_columns <- certification_operator_columns
   final
 }
 
@@ -170,6 +183,11 @@ native_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
     out$backward_error <- cert$backward_error
     out$orthogonality <- cert$orthogonality
     out$certificate <- cert
+    out$operator_block_calls <- (out$operator_block_calls %||% out$matvecs) + 1L
+    out$operator_columns <- (out$operator_columns %||% out$matvecs) +
+      ncol(out$vectors)
+    out$certification_operator_columns <-
+      (out$certification_operator_columns %||% 0L) + ncol(out$vectors)
   }
   out
 }
@@ -322,6 +340,10 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
     block = block,
     ortho_passes = ortho_passes,
     locking_events = locking_events,
+    operator_block_calls = iter$operator_block_calls %||% iter$matvecs,
+    operator_columns = iter$operator_columns %||% iter$matvecs,
+    certification_operator_columns =
+      iter$certification_operator_columns %||% 0L,
     operator_allocations = operator_allocations,
     operator_bytes_allocated = operator_bytes_allocated,
     stage_seconds = stage_seconds,
@@ -377,6 +399,15 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
     fallback$restart$failed_block_certificate <- cert
     fallback$restart$failed_block_restart <- block_restart
     fallback$restart$history <- restart_history
+    fallback$operator_block_calls <-
+      (iter$operator_block_calls %||% iter$matvecs %||% 0L) +
+      (fallback$operator_block_calls %||% fallback$matvecs %||% 0L)
+    fallback$operator_columns <-
+      (iter$operator_columns %||% iter$matvecs %||% 0L) +
+      (fallback$operator_columns %||% fallback$matvecs %||% 0L)
+    fallback$certification_operator_columns <-
+      (iter$certification_operator_columns %||% 0L) +
+      (fallback$certification_operator_columns %||% 0L)
     return(fallback)
   }
 
@@ -389,6 +420,10 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
     certificate = cert,
     iterations = iter$iterations,
     matvecs = iter$matvecs,
+    operator_block_calls = iter$operator_block_calls %||% iter$matvecs,
+    operator_columns = iter$operator_columns %||% iter$matvecs,
+    certification_operator_columns =
+      iter$certification_operator_columns %||% 0L,
     restarts = restarts_used,
     ortho_passes = ortho_passes,
     locking_events = locking_events,
@@ -445,6 +480,9 @@ native_block_full_subspace_hermitian <- function(op, k, target, tol, block,
     certificate = cert,
     iterations = 1L,
     matvecs = 0L,
+    operator_block_calls = 1L,
+    operator_columns = as.integer(k),
+    certification_operator_columns = as.integer(k),
     restarts = 0L,
     ortho_passes = 0L,
     locking_events = 0L,
@@ -498,7 +536,9 @@ reference_lanczos_ritz <- function(op, Q, alpha, beta, k, target, tol) {
     residuals = cert$residuals,
     backward_error = cert$backward_error,
     orthogonality = cert$orthogonality,
-    certificate = cert
+    certificate = cert,
+    certification_operator_block_calls = 1L,
+    certification_operator_columns = ncol(vectors)
   )
 }
 

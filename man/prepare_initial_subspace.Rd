@@ -8,7 +8,6 @@ prepare_initial_subspace(
   initial_subspace,
   n,
   width,
-  solver_tol = 1e-08,
   tol = sqrt(.Machine$double.eps)
 )
 }
@@ -21,15 +20,13 @@ directions.}
 \item{width}{Number of start-block columns the chosen method consumes
 (the Lanczos block size).}
 
-\item{solver_tol}{Solver convergence/certification tolerance; sizes the
-random escape blended into a fully user-supplied start.}
-
 \item{tol}{Numerical-rank tolerance for boundary orthonormalization.}
 }
 \value{
 A list with \code{start} (the \verb{n x width} block) and provenance fields
 \code{start_source}, \code{supplied}, \code{accepted}, \code{rejected}, \code{augmented}, \code{rank},
-\code{compressed}, \code{escape_blended}.
+and \code{compressed}. The internal \code{accepted_basis} field retains the full
+accepted basis for the invariant-subspace safety guard.
 }
 \description{
 Produces an \verb{n x width} start block for the Lanczos paths together with

@@ -27,6 +27,20 @@ expect_eigen_result_contract <- function(fit, expected_method = NULL) {
   expect_equal(diag$residuals, fit$residuals)
   expect_equal(diag$backward_error, fit$backward_error)
   expect_true(is.numeric(diag$stage_seconds))
+  if (!is.null(fit$start_source)) {
+    expect_true(all(c(
+      "start_source", "initial_subspace", "operator_block_calls",
+      "operator_columns", "certification_operator_columns"
+    ) %in% names(diag)))
+    expect_identical(diag$start_source, fit$start_source)
+    expect_identical(diag$initial_subspace, fit$initial_subspace)
+    expect_equal(diag$operator_block_calls, fit$operator_block_calls)
+    expect_equal(diag$operator_columns, fit$operator_columns)
+    expect_equal(
+      diag$certification_operator_columns,
+      fit$certification_operator_columns
+    )
+  }
   if (!is.null(fit$left_eigenvectors)) {
     expect_true(all(c(
       "left_eigenvectors", "left_certificate", "biorthogonality"

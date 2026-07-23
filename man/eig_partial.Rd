@@ -56,13 +56,12 @@ recomputed for the current operator on every solve. The columns are
 orthonormalized at the solver boundary and fitted to the method's start
 block — when the accepted rank exceeds the block width the block is a
 seeded random rotation of the full accepted basis, so every supplied
-direction contributes — with a small random component blended in to guard
-against an exact non-target invariant subspace trapping the iteration into
-certifying non-target eigenpairs. For reliable results supply a start that
-genuinely overlaps the target subspace — e.g. the previous solve's target
-eigenvectors for spectral continuation — rather than an exact invariant
-subspace disjoint from the target under a minimal \code{max_subspace}. \code{NULL}
-(the default) preserves the cold random start exactly.}
+direction contributes. Because a residual certificate proves eigenpair
+accuracy but not target identity, a fully supplied subspace that is already
+invariant at \code{tol} is discarded in favor of a cold start; provenance
+records that guard decision. Diagnostics distinguish operator block calls,
+operator columns, and certification columns. \code{NULL} (the default)
+preserves the cold random start exactly.}
 }
 \value{
 An \code{eigencore_eigen_result} containing computed values, optional

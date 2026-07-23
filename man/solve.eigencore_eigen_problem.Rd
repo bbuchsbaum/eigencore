@@ -43,8 +43,10 @@ native dense double / \code{dgCMatrix} and the matrix-free reference path;
 supplying it on any other planned path is an error. The subspace is only
 a starting hint, never a source of reused convergence: every solve
 recomputes projected quantities, residuals, orthogonality, convergence,
-and a fresh current-operator certificate. \code{NULL} (the default) preserves
-the cold random start exactly.}
+and a fresh current-operator certificate. An already-invariant supplied
+subspace is discarded to a cold start because residual certification alone
+cannot establish that it contains the requested extremal eigenpairs.
+\code{NULL} (the default) preserves the cold random start exactly.}
 
 \item{...}{Reserved for future solver options.}
 }

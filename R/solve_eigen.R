@@ -124,6 +124,12 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
   start_block <- NULL
   start_provenance <- warm_start_cold_provenance()
   if (warm) {
+    rng_state_before_prepare <- if (exists(".Random.seed", envir = .GlobalEnv,
+                                           inherits = FALSE)) {
+      get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+    } else {
+      NULL
+    }
     native_warm_path <- plan_dispatches_native_lanczos(plan)
     if (!native_warm_path && !plan_dispatches_reference_hermitian_lanczos(plan)) {
       stop("Internal error: initial_subspace reached an unsupported Lanczos dispatch.",
@@ -131,12 +137,29 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
     }
     start_width <- if (native_warm_path) as.integer(method_block) else 1L
     prep <- prepare_initial_subspace(initial_subspace, n = a$A$dim[1L],
-                                     width = start_width,
-                                     solver_tol = tol)
+                                     width = start_width)
     start_block <- prep$start
     start_provenance <- prep[c("start_source", "supplied", "accepted",
                                "rejected", "augmented", "rank", "compressed",
-                               "escape_blended")]
+                               "invariant_guard_used",
+                               "invariant_relative_residual",
+                               "guard_operator_block_calls",
+                               "guard_operator_columns")]
+    if (prep$augmented == 0L && prep$rank > 0L) {
+      guard <- warm_start_invariant_guard(a$A, prep$accepted_basis, tol = tol)
+      start_provenance$invariant_guard_used <- TRUE
+      start_provenance$invariant_relative_residual <- guard$relative_residual
+      start_provenance$guard_operator_block_calls <- guard$operator_block_calls
+      start_provenance$guard_operator_columns <- guard$operator_columns
+      if (isTRUE(guard$discard)) {
+        start_block <- NULL
+        if (!is.null(rng_state_before_prepare)) {
+          assign(".Random.seed", rng_state_before_prepare, envir = .GlobalEnv)
+        }
+        start_provenance$start_source <-
+          "user_supplied_discarded_invariant_guard"
+      }
+    }
   }
 
   native_generalized_path <- identical(plan$method, native_generalized_lanczos_label())
@@ -212,6 +235,21 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
     start_provenance$start_source <- "user_supplied_discarded_on_fallback"
   }
 
+  guard_block_calls <- start_provenance$guard_operator_block_calls %||% 0L
+  guard_columns <- start_provenance$guard_operator_columns %||% 0L
+  iter$operator_block_calls <- as.integer(
+    (iter$operator_block_calls %||% iter$matvecs %||% 0L) +
+      guard_block_calls
+  )
+  iter$operator_columns <- as.integer(
+    (iter$operator_columns %||% iter$matvecs %||% 0L) + guard_columns
+  )
+  iter$certification_operator_columns <- as.integer(
+    iter$certification_operator_columns %||% 0L
+  )
+  plan$initial_subspace <- start_provenance
+  plan$controls$initial_subspace_supported <- TRUE
+
   warning_msg <- if (native_generalized_path) {
     if (!isTRUE(iter$certificate$passed)) {
       paste0(
@@ -280,6 +318,9 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
         iter$restart$operator_bytes_allocated %||%
         if (identical(iter$restart$kind, "block_full_subspace_dense_lapack")) 0 else NA_real_,
       stage_seconds = iter$stage_seconds %||% iter$restart$stage_seconds %||% numeric(),
+      operator_block_calls = iter$operator_block_calls,
+      operator_columns = iter$operator_columns,
+      certification_operator_columns = iter$certification_operator_columns,
       convergence_history = iter$convergence_history %||% NULL,
       restart = iter$restart %||% NULL,
       locked = iter$locked %||% which(iter$certificate$converged),

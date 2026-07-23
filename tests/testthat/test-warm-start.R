@@ -79,7 +79,7 @@ test_that("sparse dgCMatrix block warm start certifies against the dense oracle"
   expect_s4_class(sp, "dgCMatrix")
   truth <- sort(eigen(as.matrix(sp), symmetric = TRUE)$values,
                 decreasing = TRUE)[seq_len(k)]
-  warm <- eigen(as.matrix(sp), symmetric = TRUE)$vectors[, seq_len(k), drop = FALSE]
+  warm <- warm_from_truth(sp, k, noise = 1e-2, seed = 17L)
   fit <- eig_partial(sp, k = k, target = largest(), method = block_method(k, n),
                      seed = 5, initial_subspace = warm)
   expect_equal(sort(values(fit), decreasing = TRUE), truth, tolerance = 1e-7)
@@ -101,8 +101,8 @@ test_that("scalar Lanczos fits a wide subspace to a single-column start", {
   expect_certificate_clean(fit)
   prov <- fit$initial_subspace
   expect_equal(prov$supplied, k)
-  expect_equal(prov$accepted, 1L)   # width-1 start block
-  expect_equal(prov$rejected, k - 1L)
+  expect_equal(prov$accepted, k)    # every independent supplied direction
+  expect_equal(prov$rejected, 0L)
   expect_equal(prov$augmented, 0L)
   expect_true(prov$compressed)      # rotation of the full k-basis, not X[, 1]
 })
@@ -114,11 +114,12 @@ test_that("compression fit mixes every supplied direction into the start", {
   set.seed(21)
   basis <- qr.Q(qr(matrix(stats::rnorm(n * k), n, k)))
   set.seed(33)
-  prep <- eigencore:::prepare_initial_subspace(basis, n = n, width = 1L,
-                                               solver_tol = 1e-8)
+  prep <- eigencore:::prepare_initial_subspace(basis, n = n, width = 1L)
   expect_true(prep$compressed)
-  expect_equal(prep$accepted, 1L)
+  expect_equal(prep$accepted, k)
+  expect_equal(prep$rejected, 0L)
   expect_equal(dim(prep$start), c(n, 1L))
+  expect_equal(crossprod(prep$start), diag(1L), tolerance = 1e-12)
   overlaps <- abs(drop(crossprod(basis, prep$start)))
   # A Gaussian rotation gives each direction weight ~ 1/sqrt(k); anything
   # above noise level proves no direction was truncated away.
@@ -126,10 +127,10 @@ test_that("compression fit mixes every supplied direction into the start", {
 
   # width >= rank keeps the basis as-is (no compression).
   set.seed(33)
-  wide <- eigencore:::prepare_initial_subspace(basis, n = n, width = k,
-                                               solver_tol = 1e-8)
+  wide <- eigencore:::prepare_initial_subspace(basis, n = n, width = k)
   expect_false(wide$compressed)
   expect_equal(wide$accepted, k)
+  expect_equal(crossprod(wide$start), diag(k), tolerance = 1e-12)
 })
 
 # --------------------------------------------------------------------------
@@ -146,6 +147,19 @@ test_that("badly scaled start does not corrupt the certified answer", {
   expect_equal(sort(values(fit), decreasing = TRUE), truth, tolerance = 1e-7)
   expect_certificate_clean(fit)
   expect_equal(fit$initial_subspace$accepted, k)
+})
+
+test_that("rank detection is invariant to tiny and huge column scaling", {
+  n <- 60L; k <- 4L
+  A <- build_dense_sym(n)
+  basis <- eigen(A, symmetric = TRUE)$vectors[, seq_len(k), drop = FALSE]
+  scales <- c(1e-300, 1e-20, 1e20, 1e308)
+  scaled <- sweep(basis, 2L, scales, `*`)
+  prep <- eigencore:::prepare_initial_subspace(scaled, n = n, width = k)
+  expect_equal(prep$rank, k)
+  expect_equal(prep$accepted, k)
+  expect_equal(prep$rejected, 0L)
+  expect_equal(crossprod(prep$start), diag(k), tolerance = 1e-12)
 })
 
 test_that("duplicate columns are rejected and deterministically augmented", {
@@ -165,6 +179,9 @@ test_that("duplicate columns are rejected and deterministically augmented", {
   expect_equal(prov$rejected, 2L)
   expect_equal(prov$augmented, 2L)   # filled up to block width
   expect_identical(fit$start_source, "user_supplied")
+  set.seed(4)
+  prepared <- eigencore:::prepare_initial_subspace(dup, n = n, width = k)
+  expect_equal(crossprod(prepared$start), diag(k), tolerance = 1e-12)
 })
 
 test_that("rank-deficient (too-few) start is augmented up to block width", {
@@ -197,11 +214,11 @@ test_that("zero-overlap start (non-target invariant subspace) still finds the ta
   expect_equal(fit$initial_subspace$accepted, k)  # full rank, just wrong directions
 })
 
-test_that("non-target invariant-subspace start never yields a wrong certified answer", {
+test_that("non-target invariant-subspace start is discarded before certification", {
   # An exact non-target invariant subspace would trap Krylov iteration and, at
   # a minimal max_subspace, certify the non-target eigenpairs it was handed. The
-  # blended random escape must prevent that: the result is either the certified
-  # target spectrum or an honest non-convergence, but never wrong-and-certified.
+  # residual certificate cannot establish target identity. The invariant guard
+  # must discard the start and recover the same target as a cold solve.
   n <- 40L; k <- 3L
   A <- build_dense_sym(n)
   E <- eigen(A, symmetric = TRUE)
@@ -212,11 +229,24 @@ test_that("non-target invariant-subspace start never yields a wrong certified an
   tight <- eig_partial(A, k = k, target = largest(),
                        method = lanczos(block = k, max_subspace = 2L * k,
                                         max_restarts = 200L),
-                       seed = 1, initial_subspace = bad)
+                       tol = 1e-4, seed = 7, initial_subspace = bad)
+  cold_tight <- eig_partial(
+    A, k = k, target = largest(),
+    method = lanczos(block = k, max_subspace = 2L * k,
+                     max_restarts = 200L),
+    tol = 1e-4, seed = 7
+  )
   tight_vals <- sort(values(tight), decreasing = TRUE)
-  target_match <- isTRUE(all.equal(tight_vals, truth, tolerance = 1e-5))
-  wrong_certified <- certificate(tight)$passed && !target_match
-  expect_false(wrong_certified)
+  expect_equal(tight_vals, truth, tolerance = 1e-4)
+  expect_equal(values(tight), values(cold_tight))
+  expect_equal(tight$matvecs, cold_tight$matvecs)
+  expect_certificate_clean(tight, tol = 1e-4)
+  expect_identical(
+    tight$start_source,
+    "user_supplied_discarded_invariant_guard"
+  )
+  expect_true(tight$initial_subspace$invariant_guard_used)
+  expect_lte(tight$initial_subspace$invariant_relative_residual, 1e-4)
 
   # Adequate budget: must fully recover and certify the target.
   ample <- eig_partial(A, k = k, target = largest(),
@@ -225,7 +255,7 @@ test_that("non-target invariant-subspace start never yields a wrong certified an
                        seed = 1, initial_subspace = bad)
   expect_equal(sort(values(ample), decreasing = TRUE), truth, tolerance = 1e-6)
   expect_certificate_clean(ample, tol = 1e-7)
-  expect_true(tight$initial_subspace$escape_blended)
+  expect_true(ample$initial_subspace$invariant_guard_used)
 })
 
 test_that("partially overlapping start recovers the certified target spectrum", {
@@ -331,8 +361,8 @@ test_that("matrix-free warm start is consumed, certified, and cheaper than cold"
   expect_equal(values(cold), values(cold2))
   expect_equal(cold$matvecs, cold2$matvecs)
 
-  # Exact previous-solve eigenvectors: the spectral-continuation access pattern.
-  warm_basis <- eigen(A, symmetric = TRUE)$vectors[, seq_len(k), drop = FALSE]
+  # A perturbed previous-solve basis models a changed-operator continuation.
+  warm_basis <- warm_from_truth(A, k, noise = 1e-3, seed = 19L)
   warm <- eig_partial(op, k = k, target = largest(), method = lanczos(),
                       maxit = n, seed = 12, initial_subspace = warm_basis)
   expect_identical(warm$method,
@@ -347,9 +377,9 @@ test_that("matrix-free warm start is consumed, certified, and cheaper than cold"
   expect_true(cert$orthogonality_passed)
   prov <- warm$initial_subspace
   expect_equal(prov$supplied, k)
-  expect_equal(prov$accepted, 1L)   # scalar reference path, width 1
+  expect_equal(prov$accepted, k)
   expect_true(prov$compressed)
-  expect_true(prov$escape_blended)
+  expect_true(prov$invariant_guard_used)
   expect_lt(warm$matvecs, cold$matvecs)
 })
 
@@ -422,9 +452,19 @@ test_that("diagnostics() surfaces start provenance on warm eigen results only", 
   fit <- eig_partial(A, k = k, target = largest(), method = block_method(k, n),
                      seed = 1, initial_subspace = warm)
   d <- diagnostics(fit)
-  expect_true(all(c("start_source", "initial_subspace") %in% names(d)))
+  expect_true(all(c(
+    "start_source", "initial_subspace", "operator_block_calls",
+    "operator_columns", "certification_operator_columns"
+  ) %in% names(d)))
   expect_identical(d$start_source, "user_supplied")
   expect_equal(d$initial_subspace$accepted, k)
+  expect_identical(fit$plan$initial_subspace, fit$initial_subspace)
+  expect_true(fit$plan$controls$initial_subspace_supported)
+  expect_gte(d$operator_block_calls, fit$matvecs)
+  expect_gte(d$operator_columns, d$operator_block_calls)
+  expect_gte(d$certification_operator_columns, 0L)
+  expect_lte(d$certification_operator_columns, d$operator_columns)
+  expect_gt(d$initial_subspace$guard_operator_columns, 0L)
 
   # SVD diagnostics schema must be unchanged (no warm-start fields).
   sv <- svd_partial(matrix(stats::rnorm(60), 10, 6), rank = 3)

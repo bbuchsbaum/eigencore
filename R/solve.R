@@ -25,13 +25,12 @@
 #'   orthonormalized at the solver boundary and fitted to the method's start
 #'   block — when the accepted rank exceeds the block width the block is a
 #'   seeded random rotation of the full accepted basis, so every supplied
-#'   direction contributes — with a small random component blended in to guard
-#'   against an exact non-target invariant subspace trapping the iteration into
-#'   certifying non-target eigenpairs. For reliable results supply a start that
-#'   genuinely overlaps the target subspace — e.g. the previous solve's target
-#'   eigenvectors for spectral continuation — rather than an exact invariant
-#'   subspace disjoint from the target under a minimal `max_subspace`. `NULL`
-#'   (the default) preserves the cold random start exactly.
+#'   direction contributes. Because a residual certificate proves eigenpair
+#'   accuracy but not target identity, a fully supplied subspace that is already
+#'   invariant at `tol` is discarded in favor of a cold start; provenance
+#'   records that guard decision. Diagnostics distinguish operator block calls,
+#'   operator columns, and certification columns. `NULL` (the default)
+#'   preserves the cold random start exactly.
 #' @return An `eigencore_eigen_result` containing computed values, optional
 #'   vectors, certificate diagnostics, method/plan metadata, and convergence
 #'   diagnostics.
@@ -131,8 +130,10 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
 #'   supplying it on any other planned path is an error. The subspace is only
 #'   a starting hint, never a source of reused convergence: every solve
 #'   recomputes projected quantities, residuals, orthogonality, convergence,
-#'   and a fresh current-operator certificate. `NULL` (the default) preserves
-#'   the cold random start exactly.
+#'   and a fresh current-operator certificate. An already-invariant supplied
+#'   subspace is discarded to a cold start because residual certification alone
+#'   cannot establish that it contains the requested extremal eigenpairs.
+#'   `NULL` (the default) preserves the cold random start exactly.
 #' @param ... Reserved for future solver options.
 #' @return An `eigencore_eigen_result`.
 #' @export

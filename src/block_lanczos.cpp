@@ -466,7 +466,8 @@ static int apply_active_block(void* impl, EigencoreApplyFn apply,
                               int n, int first_col, int cols,
                               double* V_active, double* AV_active,
                               EigencoreWorkspace* workspace,
-                              int* matvecs_out) {
+                              int* matvecs_out,
+                              int* operator_columns_out) {
   if (cols <= 0) {
     return 0;
   }
@@ -477,6 +478,9 @@ static int apply_active_block(void* impl, EigencoreApplyFn apply,
                        workspace);
   if (rc == 0 && matvecs_out != nullptr) {
     ++(*matvecs_out);
+  }
+  if (rc == 0 && operator_columns_out != nullptr) {
+    *operator_columns_out += cols;
   }
   return rc;
 }
@@ -786,7 +790,9 @@ static int final_polish_block_ritz(void* impl,
                                    int* n_converged_out,
                                    ThickRestartBuffers* buf,
                                    EigencoreWorkspace* workspace,
-                                   int* matvecs_out) {
+                                   int* matvecs_out,
+                                   int* operator_columns_out,
+                                   int* certification_operator_columns_out) {
   if (k_target <= 0) {
     if (n_converged_out != nullptr) {
       *n_converged_out = 0;
@@ -855,6 +861,12 @@ static int final_polish_block_ritz(void* impl,
   }
   if (matvecs_out != nullptr) {
     ++(*matvecs_out);
+  }
+  if (operator_columns_out != nullptr) {
+    *operator_columns_out += k_target;
+  }
+  if (certification_operator_columns_out != nullptr) {
+    *certification_operator_columns_out += k_target;
   }
 
   int n_converged_simple = 0;
@@ -1242,6 +1254,7 @@ static int block_lanczos_expand_basis_to_budget(
     int* last_block_cols,
     int* iterations_out,
     int* matvecs_out,
+    int* operator_columns_out,
     int* ortho_passes_out) {
   while (*m_active < m_max && *last_block_cols > 0) {
     auto timer = native_timer_now();
@@ -1290,7 +1303,8 @@ static int block_lanczos_expand_basis_to_budget(
       timer = native_timer_now();
       const int rc = apply_active_block(
         impl, apply, n, continuation_start, continuation_accepted,
-        buf->V_active, buf->AV_active, workspace, matvecs_out
+        buf->V_active, buf->AV_active, workspace, matvecs_out,
+        operator_columns_out
       );
       stages->apply += native_timer_elapsed(timer);
       if (rc != 0) {
@@ -1317,7 +1331,7 @@ static int block_lanczos_expand_basis_to_budget(
     timer = native_timer_now();
     const int rc = apply_active_block(impl, apply, n, accepted_start, accepted,
                                       buf->V_active, buf->AV_active, workspace,
-                                      matvecs_out);
+                                      matvecs_out, operator_columns_out);
     stages->apply += native_timer_elapsed(timer);
     if (rc != 0) {
       return rc;
@@ -1456,6 +1470,7 @@ static int block_lanczos_restart_with_continuation_tail(
     int* last_block_cols,
     double* V_out,
     int* matvecs_out,
+    int* operator_columns_out,
     int* restarts_out,
     int* ortho_passes_out) {
   auto timer = native_timer_now();
@@ -1549,7 +1564,7 @@ static int block_lanczos_restart_with_continuation_tail(
   timer = native_timer_now();
   int rc = apply_active_block(impl, apply, n, 0, *m_active,
                               buf->V_active, buf->AV_active, workspace,
-                              matvecs_out);
+                              matvecs_out, operator_columns_out);
   stages->apply += native_timer_elapsed(timer);
   if (rc != 0) {
     return rc;
@@ -1591,7 +1606,9 @@ static int block_lanczos_finalize_return(
     double* residuals_out,
     int* converged_out,
     int* n_locked,
-    int* matvecs_out) {
+    int* matvecs_out,
+    int* operator_columns_out,
+    int* certification_operator_columns_out) {
   int n_returned = *n_locked;
   if (best.filled) {
     std::memcpy(V_out, best.V.data(),
@@ -1644,7 +1661,8 @@ static int block_lanczos_finalize_return(
       lambda_out + polish_offset,
       residuals_out + polish_offset,
       converged_out + polish_offset,
-      &polished_converged, buf, workspace, matvecs_out
+      &polished_converged, buf, workspace, matvecs_out,
+      operator_columns_out, certification_operator_columns_out
     );
   } else {
     polished_converged = 0;
@@ -1663,7 +1681,8 @@ static int block_lanczos_finalize_return(
     polish_status = final_polish_block_ritz(
       impl, apply, n, k_target, target_kind, tol, norm_a,
       V_out, lambda_out, residuals_out, converged_out,
-      &polished_converged, buf, workspace, matvecs_out
+      &polished_converged, buf, workspace, matvecs_out,
+      operator_columns_out, certification_operator_columns_out
     );
     {
       const double elapsed = native_timer_elapsed(timer);
@@ -1698,6 +1717,8 @@ static int native_block_thick_restart_lanczos_run(
     int* n_locked_out,
     int* iterations_out,
     int* matvecs_out,
+    int* operator_columns_out,
+    int* certification_operator_columns_out,
     int* restarts_out,
     int* m_active_final_out,
     int* locking_events_out,
@@ -1710,6 +1731,8 @@ static int native_block_thick_restart_lanczos_run(
   *n_locked_out = 0;
   *iterations_out = 0;
   *matvecs_out = 0;
+  *operator_columns_out = 0;
+  *certification_operator_columns_out = 0;
   *restarts_out = 0;
   *m_active_final_out = 0;
   *locking_events_out = 0;
@@ -1767,7 +1790,7 @@ static int native_block_thick_restart_lanczos_run(
   timer = native_timer_now();
   int rc = apply_active_block(impl, apply, n, 0, last_block_cols,
                               buf.V_active, buf.AV_active, &workspace,
-                              matvecs_out);
+                              matvecs_out, operator_columns_out);
   stages->apply += native_timer_elapsed(timer);
   if (rc != 0) {
     trl_buffers_free(&buf);
@@ -1794,7 +1817,7 @@ static int native_block_thick_restart_lanczos_run(
       impl, apply, n, m_max, block_size, V_out, n_locked, &buf, &workspace,
       stages, &m_active, &previous_block_start, &previous_block_cols,
       &last_block_start, &last_block_cols, iterations_out, matvecs_out,
-      ortho_passes_out
+      operator_columns_out, ortho_passes_out
     );
     if (rc != 0) {
       trl_buffers_free(&buf);
@@ -1886,6 +1909,12 @@ static int native_block_thick_restart_lanczos_run(
                  buf.B_v, n, 1.0, 0.0, buf.B_av, n, &workspace);
       if (rc == 0 && matvecs_out != nullptr) {
         ++(*matvecs_out);
+      }
+      if (rc == 0 && operator_columns_out != nullptr) {
+        *operator_columns_out += selected_count;
+      }
+      if (rc == 0 && certification_operator_columns_out != nullptr) {
+        *certification_operator_columns_out += selected_count;
       }
     } else {
       F77_CALL(dgemm)(&trans_N, &trans_N, &n, &selected_count, &m_active,
@@ -2004,7 +2033,7 @@ static int native_block_thick_restart_lanczos_run(
       impl, apply, n, k_target, m_max, block_size, restart_idx, selected_count,
       n_locked, &buf, &workspace, stages, &m_active, &previous_block_start,
       &previous_block_cols, &last_block_start, &last_block_cols, V_out,
-      matvecs_out, restarts_out, ortho_passes_out
+      matvecs_out, operator_columns_out, restarts_out, ortho_passes_out
     );
     if (rc == 1) {
       *restarts_out = restart_idx;
@@ -2020,7 +2049,8 @@ static int native_block_thick_restart_lanczos_run(
   rc = block_lanczos_finalize_return(
     impl, apply, n, k_target, target_kind, tol, norm_a, selected_count_final,
     have_last_rr, &buf, &workspace, stages, best, V_out, lambda_out,
-    residuals_out, converged_out, &n_locked, matvecs_out
+    residuals_out, converged_out, &n_locked, matvecs_out,
+    operator_columns_out, certification_operator_columns_out
   );
   if (rc != 0) {
     trl_buffers_free(&buf);
@@ -2049,6 +2079,8 @@ static SEXP block_thick_lanczos_pack_result(int n, int k_target, const double* V
                                             const double* residuals,
                                             const int* converged, int n_locked,
                                             int iterations, int matvecs,
+                                            int operator_columns,
+                                            int certification_operator_columns,
                                             int restarts, int m_active_final,
                                             int locking_events, int ortho_passes,
                                             int block_size,
@@ -2150,7 +2182,7 @@ static SEXP block_thick_lanczos_pack_result(int n, int k_target, const double* V
   SET_STRING_ELT(history_names_, 7, mkChar("max_backward_error"));
   setAttrib(history_, R_NamesSymbol, history_names_);
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 16));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 19));
   SET_VECTOR_ELT(out_, 0, values_);
   SET_VECTOR_ELT(out_, 1, vectors_);
   SET_VECTOR_ELT(out_, 2, residuals_);
@@ -2167,7 +2199,10 @@ static SEXP block_thick_lanczos_pack_result(int n, int k_target, const double* V
   SET_VECTOR_ELT(out_, 13, ScalarReal(static_cast<double>(operator_bytes_allocated)));
   SET_VECTOR_ELT(out_, 14, stage_);
   SET_VECTOR_ELT(out_, 15, history_);
-  SEXP names_ = PROTECT(allocVector(STRSXP, 16));
+  SET_VECTOR_ELT(out_, 16, ScalarInteger(matvecs));
+  SET_VECTOR_ELT(out_, 17, ScalarInteger(operator_columns));
+  SET_VECTOR_ELT(out_, 18, ScalarInteger(certification_operator_columns));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 19));
   SET_STRING_ELT(names_, 0, mkChar("values"));
   SET_STRING_ELT(names_, 1, mkChar("vectors"));
   SET_STRING_ELT(names_, 2, mkChar("residuals"));
@@ -2184,6 +2219,9 @@ static SEXP block_thick_lanczos_pack_result(int n, int k_target, const double* V
   SET_STRING_ELT(names_, 13, mkChar("operator_bytes_allocated"));
   SET_STRING_ELT(names_, 14, mkChar("stage_seconds"));
   SET_STRING_ELT(names_, 15, mkChar("restart_history"));
+  SET_STRING_ELT(names_, 16, mkChar("operator_block_calls"));
+  SET_STRING_ELT(names_, 17, mkChar("operator_columns"));
+  SET_STRING_ELT(names_, 18, mkChar("certification_operator_columns"));
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(18);
   return out_;
@@ -2320,7 +2358,8 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(
   std::vector<double> lambda(static_cast<size_t>(k), 0.0);
   std::vector<double> residuals(static_cast<size_t>(k), R_PosInf);
   std::vector<int> converged(static_cast<size_t>(k), 0);
-  int n_locked = 0, iterations = 0, matvecs = 0, restarts = 0, m_active = 0;
+  int n_locked = 0, iterations = 0, matvecs = 0, operator_columns = 0;
+  int certification_operator_columns = 0, restarts = 0, m_active = 0;
   int locking_events = 0, ortho_passes = 0;
   int64_t operator_allocations = 0, operator_bytes_allocated = 0;
   NativeBlockStageSeconds stage_seconds;
@@ -2349,6 +2388,7 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(
     &impl, eigencore_dense_apply, n, k, m_max, block_size, target_kind,
     tol, max_restarts, norm_a, 0, REAL(start_), V.data(), lambda.data(),
     residuals.data(), converged.data(), &n_locked, &iterations, &matvecs,
+    &operator_columns, &certification_operator_columns,
     &restarts, &m_active, &locking_events, &ortho_passes,
     &operator_allocations, &operator_bytes_allocated, &stage_seconds, &history);
   if (status != 0) {
@@ -2356,7 +2396,8 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(
   }
   return block_thick_lanczos_pack_result(
     n, k, V.data(), lambda.data(), residuals.data(), converged.data(),
-    n_locked, iterations, matvecs, restarts, m_active, locking_events,
+    n_locked, iterations, matvecs, operator_columns,
+    certification_operator_columns, restarts, m_active, locking_events,
     ortho_passes, block_size, operator_allocations, operator_bytes_allocated,
     &stage_seconds, &history);
 }
@@ -2394,7 +2435,8 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_csc(
   std::vector<double> lambda(static_cast<size_t>(k), 0.0);
   std::vector<double> residuals(static_cast<size_t>(k), R_PosInf);
   std::vector<int> converged(static_cast<size_t>(k), 0);
-  int n_locked = 0, iterations = 0, matvecs = 0, restarts = 0, m_active = 0;
+  int n_locked = 0, iterations = 0, matvecs = 0, operator_columns = 0;
+  int certification_operator_columns = 0, restarts = 0, m_active = 0;
   int locking_events = 0, ortho_passes = 0;
   int64_t operator_allocations = 0, operator_bytes_allocated = 0;
   NativeBlockStageSeconds stage_seconds;
@@ -2423,6 +2465,7 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_csc(
     &impl, eigencore_csc_apply, n, k, m_max, block_size, target_kind,
     tol, max_restarts, norm_a, 1, REAL(start_), V.data(), lambda.data(),
     residuals.data(), converged.data(), &n_locked, &iterations, &matvecs,
+    &operator_columns, &certification_operator_columns,
     &restarts, &m_active, &locking_events, &ortho_passes,
     &operator_allocations, &operator_bytes_allocated, &stage_seconds, &history);
   if (status != 0) {
@@ -2430,7 +2473,8 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_csc(
   }
   return block_thick_lanczos_pack_result(
     n, k, V.data(), lambda.data(), residuals.data(), converged.data(),
-    n_locked, iterations, matvecs, restarts, m_active, locking_events,
+    n_locked, iterations, matvecs, operator_columns,
+    certification_operator_columns, restarts, m_active, locking_events,
     ortho_passes, block_size, operator_allocations, operator_bytes_allocated,
     &stage_seconds, &history);
 }
@@ -2478,7 +2522,8 @@ static SEXP normal_thick_restart_lanczos_impl(
   std::vector<double> lambda(static_cast<size_t>(k), 0.0);
   std::vector<double> residuals(static_cast<size_t>(k), R_PosInf);
   std::vector<int> converged(static_cast<size_t>(k), 0);
-  int n_locked = 0, iterations = 0, matvecs = 0, restarts = 0, m_active = 0;
+  int n_locked = 0, iterations = 0, matvecs = 0, operator_columns = 0;
+  int certification_operator_columns = 0, restarts = 0, m_active = 0;
   int locking_events = 0, ortho_passes = 0;
   int64_t operator_allocations = 0, operator_bytes_allocated = 0;
   NativeBlockStageSeconds stage_seconds;
@@ -2516,16 +2561,20 @@ static SEXP normal_thick_restart_lanczos_impl(
     &impl, eigencore_normal_equations_apply, n, k, m_max, block_size,
     target_kind, tol, max_restarts, norm_a, 0, REAL(start_), V.data(),
     lambda.data(), residuals.data(), converged.data(), &n_locked, &iterations,
-    &matvecs, &restarts, &m_active, &locking_events, &ortho_passes,
+    &matvecs, &operator_columns, &certification_operator_columns,
+    &restarts, &m_active, &locking_events, &ortho_passes,
     &operator_allocations, &operator_bytes_allocated, &stage_seconds, &history);
   if (status != 0) {
     error("native normal-equations thick-restart Lanczos failed with status=%d",
           status);
   }
   matvecs *= 2;  // each normal-operator application is two base-A applies
+  operator_columns *= 2;
+  certification_operator_columns *= 2;
   return block_thick_lanczos_pack_result(
     n, k, V.data(), lambda.data(), residuals.data(), converged.data(),
-    n_locked, iterations, matvecs, restarts, m_active, locking_events,
+    n_locked, iterations, matvecs, operator_columns,
+    certification_operator_columns, restarts, m_active, locking_events,
     ortho_passes, block_size, operator_allocations, operator_bytes_allocated,
     &stage_seconds, &history);
 }

@@ -9,28 +9,6 @@
 # current-operator certificate. Reusable restart objects, recurrence reuse,
 # and generalized/transformed promotion are V3.
 
-#' Relative size of the random escape blended into a fully user-supplied start.
-#'
-#' A start block composed entirely of user directions could, by accident, be an
-#' exact non-target invariant subspace of the operator. Krylov iteration cannot
-#' leave an invariant subspace, so at a minimal `max_subspace` it would converge
-#' to and certify the (wrong) non-target eigenpairs it was handed. Blending a
-#' small random component (this fraction of each unit column) guarantees the
-#' start has generic overlap with every eigendirection while keeping the
-#' supplied directions dominant, exactly as a cold random start would.
-#'
-#' The blend is sized so a trapped non-target subspace cannot satisfy the
-#' certificate: its perturbed backward error is on the order of the blend, which
-#' must exceed the solver tolerance `tol`. `sqrt(tol)` achieves that for any
-#' `tol < 1`, floored at `1e-4` (which clears the empirical trap threshold with
-#' margin) so extremely tight tolerances do not shrink the escape below it.
-#' @param tol Solver convergence/certification tolerance.
-#' @return A positive scalar blend fraction.
-#' @keywords internal
-warm_start_escape_blend <- function(tol = 1e-8) {
-  max(sqrt(tol), 1e-4)
-}
-
 #' Cold-start provenance record.
 #'
 #' Returned when no `initial_subspace` is supplied so downstream diagnostics
@@ -47,7 +25,10 @@ warm_start_cold_provenance <- function() {
     augmented = 0L,
     rank = 0L,
     compressed = FALSE,
-    escape_blended = FALSE
+    invariant_guard_used = FALSE,
+    invariant_relative_residual = NA_real_,
+    guard_operator_block_calls = 0L,
+    guard_operator_columns = 0L
   )
 }
 
@@ -109,19 +90,21 @@ validate_initial_subspace_plan_support <- function(problem, plan) {
 #' @param n Operator domain dimension.
 #' @param width Number of start-block columns the chosen method consumes
 #'   (the Lanczos block size).
-#' @param solver_tol Solver convergence/certification tolerance; sizes the
-#'   random escape blended into a fully user-supplied start.
 #' @param tol Numerical-rank tolerance for boundary orthonormalization.
 #' @return A list with `start` (the `n x width` block) and provenance fields
 #'   `start_source`, `supplied`, `accepted`, `rejected`, `augmented`, `rank`,
-#'   `compressed`, `escape_blended`.
+#'   and `compressed`. The internal `accepted_basis` field retains the full
+#'   accepted basis for the invariant-subspace safety guard.
 #' @keywords internal
 prepare_initial_subspace <- function(initial_subspace, n, width,
-                                     solver_tol = 1e-8,
                                      tol = sqrt(.Machine$double.eps)) {
   width <- as.integer(width)
   if (length(width) != 1L || is.na(width) || width < 1L) {
     stop("Internal error: warm-start block width must be a positive integer.",
+         call. = FALSE)
+  }
+  if (width > n) {
+    stop("Warm-start block width cannot exceed the operator dimension.",
          call. = FALSE)
   }
 
@@ -148,13 +131,28 @@ prepare_initial_subspace <- function(initial_subspace, n, width,
 
   supplied <- ncol(x)
 
-  # Boundary orthonormalization; MGS2 drops linearly dependent / negligible
-  # columns, so ncol(Q) is the accepted numerical rank.
-  ortho <- mgs2(x, tol = tol)
+  # A subspace is invariant to per-column scaling. Normalize robustly before
+  # rank detection so tiny but valid directions are not mistaken for zeros and
+  # huge directions cannot overflow the norm calculation.
+  normalized <- matrix(0, nrow = n, ncol = supplied)
+  for (j in seq_len(supplied)) {
+    scale <- max(abs(x[, j]))
+    if (is.finite(scale) && scale > 0) {
+      scaled <- x[, j] / scale
+      scaled_norm <- sqrt(sum(scaled^2))
+      if (is.finite(scaled_norm) && scaled_norm > 0) {
+        normalized[, j] <- scaled / scaled_norm
+      }
+    }
+  }
+
+  # Boundary orthonormalization; MGS2 now sees unit-scale columns, so `tol`
+  # expresses a relative numerical-rank threshold.
+  ortho <- mgs2(normalized, tol = tol)
   accepted_basis <- ortho$Q
   rank <- ncol(accepted_basis)
 
-  accepted <- min(rank, width)
+  accepted <- rank
   compressed <- rank > width
   start <- if (compressed) {
     # Rotate, don't truncate: mix all accepted directions into the narrower
@@ -168,39 +166,35 @@ prepare_initial_subspace <- function(initial_subspace, n, width,
     } else {
       accepted_basis[, seq_len(width), drop = FALSE]
     }
-  } else if (accepted > 0L) {
-    accepted_basis[, seq_len(accepted), drop = FALSE]
+  } else if (rank > 0L) {
+    accepted_basis
   } else {
     matrix(numeric(0), nrow = n, ncol = 0L)
   }
 
-  augmented <- width - accepted
+  used <- min(rank, width)
+  augmented <- width - used
   if (augmented > 0L) {
-    raw <- matrix(stats::rnorm(n * augmented), nrow = n, ncol = augmented)
-    filler <- if (accepted > 0L) {
-      reorthogonalize_against(raw, start, passes = 2L)
-    } else {
-      raw
+    # Draw until the fitted block is complete. MGS2 both projects against the
+    # accepted block and orthonormalizes the new directions among themselves.
+    while (ncol(start) < width) {
+      needed <- width - ncol(start)
+      raw <- matrix(stats::rnorm(n * needed), nrow = n, ncol = needed)
+      filler <- if (ncol(start)) {
+        mgs2(raw, against = start, tol = tol)$Q
+      } else {
+        mgs2(raw, tol = tol)$Q
+      }
+      if (!ncol(filler)) {
+        next
+      }
+      take <- min(needed, ncol(filler))
+      start <- cbind(start, filler[, seq_len(take), drop = FALSE])
     }
-    start <- cbind(start, filler)
   }
 
-  # When the start block is entirely user-supplied (no random augmentation),
-  # blend a small deterministic random escape so it can never be an exact
-  # non-target invariant subspace that traps Krylov iteration into certifying
-  # non-target eigenpairs. The augmented case already carries random content.
-  escape_blended <- FALSE
-  if (augmented == 0L && accepted >= 1L) {
-    escape <- matrix(stats::rnorm(n * width), nrow = n, ncol = width)
-    cn <- sqrt(colSums(escape^2))
-    cn[cn == 0] <- 1
-    escape <- sweep(escape, 2L, cn, `/`)
-    start <- start + warm_start_escape_blend(solver_tol) * escape
-    escape_blended <- TRUE
-  }
-
-  rejected <- supplied - accepted
-  start_source <- if (accepted > 0L) {
+  rejected <- supplied - rank
+  start_source <- if (rank > 0L) {
     "user_supplied"
   } else {
     # Supplied but numerically unusable (e.g. all-zero / rank-collapsed): the
@@ -217,6 +211,47 @@ prepare_initial_subspace <- function(initial_subspace, n, width,
     augmented = augmented,
     rank = rank,
     compressed = compressed,
-    escape_blended = escape_blended
+    invariant_guard_used = FALSE,
+    invariant_relative_residual = NA_real_,
+    guard_operator_block_calls = 0L,
+    guard_operator_columns = 0L,
+    accepted_basis = accepted_basis
+  )
+}
+
+#' Detect a supplied invariant subspace that cannot establish target identity.
+#'
+#' Residual certification establishes that returned pairs are eigenpairs; it
+#' does not prove that an exact invariant start contains the requested extremal
+#' pairs. If a fully supplied basis is already invariant at the requested
+#' tolerance, discard it and use the solver's cold start rather than risk
+#' certifying a non-target invariant block.
+#'
+#' @param op Hermitian operator.
+#' @param basis Orthonormal accepted user basis.
+#' @param tol Solver tolerance.
+#' @return Guard decision, relative invariance residual, and exact operator work.
+#' @keywords internal
+warm_start_invariant_guard <- function(op, basis, tol) {
+  basis <- as.matrix(basis)
+  if (!ncol(basis)) {
+    return(list(
+      discard = FALSE,
+      relative_residual = NA_real_,
+      operator_block_calls = 0L,
+      operator_columns = 0L
+    ))
+  }
+  applied <- apply_operator(op, basis)
+  residual <- applied - basis %*% crossprod(basis, applied)
+  denominator <- max(sqrt(sum(applied^2)), sqrt(sum(basis^2)),
+                     .Machine$double.eps)
+  relative <- sqrt(sum(residual^2)) / denominator
+  threshold <- max(as.numeric(tol), 100 * .Machine$double.eps)
+  list(
+    discard = is.finite(relative) && relative <= threshold,
+    relative_residual = relative,
+    operator_block_calls = 1L,
+    operator_columns = ncol(basis)
   )
 }
