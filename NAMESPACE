@@ -2,6 +2,8 @@
 # DESCRIPTION disables the namespace roclet, and export changes must be made
 # here deliberately with matching api-surface coverage.
 useDynLib(eigencore, .registration = TRUE)
+importFrom(Matrix, crossprod)
+importFrom(Matrix, tcrossprod)
 importFrom(methods, is)
 importFrom(stats, residuals)
 importFrom(utils, modifyList)
