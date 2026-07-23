@@ -8,11 +8,12 @@
   matrix. It covers dense matrices and sparse operators whose smaller side
   exceeds the explicit-Gram caps — regimes that previously fell back to a
   full LAPACK SVD (dense) or a single unrestarted Golub-Kahan sweep
-  (sparse). Representative speedups at `tol = 1e-8` with certificates still
-  passing: dense 4000x1000 `k = 10` ~18x, dense 2000x2000 `k = 10` ~80x,
-  sparse 20000x5000 `k = 10` ~2x, sparse 20000x5000 `k = 50` ~2x. Results
-  keep the exact two-sided residual certificate in original coordinates,
-  and uncertified results still fall back to the native Golub-Kahan path.
+  (sparse). Representative same-machine speedups at `tol = 1e-8` with
+  certificates still passing: dense 4000x1000 `k = 10` ~12x, dense
+  2000x2000 `k = 10` ~80x, sparse 20000x5000 `k = 10` and `k = 50` ~2x.
+  Results keep the exact two-sided residual certificate in original
+  coordinates, and uncertified results still fall back to the native
+  Golub-Kahan path.
 * The scalar Golub-Kahan kernel now uses BLAS (dgemv) classical
   Gram-Schmidt reorthogonalization on the sparse CSC, matrix-free, and
   retained-restart paths, matching the dense path; previously these used
