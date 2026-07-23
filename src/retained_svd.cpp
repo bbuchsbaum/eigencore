@@ -8,6 +8,7 @@
 #include <Rinternals.h>
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
+#include "eigencore_lapack_compat.h"
 #include "eigencore_common.h"
 #include "native_operators.h"
 #include "certificates.h"
@@ -1459,7 +1460,7 @@ extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP di
   int reorthogonalization_passes = 0;
   const int status = native_golub_kahan_run(&impl, eigencore_csc_apply, m, n,
                                             maxit, rank, target_kind, tol,
-                                            enable_projected_stop, 0,
+                                            enable_projected_stop, 1,
                                             REAL(start_),
                                             U_work.data(), V_work.data(),
                                             alpha_work.data(), beta_work.data(),
@@ -2592,7 +2593,7 @@ static SEXP irlba_lbd_retained_impl(ConfigureOperator configure_operator,
     (!one_sided_policy) || (m <= n);
   const int reorthogonalize_v =
     (!one_sided_policy) || (n <= m);
-  const int use_blas_reorthogonalization = 0;
+  const int use_blas_reorthogonalization = 1;
   const int enable_projected_stop = 0;
   const double native_workspace_bytes =
     static_cast<double>(sizeof(double)) *
