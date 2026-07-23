@@ -44,6 +44,12 @@ diagnostics <- function(x, ...) {
     plan = x$plan,
     warnings = x$warnings
   )
+  # Warm-start provenance is specific to the Hermitian Lanczos eigen path;
+  # append it only when present so SVD and other result schemas are unchanged.
+  if (!is.null(x$start_source)) {
+    out$start_source <- x$start_source
+    out$initial_subspace <- x$initial_subspace
+  }
   if (!is.null(x$left_eigenvectors)) {
     out$left_eigenvectors <- x$left_eigenvectors
     out$left_certificate <- x$left_certificate

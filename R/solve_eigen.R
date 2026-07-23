@@ -102,7 +102,8 @@ solve_eigen_lobpcg <- function(a, k, method, tol, maxit, vectors, certify, plan)
 }
 
 #' @keywords internal
-solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan) {
+solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan,
+                                initial_subspace = NULL) {
   controls <- plan$controls %||% list()
   method_maxit <- controls$max_subspace %||%
     if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$max_subspace else NULL
@@ -112,6 +113,32 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
     if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$max_restarts else NULL
   method_block <- controls$block %||%
     if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$block else 1L
+
+  # Warm start: fit a user-supplied initial_subspace to the method's start
+  # block at the solver boundary. The plan-support guard in
+  # solve.eigencore_eigen_problem() has already rejected unsupported paths, so
+  # a non-NULL start here is guaranteed to reach a standard Hermitian Lanczos
+  # dispatch (native dense/CSC, or the matrix-free reference path whose start
+  # is a single vector); the defensive stop keeps that invariant local.
+  warm <- !is.null(initial_subspace)
+  start_block <- NULL
+  start_provenance <- warm_start_cold_provenance()
+  if (warm) {
+    native_warm_path <- plan_dispatches_native_lanczos(plan)
+    if (!native_warm_path && !plan_dispatches_reference_hermitian_lanczos(plan)) {
+      stop("Internal error: initial_subspace reached an unsupported Lanczos dispatch.",
+           call. = FALSE)
+    }
+    start_width <- if (native_warm_path) as.integer(method_block) else 1L
+    prep <- prepare_initial_subspace(initial_subspace, n = a$A$dim[1L],
+                                     width = start_width,
+                                     solver_tol = tol)
+    start_block <- prep$start
+    start_provenance <- prep[c("start_source", "supplied", "accepted",
+                               "rejected", "augmented", "rank", "compressed",
+                               "escape_blended")]
+  }
+
   native_generalized_path <- identical(plan$method, native_generalized_lanczos_label())
   reference_generalized_path <- identical(plan$method, generalized_lanczos_label())
   iter <- if (native_generalized_path) {
@@ -147,7 +174,12 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
         maxit = maxit %||% method_maxit,
         block = method_block,
         max_restarts = method_max_restarts,
-        vectors = vectors
+        vectors = vectors,
+        # A warm start must actually be iterated: disable the exact
+        # full-subspace dsyev shortcut so the supplied block is consumed
+        # rather than silently ignored.
+        full_subspace = !warm,
+        start = start_block
       )
     } else {
       native_lanczos_hermitian(
@@ -157,7 +189,8 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
         tol = tol,
         maxit = maxit %||% method_maxit,
         max_restarts = method_max_restarts,
-        vectors = vectors
+        vectors = vectors,
+        start = start_block
       )
     }
   } else {
@@ -168,8 +201,15 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
       tol = tol,
       maxit = maxit %||% method_maxit,
       vectors = vectors,
-      reorthogonalize = method_reorth
+      reorthogonalize = method_reorth,
+      start = start_block
     )
+  }
+
+  # The certificate-rescue fallback recomputes from a fresh start, discarding
+  # the supplied subspace; report that honestly rather than claiming it was used.
+  if (warm && isTRUE(iter$restart$fallback_used)) {
+    start_provenance$start_source <- "user_supplied_discarded_on_fallback"
   }
 
   warning_msg <- if (native_generalized_path) {
@@ -242,7 +282,9 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
       stage_seconds = iter$stage_seconds %||% iter$restart$stage_seconds %||% numeric(),
       convergence_history = iter$convergence_history %||% NULL,
       restart = iter$restart %||% NULL,
-      locked = iter$locked %||% which(iter$certificate$converged)
+      locked = iter$locked %||% which(iter$certificate$converged),
+      start_source = start_provenance$start_source,
+      initial_subspace = start_provenance
     )
   )
 }

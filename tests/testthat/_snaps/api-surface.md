@@ -16,7 +16,7 @@
       crossprod_operator(A, name = NULL)
       diagnostics(x, ...)
       eig_full(A, B = NULL, structure = NULL, vectors = TRUE, tol = 1e-08, allow_dense_fallback = c("auto", "never", "always"), ...)
-      eig_partial(A, k, target = largest(), B = NULL, method = auto(), tol = 1e-08, maxit = NULL, vectors = TRUE, seed = NULL, certify = TRUE, allow_dense_fallback = c("auto", "never", "always"))
+      eig_partial(A, k, target = largest(), B = NULL, method = auto(), tol = 1e-08, maxit = NULL, vectors = TRUE, seed = NULL, certify = TRUE, allow_dense_fallback = c("auto", "never", "always"), initial_subspace = NULL)
       eigen_problem(A, metric = NULL, structure = NULL, target = largest(), transform = NULL)
       eigs(A, k, which = "LM", opts = list(), ...)
       eigs_sym(A, k, which = "LA", opts = list(), ...)
@@ -153,3 +153,4 @@
       scale
       scale_is_estimate
       tolerance
+
