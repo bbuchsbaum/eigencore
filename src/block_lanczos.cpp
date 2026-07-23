@@ -7,6 +7,7 @@
 #include <Rinternals.h>
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
+#include "eigencore_lapack_compat.h"
 #include "eigencore_common.h"
 #include "native_operators.h"
 
@@ -2432,4 +2433,137 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_csc(
     n_locked, iterations, matvecs, restarts, m_active, locking_events,
     ortho_passes, block_size, operator_allocations, operator_bytes_allocated,
     &stage_seconds, &history);
+}
+
+// Shared driver for the implicit normal-equations (Gram) thick-restart
+// Lanczos: runs the production block thick-restart Lanczos on A^T A
+// (side == 0, subspace in R^cols) or A A^T (side == 1, subspace in R^rows)
+// without materializing the Gram matrix. Each operator application costs one
+// forward and one adjoint apply of A; matvecs are reported in base-A applies
+// (2 per normal-operator application).
+static SEXP normal_thick_restart_lanczos_impl(
+    void* base_impl, EigencoreApplyFn base_apply,
+    int64_t rows, int64_t cols, int side,
+    SEXP k_, SEXP m_max_, SEXP block_size_, SEXP target_kind_,
+    SEXP tol_, SEXP max_restarts_, SEXP norm_a_, SEXP start_) {
+  SEXP dimS = getAttrib(start_, R_DimSymbol);
+  if (!isReal(start_) || dimS == R_NilValue) {
+    error("start must be a double matrix");
+  }
+  if (side != 0 && side != 1) {
+    error("side must be 0 (A^T A) or 1 (A A^T)");
+  }
+  const int64_t outer64 = (side == 0) ? cols : rows;
+  const int64_t inner64 = (side == 0) ? rows : cols;
+  if (!eigencore_int_indexable(outer64) || !eigencore_int_indexable(inner64)) {
+    error("normal-equations Lanczos dimensions exceed native integer range");
+  }
+  const int n = static_cast<int>(outer64);
+  const int k = static_cast<int>(asInteger(k_));
+  const int m_max = static_cast<int>(asInteger(m_max_));
+  const int block_size = static_cast<int>(asInteger(block_size_));
+  const int target_kind = static_cast<int>(asInteger(target_kind_));
+  const double tol = asReal(tol_);
+  const int max_restarts = static_cast<int>(asInteger(max_restarts_));
+  const double norm_a = asReal(norm_a_);
+  if (k < 1) error("k must be >= 1");
+  if (block_size < 1) error("block_size must be >= 1");
+  if (INTEGER(dimS)[0] != n) error("start block has wrong number of rows");
+  if (INTEGER(dimS)[1] != block_size) error("start block has wrong number of columns");
+  if (m_max < k + block_size) error("m_max must be >= k + block_size");
+  if (m_max > n) error("m_max must be <= the normal-operator dimension");
+  if (max_restarts < 0) error("max_restarts must be >= 0");
+
+  std::vector<double> V(static_cast<size_t>(n) * static_cast<size_t>(k), 0.0);
+  std::vector<double> lambda(static_cast<size_t>(k), 0.0);
+  std::vector<double> residuals(static_cast<size_t>(k), R_PosInf);
+  std::vector<int> converged(static_cast<size_t>(k), 0);
+  int n_locked = 0, iterations = 0, matvecs = 0, restarts = 0, m_active = 0;
+  int locking_events = 0, ortho_passes = 0;
+  int64_t operator_allocations = 0, operator_bytes_allocated = 0;
+  NativeBlockStageSeconds stage_seconds;
+  const int history_capacity = max_restarts + 1;
+  std::vector<int> history_restart(static_cast<size_t>(history_capacity), 0);
+  std::vector<int> history_m_active(static_cast<size_t>(history_capacity), 0);
+  std::vector<int> history_selected_count(static_cast<size_t>(history_capacity), 0);
+  std::vector<int> history_locked_before(static_cast<size_t>(history_capacity), 0);
+  std::vector<int> history_locked_after(static_cast<size_t>(history_capacity), 0);
+  std::vector<int> history_nconv_wanted(static_cast<size_t>(history_capacity), 0);
+  std::vector<double> history_max_residual(static_cast<size_t>(history_capacity), R_PosInf);
+  std::vector<double> history_max_backward_error(static_cast<size_t>(history_capacity), R_PosInf);
+  NativeBlockRestartHistory history;
+  history.capacity = history_capacity;
+  history.restart = history_restart.data();
+  history.m_active = history_m_active.data();
+  history.selected_count = history_selected_count.data();
+  history.locked_before = history_locked_before.data();
+  history.locked_after = history_locked_after.data();
+  history.nconv_wanted = history_nconv_wanted.data();
+  history.max_residual = history_max_residual.data();
+  history.max_backward_error = history_max_backward_error.data();
+
+  // The driver applies the operator to blocks as wide as the full active
+  // subspace, so the intermediate A-product needs inner x m_max capacity.
+  std::vector<double> scratch(static_cast<size_t>(inner64) *
+                              static_cast<size_t>(m_max), 0.0);
+  NormalEquationsOperator impl = {base_impl, base_apply, rows, cols, side,
+                                  scratch.data(), m_max};
+  // apply_ritz_vectors = 0: locking residuals come from the cached AV_active
+  // combination (dgemm) instead of re-applying the normal operator, which
+  // would cost 2*k base applies per restart. The R caller certifies the final
+  // triplets with exact residuals in original coordinates regardless.
+  const int status = native_block_thick_restart_lanczos_run(
+    &impl, eigencore_normal_equations_apply, n, k, m_max, block_size,
+    target_kind, tol, max_restarts, norm_a, 0, REAL(start_), V.data(),
+    lambda.data(), residuals.data(), converged.data(), &n_locked, &iterations,
+    &matvecs, &restarts, &m_active, &locking_events, &ortho_passes,
+    &operator_allocations, &operator_bytes_allocated, &stage_seconds, &history);
+  if (status != 0) {
+    error("native normal-equations thick-restart Lanczos failed with status=%d",
+          status);
+  }
+  matvecs *= 2;  // each normal-operator application is two base-A applies
+  return block_thick_lanczos_pack_result(
+    n, k, V.data(), lambda.data(), residuals.data(), converged.data(),
+    n_locked, iterations, matvecs, restarts, m_active, locking_events,
+    ortho_passes, block_size, operator_allocations, operator_bytes_allocated,
+    &stage_seconds, &history);
+}
+
+extern "C" SEXP eigencore_normal_thick_restart_lanczos_dense(
+    SEXP A_, SEXP side_, SEXP k_, SEXP m_max_, SEXP block_size_,
+    SEXP target_kind_, SEXP tol_, SEXP max_restarts_,
+    SEXP norm_a_, SEXP start_) {
+  if (!isReal(A_)) {
+    error("A must be a double matrix");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  if (dimA == R_NilValue) {
+    error("A must be a matrix");
+  }
+  const int m = INTEGER(dimA)[0];
+  const int n = INTEGER(dimA)[1];
+  DenseColumnMajorOperator base = {m, n, REAL(A_)};
+  return normal_thick_restart_lanczos_impl(
+    &base, eigencore_dense_apply, m, n,
+    static_cast<int>(asInteger(side_)),
+    k_, m_max_, block_size_, target_kind_, tol_, max_restarts_,
+    norm_a_, start_);
+}
+
+extern "C" SEXP eigencore_normal_thick_restart_lanczos_csc(
+    SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP side_, SEXP k_,
+    SEXP m_max_, SEXP block_size_, SEXP target_kind_,
+    SEXP tol_, SEXP max_restarts_, SEXP norm_a_, SEXP start_) {
+  if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
+    error("invalid CSC normal-equations Lanczos inputs");
+  }
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  CSCOperator base = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
+  return normal_thick_restart_lanczos_impl(
+    &base, eigencore_csc_apply, m, n,
+    static_cast<int>(asInteger(side_)),
+    k_, m_max_, block_size_, target_kind_, tol_, max_restarts_,
+    norm_a_, start_);
 }

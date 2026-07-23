@@ -53,6 +53,8 @@ extern "C" SEXP eigencore_block_lanczos_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP
 extern "C" SEXP eigencore_block_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_thick_restart_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_normal_thick_restart_lanczos_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_normal_thick_restart_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_lobpcg_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_lobpcg_dense_dense_b(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_lobpcg_dense_diagonal_b(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -164,6 +166,8 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_block_lanczos_csc", (DL_FUNC) &eigencore_block_lanczos_csc, 10},
   {"eigencore_block_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_block_thick_restart_lanczos_dense, 9},
   {"eigencore_block_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_block_thick_restart_lanczos_csc, 12},
+  {"eigencore_normal_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_normal_thick_restart_lanczos_dense, 10},
+  {"eigencore_normal_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_normal_thick_restart_lanczos_csc, 13},
   {"eigencore_lobpcg_dense", (DL_FUNC) &eigencore_lobpcg_dense, 10},
   {"eigencore_lobpcg_dense_dense_b", (DL_FUNC) &eigencore_lobpcg_dense_dense_b, 11},
   {"eigencore_lobpcg_dense_diagonal_b", (DL_FUNC) &eigencore_lobpcg_dense_diagonal_b, 12},

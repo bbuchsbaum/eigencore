@@ -1566,9 +1566,19 @@ test_that("SVD planner records inspectable method controls", {
     rank = 10,
     method = auto()
   )
-  expect_identical(one_sided_rank10_plan$method, "native prototype Golub-Kahan")
-  expect_false(one_sided_rank10_plan$controls$reorthogonalize)
-  expect_identical(one_sided_rank10_plan$controls$initial_max_subspace, 90L)
+  expect_identical(
+    one_sided_rank10_plan$method,
+    "native certified implicit Gram SVD (thick-restart Lanczos)"
+  )
+
+  one_sided_rank10_gk_plan <- plan_solver(
+    svd_problem(Matrix::rsparsematrix(3000, 800, density = 0.002)),
+    rank = 10,
+    method = golub_kahan(reorthogonalize = FALSE)
+  )
+  expect_identical(one_sided_rank10_gk_plan$method, "native prototype Golub-Kahan")
+  expect_false(one_sided_rank10_gk_plan$controls$reorthogonalize)
+  expect_identical(one_sided_rank10_gk_plan$controls$initial_max_subspace, 90L)
 
   randomized_plan <- plan_solver(
     svd_problem(M),
@@ -1601,7 +1611,10 @@ test_that("memory-budgeted Gram SVD policy keeps default cutoff and supports opt
   M <- Matrix::rsparsematrix(1200, 600, density = 0.004)
 
   default_plan <- plan_solver(svd_problem(M), rank = 3)
-  expect_identical(default_plan$method, "native prototype Golub-Kahan")
+  expect_identical(
+    default_plan$method,
+    "native certified implicit Gram SVD (thick-restart Lanczos)"
+  )
   default_policy <- eigencore:::gram_svd_policy(dim(M), rank = 3, target = largest())
   expect_false(default_policy$eligible)
   expect_true("gram_dimension_exceeds_max" %in% default_policy$rejection_reasons)
@@ -1643,7 +1656,10 @@ test_that("Gram SVD policy rejects large small sides by memory budget even when 
   expect_gt(policy$estimated_total_materialization_bytes, policy$gram_memory_budget_bytes)
 
   plan <- plan_solver(svd_problem(M), rank = 3)
-  expect_identical(plan$method, "native prototype Golub-Kahan")
+  expect_identical(
+    plan$method,
+    "native certified implicit Gram SVD (thick-restart Lanczos)"
+  )
 })
 
 test_that("randomized SVD reports approximation and certificate policy", {

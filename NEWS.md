@@ -1,3 +1,42 @@
+# eigencore (development version)
+
+## Performance
+
+* New production `auto` route for largest-target partial SVD: a native
+  implicit normal-equations (Gram) thick-restart Lanczos that runs on
+  \eqn{A^T A} or \eqn{A A^T} as an operator, without materializing the Gram
+  matrix. It covers dense matrices and sparse operators whose smaller side
+  exceeds the explicit-Gram caps — regimes that previously fell back to a
+  full LAPACK SVD (dense) or a single unrestarted Golub-Kahan sweep
+  (sparse). Representative speedups at `tol = 1e-8` with certificates still
+  passing: dense 4000x1000 `k = 10` ~18x, dense 2000x2000 `k = 10` ~80x,
+  sparse 20000x5000 `k = 10` ~2x, sparse 20000x5000 `k = 50` ~2x. Results
+  keep the exact two-sided residual certificate in original coordinates,
+  and uncertified results still fall back to the native Golub-Kahan path.
+* The scalar Golub-Kahan kernel now uses BLAS (dgemv) classical
+  Gram-Schmidt reorthogonalization on the sparse CSC, matrix-free, and
+  retained-restart paths, matching the dense path; previously these used
+  scalar loops.
+* The projected Golub-Kahan convergence check now runs `dbdsqr` directly on
+  the projected bidiagonal, tracking only the last row of the left singular
+  vectors, instead of a dense `dgesvd` with full vectors; scratch buffers
+  are reused across checks. The check drops from O(iter^3) plus per-check
+  allocations to O(iter^2).
+* The scalar Lanczos convergence estimate (used by the shift-invert paths)
+  computes eigenvalues with `dsterf` and recovers only the selected
+  eigenvectors with `dstevr` instead of a full `dstev` decomposition each
+  iteration, with scratch reuse across iterations.
+* The CSC sparse matrix-multiply kernel now processes wide blocks in
+  cache-friendly chunks of 10 columns instead of a strided generic loop.
+
+## Portability
+
+* The package again compiles on R < 4.4: guarded compatibility typedefs for
+  `La_INT`/`La_LGL` and declarations for the complex QZ drivers
+  (`zggev`, `zgges`) were added for headers that predate them, and
+  `crossprod`/`tcrossprod` are now imported from Matrix so sparse-matrix
+  dispatch does not rely on the base generics added in R 4.4.
+
 # eigencore 1.0.0
 
 First CRAN release.

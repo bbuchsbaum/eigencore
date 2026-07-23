@@ -205,6 +205,9 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
   if (identical(plan$method, "native certified Gram SVD special case")) {
     return(solve_svd_gram(a, rank, tol, vectors, certify, plan))
   }
+  if (identical(plan$method, native_implicit_gram_svd_label())) {
+    return(solve_svd_implicit_gram(a, rank, tol, vectors, certify, plan))
+  }
   if (identical(plan$method, native_retained_golub_kahan_diagnostic_label())) {
     return(solve_svd_retained_golub_kahan(a, rank, tol, vectors, certify, plan))
   }
@@ -1052,4 +1055,31 @@ should_use_native_gram_svd <- function(problem, method, rank = NULL) {
   dims <- problem$A$dim
   rank <- as.integer(rank %||% problem$rank %||% 1L)
   isTRUE(gram_svd_policy(dims, rank, problem$target)$eligible)
+}
+
+#' @keywords internal
+should_use_native_implicit_gram_svd <- function(problem, method, rank = NULL) {
+  if (!inherits(method, "eigencore_method") || !identical(method$kind, "auto")) {
+    return(FALSE)
+  }
+  if (!implicit_gram_svd_target_supported(problem$target)) {
+    return(FALSE)
+  }
+  storage <- problem$A$metadata$storage %||% NULL
+  source <- source_or_null(problem$A)
+  is_csc <- identical(storage, "dgCMatrix")
+  is_dense <- is.matrix(source) && is.double(source) && !is.complex(source)
+  if (!is_csc && !is_dense) {
+    return(FALSE)
+  }
+  dims <- as.integer(problem$A$dim)
+  reduced <- min(dims)
+  rank <- as.integer(rank %||% problem$rank %||% 1L)
+  if (reduced < getOption("eigencore.implicit_gram_svd_min_dimension", 64L)) {
+    # Tiny problems: the explicit Gram or dense LAPACK path is already cheap.
+    return(FALSE)
+  }
+  # Beyond half the reduced dimension the Lanczos subspace approaches the
+  # full space; the explicit paths are the honest choice there.
+  rank >= 1L && rank <= 0.5 * reduced
 }

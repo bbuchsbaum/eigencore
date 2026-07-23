@@ -520,6 +520,101 @@ solve_svd_gram <- function(a, rank, tol, vectors, certify, plan) {
 }
 
 #' @keywords internal
+solve_svd_implicit_gram <- function(a, rank, tol, vectors, certify, plan) {
+  iter <- native_implicit_gram_svd(
+    a$A,
+    rank = rank,
+    target = a$target,
+    tol = tol,
+    vectors = if (isTRUE(certify)) "both" else vectors
+  )
+  cert <- if (isTRUE(certify)) {
+    iter$certificate
+  } else {
+    empty_certificate(tol, note = "both left and right vectors are required for full SVD certification")
+  }
+  implicit_cert <- cert
+  fallback_attempted <- FALSE
+  fallback_used <- FALSE
+  fallback_iter <- NULL
+  fallback_cert <- NULL
+  if (isTRUE(certify) && !isTRUE(cert$passed)) {
+    fallback_attempted <- TRUE
+    fallback_iter <- tryCatch(
+      native_golub_kahan_svd(
+        a$A,
+        rank = rank,
+        target = a$target,
+        tol = tol,
+        maxit = NULL,
+        vectors = "both"
+      ),
+      error = function(e) {
+        structure(list(error = conditionMessage(e)), class = "eigencore_fallback_error")
+      }
+    )
+    if (!inherits(fallback_iter, "eigencore_fallback_error")) {
+      fallback_cert <- fallback_iter$certificate
+      fallback_used <- isTRUE(fallback_cert$passed) ||
+        (is.finite(fallback_cert$max_backward_error) &&
+          (!is.finite(cert$max_backward_error) ||
+            fallback_cert$max_backward_error < cert$max_backward_error))
+      if (isTRUE(fallback_used)) {
+        iter <- fallback_iter
+        cert <- fallback_cert
+      }
+    }
+  }
+  if (isTRUE(certify) && vectors != "both") {
+    if (vectors %in% c("right", "none")) {
+      iter[["u"]] <- NULL
+    }
+    if (vectors %in% c("left", "none")) {
+      iter[["v"]] <- NULL
+    }
+  }
+  restart <- iter$restart
+  restart$fallback_attempted <- fallback_attempted
+  restart$fallback_used <- fallback_used
+  restart$fallback_method <- if (fallback_attempted) "native prototype Golub-Kahan" else NA_character_
+  restart$fallback_error <- if (inherits(fallback_iter, "eigencore_fallback_error")) {
+    fallback_iter$error
+  } else {
+    NA_character_
+  }
+  restart$implicit_gram_certificate_passed <- isTRUE(implicit_cert$passed)
+  restart$implicit_gram_max_backward_error <- implicit_cert$max_backward_error
+  if (fallback_attempted && !is.null(fallback_cert)) {
+    restart$fallback_max_backward_error <- fallback_cert$max_backward_error
+  }
+  warnings_msg <- if (isTRUE(fallback_used)) {
+    "native implicit Gram SVD failed certification; using native Golub-Kahan fallback"
+  } else if (fallback_attempted) {
+    "native implicit Gram SVD failed certification; native Golub-Kahan fallback was not better"
+  } else {
+    "using native implicit Gram SVD; residuals certified in original coordinates"
+  }
+  method_label_used <- if (isTRUE(fallback_used)) {
+    "native prototype Golub-Kahan fallback from implicit Gram SVD"
+  } else {
+    plan$method
+  }
+  iter$restart <- restart
+  make_svd_result(
+    d = iter$d,
+    u = iter[["u"]],
+    v = iter[["v"]],
+    certificate = cert,
+    iter = iter,
+    requested = rank,
+    method_label = method_label_used,
+    target_label_value = target_label(a$target),
+    plan = plan,
+    warnings = warnings_msg
+  )
+}
+
+#' @keywords internal
 solve_svd_retained_golub_kahan <- function(a, rank, tol, vectors, certify, plan) {
   iter <- native_block_golub_kahan_retained_cycle_svd(
     a$A,
