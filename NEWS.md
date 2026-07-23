@@ -28,6 +28,13 @@
   iteration, with scratch reuse across iterations.
 * The CSC sparse matrix-multiply kernel now processes wide blocks in
   cache-friendly chunks of 10 columns instead of a strided generic loop.
+* `as_operator()` no longer forces a full copy of an already-double dense
+  matrix (`storage.mode<-` is now conditional), removing an O(m*n) copy
+  plus GC churn from every problem construction — operator construction on
+  a 2000x2000 input drops from ~52ms to ~6ms.
+* The scalar thick-restart Hermitian Lanczos default subspace grows from
+  `3k+20` to `max(3k+20, 5k)`: unchanged for small `k`, and at `k = 30`
+  on a general sparse operator it cuts operator applications by ~25%.
 
 ## Portability
 

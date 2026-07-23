@@ -71,7 +71,12 @@ as_operator.matrix <- function(x, ...) {
   if (is.complex(x)) {
     return(complex_dense_matrix_as_operator(x))
   }
-  storage.mode(x) <- "double"
+  # Assigning storage.mode unconditionally forces a full copy of an
+  # already-double matrix (copy-on-modify), which dominates operator
+  # construction for large dense inputs.
+  if (storage.mode(x) != "double") {
+    storage.mode(x) <- "double"
+  }
   dim_x <- dim(x)
   linear_operator(
     dim = dim_x,
