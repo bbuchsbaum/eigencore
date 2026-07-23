@@ -1,5 +1,28 @@
 # eigencore (development version)
 
+## New features
+
+* `eig_partial()` and `solve()` gain an `initial_subspace` argument: a public,
+  certified warm-start seam for standard real Hermitian Lanczos — the native
+  paths on explicit dense double and `dgCMatrix` operators, and the matrix-free
+  reference Hermitian Lanczos path for operator-only problems. The supplied
+  subspace is orthonormalized at the solver boundary and fitted to the method's
+  start block: accepted directions are augmented deterministically when short,
+  and when the accepted rank exceeds the block width the block is a seeded
+  random rotation of the full accepted basis, so every supplied direction
+  contributes generic weight (a k-column continuation subspace handed to a
+  scalar method warm-starts all k targets, not just the first). The start is
+  treated only as a hint — every solve recomputes projected quantities,
+  residuals, orthogonality, convergence, and a fresh current-operator
+  certificate. `initial_subspace = NULL` (the default) preserves the cold
+  random start exactly. Supplying it on any other planned path (generalized,
+  shift-invert, dense fallback) is an explicit error rather than a silently
+  ignored or densified request. Results and `diagnostics()` report start
+  provenance (`start_source` plus supplied/accepted/rejected/augmented and
+  `compressed` fields). This is the downstream-enablement surface for spectral
+  continuation (e.g. repeated `A - rho * B` sequences); reusable restart-state
+  objects and generalized/transformed warm-start promotion remain future work.
+
 ## Performance
 
 * New production `auto` route for largest-target partial SVD: a native

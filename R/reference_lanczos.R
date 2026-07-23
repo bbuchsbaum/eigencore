@@ -13,7 +13,7 @@ default_block_lanczos_max_subspace <- function(k, block) {
 #' @keywords internal
 reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
                                         maxit = NULL, vectors = TRUE,
-                                        reorthogonalize = TRUE) {
+                                        reorthogonalize = TRUE, start = NULL) {
   op <- as_operator(op)
   if (op$dim[1L] != op$dim[2L]) {
     stop("Hermitian Lanczos requires a square operator.", call. = FALSE)
@@ -37,7 +37,16 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
   alpha <- numeric(maxit)
   beta <- numeric(maxit)
   q_prev <- numeric(n)
-  q <- stats::rnorm(n)
+  q <- if (is.null(start)) {
+    stats::rnorm(n)
+  } else {
+    start <- as.numeric(as.matrix(start)[, 1L])
+    if (length(start) != n || !all(is.finite(start))) {
+      stop("reference Hermitian Lanczos start vector must be length ", n,
+           " and finite.", call. = FALSE)
+    }
+    start
+  }
   q_norm <- sqrt(sum(q^2))
   if (q_norm == 0) {
     q[1L] <- 1
@@ -99,7 +108,7 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
 #' @keywords internal
 native_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
                                      maxit = NULL, max_restarts = NULL,
-                                     vectors = TRUE) {
+                                     vectors = TRUE, start = NULL) {
   op <- as_operator(op)
   if (op$dim[1L] != op$dim[2L]) {
     stop("Native Hermitian Lanczos requires a square operator.", call. = FALSE)
@@ -139,7 +148,8 @@ native_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
     max_restarts = max_restarts,
     vectors = vectors,
     full_subspace = FALSE,
-    certificate_fallback = FALSE
+    certificate_fallback = FALSE,
+    start = start
   )
   out$restart$kind <- "thick_restart"
   if (is.data.frame(out$convergence_history)) {
@@ -170,7 +180,8 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
                                            max_restarts = 100L,
                                            vectors = TRUE,
                                            full_subspace = TRUE,
-                                           certificate_fallback = TRUE) {
+                                           certificate_fallback = TRUE,
+                                           start = NULL) {
   op <- as_operator(op)
   if (op$dim[1L] != op$dim[2L]) {
     stop("Native block Hermitian Lanczos requires a square operator.", call. = FALSE)
@@ -214,7 +225,16 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
     ))
   }
 
-  start <- matrix(stats::rnorm(n * block), nrow = n, ncol = block)
+  if (is.null(start)) {
+    start <- matrix(stats::rnorm(n * block), nrow = n, ncol = block)
+  } else {
+    start <- as.matrix(start)
+    storage.mode(start) <- "double"
+    if (nrow(start) != n || ncol(start) != block) {
+      stop("native block Hermitian Lanczos start block must be ", n, " x ", block,
+           " but is ", nrow(start), " x ", ncol(start), ".", call. = FALSE)
+    }
+  }
   iter <- if (identical(storage, "dgCMatrix")) {
     A <- op$metadata$matrix
     .Call(

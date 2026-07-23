@@ -11,6 +11,27 @@
 #' @param seed Optional random seed for stochastic solver components.
 #' @param certify Whether to compute certification diagnostics.
 #' @param allow_dense_fallback Dense fallback policy.
+#' @param initial_subspace Optional numeric matrix of starting directions
+#'   (a warm start). Supported on standard real Hermitian Lanczos paths: the
+#'   native paths for explicit dense double or `dgCMatrix` operators, and the
+#'   matrix-free reference Hermitian Lanczos path for operator-only problems;
+#'   supplying it on any other planned path (generalized, shift-invert, dense
+#'   fallback) is an error. Pass `method = lanczos()` to guarantee a Lanczos
+#'   route: with the default `method = auto()`, sparse or `nearest()` problems
+#'   may be planned as shift-invert, which does not consume a start and will
+#'   reject the argument. The subspace is only a starting hint: projected
+#'   quantities, residuals, orthogonality, convergence, and the certificate are
+#'   recomputed for the current operator on every solve. The columns are
+#'   orthonormalized at the solver boundary and fitted to the method's start
+#'   block — when the accepted rank exceeds the block width the block is a
+#'   seeded random rotation of the full accepted basis, so every supplied
+#'   direction contributes — with a small random component blended in to guard
+#'   against an exact non-target invariant subspace trapping the iteration into
+#'   certifying non-target eigenpairs. For reliable results supply a start that
+#'   genuinely overlaps the target subspace — e.g. the previous solve's target
+#'   eigenvectors for spectral continuation — rather than an exact invariant
+#'   subspace disjoint from the target under a minimal `max_subspace`. `NULL`
+#'   (the default) preserves the cold random start exactly.
 #' @return An `eigencore_eigen_result` containing computed values, optional
 #'   vectors, certificate diagnostics, method/plan metadata, and convergence
 #'   diagnostics.
@@ -28,7 +49,8 @@
 eig_partial <- function(A, k, target = largest(), B = NULL, method = auto(),
                         tol = 1e-8, maxit = NULL, vectors = TRUE, seed = NULL,
                         certify = TRUE,
-                        allow_dense_fallback = c("auto", "never", "always")) {
+                        allow_dense_fallback = c("auto", "never", "always"),
+                        initial_subspace = NULL) {
   allow_dense_fallback <- match.arg(allow_dense_fallback)
   if (!is.null(seed)) {
     set.seed(seed)
@@ -36,7 +58,8 @@ eig_partial <- function(A, k, target = largest(), B = NULL, method = auto(),
   P <- eigen_problem(A, metric = B, target = target,
                      transform = if (is_transform_method(method)) method else NULL)
   solve(P, k = k, method = method, tol = tol, maxit = maxit, vectors = vectors,
-        certify = certify, allow_dense_fallback = allow_dense_fallback)
+        certify = certify, allow_dense_fallback = allow_dense_fallback,
+        initial_subspace = initial_subspace)
 }
 
 #' Compute a partial singular-value decomposition.
@@ -102,19 +125,31 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
 #' @param vectors Whether to compute vectors.
 #' @param certify Whether to compute certification diagnostics.
 #' @param allow_dense_fallback Dense fallback policy.
+#' @param initial_subspace Optional numeric matrix of starting directions
+#'   (a warm start). Supported on standard real Hermitian Lanczos paths —
+#'   native dense double / `dgCMatrix` and the matrix-free reference path;
+#'   supplying it on any other planned path is an error. The subspace is only
+#'   a starting hint, never a source of reused convergence: every solve
+#'   recomputes projected quantities, residuals, orthogonality, convergence,
+#'   and a fresh current-operator certificate. `NULL` (the default) preserves
+#'   the cold random start exactly.
 #' @param ... Reserved for future solver options.
 #' @return An `eigencore_eigen_result`.
 #' @export
 solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
                                           maxit = NULL, vectors = TRUE,
                                           certify = TRUE,
-                                          allow_dense_fallback = c("auto", "never", "always"), ...) {
+                                          allow_dense_fallback = c("auto", "never", "always"),
+                                          initial_subspace = NULL, ...) {
   allow_dense_fallback <- match.arg(allow_dense_fallback)
   auto_shift <- auto_shift_invert_route(a, method)
   a <- auto_shift$problem
   method <- auto_shift$method
   plan <- plan_solver(a, k = k, method = method)
   plan <- validate_complex_eigen_plan(a, plan)
+  if (!is.null(initial_subspace)) {
+    validate_initial_subspace_plan_support(a, plan)
+  }
   if (is_transform_method(a$transform)) {
     if (identical(a$transform$kind, "shift_invert")) {
       return(solve_shift_invert_hermitian(
@@ -138,7 +173,8 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
     return(solve_eigen_native_tridiagonal_hermitian(a, k, tol, vectors, certify, plan))
   }
   if (plan_dispatches_lanczos(plan)) {
-    return(solve_eigen_lanczos(a, k, method, tol, maxit, vectors, certify, plan))
+    return(solve_eigen_lanczos(a, k, method, tol, maxit, vectors, certify, plan,
+                               initial_subspace = initial_subspace))
   }
   if (plan_dispatches_sparse_general_pencil_arnoldi(plan)) {
     return(solve_eigen_sparse_general_pencil_arnoldi(
@@ -384,6 +420,14 @@ plan_dispatches_native_lanczos <- function(plan) {
     "native scalar thick-restart Hermitian Lanczos",
     "native block Hermitian Lanczos thick-restart candidate",
     "native block Hermitian Lanczos (thick restart, locking)"
+  )
+}
+
+#' @keywords internal
+plan_dispatches_reference_hermitian_lanczos <- function(plan) {
+  plan$method %in% c(
+    "reference Hermitian Lanczos (target unsupported by native path)",
+    "reference Hermitian Lanczos (prototype/oracle fallback)"
   )
 }
 

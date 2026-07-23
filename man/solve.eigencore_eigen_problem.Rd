@@ -14,6 +14,7 @@
   vectors = TRUE,
   certify = TRUE,
   allow_dense_fallback = c("auto", "never", "always"),
+  initial_subspace = NULL,
   ...
 )
 }
@@ -35,6 +36,15 @@
 \item{certify}{Whether to compute certification diagnostics.}
 
 \item{allow_dense_fallback}{Dense fallback policy.}
+
+\item{initial_subspace}{Optional numeric matrix of starting directions
+(a warm start). Supported on standard real Hermitian Lanczos paths —
+native dense double / \code{dgCMatrix} and the matrix-free reference path;
+supplying it on any other planned path is an error. The subspace is only
+a starting hint, never a source of reused convergence: every solve
+recomputes projected quantities, residuals, orthogonality, convergence,
+and a fresh current-operator certificate. \code{NULL} (the default) preserves
+the cold random start exactly.}
 
 \item{...}{Reserved for future solver options.}
 }

@@ -15,7 +15,8 @@ eig_partial(
   vectors = TRUE,
   seed = NULL,
   certify = TRUE,
-  allow_dense_fallback = c("auto", "never", "always")
+  allow_dense_fallback = c("auto", "never", "always"),
+  initial_subspace = NULL
 )
 }
 \arguments{
@@ -40,6 +41,28 @@ eig_partial(
 \item{certify}{Whether to compute certification diagnostics.}
 
 \item{allow_dense_fallback}{Dense fallback policy.}
+
+\item{initial_subspace}{Optional numeric matrix of starting directions
+(a warm start). Supported on standard real Hermitian Lanczos paths: the
+native paths for explicit dense double or \code{dgCMatrix} operators, and the
+matrix-free reference Hermitian Lanczos path for operator-only problems;
+supplying it on any other planned path (generalized, shift-invert, dense
+fallback) is an error. Pass \code{method = lanczos()} to guarantee a Lanczos
+route: with the default \code{method = auto()}, sparse or \code{nearest()} problems
+may be planned as shift-invert, which does not consume a start and will
+reject the argument. The subspace is only a starting hint: projected
+quantities, residuals, orthogonality, convergence, and the certificate are
+recomputed for the current operator on every solve. The columns are
+orthonormalized at the solver boundary and fitted to the method's start
+block — when the accepted rank exceeds the block width the block is a
+seeded random rotation of the full accepted basis, so every supplied
+direction contributes — with a small random component blended in to guard
+against an exact non-target invariant subspace trapping the iteration into
+certifying non-target eigenpairs. For reliable results supply a start that
+genuinely overlaps the target subspace — e.g. the previous solve's target
+eigenvectors for spectral continuation — rather than an exact invariant
+subspace disjoint from the target under a minimal \code{max_subspace}. \code{NULL}
+(the default) preserves the cold random start exactly.}
 }
 \value{
 An \code{eigencore_eigen_result} containing computed values, optional
