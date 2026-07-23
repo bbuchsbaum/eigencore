@@ -6,6 +6,7 @@
 #include <Rinternals.h>
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
+#include "eigencore_lapack_compat.h"
 
 struct BasisWorkspace {
   int64_t rows;

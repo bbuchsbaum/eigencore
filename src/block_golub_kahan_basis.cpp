@@ -7,6 +7,7 @@
 #include <Rinternals.h>
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
+#include "eigencore_lapack_compat.h"
 #include "native_operators.h"
 #include "block_golub_kahan_basis.h"
 

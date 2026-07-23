@@ -8,6 +8,7 @@
 #include <Rinternals.h>
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
+#include "eigencore_lapack_compat.h"
 #include "eigencore_common.h"
 
 static double max_orthogonality_loss_gram(const double* gram, int k) {

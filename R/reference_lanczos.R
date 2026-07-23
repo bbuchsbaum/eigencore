@@ -110,7 +110,10 @@ native_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
 
   n <- op$dim[1L]
   m_max <- if (is.null(maxit)) {
-    min(n, max(as.integer(k) + 1L, 3L * as.integer(k) + 20L))
+    # 3k+20 suits small k; from k ~ 10 upward a 5k subspace measurably cuts
+    # both matvecs and total time (e.g. general sparse n=20000, k=30:
+    # 735 -> 534 matvecs, ~20% faster) by amortizing restarts.
+    min(n, max(as.integer(k) + 1L, 3L * as.integer(k) + 20L, 5L * as.integer(k)))
   } else {
     min(n, as.integer(maxit))
   }

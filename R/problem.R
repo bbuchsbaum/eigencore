@@ -614,6 +614,8 @@ plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ..
     }
   } else if (should_use_native_gram_svd(problem, method, rank = rank)) {
     "native certified Gram SVD special case"
+  } else if (should_use_native_implicit_gram_svd(problem, method, rank = rank)) {
+    native_implicit_gram_svd_label()
   } else if (should_use_native_retained_golub_kahan(problem, method, rank = rank)) {
     native_retained_golub_kahan_diagnostic_label()
   } else if (is_smallest_svd_target && is_native_csc && !is.null(problem$A$apply_adjoint)) {
@@ -643,6 +645,8 @@ plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ..
     if (!is.null(problem$A$apply_adjoint)) "adjoint is available" else "adjoint is missing",
     if (identical(chosen, "native certified Gram SVD special case")) {
       "bounded smaller-side normal problem with exact original-coordinate certification; explicit Gram is the production default"
+    } else if (identical(chosen, native_implicit_gram_svd_label())) {
+      "smaller-side normal operator solved by native thick-restart Lanczos without materializing the Gram matrix; exact original-coordinate certification"
     } else if (identical(chosen, native_retained_golub_kahan_diagnostic_label())) {
       "sparse explicit operator uses diagnostic native retained block Golub-Kahan with thick restart; not production-promoted"
     } else if (identical(chosen, native_matrix_free_golub_kahan_label()) ||
@@ -665,6 +669,8 @@ plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ..
       "opt-in implicit candidate retries explicit Gram;",
       "native Golub-Kahan if Gram remains uncertified"
     )
+  } else if (identical(chosen, native_implicit_gram_svd_label())) {
+    "native Golub-Kahan if the implicit Gram result remains uncertified"
   } else if (identical(chosen, native_matrix_free_golub_kahan_label()) ||
       identical(chosen, native_matrix_free_smallest_golub_kahan_label()) ||
       identical(chosen, native_matrix_free_interior_golub_kahan_label())) {
@@ -899,6 +905,11 @@ promoted_block_lanczos_controls <- function(problem, k) {
     ))
   }
   NULL
+}
+
+#' @keywords internal
+native_implicit_gram_svd_label <- function() {
+  "native certified implicit Gram SVD (thick-restart Lanczos)"
 }
 
 #' @keywords internal

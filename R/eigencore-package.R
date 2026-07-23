@@ -7,4 +7,5 @@
 #' @keywords internal
 #' @useDynLib eigencore, .registration = TRUE
 #' @importFrom methods is
+#' @importFrom Matrix crossprod tcrossprod
 "_PACKAGE"

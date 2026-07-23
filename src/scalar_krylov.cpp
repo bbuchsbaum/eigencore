@@ -7,6 +7,7 @@
 #include <Rinternals.h>
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
+#include "eigencore_lapack_compat.h"
 #include "eigencore_common.h"
 #include "native_operators.h"
 #include "scalar_krylov.h"
@@ -50,6 +51,85 @@ static int selected_ritz_indices(const double* values,
   return count;
 }
 
+// Reusable scratch for the Lanczos convergence estimate. The estimate runs
+// every iteration once the subspace holds k candidates, so the buffers are
+// sized once for the sweep's maximum subspace (maxit) and the k requested
+// vectors instead of being reallocated per check.
+struct LanczosConvergenceScratch {
+  double* w = nullptr;         // capacity: full eigenvalue list (dsterf)
+  double* e_work = nullptr;    // capacity: offdiagonal copy consumed by dsterf
+  double* d2 = nullptr;        // capacity: diagonal copy consumed by dstevr
+  double* e2 = nullptr;        // capacity: offdiagonal copy consumed by dstevr
+  double* w2 = nullptr;        // capacity: eigenvalues returned by dstevr
+  double* z = nullptr;         // capacity * kcap: selected eigenvectors
+  double* work = nullptr;      // 20 * capacity doubles: dstevr workspace
+  int* iwork = nullptr;        // 10 * capacity ints: dstevr workspace
+  int* isuppz = nullptr;       // 2 * kcap ints
+  int* selected = nullptr;     // capacity ints
+  int capacity = 0;
+  int kcap = 0;
+
+  int ensure(int needed, int k_needed) {
+    if (needed <= capacity && k_needed <= kcap) {
+      return 0;
+    }
+    release();
+    const size_t cap = static_cast<size_t>(needed);
+    const size_t kc = static_cast<size_t>(k_needed);
+    w = static_cast<double*>(std::malloc(cap * sizeof(double)));
+    e_work = static_cast<double*>(std::malloc(cap * sizeof(double)));
+    d2 = static_cast<double*>(std::malloc(cap * sizeof(double)));
+    e2 = static_cast<double*>(std::malloc(cap * sizeof(double)));
+    w2 = static_cast<double*>(std::malloc(cap * sizeof(double)));
+    z = static_cast<double*>(std::malloc(cap * kc * sizeof(double)));
+    work = static_cast<double*>(std::malloc(20U * cap * sizeof(double)));
+    iwork = static_cast<int*>(std::malloc(10U * cap * sizeof(int)));
+    isuppz = static_cast<int*>(std::malloc(2U * kc * sizeof(int)));
+    selected = static_cast<int*>(std::malloc(cap * sizeof(int)));
+    if (w == nullptr || e_work == nullptr || d2 == nullptr || e2 == nullptr ||
+        w2 == nullptr || z == nullptr || work == nullptr || iwork == nullptr ||
+        isuppz == nullptr || selected == nullptr) {
+      release();
+      return -2;
+    }
+    capacity = needed;
+    kcap = k_needed;
+    return 0;
+  }
+
+  void release() {
+    std::free(w);
+    std::free(e_work);
+    std::free(d2);
+    std::free(e2);
+    std::free(w2);
+    std::free(z);
+    std::free(work);
+    std::free(iwork);
+    std::free(isuppz);
+    std::free(selected);
+    w = nullptr;
+    e_work = nullptr;
+    d2 = nullptr;
+    e2 = nullptr;
+    w2 = nullptr;
+    z = nullptr;
+    work = nullptr;
+    iwork = nullptr;
+    isuppz = nullptr;
+    selected = nullptr;
+    capacity = 0;
+    kcap = 0;
+  }
+};
+
+// Ritz-residual convergence estimate for the Lanczos tridiagonal. The bound
+// |beta_last * z[last, idx]| only needs the selected Ritz values and the
+// LAST components of their tridiagonal eigenvectors, so instead of dstev
+// with jobz='V' (all eigenvectors, O(iter^3) per check) we take eigenvalues
+// from dsterf (O(iter^2)) and recover just the selected eigenvectors with
+// dstevr over the contiguous index runs of the selection (the magnitude
+// targets select from both spectrum ends, giving at most two runs).
 static int lanczos_convergence_estimate(const double* alpha,
                                         const double* beta,
                                         int iter,
@@ -57,83 +137,176 @@ static int lanczos_convergence_estimate(const double* alpha,
                                         int target_kind,
                                         double tol,
                                         int* nconv,
-                                        double* max_residual) {
+                                        double* max_residual,
+                                        LanczosConvergenceScratch* scratch) {
   *nconv = 0;
   *max_residual = R_PosInf;
   if (iter <= 0 || k <= 0) {
     return 0;
   }
 
-  const size_t iter_len = static_cast<size_t>(iter);
-  const size_t offdiag_len = (iter > 1) ? iter_len - 1U : 0U;
-  const size_t work_len = 2U * offdiag_len;
-  double* diag = static_cast<double*>(std::calloc(iter_len, sizeof(double)));
-  double* offdiag = (offdiag_len > 0U)
-    ? static_cast<double*>(std::calloc(offdiag_len, sizeof(double)))
-    : nullptr;
-  double* z = static_cast<double*>(std::calloc(iter_len * iter_len, sizeof(double)));
-  double* work = (work_len > 0U)
-    ? static_cast<double*>(std::calloc(work_len, sizeof(double)))
-    : nullptr;
-  int* selected = static_cast<int*>(std::calloc(static_cast<size_t>((k < iter) ? k : iter), sizeof(int)));
-  if (diag == nullptr || z == nullptr || selected == nullptr ||
-      (offdiag_len > 0U && (offdiag == nullptr || work == nullptr))) {
-    std::free(diag);
-    std::free(offdiag);
-    std::free(z);
-    std::free(work);
-    std::free(selected);
-    return -2;
+  LanczosConvergenceScratch local;
+  LanczosConvergenceScratch* s = (scratch != nullptr) ? scratch : &local;
+  const int k_needed = (k < iter) ? k : iter;
+  const int ensure_status = s->ensure(iter, k_needed);
+  if (ensure_status != 0) {
+    return ensure_status;
   }
 
-  for (int i = 0; i < iter; ++i) {
-    diag[i] = alpha[i];
-  }
-  for (size_t i = 0; i < offdiag_len; ++i) {
-    offdiag[i] = beta[i];
-  }
-
-  if (iter == 1) {
-    z[0] = 1.0;
-  } else {
-    char jobz = 'V';
-    int info = 0;
-    F77_CALL(dstev)(&jobz, &iter, diag, offdiag, z, &iter, work, &info FCONE);
-    if (info != 0) {
-      std::free(diag);
-      std::free(offdiag);
-      std::free(z);
-      std::free(work);
-      std::free(selected);
-      return info;
-    }
-  }
-
-  const int count = selected_ritz_indices(diag, iter, k, target_kind, selected);
   double max_selected = 0.0;
   int conv = 0;
-  for (int i = 0; i < count; ++i) {
-    const int idx = selected[i];
-    const double residual = fabs(beta[iter - 1] * z[(iter - 1) + idx * iter]);
-    const double threshold = tol * ((fabs(diag[idx]) > 1.0) ? fabs(diag[idx]) : 1.0);
+
+  if (iter == 1) {
+    const double residual = fabs(beta[0]);
+    const double threshold = tol * ((fabs(alpha[0]) > 1.0) ? fabs(alpha[0]) : 1.0);
     if (residual <= threshold) {
       ++conv;
     }
-    if (residual > max_selected) {
-      max_selected = residual;
+    max_selected = residual;
+    *nconv = conv;
+    *max_residual = max_selected;
+    if (s == &local) {
+      local.release();
     }
+    return 0;
+  }
+
+  std::memcpy(s->w, alpha, sizeof(double) * static_cast<size_t>(iter));
+  std::memcpy(s->e_work, beta, sizeof(double) * static_cast<size_t>(iter - 1));
+  int info = 0;
+  F77_CALL(dsterf)(&iter, s->w, s->e_work, &info);
+  if (info != 0) {
+    if (s == &local) {
+      local.release();
+    }
+    return info;
+  }
+
+  const int count = selected_ritz_indices(s->w, iter, k, target_kind, s->selected);
+  // Sort the selected indices so contiguous runs can be recovered with a
+  // single dstevr range each; the selection order itself is irrelevant to
+  // the aggregate nconv / max_residual outputs.
+  for (int i = 1; i < count; ++i) {
+    const int key = s->selected[i];
+    int pos = i - 1;
+    while (pos >= 0 && s->selected[pos] > key) {
+      s->selected[pos + 1] = s->selected[pos];
+      --pos;
+    }
+    s->selected[pos + 1] = key;
+  }
+
+  int run_start = 0;
+  while (run_start < count) {
+    int run_end = run_start;
+    while (run_end + 1 < count &&
+           s->selected[run_end + 1] == s->selected[run_end] + 1) {
+      ++run_end;
+    }
+    const int il = s->selected[run_start] + 1;
+    const int iu = s->selected[run_end] + 1;
+    const int run_len = iu - il + 1;
+
+    std::memcpy(s->d2, alpha, sizeof(double) * static_cast<size_t>(iter));
+    std::memcpy(s->e2, beta, sizeof(double) * static_cast<size_t>(iter - 1));
+    char jobz = 'V';
+    char range = 'I';
+    double vl = 0.0;
+    double vu = 0.0;
+    double abstol = 0.0;
+    int found = 0;
+    int lwork = 20 * iter;
+    int liwork = 10 * iter;
+    int iter_local = iter;
+    F77_CALL(dstevr)(&jobz, &range, &iter_local, s->d2, s->e2, &vl, &vu,
+                     const_cast<int*>(&il), const_cast<int*>(&iu), &abstol,
+                     &found, s->w2, s->z, &iter_local, s->isuppz,
+                     s->work, &lwork, s->iwork, &liwork, &info FCONE FCONE);
+    if (info != 0 || found != run_len) {
+      if (s == &local) {
+        local.release();
+      }
+      return (info != 0) ? info : -3;
+    }
+
+    for (int i = run_start; i <= run_end; ++i) {
+      const int idx = s->selected[i];
+      const int z_col = idx - (il - 1);
+      const double residual =
+        fabs(beta[iter - 1] * s->z[(iter - 1) + static_cast<int64_t>(z_col) * iter]);
+      const double value = s->w[idx];
+      const double threshold = tol * ((fabs(value) > 1.0) ? fabs(value) : 1.0);
+      if (residual <= threshold) {
+        ++conv;
+      }
+      if (residual > max_selected) {
+        max_selected = residual;
+      }
+    }
+    run_start = run_end + 1;
   }
 
   *nconv = conv;
   *max_residual = max_selected;
-  std::free(diag);
-  std::free(offdiag);
-  std::free(z);
-  std::free(work);
-  std::free(selected);
+  if (s == &local) {
+    local.release();
+  }
   return 0;
 }
 
+// Reusable scratch for the projected convergence check so repeated checks
+// inside one Golub-Kahan sweep do not reallocate. Capacity is the maximum
+// subspace size (maxit) of the sweep.
+struct GolubKahanProjectedScratch {
+  double* d = nullptr;         // capacity doubles: singular values
+  double* e = nullptr;         // capacity doubles: superdiagonal copy
+  double* u_last = nullptr;    // capacity doubles: last row of projected U
+  double* work = nullptr;      // 4 * capacity doubles: dbdsqr workspace
+  int* selected = nullptr;     // capacity ints
+  int capacity = 0;
+
+  int ensure(int needed) {
+    if (needed <= capacity) {
+      return 0;
+    }
+    release();
+    d = static_cast<double*>(std::malloc(static_cast<size_t>(needed) * sizeof(double)));
+    e = static_cast<double*>(std::malloc(static_cast<size_t>(needed) * sizeof(double)));
+    u_last = static_cast<double*>(std::malloc(static_cast<size_t>(needed) * sizeof(double)));
+    work = static_cast<double*>(std::malloc(4U * static_cast<size_t>(needed) * sizeof(double)));
+    selected = static_cast<int*>(std::malloc(static_cast<size_t>(needed) * sizeof(int)));
+    if (d == nullptr || e == nullptr || u_last == nullptr ||
+        work == nullptr || selected == nullptr) {
+      release();
+      return -2;
+    }
+    capacity = needed;
+    return 0;
+  }
+
+  void release() {
+    std::free(d);
+    std::free(e);
+    std::free(u_last);
+    std::free(work);
+    std::free(selected);
+    d = nullptr;
+    e = nullptr;
+    u_last = nullptr;
+    work = nullptr;
+    selected = nullptr;
+    capacity = 0;
+  }
+};
+
+// Projected convergence estimate for the Golub-Kahan bidiagonalization.
+// The residual bound only needs the singular values of the projected
+// bidiagonal B and the LAST row of its left singular vectors, so instead of
+// a dense dgesvd with jobu='A' (O(iter^3) plus per-check allocation churn)
+// we run dbdsqr directly on the bidiagonal, rotating a single row vector
+// seeded with e_iter^T. dbdsqr is the same kernel dgesvd applies after
+// bidiagonal reduction, so singular values and the tracked row agree with
+// the previous implementation to rounding.
 static int golub_kahan_projected_convergence_estimate(const double* alpha,
                                                       const double* beta,
                                                       int iter,
@@ -141,88 +314,55 @@ static int golub_kahan_projected_convergence_estimate(const double* alpha,
                                                       int target_kind,
                                                       double tol,
                                                       int* nconv,
-                                                      double* max_residual) {
+                                                      double* max_residual,
+                                                      GolubKahanProjectedScratch* scratch) {
   *nconv = 0;
   *max_residual = R_PosInf;
   if (iter <= 0 || k <= 0) {
     return 0;
   }
 
-  double* B = static_cast<double*>(std::calloc(static_cast<size_t>(iter) * iter, sizeof(double)));
-  double* d = static_cast<double*>(std::calloc(static_cast<size_t>(iter), sizeof(double)));
-  double* u = static_cast<double*>(std::calloc(static_cast<size_t>(iter) * iter, sizeof(double)));
-  double* vt = static_cast<double*>(std::calloc(static_cast<size_t>(iter) * iter, sizeof(double)));
-  int* selected = static_cast<int*>(std::calloc(static_cast<size_t>((k < iter) ? k : iter), sizeof(int)));
-  if (B == nullptr || d == nullptr || u == nullptr || vt == nullptr || selected == nullptr) {
-    std::free(B);
-    std::free(d);
-    std::free(u);
-    std::free(vt);
-    std::free(selected);
-    return -2;
+  GolubKahanProjectedScratch local;
+  GolubKahanProjectedScratch* s = (scratch != nullptr) ? scratch : &local;
+  const int ensure_status = s->ensure(iter);
+  if (ensure_status != 0) {
+    return ensure_status;
   }
 
-  for (int i = 0; i < iter; ++i) {
-    B[i + i * iter] = alpha[i];
+  std::memcpy(s->d, alpha, sizeof(double) * static_cast<size_t>(iter));
+  if (iter > 1) {
+    std::memcpy(s->e, beta, sizeof(double) * static_cast<size_t>(iter - 1));
   }
-  for (int i = 0; i < iter - 1; ++i) {
-    B[i + (i + 1) * iter] = beta[i];
-  }
+  // Track only the last row of the projected left singular vectors: dbdsqr
+  // applies its rotations to any caller-supplied U block, so a 1 x iter row
+  // seeded with e_iter^T ends up holding that row exactly.
+  std::memset(s->u_last, 0, sizeof(double) * static_cast<size_t>(iter));
+  s->u_last[iter - 1] = 1.0;
 
-  char jobu = 'A';
-  char jobvt = 'N';
+  char uplo = 'U';
+  const int ncvt = 0;
+  const int nru = 1;
+  const int ncc = 0;
+  const int ldu = 1;
   int info = 0;
-  int lwork = -1;
-  double work_query = 0.0;
-  F77_CALL(dgesvd)(&jobu, &jobvt, &iter, &iter, B, &iter,
-                   d, u, &iter, vt, &iter, &work_query, &lwork,
-                   &info FCONE FCONE);
+  double dummy = 0.0;
+  F77_CALL(dbdsqr)(&uplo, &iter, &ncvt, &nru, &ncc,
+                   s->d, s->e, &dummy, &iter, s->u_last, &ldu,
+                   &dummy, &iter, s->work, &info FCONE);
   if (info != 0) {
-    std::free(B);
-    std::free(d);
-    std::free(u);
-    std::free(vt);
-    std::free(selected);
-    return info;
-  }
-  lwork = static_cast<int>(work_query);
-  double* work = static_cast<double*>(std::calloc(static_cast<size_t>(lwork), sizeof(double)));
-  if (work == nullptr) {
-    std::free(B);
-    std::free(d);
-    std::free(u);
-    std::free(vt);
-    std::free(selected);
-    return -2;
-  }
-
-  std::memset(B, 0, sizeof(double) * static_cast<size_t>(iter) * iter);
-  for (int i = 0; i < iter; ++i) {
-    B[i + i * iter] = alpha[i];
-  }
-  for (int i = 0; i < iter - 1; ++i) {
-    B[i + (i + 1) * iter] = beta[i];
-  }
-  F77_CALL(dgesvd)(&jobu, &jobvt, &iter, &iter, B, &iter,
-                   d, u, &iter, vt, &iter, work, &lwork,
-                   &info FCONE FCONE);
-  if (info != 0) {
-    std::free(B);
-    std::free(d);
-    std::free(u);
-    std::free(vt);
-    std::free(work);
-    std::free(selected);
+    if (s == &local) {
+      local.release();
+    }
     return info;
   }
 
-  const int count = selected_ritz_indices(d, iter, k, target_kind, selected);
+  const int count = selected_ritz_indices(s->d, iter, k, target_kind, s->selected);
   double max_selected = 0.0;
   int conv = 0;
   for (int i = 0; i < count; ++i) {
-    const int idx = selected[i];
-    const double residual = fabs(beta[iter - 1] * u[(iter - 1) + idx * iter]);
-    const double scale = (fabs(d[idx]) > 1.0) ? fabs(d[idx]) : 1.0;
+    const int idx = s->selected[i];
+    const double residual = fabs(beta[iter - 1] * s->u_last[idx]);
+    const double scale = (fabs(s->d[idx]) > 1.0) ? fabs(s->d[idx]) : 1.0;
     const double threshold = tol * scale;
     if (residual <= threshold) {
       ++conv;
@@ -234,12 +374,9 @@ static int golub_kahan_projected_convergence_estimate(const double* alpha,
 
   *nconv = conv;
   *max_residual = max_selected;
-  std::free(B);
-  std::free(d);
-  std::free(u);
-  std::free(vt);
-  std::free(work);
-  std::free(selected);
+  if (s == &local) {
+    local.release();
+  }
   return 0;
 }
 
@@ -286,6 +423,16 @@ static int native_lanczos_run(void* impl,
   *iterations = 0;
   *matvecs = 0;
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
+  LanczosConvergenceScratch convergence_scratch;
+  // Size the convergence scratch for the full sweep once so the
+  // per-iteration estimate never reallocates.
+  if (convergence_scratch.ensure(maxit, (k < maxit) ? k : maxit) != 0) {
+    std::free(q);
+    std::free(q_prev);
+    std::free(z);
+    std::free(coeff);
+    return -2;
+  }
   for (int j = 0; j < maxit; ++j) {
     *iterations = j + 1;
     std::memcpy(Q + j * n, q, sizeof(double) * static_cast<size_t>(n));
@@ -294,6 +441,7 @@ static int native_lanczos_run(void* impl,
     const int status = apply(impl, EIGENCORE_TRANSPOSE_NONE, 1, q, n,
                              1.0, 0.0, z, n, &workspace);
     if (status != 0) {
+      convergence_scratch.release();
       std::free(q);
       std::free(q_prev);
       std::free(z);
@@ -368,9 +516,11 @@ static int native_lanczos_run(void* impl,
       int nconv = 0;
       double max_residual = R_PosInf;
       const int conv_status = lanczos_convergence_estimate(
-        alpha, beta, j + 1, k, target_kind, tol, &nconv, &max_residual
+        alpha, beta, j + 1, k, target_kind, tol, &nconv, &max_residual,
+        &convergence_scratch
       );
       if (conv_status != 0) {
+        convergence_scratch.release();
         std::free(q);
         std::free(q_prev);
         std::free(z);
@@ -393,6 +543,7 @@ static int native_lanczos_run(void* impl,
     }
   }
 
+  convergence_scratch.release();
   std::free(q);
   std::free(q_prev);
   std::free(z);
@@ -483,6 +634,17 @@ int native_golub_kahan_run(void* impl,
   *reorthogonalization_passes = 0;
   double beta_prev = 0.0;
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
+  GolubKahanProjectedScratch projected_scratch;
+  // Size the projected-stop scratch for the full sweep once so repeated
+  // convergence checks never reallocate.
+  if (enable_projected_stop && projected_scratch.ensure(maxit) != 0) {
+    std::free(v);
+    std::free(z);
+    std::free(u);
+    std::free(u_prev);
+    std::free(coeff);
+    return -2;
+  }
   const int check_interval = (2 * k > 10) ? 2 * k : 10;
   const int min_projected_savings = (k > 5) ? k : 5;
 
@@ -496,6 +658,7 @@ int native_golub_kahan_run(void* impl,
                        1.0, 0.0, u, m, &workspace);
     *stage_apply_seconds += native_timer_elapsed(stage_timer);
     if (status != 0) {
+      projected_scratch.release();
       std::free(v);
       std::free(z);
       std::free(u);
@@ -583,6 +746,7 @@ int native_golub_kahan_run(void* impl,
                    1.0, 0.0, z, n, &workspace);
     *stage_apply_seconds += native_timer_elapsed(stage_timer);
     if (status != 0) {
+      projected_scratch.release();
       std::free(v);
       std::free(z);
       std::free(u);
@@ -663,11 +827,13 @@ int native_golub_kahan_run(void* impl,
       double max_residual = R_PosInf;
       auto projected_timer = native_timer_now();
       const int conv_status = golub_kahan_projected_convergence_estimate(
-        alpha, beta, j + 1, k, target_kind, tol, &nconv, &max_residual
+        alpha, beta, j + 1, k, target_kind, tol, &nconv, &max_residual,
+        &projected_scratch
       );
       *projected_seconds += native_timer_elapsed(projected_timer);
       ++(*projected_checks);
       if (conv_status != 0) {
+        projected_scratch.release();
         std::free(v);
         std::free(z);
         std::free(u);
@@ -695,6 +861,7 @@ int native_golub_kahan_run(void* impl,
     *stage_recurrence_seconds += native_timer_elapsed(stage_timer);
   }
 
+  projected_scratch.release();
   std::free(v);
   std::free(z);
   std::free(u);
@@ -1567,7 +1734,7 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   int reorthogonalization_passes = 0;
   const int status = native_golub_kahan_run(&impl, eigencore_csc_apply, m, n,
                                             maxit, rank, target_kind, tol,
-                                            enable_projected_stop, 0,
+                                            enable_projected_stop, 1,
                                             REAL(start_),
                                             U_work.data(), V_work.data(),
                                             alpha_work.data(), beta_work.data(),
@@ -1695,7 +1862,7 @@ extern "C" SEXP eigencore_golub_kahan_r_operator(
   int reorthogonalization_passes = 0;
   const int status = native_golub_kahan_run(
     &impl, eigencore_r_operator_apply, m, n, maxit, rank, target_kind, tol,
-    enable_projected_stop, 0, REAL(start_), U_work.data(), V_work.data(),
+    enable_projected_stop, 1, REAL(start_), U_work.data(), V_work.data(),
     alpha_work.data(), beta_work.data(), &iterations, &matvecs,
     &projected_stop, &projected_nconv, &projected_max_residual,
     &projected_checks, &projected_seconds, &stage_apply_seconds,

@@ -39,6 +39,21 @@ struct RApplyOperator {
   SEXP apply_adjoint;
 };
 
+// Symmetric normal-equations view of a rectangular base operator A: applies
+// A^T A (side == 0, acting on R^cols) or A A^T (side == 1, acting on R^rows)
+// without materializing the Gram matrix. The intermediate product lives in a
+// caller-provided scratch buffer of at least inner_dim * block_cols doubles,
+// where inner_dim is rows for side 0 and cols for side 1.
+struct NormalEquationsOperator {
+  void* base_impl;
+  EigencoreApplyFn base_apply;
+  int64_t rows;              // rows of A
+  int64_t cols;              // cols of A
+  int side;                  // 0: A^T A, 1: A A^T
+  double* scratch;           // inner_dim * scratch_block_capacity doubles
+  int64_t scratch_block_capacity;
+};
+
 struct DenseShiftInvertOperator {
   int n;
   double* lu;
@@ -172,5 +187,16 @@ extern "C" int eigencore_r_operator_apply(void* impl,
                                            double* Y,
                                            int64_t ldy,
                                            EigencoreWorkspace* workspace);
+
+extern "C" int eigencore_normal_equations_apply(void* impl,
+                                                 EigencoreTranspose op,
+                                                 int64_t block_cols,
+                                                 const double* X,
+                                                 int64_t ldx,
+                                                 double alpha,
+                                                 double beta,
+                                                 double* Y,
+                                                 int64_t ldy,
+                                                 EigencoreWorkspace* workspace);
 
 #endif

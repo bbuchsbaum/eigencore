@@ -7,6 +7,7 @@
 #include <Rdefines.h>
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
+#include "eigencore_lapack_compat.h"
 #include <R_ext/Random.h>
 #include "eigencore_common.h"
 #include "native_operators.h"
@@ -372,12 +373,32 @@ extern "C" int eigencore_csc_apply(void* impl,
         }
       }
     } else {
-      for (int64_t col = 0; col < csc->cols; ++col) {
-        for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
-          const int row = csc->row_idx[pos];
-          const double a = alpha * csc->values[pos];
-          for (int64_t block = 0; block < block_cols; ++block) {
-            Y[row + block * ldy] += a * X[col + block * ldx];
+      // Wide blocks: sweep the matrix once per chunk of at most 10 columns so
+      // each pass keeps the per-column accumulators and X/Y panels hot,
+      // instead of striding across the whole block per nonzero.
+      for (int64_t chunk = 0; chunk < block_cols; chunk += 10) {
+        const int64_t chunk_cols =
+          (block_cols - chunk < 10) ? block_cols - chunk : 10;
+        double* yptr[10];
+        const double* xptr[10];
+        double xval[10];
+        for (int64_t block = 0; block < chunk_cols; ++block) {
+          yptr[block] = Y + (chunk + block) * ldy;
+          xptr[block] = X + (chunk + block) * ldx;
+        }
+        for (int64_t col = 0; col < csc->cols; ++col) {
+          bool all_zero = true;
+          for (int64_t block = 0; block < chunk_cols; ++block) {
+            xval[block] = xptr[block][col];
+            all_zero = all_zero && xval[block] == 0.0;
+          }
+          if (all_zero) continue;
+          for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
+            const int row = csc->row_idx[pos];
+            const double a = alpha * csc->values[pos];
+            for (int64_t block = 0; block < chunk_cols; ++block) {
+              yptr[block][row] += a * xval[block];
+            }
           }
         }
       }
@@ -432,12 +453,31 @@ extern "C" int eigencore_csc_apply(void* impl,
         }
       }
     } else {
-      for (int64_t col = 0; col < csc->cols; ++col) {
-        for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
-          const int row = csc->row_idx[pos];
-          const double a = alpha * csc->values[pos];
-          for (int64_t block = 0; block < block_cols; ++block) {
-            Y[col + block * ldy] += a * X[row + block * ldx];
+      // Wide blocks: same chunking as the forward path, keeping at most 10
+      // running dot-product accumulators per matrix sweep.
+      for (int64_t chunk = 0; chunk < block_cols; chunk += 10) {
+        const int64_t chunk_cols =
+          (block_cols - chunk < 10) ? block_cols - chunk : 10;
+        double* yptr[10];
+        const double* xptr[10];
+        double acc[10];
+        for (int64_t block = 0; block < chunk_cols; ++block) {
+          yptr[block] = Y + (chunk + block) * ldy;
+          xptr[block] = X + (chunk + block) * ldx;
+        }
+        for (int64_t col = 0; col < csc->cols; ++col) {
+          for (int64_t block = 0; block < chunk_cols; ++block) {
+            acc[block] = 0.0;
+          }
+          for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
+            const int row = csc->row_idx[pos];
+            const double a = csc->values[pos];
+            for (int64_t block = 0; block < chunk_cols; ++block) {
+              acc[block] += a * xptr[block][row];
+            }
+          }
+          for (int64_t block = 0; block < chunk_cols; ++block) {
+            yptr[block][col] += alpha * acc[block];
           }
         }
       }
@@ -470,6 +510,42 @@ extern "C" int eigencore_diagonal_apply(void* impl,
     }
   }
   return 0;
+}
+
+extern "C" int eigencore_normal_equations_apply(void* impl,
+                                                 EigencoreTranspose op,
+                                                 int64_t block_cols,
+                                                 const double* X,
+                                                 int64_t ldx,
+                                                 double alpha,
+                                                 double beta,
+                                                 double* Y,
+                                                 int64_t ldy,
+                                                 EigencoreWorkspace* workspace) {
+  (void) op;  // A^T A and A A^T are symmetric
+  NormalEquationsOperator* normal = static_cast<NormalEquationsOperator*>(impl);
+  const int64_t outer = (normal->side == 0) ? normal->cols : normal->rows;
+  const int64_t inner = (normal->side == 0) ? normal->rows : normal->cols;
+  if (ldx < outer || ldy < outer) {
+    return -1;
+  }
+  if (block_cols > normal->scratch_block_capacity || normal->scratch == nullptr) {
+    return -1;
+  }
+  const EigencoreTranspose first =
+    (normal->side == 0) ? EIGENCORE_TRANSPOSE_NONE : EIGENCORE_TRANSPOSE_ADJOINT;
+  const EigencoreTranspose second =
+    (normal->side == 0) ? EIGENCORE_TRANSPOSE_ADJOINT : EIGENCORE_TRANSPOSE_NONE;
+  int status = normal->base_apply(normal->base_impl, first, block_cols,
+                                  X, ldx, 1.0, 0.0,
+                                  normal->scratch, inner, workspace);
+  if (status != 0) {
+    return status;
+  }
+  status = normal->base_apply(normal->base_impl, second, block_cols,
+                              normal->scratch, inner, alpha, beta,
+                              Y, ldy, workspace);
+  return status;
 }
 
 extern "C" int eigencore_r_operator_apply(void* impl,
