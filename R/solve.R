@@ -13,8 +13,9 @@
 #' @param allow_dense_fallback Dense fallback policy.
 #' @param initial_subspace Optional numeric matrix of starting directions
 #'   (a warm start). Supported on standard real Hermitian Lanczos paths: the
-#'   native paths for explicit dense double or `dgCMatrix` operators, and the
-#'   matrix-free reference Hermitian Lanczos path for operator-only problems;
+#'   native paths for explicit dense double or `dgCMatrix` operators, the native
+#'   matrix-free callback path selected by `lanczos(block > 1)`, and the scalar
+#'   matrix-free reference path selected by `lanczos(block = 1)`;
 #'   supplying it on any other planned path (generalized, shift-invert, dense
 #'   fallback) is an error. Pass `method = lanczos()` to guarantee a Lanczos
 #'   route: with the default `method = auto()`, sparse or `nearest()` problems
@@ -126,8 +127,10 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
 #' @param allow_dense_fallback Dense fallback policy.
 #' @param initial_subspace Optional numeric matrix of starting directions
 #'   (a warm start). Supported on standard real Hermitian Lanczos paths —
-#'   native dense double / `dgCMatrix` and the matrix-free reference path;
-#'   supplying it on any other planned path is an error. The subspace is only
+#'   native dense double / `dgCMatrix`, native matrix-free callbacks for
+#'   `lanczos(block > 1)`, and the scalar matrix-free reference path for
+#'   `lanczos(block = 1)`; supplying it on any other planned path is an error.
+#'   The subspace is only
 #'   a starting hint, never a source of reused convergence: every solve
 #'   recomputes projected quantities, residuals, orthogonality, convergence,
 #'   and a fresh current-operator certificate. An already-invariant supplied

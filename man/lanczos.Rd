@@ -21,16 +21,18 @@ basis bounded by this value across restart cycles.}
 number of thick-restart cycles allowed before stopping with whatever
 has converged. Default \code{100L}.}
 
-\item{block}{Native block size. \code{1L} selects the scalar thick-restart path;
-values greater than one select the native block Krylov prototype where
-supported.}
+\item{block}{Native block size. \code{1L} selects the scalar path; for a
+matrix-free operator this remains the reference Hermitian Lanczos
+boundary. Values greater than one select the native block Krylov path
+where supported, including real Hermitian matrix-free callbacks.}
 
 \item{check_stride}{Native block thick-restart mid-sweep convergence stride.
 \code{0L} (default) evaluates convergence once per full sweep (legacy). A
 positive \code{N} evaluates convergence every \code{N} block iterations within a
 sweep, letting a warm start that converges after a few blocks stop early
 instead of paying a full cold-sized sweep. Mid-sweep checks never consume
-extra operator applications and never change results at \code{check_stride = 0L}.}
+extra operator applications and never change results at
+\code{check_stride = 0L}. This control applies only to native block paths.}
 
 \item{reorthogonalize}{Whether to apply full reorthogonalization. The
 native path always reorthogonalizes (DGKS x2) and ignores this flag;

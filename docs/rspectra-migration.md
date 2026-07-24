@@ -242,6 +242,7 @@ their documented regimes:
 | `native scalar thick-restart Hermitian Lanczos` | Native Hermitian path. |
 | `native tridiagonal Hermitian LAPACK selected eigensolver` | Promoted native Hermitian default for symmetric tridiagonal sparse/diagonal sources with largest/smallest algebraic targets. |
 | `native block Hermitian Lanczos (thick restart, locking)` | Block Hermitian path for explicit block requests, dense full-subspace cases, and diagnostic sparse opt-in; not promoted for general sparse `auto()`. |
+| `native block Hermitian Lanczos (matrix-free callback, thick restart, locking)` | Explicit `lanczos(block > 1)` path for real Hermitian matrix-free callbacks; `block = 1` retains the reference Hermitian label. |
 | `native certified Gram SVD special case` | Bounded Gram SVD special case, certified in original coordinates. |
 | `native dense ... fallback` | Native dense LAPACK fallback, not an iterative sparse solver. |
 | `native prototype ...` | Native prototype or staging path; do not count as V2 CRAN completion by itself. |

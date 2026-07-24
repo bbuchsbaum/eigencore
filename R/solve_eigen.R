@@ -121,8 +121,8 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
   # block at the solver boundary. The plan-support guard in
   # solve.eigencore_eigen_problem() has already rejected unsupported paths, so
   # a non-NULL start here is guaranteed to reach a standard Hermitian Lanczos
-  # dispatch (native dense/CSC, or the matrix-free reference path whose start
-  # is a single vector); the defensive stop keeps that invariant local.
+  # dispatch (native dense/CSC, native block matrix-free callback, or scalar
+  # matrix-free reference); the defensive stop keeps that invariant local.
   warm <- !is.null(initial_subspace)
   start_block <- NULL
   start_provenance <- warm_start_cold_provenance()

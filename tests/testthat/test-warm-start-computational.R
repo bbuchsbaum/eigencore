@@ -210,6 +210,9 @@ test_that("matrix-free work accounting matches an independently observed callbac
     maxit = n, tol = 1e-8, seed = 133L, initial_subspace = start
   )
 
+  expect_identical(
+    fit$method, "reference Hermitian Lanczos (prototype/oracle fallback)"
+  )
   expect_certificate_clean(fit)
   expect_equal(
     sort(values(fit), decreasing = TRUE),
@@ -226,6 +229,67 @@ test_that("matrix-free work accounting matches an independently observed callbac
   )
   expect_gt(fit$certification_operator_columns, 0L)
   expect_gt(fit$initial_subspace$guard_operator_columns, 0L)
+})
+
+test_that("native matrix-free block accounting matches the callback exactly", {
+  n <- 50L
+  k <- 3L
+  fixture <- ws_comp_symmetric(seq(8, 1, length.out = n), seed = 131L)
+  observed <- new.env(parent = emptyenv())
+  observed$calls <- 0L
+  observed$columns <- 0L
+
+  op <- linear_operator(
+    dim = c(n, n),
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      observed$calls <- observed$calls + 1L
+      observed$columns <- observed$columns +
+        if (is.null(dim(X))) 1L else ncol(X)
+      Z <- alpha * (fixture$A %*% X)
+      if (is.null(Y) || beta == 0) Z else Z + beta * Y
+    },
+    structure = hermitian(),
+    metadata = list(frobenius_norm = sqrt(sum(fixture$A^2)))
+  )
+  set.seed(132L)
+  start <- fixture$vectors[, seq_len(k), drop = FALSE] +
+    matrix(stats::rnorm(n * k, sd = 1e-3), n, k)
+  fit <- eig_partial(
+    op, k = k, target = largest(),
+    method = lanczos(
+      max_subspace = 30L, max_restarts = 100L, block = k, check_stride = 1L
+    ),
+    tol = 1e-8, seed = 133L, initial_subspace = start
+  )
+
+  expect_identical(
+    fit$method,
+    "native block Hermitian Lanczos (matrix-free callback, thick restart, locking)"
+  )
+  expect_certificate_clean(fit)
+  expect_equal(
+    sort(values(fit), decreasing = TRUE),
+    fixture$spectrum[seq_len(k)],
+    tolerance = 1e-7
+  )
+  expect_identical(fit$operator_block_calls, observed$calls)
+  expect_identical(fit$operator_columns, observed$columns)
+  expect_equal(
+    fit$operator_block_calls,
+    fit$restart$operator_block_calls +
+      fit$initial_subspace$guard_operator_block_calls
+  )
+  expect_equal(
+    fit$operator_columns,
+    fit$restart$operator_columns +
+      fit$initial_subspace$guard_operator_columns
+  )
+  expect_equal(fit$restart$operator_block_calls, fit$matvecs)
+  expect_gt(fit$certification_operator_columns, 0L)
+  expect_lte(
+    fit$certification_operator_columns,
+    fit$restart$operator_columns
+  )
 })
 
 test_that("rank-deficient augmentation is reproducible and preserves accepted directions", {

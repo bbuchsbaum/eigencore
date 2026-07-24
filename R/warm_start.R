@@ -2,9 +2,10 @@
 #
 # Scope (planning/prd.json `initial_subspace_contract`): expose the Hermitian
 # Lanczos start-block capability behind a public `initial_subspace` argument,
-# on native dense/CSC paths and on the matrix-free reference Hermitian Lanczos
-# path (the spectral-continuation surface for operator-only `A - rho * B`
-# sequences). The subspace is only a starting hint; every solve recomputes
+# on native dense/CSC paths, on the native block matrix-free callback path, and
+# on the scalar matrix-free reference Hermitian Lanczos path (the
+# spectral-continuation surface for operator-only `A - rho * B` sequences).
+# The subspace is only a starting hint; every solve recomputes
 # projected quantities, residuals, orthogonality, convergence, and a fresh
 # current-operator certificate. Reusable restart objects, recurrence reuse,
 # and generalized/transformed promotion are V3.
@@ -35,10 +36,11 @@ warm_start_cold_provenance <- function() {
 #' Whether the resolved plan consumes a user-supplied starting subspace.
 #'
 #' The boundary is standard (non-generalized, non-transformed) real Hermitian
-#' Lanczos: the native dense double / dgCMatrix CSC paths plus the matrix-free
-#' reference Hermitian Lanczos path. Every other dispatch is out of scope and
-#' must reject `initial_subspace` rather than ignore it, densify, or borrow a
-#' production label.
+#' Lanczos: native dense double / dgCMatrix CSC paths, the native matrix-free
+#' callback path selected by `lanczos(block > 1)`, and the scalar matrix-free
+#' reference path selected by `lanczos(block = 1)`. Every other dispatch is out
+#' of scope and must reject `initial_subspace` rather than ignore it, densify,
+#' or borrow a production label.
 #' @return `TRUE` if the plan consumes a user-supplied start block, else `FALSE`.
 #' @keywords internal
 warm_start_plan_consumes_start <- function(problem, plan) {
@@ -60,8 +62,9 @@ validate_initial_subspace_plan_support <- function(problem, plan) {
     "initial_subspace was supplied but the resolved plan '", plan$method,
     "' does not consume a starting subspace. The warm-start seam is limited ",
     "to standard real Hermitian Lanczos (native dense double / dgCMatrix ",
-    "paths and the matrix-free reference path); pass method = lanczos() on ",
-    "such an operator, or omit initial_subspace.",
+    "paths, native block matrix-free callbacks, and the scalar matrix-free ",
+    "reference path); pass method = lanczos() on such an operator, or omit ",
+    "initial_subspace.",
     call. = FALSE
   )
 }

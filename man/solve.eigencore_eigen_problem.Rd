@@ -39,8 +39,10 @@
 
 \item{initial_subspace}{Optional numeric matrix of starting directions
 (a warm start). Supported on standard real Hermitian Lanczos paths —
-native dense double / \code{dgCMatrix} and the matrix-free reference path;
-supplying it on any other planned path is an error. The subspace is only
+native dense double / \code{dgCMatrix}, native matrix-free callbacks for
+\code{lanczos(block > 1)}, and the scalar matrix-free reference path for
+\code{lanczos(block = 1)}; supplying it on any other planned path is an error.
+The subspace is only
 a starting hint, never a source of reused convergence: every solve
 recomputes projected quantities, residuals, orthogonality, convergence,
 and a fresh current-operator certificate. An already-invariant supplied

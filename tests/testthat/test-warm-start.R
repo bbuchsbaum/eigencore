@@ -2,8 +2,9 @@
 #
 # Scope: planning/prd.json `initial_subspace_contract`. The public
 # initial_subspace argument seeds standard real Hermitian Lanczos: the native
-# paths on explicit dense double / dgCMatrix operators and the matrix-free
-# reference Hermitian Lanczos path. The subspace is only a hint; every solve
+# paths on explicit dense double / dgCMatrix operators, the native block
+# matrix-free callback path, and the scalar matrix-free reference path. The
+# subspace is only a hint; every solve
 # recomputes a fresh current-operator certificate. Correctness is checked
 # against an independent dense oracle (base eigen()).
 

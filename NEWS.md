@@ -4,8 +4,9 @@
 
 * `eig_partial()` and `solve()` gain an `initial_subspace` argument: a public,
   certified warm-start seam for standard real Hermitian Lanczos — the native
-  paths on explicit dense double and `dgCMatrix` operators, and the matrix-free
-  reference Hermitian Lanczos path for operator-only problems. The supplied
+  paths on explicit dense double and `dgCMatrix` operators, the native
+  matrix-free callback path selected by `lanczos(block > 1)`, and the scalar
+  matrix-free reference path selected by `lanczos(block = 1)`. The supplied
   subspace is orthonormalized at the solver boundary and fitted to the method's
   start block: accepted directions are augmented deterministically when short,
   and when the accepted rank exceeds the block width the block is a seeded
@@ -24,6 +25,10 @@
   operator block calls, operator columns, and certification columns. Reusable
   restart-state objects and generalized/transformed promotion remain future
   work.
+* `lanczos()` gains `check_stride`. The default `0L` preserves full-sweep
+  convergence checks exactly; a positive stride lets native block
+  thick-restart paths, including real Hermitian matrix-free callbacks, check
+  and stop within a sweep without additional operator applications.
 
 ## Performance
 

@@ -11,9 +11,10 @@ warm_start_plan_consumes_start(problem, plan)
 }
 \description{
 The boundary is standard (non-generalized, non-transformed) real Hermitian
-Lanczos: the native dense double / dgCMatrix CSC paths plus the matrix-free
-reference Hermitian Lanczos path. Every other dispatch is out of scope and
-must reject \code{initial_subspace} rather than ignore it, densify, or borrow a
-production label.
+Lanczos: native dense double / dgCMatrix CSC paths, the native matrix-free
+callback path selected by \code{lanczos(block > 1)}, and the scalar matrix-free
+reference path selected by \code{lanczos(block = 1)}. Every other dispatch is out
+of scope and must reject \code{initial_subspace} rather than ignore it, densify,
+or borrow a production label.
 }
 \keyword{internal}

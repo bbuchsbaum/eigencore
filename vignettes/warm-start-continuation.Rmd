@@ -206,7 +206,8 @@ The supported surface is deliberately narrow:
 |---|---|
 | Standard real Hermitian Lanczos, explicit dense double matrix | Native and supported |
 | Standard real Hermitian Lanczos, `dgCMatrix` | Native and supported |
-| Standard real Hermitian Lanczos, matrix-free operator | Supported on the reference-labelled path |
+| Standard real Hermitian Lanczos, matrix-free operator, `block > 1` | Native callback path and supported |
+| Standard real Hermitian Lanczos, matrix-free operator, `block = 1` | Reference-labelled path and supported |
 | Generalized problem using the `B` argument | Rejected |
 | Shift-invert or `nearest()` plan | Rejected |
 | Dense fallback, nonsymmetric, or non-Lanczos plan | Rejected |
@@ -215,6 +216,12 @@ Use `method = lanczos()` when the start is required. With `method = auto()`,
 inspect `plan_solver()` first: sparse algebraic-edge targets and
 `nearest()` may select a factorized shift-invert plan. Supplying a start to an
 unsupported plan raises an error instead of silently ignoring it.
+
+For native block paths, `lanczos(check_stride = N)` with a positive integer
+checks convergence every `N` block iterations and can stop a strong warm start
+before a full cold-sized sweep completes. The default `check_stride = 0L`
+preserves full-sweep behavior. Mid-sweep checks do not add operator
+applications; enable them when workload-specific measurements show a benefit.
 
 ## What does the fresh certificate prove?
 

@@ -128,15 +128,17 @@ auto <- function() {
 #' @param max_restarts Optional non-negative integer giving the maximum
 #'   number of thick-restart cycles allowed before stopping with whatever
 #'   has converged. Default `100L`.
-#' @param block Native block size. `1L` selects the scalar thick-restart path;
-#'   values greater than one select the native block Krylov prototype where
-#'   supported.
+#' @param block Native block size. `1L` selects the scalar path; for a
+#'   matrix-free operator this remains the reference Hermitian Lanczos
+#'   boundary. Values greater than one select the native block Krylov path
+#'   where supported, including real Hermitian matrix-free callbacks.
 #' @param check_stride Native block thick-restart mid-sweep convergence stride.
 #'   `0L` (default) evaluates convergence once per full sweep (legacy). A
 #'   positive `N` evaluates convergence every `N` block iterations within a
 #'   sweep, letting a warm start that converges after a few blocks stop early
 #'   instead of paying a full cold-sized sweep. Mid-sweep checks never consume
-#'   extra operator applications and never change results at `check_stride = 0L`.
+#'   extra operator applications and never change results at
+#'   `check_stride = 0L`. This control applies only to native block paths.
 #' @param reorthogonalize Whether to apply full reorthogonalization. The
 #'   native path always reorthogonalizes (DGKS x2) and ignores this flag;
 #'   it is preserved for the R reference solver's public API.
