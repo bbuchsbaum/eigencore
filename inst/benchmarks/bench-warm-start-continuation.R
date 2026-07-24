@@ -227,7 +227,8 @@ trace_fun <- function(fixture) {
       target = eigencore::smallest(),
       method = eigencore::lanczos(
         block = spec$k,
-        max_subspace = min(spec$n - 1L, 8L * spec$k)
+        max_subspace = min(spec$n - 1L, 8L * spec$k),
+        max_restarts = 400L
       ),
       tol = spec$tol,
       seed = base_seed,

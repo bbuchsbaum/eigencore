@@ -109,6 +109,7 @@ articles:
   navbar: ~
   contents:
   - eigencore
+  - warm-start-continuation
   - sparse-pca
   - certificates
   - generalized-eigenproblems

@@ -1,0 +1,241 @@
+---
+title: "Reuse an eigenspace across a parameter sweep"
+output:
+  rmarkdown::html_vignette:
+    toc: yes
+    toc_depth: 2
+    css: albers.css
+    includes:
+      in_header: albers-header.html
+params:
+  family: lapis
+  preset: homage
+resource_files:
+- albers.css
+- albers.js
+- albers-header.html
+- fonts
+
+vignette: |
+  %\VignetteIndexEntry{Reuse an eigenspace across a parameter sweep}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup-opts, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+```{r albers-classes, echo = FALSE, results = "asis"}
+cat(sprintf(
+  paste0(
+    '<script>document.addEventListener("DOMContentLoaded",function(){',
+    'document.body.classList.remove("palette-red","palette-lapis","palette-ochre","palette-teal","palette-green","palette-violet","preset-homage","preset-interaction","preset-study","preset-structural","preset-adobe","preset-midnight");',
+    'document.body.classList.add("palette-%s","preset-%s");',
+    '});</script>'
+  ),
+  params$family,
+  params$preset
+))
+```
+
+When you solve a sequence of nearby Hermitian eigenproblems, the eigenvectors
+from one solve are often good starting directions for the next. Passing those
+directions through `initial_subspace` can reduce operator work while preserving
+the ordinary result contract: eigencore still recomputes the Ritz values,
+residuals, orthogonality checks, and certificate for the current operator.
+
+This vignette follows the smallest eigenpairs of `A - rho B` as `rho` changes.
+At the end you will have a certified result at every step, provenance showing
+whether the supplied start was used, and operator-column counts for comparing
+the warm and cold solves.
+
+```{r setup}
+library(eigencore)
+```
+
+## What problem are we solving?
+
+Here `B` is a perturbation term in the standard eigenproblem, not the optional
+generalized-eigenproblem metric argument of `eig_partial()`. Both `A` and `B`
+are symmetric, so every member of the family `A - rho B` is Hermitian.
+
+```{r build-family}
+n <- 180L
+k <- 5L
+A <- diag(2, n)
+A[row(A) == col(A) + 1L] <- -1
+A[row(A) + 1L == col(A)] <- -1
+x <- seq_len(n) / (n + 1)
+B <- diag(0.5 + x + 0.2 * sin(4 * pi * x))
+```
+
+Use an explicit Lanczos method for a warm start. This prevents `auto()` from
+routing a structured or nearest-target problem to shift-invert, which does not
+consume `initial_subspace`.
+
+```{r first-solve}
+method <- lanczos(
+  block = k,
+  max_subspace = 8L * k,
+  max_restarts = 200L
+)
+first <- eig_partial(
+  A, k = k, target = smallest(), method = method,
+  tol = 1e-8, seed = 2026
+)
+certificate(first)$passed
+```
+
+## How do you reuse the previous eigenspace?
+
+Pass the returned eigenvectors to the next solve. The values alone are not
+enough: `initial_subspace` expects directions with one row per operator
+dimension.
+
+```{r warm-step}
+rho <- 0.02
+warm <- eig_partial(
+  A - rho * B, k = k, target = smallest(), method = method,
+  tol = 1e-8, seed = 2026, initial_subspace = vectors(first)
+)
+certificate(warm)$passed
+```
+
+The same pattern extends to a sweep. This example also runs a cold solve at
+each step so the work and answers can be compared on equal terms.
+
+```{r continuation-sweep}
+rhos <- c(0.02, 0.04, 0.06)
+start <- vectors(first)
+rows <- vector("list", length(rhos))
+
+for (i in seq_along(rhos)) {
+  op <- A - rhos[[i]] * B
+  cold <- eig_partial(
+    op, k, smallest(), method = method, tol = 1e-8, seed = 2026
+  )
+  warm <- eig_partial(
+    op, k, smallest(), method = method, tol = 1e-8, seed = 2026,
+    initial_subspace = start
+  )
+  rows[[i]] <- data.frame(
+    rho = rhos[[i]],
+    cold_columns = cold$operator_columns,
+    warm_columns = warm$operator_columns,
+    max_value_difference = max(abs(sort(values(cold)) - sort(values(warm))))
+  )
+  start <- vectors(warm)
+}
+comparison <- do.call(rbind, rows)
+```
+
+```{r continuation-checks, include = FALSE}
+stopifnot(
+  isTRUE(certificate(first)$passed),
+  all(vapply(rows, function(x) all(is.finite(unlist(x))), logical(1))),
+  all(comparison$max_value_difference < 1e-8),
+  all(comparison$warm_columns < comparison$cold_columns),
+  isTRUE(certificate(warm)$passed)
+)
+```
+
+```{r continuation-table, echo = FALSE}
+shown <- comparison
+shown$max_value_difference <- format(
+  shown$max_value_difference, digits = 3, scientific = TRUE
+)
+knitr::kable(
+  shown,
+  col.names = c(
+    "rho", "cold operator columns", "warm operator columns",
+    "max |cold value - warm value|"
+  )
+)
+```
+
+On this reproducible family, every continuation step uses fewer operator
+columns than its cold counterpart and agrees on the requested values well
+within the solve tolerance. These counts include the work used to guard and
+certify the supplied subspace; `operator_block_calls` is a different metric
+because one block call may apply the operator to several columns.
+
+Do not assume the same speedup for every sweep. When the target eigenspace
+changes abruptly or the supplied directions have little overlap with it, a
+warm solve can cost about as much as a cold one. The reproducible benchmark
+`inst/benchmarks/bench-warm-start-continuation.R` includes both high-overlap
+continuation and a deliberate overlap-loss jump.
+
+## How can you tell what happened to the start?
+
+`diagnostics()` exposes the start source and the boundary-processing counts.
+
+```{r provenance}
+d <- diagnostics(warm)
+data.frame(
+  start_source = d$start_source,
+  supplied = d$initial_subspace$supplied,
+  accepted = d$initial_subspace$accepted,
+  rejected = d$initial_subspace$rejected,
+  augmented = d$initial_subspace$augmented,
+  rank = d$initial_subspace$rank
+)
+```
+
+The supplied matrix must be numeric, finite, and have `n` rows. Eigencore
+orthonormalizes its columns and detects numerical rank at the solver boundary.
+If too few independent directions survive, the start block is augmented; if
+more directions survive than the method's block width, a seeded rotation lets
+all accepted directions contribute to the fitted block. The `seed` therefore
+makes augmentation and compression reproducible as well as controlling a cold
+random start.
+
+Passing `initial_subspace = NULL` is exactly the cold-start contract. It leaves
+the previous random-start sequence and result unchanged.
+
+## Which solver plans accept a warm start?
+
+The supported surface is deliberately narrow:
+
+| Problem and plan | Warm-start status |
+|---|---|
+| Standard real Hermitian Lanczos, explicit dense double matrix | Native and supported |
+| Standard real Hermitian Lanczos, `dgCMatrix` | Native and supported |
+| Standard real Hermitian Lanczos, matrix-free operator | Supported on the reference-labelled path |
+| Generalized problem using the `B` argument | Rejected |
+| Shift-invert or `nearest()` plan | Rejected |
+| Dense fallback, nonsymmetric, or non-Lanczos plan | Rejected |
+
+Use `method = lanczos()` when the start is required. With `method = auto()`,
+inspect `plan_solver()` first: sparse algebraic-edge targets and
+`nearest()` may select a factorized shift-invert plan. Supplying a start to an
+unsupported plan raises an error instead of silently ignoring it.
+
+## What does the fresh certificate prove?
+
+A starting subspace is only a hint. Each solve certifies the returned
+eigenpairs against the current `A - rho B`; it never reuses the previous
+certificate.
+
+There is one important distinction: a small residual proves that a returned
+pair is an eigenpair, but not that it belongs to the requested end of the
+spectrum. A fully supplied subspace that is already invariant at the requested
+tolerance is therefore discarded in favor of a cold start, and
+`start_source` records the invariant-guard decision. For reliable continuation,
+supply directions that overlap the requested target eigenspace and always
+check `certificate(fit)$passed`.
+
+## Where should you go next?
+
+- `?eig_partial` documents the complete `initial_subspace` contract.
+- `vignette("certificates")` explains residuals, backward error, and
+  orthogonality checks.
+- `diagnostics(fit)` reports start provenance and separates operator block
+  calls, operator columns, and certification columns.
+- Run `Rscript inst/benchmarks/bench-warm-start-continuation.R --strict` for
+  the non-quick continuation evidence on your own machine.
