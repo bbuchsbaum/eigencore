@@ -1,3 +1,17 @@
+# eigencore 1.0.1
+
+* Fix an R CMD check ERROR on R builds without memory profiling (for example
+  the r-devel Linux fedora flavors, which are configured without
+  `--enable-memory-profiling`). The internal benchmark/validation timing
+  helpers passed `memory = TRUE` to `bench::mark()`, which calls
+  `utils::Rprofmem()` and aborts with "memory profiling is not available on
+  this system" on those platforms. Memory measurement is now requested only
+  when `capabilities("profmem")` is `TRUE`; elsewhere timing still runs and
+  `mem_alloc` is reported as `NA`.
+* Benchmark smoke tests now use `testthat::skip_on_cran()` so they are skipped
+  on CRAN as intended (the previous `Sys.getenv("CRAN")` guard never fired on
+  the CRAN check farm).
+
 # eigencore 1.0.0
 
 First CRAN release.

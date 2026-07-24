@@ -981,7 +981,10 @@ time_repeated <- function(repeats, expr) {
       iterations = repeats,
       check = FALSE,
       time_unit = "s",
-      memory = TRUE,
+      # Memory profiling requires R built with --enable-memory-profiling.
+      # bench::mark(memory = TRUE) calls utils::Rprofmem(), which errors
+      # otherwise (e.g. r-devel fedora); fall back to timing-only there.
+      memory = isTRUE(capabilities("profmem")),
       filter_gc = FALSE
     )
     return(list(

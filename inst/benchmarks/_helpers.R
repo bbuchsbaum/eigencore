@@ -568,7 +568,9 @@ run_timed <- function(expr, iterations = 3L, seed = NULL) {
     iterations = iterations,
     check = FALSE,
     time_unit = "s",
-    memory = TRUE,
+    # bench::mark(memory = TRUE) calls utils::Rprofmem(), which errors on R
+    # builds without --enable-memory-profiling (e.g. r-devel fedora).
+    memory = isTRUE(capabilities("profmem")),
     filter_gc = FALSE
   )
   list(
@@ -1883,7 +1885,9 @@ benchmark_tiny_gram_eigensolvers <- function(dimensions = c(32L, 64L, 90L, 128L)
           iterations = iterations,
           check = FALSE,
           time_unit = "s",
-          memory = TRUE,
+          # bench::mark(memory = TRUE) calls utils::Rprofmem(), which errors on
+          # R builds without --enable-memory-profiling (e.g. r-devel fedora).
+          memory = isTRUE(capabilities("profmem")),
           filter_gc = FALSE
         )
         rows[[out_idx]] <- data.frame(
