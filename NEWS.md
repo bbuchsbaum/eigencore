@@ -70,6 +70,15 @@
   `crossprod`/`tcrossprod` are now imported from Matrix so sparse-matrix
   dispatch does not rely on the base generics added in R 4.4.
 
+## Bug fixes
+
+* Benchmark/validation timing helpers no longer error on R builds without
+  memory profiling (e.g. r-devel Linux fedora, configured without
+  `--enable-memory-profiling`). `bench::mark()` memory measurement is now
+  requested only when `capabilities("profmem")` is `TRUE`; timing still runs
+  otherwise and `mem_alloc` is reported as `NA`. Benchmark smoke tests also use
+  `testthat::skip_on_cran()`. Backported to the 1.0.1 CRAN patch release.
+
 # eigencore 1.0.0
 
 First CRAN release.

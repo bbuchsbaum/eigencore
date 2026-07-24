@@ -15,7 +15,7 @@ validation_file <- function(...) {
 }
 
 test_that("benchmark harness produces certificate-inclusive rows", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
 
   helper_path <- benchmark_file("_helpers.R")
@@ -168,7 +168,7 @@ test_that("benchmark harness produces certificate-inclusive rows", {
 })
 
 test_that("Gram SVD cutoff benchmark rows expose 600-side provenance", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
 
   helper_path <- benchmark_file("_helpers.R")
@@ -198,7 +198,7 @@ test_that("Gram SVD cutoff benchmark rows expose 600-side provenance", {
 })
 
 test_that("PRIMME is an optional certified SVD benchmark baseline", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
   skip_if_not_installed("PRIMME")
 
@@ -220,7 +220,7 @@ test_that("PRIMME is an optional certified SVD benchmark baseline", {
 })
 
 test_that("benchmark timing resets seed for each measured iteration", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
 
   helper_path <- benchmark_file("_helpers.R")
@@ -254,7 +254,7 @@ test_that("native validation smoke script is available for sanitizer runs", {
 })
 
 test_that("generalized LOBPCG benchmark exposes native B-orthogonal diagnostics", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
 
   helper_path <- benchmark_file("_helpers.R")
@@ -357,7 +357,7 @@ test_that("generalized eigen replacement-surface script gates planner families",
 })
 
 test_that("benchmark argument parser keeps dense diagnostics opt-in", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
 
   helper_path <- benchmark_file("_helpers.R")
   source(helper_path)
@@ -383,7 +383,7 @@ test_that("benchmark argument parser keeps dense diagnostics opt-in", {
 })
 
 test_that("benchmark case filtering supports stable ids and names", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
 
   helper_path <- benchmark_file("_helpers.R")
   source(helper_path)
@@ -655,7 +655,7 @@ test_that("randomized-rsvd benchmark script is available", {
 })
 
 test_that("randomized-rsvd cases mark release and diagnostic rows", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
 
   source(benchmark_file("_helpers.R"))
   quick <- randomized_rsvd_benchmark_cases(quick = TRUE)
@@ -949,7 +949,7 @@ test_that("known limitations document complex ABI certificate contract", {
 })
 
 test_that("randomized-rsvd gate enforces accuracy and speed versus rsvd", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
 
   helper_path <- benchmark_file("_helpers.R")
   source(helper_path)
@@ -990,7 +990,7 @@ test_that("randomized-rsvd gate enforces accuracy and speed versus rsvd", {
 })
 
 test_that("randomized-rsvd controller contract enforces native dense and sparse provenance", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
 
   source(benchmark_file("_helpers.R"))
 
@@ -1023,7 +1023,7 @@ test_that("randomized-rsvd controller contract enforces native dense and sparse 
 })
 
 test_that("randomized-rsvd benchmark rows expose native projection diagnostics", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
 
   helper_path <- benchmark_file("_helpers.R")
   source(helper_path)
@@ -1079,7 +1079,7 @@ test_that("randomized-rsvd benchmark rows expose native projection diagnostics",
 })
 
 test_that("SVD surface H candidate preset selects production eigencore subject", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
 
   source(benchmark_file("_helpers.R"))
 
@@ -1167,7 +1167,7 @@ test_that("SVD surface H candidate preset selects production eigencore subject",
 })
 
 test_that("SVD benchmark exposes guarded BPRO diagnostic rows", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
 
   helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
@@ -1214,7 +1214,7 @@ test_that("SVD benchmark exposes guarded BPRO diagnostic rows", {
 })
 
 test_that("SVD benchmark harness exposes Golub-Kahan candidate separately", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
 
   helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
@@ -1292,6 +1292,7 @@ test_that("wide Golub-Kahan adaptive default starts with planner budget", {
 })
 
 test_that("opt-in projected Golub-Kahan stop can shorten a wide attempt", {
+  source(benchmark_file("_helpers.R"))
   old_options <- options(eigencore.golub_kahan_projected_stop = TRUE)
   on.exit(options(old_options), add = TRUE)
   A <- Matrix::t(tall_skinny_sparse(600L, 90L, density = 0.03, seed = 702))
@@ -1306,6 +1307,7 @@ test_that("opt-in projected Golub-Kahan stop can shorten a wide attempt", {
 })
 
 test_that("projected Golub-Kahan auto policy skips high-aspect tall sparse checks", {
+  source(benchmark_file("_helpers.R"))
   old_options <- options(eigencore.golub_kahan_projected_stop = TRUE)
   on.exit(options(old_options), add = TRUE)
   A <- tall_skinny_sparse(600L, 90L, density = 0.03, seed = 701)
@@ -1319,7 +1321,7 @@ test_that("projected Golub-Kahan auto policy skips high-aspect tall sparse check
 })
 
 test_that("SVD benchmark can expose projected Golub-Kahan as a separate row", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
 
   helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
@@ -1354,7 +1356,7 @@ test_that("SVD benchmark can expose projected Golub-Kahan as a separate row", {
 })
 
 test_that("SVD benchmark can expose native block Golub-Kahan cycle candidate", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
 
   helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
@@ -1383,7 +1385,7 @@ test_that("SVD benchmark can expose native block Golub-Kahan cycle candidate", {
 })
 
 test_that("SVD benchmark can expose lean native block Golub-Kahan restart candidate", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
 
   helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
@@ -1486,7 +1488,7 @@ test_that("SVD benchmark can expose lean native block Golub-Kahan restart candid
 })
 
 test_that("SVD reference gate can evaluate an explicit H candidate subject", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
 
   helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
   if (!nzchar(helper_path)) {
@@ -1516,7 +1518,7 @@ test_that("SVD reference gate can evaluate an explicit H candidate subject", {
 })
 
 test_that("SVD benchmark rows audit raw and eigencore-certified reference timing", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
 
   helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
   if (!nzchar(helper_path)) {
@@ -1599,7 +1601,7 @@ test_that("SVD external adapters pass the requested tolerance to solver APIs", {
 })
 
 test_that("matched reference SVD results certify at the requested tolerance", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("RSpectra")
   skip_if_not_installed("irlba")
 
@@ -1674,7 +1676,7 @@ test_that("strict SVD crossover evidence requires certified sampled transitions"
 })
 
 test_that("tiny Gram eigensolver benchmark compares native backends", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
 
   helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
@@ -1709,7 +1711,7 @@ test_that("tiny Gram eigensolver benchmark compares native backends", {
 })
 
 test_that("SVD memory diagnostics expose subject/reference allocation gaps", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
 
   helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
   if (!nzchar(helper_path)) {
@@ -1743,7 +1745,7 @@ test_that("SVD memory diagnostics expose subject/reference allocation gaps", {
 })
 
 test_that("G1 candidate baseline covers required pre-promotion cases", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
 
   helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
@@ -1776,7 +1778,7 @@ test_that("G1 candidate baseline covers required pre-promotion cases", {
 })
 
 test_that("benchmark harness records failed eigen references as uncertified rows", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
 
   helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
   if (!nzchar(helper_path)) {
@@ -1839,7 +1841,7 @@ test_that("promoted block Lanczos exposes G1 counters", {
 })
 
 test_that("benchmark rows expose typed preconditioner diagnostics", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
 
   helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
@@ -1898,7 +1900,7 @@ test_that("native shifted-tridiagonal LOBPCG wrapper is native and guarded", {
 })
 
 test_that("native Hermitian benchmark gate reports current pass/fail state", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
   skip_if_not_installed("RSpectra")
 
@@ -1930,7 +1932,7 @@ test_that("native Hermitian benchmark gate reports current pass/fail state", {
 })
 
 test_that("Hermitian benchmark harness can gate the explicit block candidate", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
   skip_if_not_installed("RSpectra")
 
@@ -2116,7 +2118,7 @@ test_that("native Hermitian gate records uncertified references as failed rows",
 })
 
 test_that("performance baseline helpers cover release regimes", {
-  skip_if(identical(Sys.getenv("CRAN"), "true"), "skip benchmark smoke on CRAN")
+  skip_on_cran()
   skip_if_not_installed("bench")
 
   helper_path <- system.file("benchmarks/_helpers.R", package = "eigencore")
