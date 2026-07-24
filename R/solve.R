@@ -400,6 +400,7 @@ plan_dispatches_lanczos <- function(plan) {
     "native scalar thick-restart Hermitian Lanczos",
     "native block Hermitian Lanczos thick-restart candidate",
     "native block Hermitian Lanczos (thick restart, locking)",
+    native_matrix_free_block_lanczos_label(),
     native_generalized_lanczos_label(),
     generalized_lanczos_label(),
     "reference Hermitian Lanczos (target unsupported by native path)",
@@ -420,7 +421,8 @@ plan_dispatches_native_lanczos <- function(plan) {
   plan$method %in% c(
     "native scalar thick-restart Hermitian Lanczos",
     "native block Hermitian Lanczos thick-restart candidate",
-    "native block Hermitian Lanczos (thick restart, locking)"
+    "native block Hermitian Lanczos (thick restart, locking)",
+    native_matrix_free_block_lanczos_label()
   )
 }
 

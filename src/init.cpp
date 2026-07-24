@@ -51,8 +51,9 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_retained_cycle(SEXP, SEXP, SEX
 extern "C" SEXP eigencore_block_golub_kahan_csc_retained_cycle(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_lanczos_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
-extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
-extern "C" SEXP eigencore_block_thick_restart_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_block_thick_restart_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_block_thick_restart_lanczos_r_operator(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_normal_thick_restart_lanczos_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_normal_thick_restart_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_lobpcg_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -164,8 +165,9 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_block_golub_kahan_csc_retained_cycle", (DL_FUNC) &eigencore_block_golub_kahan_csc_retained_cycle, 14},
   {"eigencore_block_lanczos_dense", (DL_FUNC) &eigencore_block_lanczos_dense, 7},
   {"eigencore_block_lanczos_csc", (DL_FUNC) &eigencore_block_lanczos_csc, 10},
-  {"eigencore_block_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_block_thick_restart_lanczos_dense, 9},
-  {"eigencore_block_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_block_thick_restart_lanczos_csc, 12},
+  {"eigencore_block_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_block_thick_restart_lanczos_dense, 10},
+  {"eigencore_block_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_block_thick_restart_lanczos_csc, 13},
+  {"eigencore_block_thick_restart_lanczos_r_operator", (DL_FUNC) &eigencore_block_thick_restart_lanczos_r_operator, 11},
   {"eigencore_normal_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_normal_thick_restart_lanczos_dense, 10},
   {"eigencore_normal_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_normal_thick_restart_lanczos_csc, 13},
   {"eigencore_lobpcg_dense", (DL_FUNC) &eigencore_lobpcg_dense, 10},

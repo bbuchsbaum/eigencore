@@ -26,7 +26,7 @@
       generalized_svd(A, B, tol = 1e-08, ...)
       golub_kahan(max_subspace = NULL, reorthogonalize = TRUE)
       hermitian()
-      lanczos(max_subspace = NULL, max_restarts = NULL, block = 1L, reorthogonalize = TRUE)
+      lanczos(max_subspace = NULL, max_restarts = NULL, block = 1L, check_stride = 0L, reorthogonalize = TRUE)
       largest()
       largest_imaginary()
       largest_magnitude()

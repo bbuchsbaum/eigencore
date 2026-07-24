@@ -8,6 +8,7 @@ lanczos(
   max_subspace = NULL,
   max_restarts = NULL,
   block = 1L,
+  check_stride = 0L,
   reorthogonalize = TRUE
 )
 }
@@ -23,6 +24,13 @@ has converged. Default \code{100L}.}
 \item{block}{Native block size. \code{1L} selects the scalar thick-restart path;
 values greater than one select the native block Krylov prototype where
 supported.}
+
+\item{check_stride}{Native block thick-restart mid-sweep convergence stride.
+\code{0L} (default) evaluates convergence once per full sweep (legacy). A
+positive \code{N} evaluates convergence every \code{N} block iterations within a
+sweep, letting a warm start that converges after a few blocks stop early
+instead of paying a full cold-sized sweep. Mid-sweep checks never consume
+extra operator applications and never change results at \code{check_stride = 0L}.}
 
 \item{reorthogonalize}{Whether to apply full reorthogonalization. The
 native path always reorthogonalizes (DGKS x2) and ignores this flag;

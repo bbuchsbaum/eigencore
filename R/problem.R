@@ -172,6 +172,14 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
         "native block Hermitian Lanczos (thick restart, locking)"
       } else if (native_lanczos_supported) {
         "native scalar thick-restart Hermitian Lanczos"
+      } else if (lanczos_block > 1L &&
+                 native_lanczos_target_supported(problem$target) &&
+                 native_matrix_free_block_lanczos_available(problem$A)) {
+        # Opt-in only: a matrix-free Hermitian operator routes to the native
+        # block thick-restart kernel through its apply callback when the user
+        # explicitly asks for block > 1. The scalar (block == 1) matrix-free
+        # default keeps routing to the reference Hermitian Lanczos path below.
+        native_matrix_free_block_lanczos_label()
       } else {
         "reference Hermitian Lanczos (prototype/oracle fallback)"
       }
@@ -819,10 +827,16 @@ lanczos_plan_controls <- function(problem, k, method, chosen) {
   } else {
     TRUE
   }
+  check_stride <- if (is_lanczos_method) {
+    as.integer(method$check_stride %||% 0L)
+  } else {
+    0L
+  }
   controls <- list(
     block = block,
     max_subspace = max_subspace,
     max_restarts = max_restarts,
+    check_stride = check_stride,
     reorthogonalize = reorthogonalize
   )
   if (inherits(problem$transform, "eigencore_method") &&

@@ -121,7 +121,8 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
 #' @keywords internal
 native_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
                                      maxit = NULL, max_restarts = NULL,
-                                     vectors = TRUE, start = NULL) {
+                                     vectors = TRUE, start = NULL,
+                                     check_stride = 0L) {
   op <- as_operator(op)
   if (op$dim[1L] != op$dim[2L]) {
     stop("Native Hermitian Lanczos requires a square operator.", call. = FALSE)
@@ -162,7 +163,8 @@ native_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
     vectors = vectors,
     full_subspace = FALSE,
     certificate_fallback = FALSE,
-    start = start
+    start = start,
+    check_stride = check_stride
   )
   out$restart$kind <- "thick_restart"
   if (is.data.frame(out$convergence_history)) {
@@ -199,7 +201,8 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
                                            vectors = TRUE,
                                            full_subspace = TRUE,
                                            certificate_fallback = TRUE,
-                                           start = NULL) {
+                                           start = NULL,
+                                           check_stride = 0L) {
   op <- as_operator(op)
   if (op$dim[1L] != op$dim[2L]) {
     stop("Native block Hermitian Lanczos requires a square operator.", call. = FALSE)
@@ -212,6 +215,10 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
   block <- as.integer(block)
   if (length(block) != 1L || is.na(block) || block < 1L) {
     stop("native block Hermitian Lanczos requires block >= 1.", call. = FALSE)
+  }
+  check_stride <- as.integer(check_stride)
+  if (length(check_stride) != 1L || is.na(check_stride) || check_stride < 0L) {
+    stop("native block Hermitian Lanczos requires check_stride >= 0.", call. = FALSE)
   }
   m_max <- if (is.null(maxit)) {
     min(n, default_block_lanczos_max_subspace(k, block))
@@ -269,6 +276,7 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
       as.integer(max_restarts),
       as.numeric(norm_A),
       start,
+      as.integer(check_stride),
       PACKAGE = "eigencore"
     )
   } else if (is.matrix(source) && is.double(source)) {
@@ -283,10 +291,31 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
       as.integer(max_restarts),
       as.numeric(norm_A),
       start,
+      as.integer(check_stride),
+      PACKAGE = "eigencore"
+    )
+  } else if (native_matrix_free_block_lanczos_available(op)) {
+    # Matrix-free Hermitian operator: drive the same native block thick-restart
+    # kernel through the R apply closure. The kernel only applies A (Hermitian),
+    # so a single apply closure suffices; residual certification below runs the
+    # standard matrix-free path unchanged.
+    .Call(
+      "eigencore_block_thick_restart_lanczos_r_operator",
+      as.integer(op$dim),
+      op$apply,
+      as.integer(k),
+      as.integer(m_max),
+      as.integer(block),
+      as.integer(target_kind),
+      as.numeric(tol),
+      as.integer(max_restarts),
+      as.numeric(norm_A),
+      start,
+      as.integer(check_stride),
       PACKAGE = "eigencore"
     )
   } else {
-    stop("Native block Hermitian Lanczos currently supports dense double matrices and dgCMatrix operators only.", call. = FALSE)
+    stop("Native block Hermitian Lanczos currently supports dense double matrices, dgCMatrix, and real matrix-free Hermitian operators only.", call. = FALSE)
   }
 
   values <- iter$values
@@ -338,6 +367,7 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
     max_subspace = m_max,
     final_active_subspace = iter$m_active_final %||% NA_integer_,
     block = block,
+    check_stride = check_stride,
     ortho_passes = ortho_passes,
     locking_events = locking_events,
     operator_block_calls = iter$operator_block_calls %||% iter$matvecs,
@@ -519,6 +549,27 @@ lanczos_target_kind <- function(target) {
 native_lanczos_target_supported <- function(target) {
   kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
   kind %in% c("largest", "smallest", "largest_magnitude", "smallest_magnitude")
+}
+
+# Whether a matrix-free operator can drive the native block thick-restart
+# Hermitian Lanczos kernel through its R apply closure: a real, square,
+# Hermitian-structured operator with no dense or dgCMatrix source (a genuinely
+# matrix-free callback). Opt-in entry, selected only when lanczos() sets
+# block > 1L.
+#' @noRd
+native_matrix_free_block_lanczos_available <- function(op) {
+  op <- as_operator(op)
+  identical(op$structure$kind, "hermitian") &&
+    is.null(source_or_null(op)) &&
+    is.null(op$metadata$matrix) &&
+    is.function(op$apply) &&
+    identical(op$dtype, "double") &&
+    op$dim[[1L]] == op$dim[[2L]]
+}
+
+#' @keywords internal
+native_matrix_free_block_lanczos_label <- function() {
+  "native block Hermitian Lanczos (matrix-free callback, thick restart, locking)"
 }
 
 #' @keywords internal

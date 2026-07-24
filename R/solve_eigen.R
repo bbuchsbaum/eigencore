@@ -113,6 +113,9 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
     if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$max_restarts else NULL
   method_block <- controls$block %||%
     if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$block else 1L
+  method_check_stride <- controls$check_stride %||%
+    if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$check_stride %||% 0L else 0L
+  method_check_stride <- as.integer(method_check_stride %||% 0L)
 
   # Warm start: fit a user-supplied initial_subspace to the method's start
   # block at the solver boundary. The plan-support guard in
@@ -202,7 +205,8 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
         # full-subspace dsyev shortcut so the supplied block is consumed
         # rather than silently ignored.
         full_subspace = !warm,
-        start = start_block
+        start = start_block,
+        check_stride = method_check_stride
       )
     } else {
       native_lanczos_hermitian(
@@ -213,7 +217,8 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
         maxit = maxit %||% method_maxit,
         max_restarts = method_max_restarts,
         vectors = vectors,
-        start = start_block
+        start = start_block,
+        check_stride = method_check_stride
       )
     }
   } else {

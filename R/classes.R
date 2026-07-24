@@ -131,16 +131,26 @@ auto <- function() {
 #' @param block Native block size. `1L` selects the scalar thick-restart path;
 #'   values greater than one select the native block Krylov prototype where
 #'   supported.
+#' @param check_stride Native block thick-restart mid-sweep convergence stride.
+#'   `0L` (default) evaluates convergence once per full sweep (legacy). A
+#'   positive `N` evaluates convergence every `N` block iterations within a
+#'   sweep, letting a warm start that converges after a few blocks stop early
+#'   instead of paying a full cold-sized sweep. Mid-sweep checks never consume
+#'   extra operator applications and never change results at `check_stride = 0L`.
 #' @param reorthogonalize Whether to apply full reorthogonalization. The
 #'   native path always reorthogonalizes (DGKS x2) and ignores this flag;
 #'   it is preserved for the R reference solver's public API.
 #' @return An `eigencore_method` descriptor selecting Lanczos iteration.
 #' @export
 lanczos <- function(max_subspace = NULL, max_restarts = NULL, block = 1L,
-                    reorthogonalize = TRUE) {
+                    check_stride = 0L, reorthogonalize = TRUE) {
   block <- as.integer(block)
   if (length(block) != 1L || is.na(block) || block < 1L) {
     stop("block must be a single positive integer.", call. = FALSE)
+  }
+  check_stride <- as.integer(check_stride)
+  if (length(check_stride) != 1L || is.na(check_stride) || check_stride < 0L) {
+    stop("check_stride must be a single non-negative integer.", call. = FALSE)
   }
   if (!is.null(max_restarts)) {
     max_restarts <- as.integer(max_restarts)
@@ -153,6 +163,7 @@ lanczos <- function(max_subspace = NULL, max_restarts = NULL, block = 1L,
     max_subspace = max_subspace,
     max_restarts = max_restarts,
     block = block,
+    check_stride = check_stride,
     reorthogonalize = reorthogonalize
   )
 }

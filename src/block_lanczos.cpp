@@ -1241,6 +1241,7 @@ static int block_lanczos_expand_basis_to_budget(
     EigencoreApplyFn apply,
     int n,
     int m_max,
+    int m_stop,
     int block_size,
     const double* V_locked,
     int n_locked,
@@ -1256,7 +1257,11 @@ static int block_lanczos_expand_basis_to_budget(
     int* matvecs_out,
     int* operator_columns_out,
     int* ortho_passes_out) {
-  while (*m_active < m_max && *last_block_cols > 0) {
+  // m_stop bounds this expansion pass; buffers (V_active, AV_active, T_proj)
+  // remain sized by m_max. With mid-sweep checks (m_stop < m_max) the driver
+  // expands one chunk, evaluates convergence, then re-enters to continue the
+  // same sweep. Legacy behaviour is m_stop == m_max (a single full sweep).
+  while (*m_active < m_stop && *last_block_cols > 0) {
     auto timer = native_timer_now();
     form_structured_projected_block_residual(
       buf->V_active, buf->AV_active, buf->T_proj, m_max, n,
@@ -1697,6 +1702,246 @@ static int block_lanczos_finalize_return(
   return 0;
 }
 
+// Project a vector orthogonal to a basis D (n x d_cols, orthonormal columns)
+// with `passes` Gram-Schmidt sweeps. Used to build and maintain the deflated
+// complement in block_lanczos_window_complement_clean.
+static void block_lanczos_project_out(double* v, int n, const double* D,
+                                      int d_cols, int passes) {
+  for (int pass = 0; pass < passes; ++pass) {
+    for (int c = 0; c < d_cols; ++c) {
+      const double* d = D + static_cast<int64_t>(c) * n;
+      long double dot = 0.0L;
+      for (int r = 0; r < n; ++r) {
+        dot += static_cast<long double>(d[r]) * v[r];
+      }
+      const double dotd = static_cast<double>(dot);
+      for (int r = 0; r < n; ++r) {
+        v[r] -= dotd * d[r];
+      }
+    }
+  }
+}
+
+// Does a complement extreme (d_min, d_max) beat the window edge for this target?
+static bool block_lanczos_complement_intruder(int target_kind, double d_min,
+                                              double d_max, double window_edge,
+                                              double norm_a, double tol) {
+  const double scale = std::fmax(std::fmax(std::fabs(window_edge), std::fabs(d_max)),
+                                 std::fmax(std::fabs(d_min), std::fmax(norm_a, 1.0)));
+  const double margin = std::fmax(1e-6, 10.0 * tol) * scale;
+  if (target_kind == 1) {                     // largest algebraic
+    return d_max > window_edge + margin;
+  } else if (target_kind == 2) {              // smallest algebraic
+    return d_min < window_edge - margin;
+  }
+  const double comp_mag = std::fmax(std::fabs(d_min), std::fabs(d_max));
+  return comp_mag > std::fabs(window_edge) + margin;  // largest magnitude
+}
+
+// Deflated-complement confirmation for a candidate mid-sweep window. The window
+// (n_locked locked columns in V_out plus the `wanted` window Ritz vectors at the
+// front of window_vecs) is projected out of A, and short deterministic-seed
+// Lanczos segments on the deflated operator estimate the operator's extreme
+// eigenvalues on that complement. If an extreme lies past the window edge -- a
+// more-preferred value than the least-preferred window member for the active
+// target -- the window has truncated a target direction it does not hold. That
+// happens for an unresolved near-degenerate copy: its eigenvector is orthogonal
+// to the (resolved) window, so it survives deflation and reappears here even
+// though the un-deflated workspace already (weakly) contains it and cannot
+// separate it as its own Ritz value.
+//
+// A single Lanczos run is not enough: if the seed coordinate is (near) an
+// isolated eigenvector, the segment breaks down at step one, exploring only that
+// one invariant coordinate and learning nothing about the rest of the complement
+// -- treating that as a clean probe is exactly the failure this guards against.
+// So segments that break down are not evidence: the explored directions are
+// deflated out and the probe re-seeds from the next deterministic coordinate,
+// until the honest step budget is spent or the complement is exhausted. An
+// intruder in ANY segment defers. The verdict is "clean" only when either the
+// complement was fully exhausted, or at least one segment ran a minimum mixed
+// length (min(4, remaining complement dimension) steps) without breaking down --
+// evidence that a generically mixing Krylov vector amplified dominant intruders
+// and found none. If the whole budget is consumed by short breakdown segments
+// and the complement is not exhausted, the probe is inconclusive and defers:
+// for a genuinely diagonal-like operator with unexplored coordinates no cheap
+// probe can certify the window, and deferring to the full-subspace sweep
+// boundary is correct. Returns 1 (clean), 0 (defer), or -1 on operator failure.
+// Deflated applies count in matvecs/operator_columns honestly. Targets a short
+// Lanczos cannot resolve to the relevant extreme (smallest_magnitude, unknown)
+// conservatively defer.
+static int block_lanczos_window_complement_clean(
+    void* impl,
+    EigencoreApplyFn apply,
+    int n,
+    int target_kind,
+    const double* V_out,
+    int n_locked,
+    const double* window_vecs,
+    int wanted,
+    double window_edge,
+    double norm_a,
+    double tol,
+    int steps,
+    int probe_seed,
+    EigencoreWorkspace* workspace,
+    int* matvecs_out,
+    int* operator_columns_out,
+    int* status_out) {
+  *status_out = 0;
+  if (target_kind != 1 && target_kind != 2 && target_kind != 3) {
+    return 0;  // smallest_magnitude / unknown: cannot certify cheaply -> defer.
+  }
+  const int d0 = n_locked + wanted;
+  const int comp_dim = n - d0;
+  if (comp_dim <= 0) {
+    return 1;  // no complement: nothing can hide.
+  }
+  int budget = steps;
+  if (budget > comp_dim) budget = comp_dim;
+  if (budget < 1) return 1;
+
+  // Projection basis P = [locked | window | explored segment vectors]. Segment
+  // vectors are appended as they are generated, so later seeds and the Lanczos
+  // reorthogonalization see the whole explored subspace.
+  const int cap = d0 + budget;
+  std::vector<double> P(static_cast<size_t>(n) * static_cast<size_t>(cap), 0.0);
+  for (int c = 0; c < n_locked; ++c) {
+    std::memcpy(P.data() + static_cast<int64_t>(c) * n,
+                V_out + static_cast<int64_t>(c) * n,
+                sizeof(double) * static_cast<size_t>(n));
+  }
+  for (int c = 0; c < wanted; ++c) {
+    std::memcpy(P.data() + static_cast<int64_t>(n_locked + c) * n,
+                window_vecs + static_cast<int64_t>(c) * n,
+                sizeof(double) * static_cast<size_t>(n));
+  }
+  int p_cols = d0;
+
+  std::vector<double> q(static_cast<size_t>(n), 0.0);
+  std::vector<double> Aq(static_cast<size_t>(n), 0.0);
+  std::vector<double> alpha(static_cast<size_t>(budget), 0.0);
+  std::vector<double> beta(static_cast<size_t>(budget), 0.0);
+
+  double d_min = R_PosInf;
+  double d_max = R_NegInf;
+  bool had_mixed = false;
+  bool exhausted = false;
+  int total_steps = 0;
+  int attempt = 0;
+
+  while (total_steps < budget) {
+    // Seed the next segment: the next deterministic unit vector, projected into
+    // the complement of everything explored so far.
+    double seed_norm = 0.0;
+    bool got_seed = false;
+    for (; attempt < n + budget; ++attempt) {
+      std::memset(q.data(), 0, sizeof(double) * static_cast<size_t>(n));
+      const int idx = ((probe_seed + 1) * 17 + attempt * 31) % n;
+      q[idx < 0 ? -idx : idx] = 1.0;
+      block_lanczos_project_out(q.data(), n, P.data(), p_cols, 2);
+      long double s = 0.0L;
+      for (int r = 0; r < n; ++r) s += static_cast<long double>(q[r]) * q[r];
+      seed_norm = std::sqrt(static_cast<double>(s));
+      if (seed_norm > 1e-8) {
+        ++attempt;
+        got_seed = true;
+        break;
+      }
+    }
+    if (!got_seed) {
+      exhausted = true;  // no unit coordinate survives -> complement explored.
+      break;
+    }
+    {
+      const double inv = 1.0 / seed_norm;
+      for (int r = 0; r < n; ++r) q[r] *= inv;
+    }
+
+    const int remaining = comp_dim - (p_cols - d0);
+    int seg_max = budget - total_steps;
+    if (seg_max > remaining) seg_max = remaining;
+    const int min_mixed = remaining < 4 ? remaining : 4;
+
+    int seg_len = 0;
+    bool seg_broke = false;
+    for (int j = 0; j < seg_max; ++j) {
+      std::memcpy(P.data() + static_cast<int64_t>(p_cols + j) * n, q.data(),
+                  sizeof(double) * static_cast<size_t>(n));
+      const int rc = apply(impl, EIGENCORE_TRANSPOSE_NONE, 1, q.data(), n,
+                           1.0, 0.0, Aq.data(), n, workspace);
+      if (matvecs_out != nullptr) ++(*matvecs_out);
+      if (operator_columns_out != nullptr) ++(*operator_columns_out);
+      ++total_steps;
+      if (rc != 0) {
+        *status_out = rc;
+        return -1;
+      }
+      if (j > 0) {
+        const double b = beta[j - 1];
+        const double* qprev = P.data() + static_cast<int64_t>(p_cols + j - 1) * n;
+        for (int r = 0; r < n; ++r) Aq[r] -= b * qprev[r];
+      }
+      long double adot = 0.0L;
+      for (int r = 0; r < n; ++r) adot += static_cast<long double>(q[r]) * Aq[r];
+      alpha[j] = static_cast<double>(adot);
+      for (int r = 0; r < n; ++r) Aq[r] -= alpha[j] * q[r];
+      // Full reorthogonalization against everything explored (deflation basis
+      // plus all segment vectors, including this segment so far).
+      block_lanczos_project_out(Aq.data(), n, P.data(), p_cols + j + 1, 2);
+      long double bs = 0.0L;
+      for (int r = 0; r < n; ++r) bs += static_cast<long double>(Aq[r]) * Aq[r];
+      const double bn = std::sqrt(static_cast<double>(bs));
+      seg_len = j + 1;
+      beta[j] = bn;
+      if (bn <= 1e-12 * std::fmax(1.0, norm_a)) {
+        seg_broke = true;
+        break;
+      }
+      if (j + 1 < seg_max) {
+        const double inv = 1.0 / bn;
+        for (int r = 0; r < n; ++r) q[r] = Aq[r] * inv;
+      }
+    }
+    p_cols += seg_len;
+
+    // Extremes of this segment's tridiagonal feed the running d_min / d_max.
+    std::vector<double> diag(alpha.begin(), alpha.begin() + seg_len);
+    double seg_dmin = diag[0];
+    double seg_dmax = diag[0];
+    if (seg_len > 1) {
+      std::vector<double> off(static_cast<size_t>(seg_len - 1), 0.0);
+      for (int j = 0; j < seg_len - 1; ++j) off[static_cast<size_t>(j)] = beta[j];
+      int info = 0;
+      F77_CALL(dsterf)(&seg_len, diag.data(), off.data(), &info);
+      if (info != 0) {
+        return 0;  // eigensolve failed: be conservative and defer.
+      }
+      seg_dmin = diag[0];
+      seg_dmax = diag[static_cast<size_t>(seg_len - 1)];
+    }
+    if (seg_dmin < d_min) d_min = seg_dmin;
+    if (seg_dmax > d_max) d_max = seg_dmax;
+
+    if (block_lanczos_complement_intruder(target_kind, d_min, d_max, window_edge,
+                                          norm_a, tol)) {
+      return 0;  // an intruder in any segment defers.
+    }
+    // A segment that runs the mixed minimum without breaking down had a
+    // generically mixing seed: dominant intruders would have amplified.
+    if (!seg_broke && seg_len >= min_mixed) {
+      had_mixed = true;
+    }
+    if (p_cols >= n) {
+      exhausted = true;
+      break;
+    }
+  }
+
+  // No intruder found. Clean only with positive evidence: the complement was
+  // exhausted, or a mixed segment vouched for it. Otherwise inconclusive: defer.
+  return (exhausted || had_mixed) ? 1 : 0;
+}
+
 static int native_block_thick_restart_lanczos_run(
     void* impl,
     EigencoreApplyFn apply,
@@ -1709,6 +1954,7 @@ static int native_block_thick_restart_lanczos_run(
     int max_restarts,
     double norm_a,
     int apply_ritz_vectors,
+    int check_stride,
     const double* start_block,
     double* V_out,
     double* lambda_out,
@@ -1812,12 +2058,43 @@ static int native_block_thick_restart_lanczos_run(
   int restart_idx = 0;
   bool have_last_rr = false;
 
-  for (; restart_idx <= max_restarts; ++restart_idx) {
+  // Probe-confirmed mid-sweep termination state. A mid-sweep window that looks
+  // complete is not locked on sight: it must first pass a deflated-complement
+  // check (nothing more preferred than its edge hides in its complement). The
+  // check is cached by value set -- last_defer_window records the most recent
+  // window that failed, so while the window is stuck the check is not repeated;
+  // it reruns only when the window changes. None of this is reachable when
+  // check_stride == 0 (every evaluation is a sweep boundary), preserving
+  // bit-identity with the legacy path.
+  std::vector<double> last_defer_window(static_cast<size_t>(k_target), 0.0);
+  bool have_last_defer_window = false;
+  int probe_count = 0;
+  // Deflated Lanczos steps for the complement check. Enough to resolve a
+  // well-separated complement extreme (a severe miss shows within a handful of
+  // steps; a near-tied miss surfaces slowly but then the wrong window differs
+  // from the right one only within the tie), yet small enough that a confirmed
+  // window stays cheap.
+  const int complement_steps = 8;
+
+  while (true) {
+    // Expand the active basis by one chunk. With mid-sweep checks enabled the
+    // chunk is check_stride blocks wide; otherwise the whole sweep is a single
+    // chunk up to the m_max budget (legacy behaviour). The chunk target is
+    // computed in 64-bit and clamped to m_max so a large check_stride cannot
+    // overflow int or push m_stop past the budget.
+    int m_stop = m_max;
+    if (check_stride > 0) {
+      const int64_t chunk = static_cast<int64_t>(check_stride) *
+                            static_cast<int64_t>(block_size);
+      const int64_t target = static_cast<int64_t>(m_active) + chunk;
+      m_stop = (target < static_cast<int64_t>(m_max)) ?
+        static_cast<int>(target) : m_max;
+    }
     rc = block_lanczos_expand_basis_to_budget(
-      impl, apply, n, m_max, block_size, V_out, n_locked, &buf, &workspace,
-      stages, &m_active, &previous_block_start, &previous_block_cols,
-      &last_block_start, &last_block_cols, iterations_out, matvecs_out,
-      operator_columns_out, ortho_passes_out
+      impl, apply, n, m_max, m_stop, block_size, V_out, n_locked, &buf,
+      &workspace, stages, &m_active, &previous_block_start,
+      &previous_block_cols, &last_block_start, &last_block_cols, iterations_out,
+      matvecs_out, operator_columns_out, ortho_passes_out
     );
     if (rc != 0) {
       trl_buffers_free(&buf);
@@ -1829,6 +2106,13 @@ static int native_block_thick_restart_lanczos_run(
       *m_active_final_out = m_active;
       break;
     }
+
+    // The sweep is complete once the budget is reached, or the expansion could
+    // not fill this chunk (breakdown / exhausted continuation). A checkpoint
+    // that stopped strictly at the chunk boundary (m_stop < m_max) is a
+    // mid-sweep evaluation. With check_stride == 0 the sweep is always complete
+    // here, so every downstream decision matches the legacy path bit-for-bit.
+    const bool sweep_complete = (m_active >= m_max) || (m_active < m_stop);
 
     const int remaining_before_lock = k_target - n_locked;
     int pad = block_size > 4 ? block_size : 4;
@@ -1902,9 +2186,16 @@ static int native_block_thick_restart_lanczos_run(
       stages->ritz_vector_form += elapsed;
     }
 
+    // Mid-sweep checkpoints must not spend operator applications: recombine the
+    // cached AV_active block (dgemm) for the residual regardless of the passed
+    // apply_ritz_vectors policy. Sweep-boundary evaluations keep that policy
+    // exactly as before. block_lanczos_finalize_return always re-certifies the
+    // returned block with fresh operator applications, so the cached residual
+    // here only steers mid-sweep locking, never the reported certificate.
+    const bool eval_apply_ritz = (apply_ritz_vectors != 0) && sweep_complete;
     timer = native_timer_now();
     rc = 0;
-    if (apply_ritz_vectors) {
+    if (eval_apply_ritz) {
       rc = apply(impl, EIGENCORE_TRANSPOSE_NONE, selected_count,
                  buf.B_v, n, 1.0, 0.0, buf.B_av, n, &workspace);
       if (rc == 0 && matvecs_out != nullptr) {
@@ -1986,28 +2277,130 @@ static int native_block_thick_restart_lanczos_run(
 
     timer = native_timer_now();
     int lock_now = 0;
-    for (int p = 0; p < wanted && p < selected_count; ++p) {
-      const int idx = buf.selected[p];
-      const double scale_i = standard_eigen_lock_scale(
-        norm_a, buf.theta[idx], buf.B_v + static_cast<int64_t>(p) * n, n
-      );
-      if (buf.ritz_res[p] <= tol * scale_i) {
-        if (!vector_is_independent_from_locked(
-              V_out, n_locked, buf.B_v + static_cast<int64_t>(p) * n, n)) {
+    if (sweep_complete) {
+      // Sweep-boundary evaluation: legacy incremental locking. The thick restart
+      // deflates the locked directions out of the active basis before the next
+      // Rayleigh-Ritz, so re-selection of a locked pair (the independence-guard
+      // branch) cannot corrupt the target set. This is exactly the behaviour
+      // predating mid-sweep checks, and with check_stride == 0 every evaluation
+      // is a sweep boundary, so that path stays bit-for-bit identical. A sweep
+      // boundary (full m_max subspace) supersedes any cached mid-sweep defer.
+      have_last_defer_window = false;
+      for (int p = 0; p < wanted && p < selected_count; ++p) {
+        const int idx = buf.selected[p];
+        const double scale_i = standard_eigen_lock_scale(
+          norm_a, buf.theta[idx], buf.B_v + static_cast<int64_t>(p) * n, n
+        );
+        if (buf.ritz_res[p] <= tol * scale_i) {
+          if (!vector_is_independent_from_locked(
+                V_out, n_locked, buf.B_v + static_cast<int64_t>(p) * n, n)) {
+            buf.is_locked[p] = 1;
+            continue;
+          }
+          std::memcpy(V_out + static_cast<int64_t>(n_locked) * n,
+                      buf.B_v + static_cast<int64_t>(p) * n,
+                      sizeof(double) * static_cast<size_t>(n));
+          lambda_out[n_locked] = buf.theta[idx];
+          residuals_out[n_locked] = buf.ritz_res[p];
+          converged_out[n_locked] = 1;
           buf.is_locked[p] = 1;
-          continue;
+          ++n_locked;
+          ++lock_now;
+        } else {
+          break;
         }
-        std::memcpy(V_out + static_cast<int64_t>(n_locked) * n,
-                    buf.B_v + static_cast<int64_t>(p) * n,
-                    sizeof(double) * static_cast<size_t>(n));
-        lambda_out[n_locked] = buf.theta[idx];
-        residuals_out[n_locked] = buf.ritz_res[p];
-        converged_out[n_locked] = 1;
-        buf.is_locked[p] = 1;
-        ++n_locked;
-        ++lock_now;
-      } else {
-        break;
+      }
+    } else {
+      // Mid-sweep evaluation: complement-confirmed all-or-nothing termination.
+      //
+      // First gate -- window readiness. The whole remaining wanted window from
+      // THIS single Rayleigh-Ritz must be converged and independent of the
+      // locked set (all-or-nothing; the active basis is not deflated mid-sweep,
+      // so partial incremental locking could substitute a non-target pair), and
+      // cluster-clear (no numerically unresolved adjacent Ritz pair at or past
+      // the window edge -- a cheap first cut that defers a window holding two
+      // resolved copies of a tight cluster to the full-subspace sweep boundary).
+      bool window_ready = (selected_count >= wanted && wanted > 0);
+      for (int p = 0; window_ready && p < wanted; ++p) {
+        const int idx = buf.selected[p];
+        const double scale_i = standard_eigen_lock_scale(
+          norm_a, buf.theta[idx], buf.B_v + static_cast<int64_t>(p) * n, n
+        );
+        if (buf.ritz_res[p] > tol * scale_i ||
+            !vector_is_independent_from_locked(
+                V_out, n_locked, buf.B_v + static_cast<int64_t>(p) * n, n)) {
+          window_ready = false;
+        }
+      }
+      const double set_tol = fmax(1e-6, 10.0 * tol);
+      if (window_ready) {
+        const int probe = (wanted + 1 <= selected_count) ? wanted + 1 : selected_count;
+        for (int p = 0; p + 1 < probe; ++p) {
+          const double hi = buf.theta[buf.selected[p]];
+          const double lo = buf.theta[buf.selected[p + 1]];
+          const double scale = fmax(fmax(fabs(hi), fabs(lo)), fmax(norm_a, 1.0));
+          if (fabs(hi - lo) <= set_tol * scale) {
+            window_ready = false;
+            break;
+          }
+        }
+      }
+
+      // Second gate -- deflated-complement confirmation. A ready window is NOT
+      // locked on sight: a small subspace can hold a target direction only
+      // weakly, unresolved as its own Ritz value, so the window silently omits
+      // it with no locally visible signal (the window is a genuine set of
+      // converged, independent, cluster-clear eigenpairs). Deflate the window
+      // and probe its complement; if nothing more preferred than the window edge
+      // hides there, lock. Otherwise defer -- caching the window so the check is
+      // not repeated while it is stuck -- and keep iterating; natural expansion
+      // eventually resolves the omitted direction (which then either enters the
+      // window, tripping the cluster-clearance cut, or is caught again here) and
+      // the full-subspace sweep boundary reproduces the legacy set.
+      if (window_ready) {
+        bool same_as_last = have_last_defer_window;
+        for (int p = 0; same_as_last && p < wanted; ++p) {
+          const double cur = buf.theta[buf.selected[p]];
+          const double ref = last_defer_window[static_cast<size_t>(p)];
+          const double scale = fmax(fmax(fabs(cur), fabs(ref)), fmax(norm_a, 1.0));
+          if (fabs(cur - ref) > set_tol * scale) {
+            same_as_last = false;
+          }
+        }
+        if (!same_as_last) {
+          const double window_edge = buf.theta[buf.selected[wanted - 1]];
+          stages->locking += native_timer_elapsed(timer);
+          int status = 0;
+          const int clean = block_lanczos_window_complement_clean(
+            impl, apply, n, target_kind, V_out, n_locked, buf.B_v, wanted,
+            window_edge, norm_a, tol, complement_steps, probe_count, &workspace,
+            matvecs_out, operator_columns_out, &status);
+          ++probe_count;
+          timer = native_timer_now();
+          if (clean < 0) {
+            trl_buffers_free(&buf);
+            return status != 0 ? status : -1;
+          }
+          if (clean == 1) {
+            for (int p = 0; p < wanted; ++p) {
+              const int idx = buf.selected[p];
+              std::memcpy(V_out + static_cast<int64_t>(n_locked) * n,
+                          buf.B_v + static_cast<int64_t>(p) * n,
+                          sizeof(double) * static_cast<size_t>(n));
+              lambda_out[n_locked] = buf.theta[idx];
+              residuals_out[n_locked] = buf.ritz_res[p];
+              converged_out[n_locked] = 1;
+              buf.is_locked[p] = 1;
+              ++n_locked;
+              ++lock_now;
+            }
+          } else {
+            for (int p = 0; p < wanted; ++p) {
+              last_defer_window[static_cast<size_t>(p)] = buf.theta[buf.selected[p]];
+            }
+            have_last_defer_window = true;
+          }
+        }
       }
     }
     if (lock_now > 0) {
@@ -2023,27 +2416,42 @@ static int native_block_thick_restart_lanczos_run(
       V_out, lambda_out, residuals_out, &best
     );
 
-    if (n_locked >= k_target || restart_idx == max_restarts) {
+    if (n_locked >= k_target) {
+      *restarts_out = restart_idx;
+      *m_active_final_out = m_active;
+      break;
+    }
+    // Evaluate the final sweep before stopping, exactly as the legacy loop did
+    // at restart_idx == max_restarts. A mid-sweep checkpoint never terminates
+    // here: it must be able to keep expanding within the current sweep.
+    if (sweep_complete && restart_idx == max_restarts) {
       *restarts_out = restart_idx;
       *m_active_final_out = m_active;
       break;
     }
 
-    rc = block_lanczos_restart_with_continuation_tail(
-      impl, apply, n, k_target, m_max, block_size, restart_idx, selected_count,
-      n_locked, &buf, &workspace, stages, &m_active, &previous_block_start,
-      &previous_block_cols, &last_block_start, &last_block_cols, V_out,
-      matvecs_out, operator_columns_out, restarts_out, ortho_passes_out
-    );
-    if (rc == 1) {
-      *restarts_out = restart_idx;
-      *m_active_final_out = m_active;
-      break;
+    if (sweep_complete) {
+      // A thick restart (and only a thick restart) advances restart_idx, so the
+      // restart_idx / max_restarts accounting matches the legacy semantics.
+      rc = block_lanczos_restart_with_continuation_tail(
+        impl, apply, n, k_target, m_max, block_size, restart_idx, selected_count,
+        n_locked, &buf, &workspace, stages, &m_active, &previous_block_start,
+        &previous_block_cols, &last_block_start, &last_block_cols, V_out,
+        matvecs_out, operator_columns_out, restarts_out, ortho_passes_out
+      );
+      if (rc == 1) {
+        *restarts_out = restart_idx;
+        *m_active_final_out = m_active;
+        break;
+      }
+      if (rc != 0) {
+        trl_buffers_free(&buf);
+        return rc;
+      }
+      ++restart_idx;
     }
-    if (rc != 0) {
-      trl_buffers_free(&buf);
-      return rc;
-    }
+    // Otherwise this was a mid-sweep checkpoint: loop to expand the next chunk
+    // of the current sweep without restarting.
   }
 
   rc = block_lanczos_finalize_return(
@@ -2324,10 +2732,79 @@ extern "C" SEXP eigencore_block_lanczos_csc(SEXP i_, SEXP p_, SEXP x_,
                                    nconv, iterations, matvecs, m_active);
 }
 
+// Shared driver for the three concrete block thick-restart Lanczos bindings
+// (dense, CSC, matrix-free R operator). The per-storage wrappers validate and
+// build their operator impl, then hand off here so allocation, restart-history
+// sizing, the run call, and result packing stay identical across bindings.
+// apply_ritz_vectors selects the sweep-boundary residual policy (0: recombine
+// cached AV_active, 1: re-apply the operator). check_stride enables mid-sweep
+// convergence checks (0: legacy single-sweep expansion).
+static SEXP block_thick_restart_lanczos_impl(
+    void* impl, EigencoreApplyFn apply, int n, int apply_ritz_vectors,
+    int k, int m_max, int block_size, int target_kind, double tol,
+    int max_restarts, double norm_a, const double* start, int check_stride) {
+  std::vector<double> V(static_cast<size_t>(n) * static_cast<size_t>(k), 0.0);
+  std::vector<double> lambda(static_cast<size_t>(k), 0.0);
+  std::vector<double> residuals(static_cast<size_t>(k), R_PosInf);
+  std::vector<int> converged(static_cast<size_t>(k), 0);
+  int n_locked = 0, iterations = 0, matvecs = 0, operator_columns = 0;
+  int certification_operator_columns = 0, restarts = 0, m_active = 0;
+  int locking_events = 0, ortho_passes = 0;
+  int64_t operator_allocations = 0, operator_bytes_allocated = 0;
+  NativeBlockStageSeconds stage_seconds;
+  // Each mid-sweep checkpoint records a history row, so budget one row per chunk
+  // per restart cycle (capped) when check_stride > 0; legacy sizing otherwise.
+  int history_capacity = max_restarts + 1;
+  if (check_stride > 0) {
+    const int chunk = (check_stride * block_size > 1) ? check_stride * block_size : 1;
+    const long evals_per_sweep = (static_cast<long>(m_max) + chunk - 1) / chunk;
+    long cap = static_cast<long>(max_restarts + 1) *
+               (evals_per_sweep > 1 ? evals_per_sweep : 1);
+    if (cap > 8192) cap = 8192;
+    if (cap < 1) cap = 1;
+    history_capacity = static_cast<int>(cap);
+  }
+  std::vector<int> history_restart(static_cast<size_t>(history_capacity), 0);
+  std::vector<int> history_m_active(static_cast<size_t>(history_capacity), 0);
+  std::vector<int> history_selected_count(static_cast<size_t>(history_capacity), 0);
+  std::vector<int> history_locked_before(static_cast<size_t>(history_capacity), 0);
+  std::vector<int> history_locked_after(static_cast<size_t>(history_capacity), 0);
+  std::vector<int> history_nconv_wanted(static_cast<size_t>(history_capacity), 0);
+  std::vector<double> history_max_residual(static_cast<size_t>(history_capacity), R_PosInf);
+  std::vector<double> history_max_backward_error(static_cast<size_t>(history_capacity), R_PosInf);
+  NativeBlockRestartHistory history;
+  history.capacity = history_capacity;
+  history.restart = history_restart.data();
+  history.m_active = history_m_active.data();
+  history.selected_count = history_selected_count.data();
+  history.locked_before = history_locked_before.data();
+  history.locked_after = history_locked_after.data();
+  history.nconv_wanted = history_nconv_wanted.data();
+  history.max_residual = history_max_residual.data();
+  history.max_backward_error = history_max_backward_error.data();
+
+  const int status = native_block_thick_restart_lanczos_run(
+    impl, apply, n, k, m_max, block_size, target_kind,
+    tol, max_restarts, norm_a, apply_ritz_vectors, check_stride, start,
+    V.data(), lambda.data(), residuals.data(), converged.data(), &n_locked,
+    &iterations, &matvecs, &operator_columns, &certification_operator_columns,
+    &restarts, &m_active, &locking_events, &ortho_passes,
+    &operator_allocations, &operator_bytes_allocated, &stage_seconds, &history);
+  if (status != 0) {
+    error("native block thick-restart Lanczos failed with status=%d", status);
+  }
+  return block_thick_lanczos_pack_result(
+    n, k, V.data(), lambda.data(), residuals.data(), converged.data(),
+    n_locked, iterations, matvecs, operator_columns,
+    certification_operator_columns, restarts, m_active, locking_events,
+    ortho_passes, block_size, operator_allocations, operator_bytes_allocated,
+    &stage_seconds, &history);
+}
+
 extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(
     SEXP A_, SEXP k_, SEXP m_max_, SEXP block_size_,
     SEXP target_kind_, SEXP tol_, SEXP max_restarts_,
-    SEXP norm_a_, SEXP start_) {
+    SEXP norm_a_, SEXP start_, SEXP check_stride_) {
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
   }
@@ -2347,64 +2824,25 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(
   const double tol = asReal(tol_);
   const int max_restarts = static_cast<int>(asInteger(max_restarts_));
   const double norm_a = asReal(norm_a_);
+  const int check_stride = static_cast<int>(asInteger(check_stride_));
   if (k < 1) error("k must be >= 1");
   if (block_size < 1) error("block_size must be >= 1");
   if (INTEGER(dimS)[1] != block_size) error("start block has wrong number of columns");
   if (m_max < k + block_size) error("m_max must be >= k + block_size");
   if (m_max > n) error("m_max must be <= nrow(A)");
   if (max_restarts < 0) error("max_restarts must be >= 0");
-
-  std::vector<double> V(static_cast<size_t>(n) * static_cast<size_t>(k), 0.0);
-  std::vector<double> lambda(static_cast<size_t>(k), 0.0);
-  std::vector<double> residuals(static_cast<size_t>(k), R_PosInf);
-  std::vector<int> converged(static_cast<size_t>(k), 0);
-  int n_locked = 0, iterations = 0, matvecs = 0, operator_columns = 0;
-  int certification_operator_columns = 0, restarts = 0, m_active = 0;
-  int locking_events = 0, ortho_passes = 0;
-  int64_t operator_allocations = 0, operator_bytes_allocated = 0;
-  NativeBlockStageSeconds stage_seconds;
-  const int history_capacity = max_restarts + 1;
-  std::vector<int> history_restart(static_cast<size_t>(history_capacity), 0);
-  std::vector<int> history_m_active(static_cast<size_t>(history_capacity), 0);
-  std::vector<int> history_selected_count(static_cast<size_t>(history_capacity), 0);
-  std::vector<int> history_locked_before(static_cast<size_t>(history_capacity), 0);
-  std::vector<int> history_locked_after(static_cast<size_t>(history_capacity), 0);
-  std::vector<int> history_nconv_wanted(static_cast<size_t>(history_capacity), 0);
-  std::vector<double> history_max_residual(static_cast<size_t>(history_capacity), R_PosInf);
-  std::vector<double> history_max_backward_error(static_cast<size_t>(history_capacity), R_PosInf);
-  NativeBlockRestartHistory history;
-  history.capacity = history_capacity;
-  history.restart = history_restart.data();
-  history.m_active = history_m_active.data();
-  history.selected_count = history_selected_count.data();
-  history.locked_before = history_locked_before.data();
-  history.locked_after = history_locked_after.data();
-  history.nconv_wanted = history_nconv_wanted.data();
-  history.max_residual = history_max_residual.data();
-  history.max_backward_error = history_max_backward_error.data();
+  if (check_stride < 0) error("check_stride must be >= 0");
 
   DenseColumnMajorOperator impl = {n, n, REAL(A_)};
-  const int status = native_block_thick_restart_lanczos_run(
-    &impl, eigencore_dense_apply, n, k, m_max, block_size, target_kind,
-    tol, max_restarts, norm_a, 0, REAL(start_), V.data(), lambda.data(),
-    residuals.data(), converged.data(), &n_locked, &iterations, &matvecs,
-    &operator_columns, &certification_operator_columns,
-    &restarts, &m_active, &locking_events, &ortho_passes,
-    &operator_allocations, &operator_bytes_allocated, &stage_seconds, &history);
-  if (status != 0) {
-    error("native dense block thick-restart Lanczos failed with status=%d", status);
-  }
-  return block_thick_lanczos_pack_result(
-    n, k, V.data(), lambda.data(), residuals.data(), converged.data(),
-    n_locked, iterations, matvecs, operator_columns,
-    certification_operator_columns, restarts, m_active, locking_events,
-    ortho_passes, block_size, operator_allocations, operator_bytes_allocated,
-    &stage_seconds, &history);
+  return block_thick_restart_lanczos_impl(
+    &impl, eigencore_dense_apply, n, 0, k, m_max, block_size, target_kind,
+    tol, max_restarts, norm_a, REAL(start_), check_stride);
 }
 extern "C" SEXP eigencore_block_thick_restart_lanczos_csc(
     SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP k_,
     SEXP m_max_, SEXP block_size_, SEXP target_kind_,
-    SEXP tol_, SEXP max_restarts_, SEXP norm_a_, SEXP start_) {
+    SEXP tol_, SEXP max_restarts_, SEXP norm_a_, SEXP start_,
+    SEXP check_stride_) {
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(start_)) {
     error("invalid CSC block thick-restart Lanczos inputs");
@@ -2424,59 +2862,62 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_csc(
   const double tol = asReal(tol_);
   const int max_restarts = static_cast<int>(asInteger(max_restarts_));
   const double norm_a = asReal(norm_a_);
+  const int check_stride = static_cast<int>(asInteger(check_stride_));
   if (k < 1) error("k must be >= 1");
   if (block_size < 1) error("block_size must be >= 1");
   if (INTEGER(dimS)[1] != block_size) error("start block has wrong number of columns");
   if (m_max < k + block_size) error("m_max must be >= k + block_size");
   if (m_max > n) error("m_max must be <= nrow(A)");
   if (max_restarts < 0) error("max_restarts must be >= 0");
-
-  std::vector<double> V(static_cast<size_t>(n) * static_cast<size_t>(k), 0.0);
-  std::vector<double> lambda(static_cast<size_t>(k), 0.0);
-  std::vector<double> residuals(static_cast<size_t>(k), R_PosInf);
-  std::vector<int> converged(static_cast<size_t>(k), 0);
-  int n_locked = 0, iterations = 0, matvecs = 0, operator_columns = 0;
-  int certification_operator_columns = 0, restarts = 0, m_active = 0;
-  int locking_events = 0, ortho_passes = 0;
-  int64_t operator_allocations = 0, operator_bytes_allocated = 0;
-  NativeBlockStageSeconds stage_seconds;
-  const int history_capacity = max_restarts + 1;
-  std::vector<int> history_restart(static_cast<size_t>(history_capacity), 0);
-  std::vector<int> history_m_active(static_cast<size_t>(history_capacity), 0);
-  std::vector<int> history_selected_count(static_cast<size_t>(history_capacity), 0);
-  std::vector<int> history_locked_before(static_cast<size_t>(history_capacity), 0);
-  std::vector<int> history_locked_after(static_cast<size_t>(history_capacity), 0);
-  std::vector<int> history_nconv_wanted(static_cast<size_t>(history_capacity), 0);
-  std::vector<double> history_max_residual(static_cast<size_t>(history_capacity), R_PosInf);
-  std::vector<double> history_max_backward_error(static_cast<size_t>(history_capacity), R_PosInf);
-  NativeBlockRestartHistory history;
-  history.capacity = history_capacity;
-  history.restart = history_restart.data();
-  history.m_active = history_m_active.data();
-  history.selected_count = history_selected_count.data();
-  history.locked_before = history_locked_before.data();
-  history.locked_after = history_locked_after.data();
-  history.nconv_wanted = history_nconv_wanted.data();
-  history.max_residual = history_max_residual.data();
-  history.max_backward_error = history_max_backward_error.data();
+  if (check_stride < 0) error("check_stride must be >= 0");
 
   CSCOperator impl = {n, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
-  const int status = native_block_thick_restart_lanczos_run(
-    &impl, eigencore_csc_apply, n, k, m_max, block_size, target_kind,
-    tol, max_restarts, norm_a, 1, REAL(start_), V.data(), lambda.data(),
-    residuals.data(), converged.data(), &n_locked, &iterations, &matvecs,
-    &operator_columns, &certification_operator_columns,
-    &restarts, &m_active, &locking_events, &ortho_passes,
-    &operator_allocations, &operator_bytes_allocated, &stage_seconds, &history);
-  if (status != 0) {
-    error("native CSC block thick-restart Lanczos failed with status=%d", status);
+  return block_thick_restart_lanczos_impl(
+    &impl, eigencore_csc_apply, n, 1, k, m_max, block_size, target_kind,
+    tol, max_restarts, norm_a, REAL(start_), check_stride);
+}
+
+extern "C" SEXP eigencore_block_thick_restart_lanczos_r_operator(
+    SEXP dim_, SEXP apply_, SEXP k_, SEXP m_max_, SEXP block_size_,
+    SEXP target_kind_, SEXP tol_, SEXP max_restarts_, SEXP norm_a_, SEXP start_,
+    SEXP check_stride_) {
+  if (!isInteger(dim_) || LENGTH(dim_) != 2 || TYPEOF(apply_) != CLOSXP ||
+      !isReal(start_)) {
+    error("invalid matrix-free block thick-restart Lanczos inputs");
   }
-  return block_thick_lanczos_pack_result(
-    n, k, V.data(), lambda.data(), residuals.data(), converged.data(),
-    n_locked, iterations, matvecs, operator_columns,
-    certification_operator_columns, restarts, m_active, locking_events,
-    ortho_passes, block_size, operator_allocations, operator_bytes_allocated,
-    &stage_seconds, &history);
+  SEXP dimS = getAttrib(start_, R_DimSymbol);
+  if (dimS == R_NilValue) {
+    error("start must be a matrix");
+  }
+  const int n = INTEGER(dim_)[0];
+  if (INTEGER(dim_)[1] != n) {
+    error("A must be a square matrix-free operator");
+  }
+  if (INTEGER(dimS)[0] != n) {
+    error("non-conformable matrix-free block thick-restart Lanczos inputs");
+  }
+  const int k = static_cast<int>(asInteger(k_));
+  const int m_max = static_cast<int>(asInteger(m_max_));
+  const int block_size = static_cast<int>(asInteger(block_size_));
+  const int target_kind = static_cast<int>(asInteger(target_kind_));
+  const double tol = asReal(tol_);
+  const int max_restarts = static_cast<int>(asInteger(max_restarts_));
+  const double norm_a = asReal(norm_a_);
+  const int check_stride = static_cast<int>(asInteger(check_stride_));
+  if (k < 1) error("k must be >= 1");
+  if (block_size < 1) error("block_size must be >= 1");
+  if (INTEGER(dimS)[1] != block_size) error("start block has wrong number of columns");
+  if (m_max < k + block_size) error("m_max must be >= k + block_size");
+  if (m_max > n) error("m_max must be <= the operator dimension");
+  if (max_restarts < 0) error("max_restarts must be >= 0");
+  if (check_stride < 0) error("check_stride must be >= 0");
+
+  // The Hermitian kernel only applies A (no adjoint); apply_ritz_vectors = 1
+  // re-applies the callback for sweep-boundary residuals, matching the CSC path.
+  RApplyOperator impl = {n, n, apply_, R_NilValue};
+  return block_thick_restart_lanczos_impl(
+    &impl, eigencore_r_operator_apply, n, 1, k, m_max, block_size, target_kind,
+    tol, max_restarts, norm_a, REAL(start_), check_stride);
 }
 
 // Shared driver for the implicit normal-equations (Gram) thick-restart
@@ -2557,9 +2998,12 @@ static SEXP normal_thick_restart_lanczos_impl(
   // combination (dgemm) instead of re-applying the normal operator, which
   // would cost 2*k base applies per restart. The R caller certifies the final
   // triplets with exact residuals in original coordinates regardless.
+  // check_stride = 0: mid-sweep checks stay off on the normal-equations path
+  // (legacy single-sweep expansion); enabling them there would require threading
+  // the parameter through the separate normal-equations SEXP/R plumbing.
   const int status = native_block_thick_restart_lanczos_run(
     &impl, eigencore_normal_equations_apply, n, k, m_max, block_size,
-    target_kind, tol, max_restarts, norm_a, 0, REAL(start_), V.data(),
+    target_kind, tol, max_restarts, norm_a, 0, 0, REAL(start_), V.data(),
     lambda.data(), residuals.data(), converged.data(), &n_locked, &iterations,
     &matvecs, &operator_columns, &certification_operator_columns,
     &restarts, &m_active, &locking_events, &ortho_passes,
