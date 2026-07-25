@@ -23,12 +23,18 @@ benchmark entry points.
 
 * local: macOS 14 (aarch64-apple-darwin20), R 4.5.1,
   `R CMD check --as-cran --no-manual`
-* Fedora/no-memory-profiling check: pending on this exact 1.0.2 tarball
+* R-hub `gcc16`: Fedora Linux 44, R-devel (2026-07-24 r90297), GCC 16
+* On the same Fedora runner, an explicit no-memory-profiling probe forced
+  `capabilities("profmem")` to false, exercised both timing helpers and the
+  regression test, and rebuilt `vignettes/benchmarks.Rmd`.
 
 ## R CMD check results
 
-0 errors | 0 warnings | 0 notes locally. Fedora is pending on the exact source
-tarball.
+0 errors | 0 warnings | 0 notes locally.
+
+The Fedora R-hub job completed successfully (3,806 test expectations passed;
+47 environment/CRAN skips). The explicit no-memory-profiling probe also
+completed successfully, including the benchmark-vignette render.
 
 ## Downstream dependencies
 
