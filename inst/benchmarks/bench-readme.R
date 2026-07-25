@@ -30,7 +30,9 @@ timeit <- function(expr, iters = ITERS) {
   env <- parent.frame()
   mark <- tryCatch(
     bench::mark(eval(expr, env), iterations = iters, check = FALSE,
-                time_unit = "s", memory = TRUE, filter_gc = FALSE),
+                time_unit = "s",
+                memory = isTRUE(capabilities("profmem")),
+                filter_gc = FALSE),
     error = function(e) NULL
   )
   if (is.null(mark)) return(list(t = NA_real_, mem = NA_real_))
