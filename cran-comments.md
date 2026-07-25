@@ -36,6 +36,29 @@ The Fedora R-hub job completed successfully (3,806 test expectations passed;
 47 environment/CRAN skips). The explicit no-memory-profiling probe also
 completed successfully, including the benchmark-vignette render.
 
+## Reproducible verification evidence
+
+* Release payload: commit
+  `cd32f89a577ef68ceb673da4a70953b74de11d2b`; built tarball SHA-256
+  `0264d972b494775a6e1eb7c357b120f69e48016b7b68b21f74b3acbaaf51a2cb`.
+* Public Fedora R-hub run:
+  <https://github.com/bbuchsbaum/eigencore/actions/runs/30157914407>.
+  Its `gcc16` job completed successfully:
+  <https://github.com/bbuchsbaum/eigencore/actions/runs/30157914407/job/89678675741>.
+  Both the `Exercise no-memory-profiling paths` step and the full R-hub check
+  are green.
+* The no-memory-profiling step forced `capabilities("profmem")` to false,
+  asserted that the package and installed benchmark helpers returned finite
+  timings with unavailable allocation recorded as `NA`, ran the portability
+  regression test, and rebuilt `vignettes/benchmarks.Rmd`.
+
+The R-hub image itself supports memory profiling. The explicit probe therefore
+tests the exact false-capability branch used on CRAN builds without profiling;
+it is not presented as an R binary compiled without that optional feature.
+The checked CI commit `b50277deb51e357938a8c0f48af50958688d081c` differs
+from the release payload only by `.github/scripts/check-no-profmem.R` and
+`.github/workflows/rhub.yaml`; `.github` is excluded by `.Rbuildignore`.
+
 ## Downstream dependencies
 
 None: no reverse dependencies are affected by this patch.
