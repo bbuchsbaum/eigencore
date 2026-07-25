@@ -12,6 +12,9 @@ run-name: >-
   ${{ github.event.inputs.name || github.event.inputs.config }}
 
 on:
+  push:
+    branches:
+      - ci/1.0.2-fedora
   workflow_dispatch:
     inputs:
       config:
@@ -39,7 +42,7 @@ jobs:
     # NO NEED TO CHECKOUT HERE
     - uses: r-hub/actions/setup@v1
       with:
-        config: ${{ github.event.inputs.config }}
+        config: ${{ github.event.inputs.config || 'gcc16' }}
       id: rhub-setup
 
   linux-containers:
