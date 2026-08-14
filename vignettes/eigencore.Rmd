@@ -74,8 +74,7 @@ or singular values you actually need — the top few directions of variance,
 the leading modes of a graph, the dominant singular triplets behind a
 low-rank approximation. eigencore computes exactly that partial answer, and
 every result carries a certificate: residuals, a backward-error bound, and
-a pass/fail verdict, so you don't have to recompute the check yourself to
-trust it.
+a pass/fail verdict for the checks named by the certificate type.
 
 ```{r setup}
 library(eigencore)
@@ -93,8 +92,10 @@ fit <- eig_partial(A, k = 5, target = largest())
 fit
 ```
 
-The certificate is not a side note — `fit$certificate$passed` is the
-answer to "can I trust these five numbers?"
+`fit$certificate$passed` reports whether these five returned pairs meet the
+certificate's residual, backward-error, and orthogonality requirements. It
+does not by itself prove that they are the five largest eigenpairs; the solver
+target and plan describe that selection.
 
 ```{r first-certificate}
 fit$certificate$passed

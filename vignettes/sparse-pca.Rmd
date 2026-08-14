@@ -163,8 +163,8 @@ The residual is tiny — far below the `1e-8` tolerance. What's withheld is
 the *scale*: computing an exact Frobenius norm bound for a centered operator
 would mean a second full pass over the data, so eigencore instead reports a
 stochastic (Hutchinson) estimate and refuses to mark the certificate
-`passed` while that estimate is the only evidence. This is the same honest
-bookkeeping `vignette("certificates")` covers in detail — a composed
+`passed` while that estimate is the only evidence. This is the same
+certificate rule that `vignette("certificates")` covers in detail — a composed
 operator trades the exact bound for an estimated one unless you supply
 norm metadata yourself, which the next section shows.
 
@@ -202,8 +202,8 @@ fit_scaled$d
 
 ## What did the planner actually do?
 
-Every solve is preceded by a plan, and you can inspect it directly instead
-of trusting a black box:
+Every solve is preceded by a plan. Inspect it before the solve when method
+selection, densification, or fallback behavior matters:
 
 ```{r plan}
 plan <- plan_solver(svd_problem(Acs), rank = 5, target = largest())
@@ -246,7 +246,8 @@ fit_mf$certificate$norm_bound_type
 
 Without any norm metadata, this is another stochastic-estimate certificate.
 Supply the exact Frobenius norm — cheap to compute once for a sparse
-matrix — and the certificate stops withholding `passed`:
+matrix — and the certificate can report `passed = TRUE` when its residual and
+orthogonality checks also meet tolerance:
 
 ```{r matrix-free-hint}
 op_hinted <- linear_operator(

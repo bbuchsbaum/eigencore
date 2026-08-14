@@ -218,7 +218,7 @@ randomized <- function(oversample = 10, n_iter = 2, block = NULL,
 #' @param constraints Optional matrix whose columns span a subspace to deflate.
 #'   Iterates are kept orthogonal to this subspace in the Euclidean or
 #'   generalized `B` inner product. Native constrained LOBPCG is not promoted
-#'   yet; constrained problems use the honest reference path.
+#'   yet; constrained problems use the labelled reference path.
 #' @return An `eigencore_method` descriptor selecting LOBPCG. Built-in
 #'   standard Hermitian dense/CSC operators may use a native prototype;
 #'   unsupported cases route to the reference prototype.

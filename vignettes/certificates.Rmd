@@ -78,10 +78,11 @@ plot_backward_error <- function(cert, main = NULL, tol = cert$tolerance,
 }
 ```
 
-Every result returned by eigencore carries a **certificate** — a small object
-that says how trustworthy the numbers are, not just what they are. Reading
-the certificate takes 30 seconds and replaces the usual ritual of
-"recompute the residual yourself to be sure."
+Every result returned by eigencore carries a **certificate**: a compact record
+of the residual, backward-error scale, orthogonality check, and tolerance used
+for that result. The certificate lets you inspect those checks without
+recomputing the residual. It does not certify spectral ordering or any property
+that its `certificate_type` does not name.
 
 This vignette walks through the certificate's fields, the three things they
 measure, and what to do when one of them fails.
@@ -104,9 +105,9 @@ cert
 
 The fields you act on, in order:
 
-- **`passed`** — overall verdict. `TRUE` means every requested pair satisfies
-  every check (residual, backward error, orthogonality) and the norm bound
-  used to build the scale is exact, not estimated.
+- **`passed`** — overall verdict. `TRUE` means every returned pair satisfies
+  the checks required by this certificate type and the norm bound used to
+  build the scale is exact, not estimated.
 - **`tolerance`** — the user-requested tolerance. Defaults to `1e-8`.
 - **`max_residual`** — the worst absolute residual `||A v - lambda v||` (or
   `||A v - lambda B v||` for generalized problems) across the returned basis.
@@ -154,7 +155,7 @@ small. Backward error is the residual divided by a scale that captures
 "how big could a perturbation of `A` (and `B`) be that *exactly* makes
 `(lambda, v)` an eigenpair?":
 
-> eta_i  =  ||r_i||  /  ( ||A|| + |lambda_i| ||B|| ).
+> eta_i  =  ||r_i||  /  ( (||A|| + |lambda_i| ||B||) ||v_i|| ).
 
 A pair "converges" when `eta_i <= tol`. This is the criterion eigencore uses
 internally; the tolerance you pass to `eig_partial(tol = ...)` is the
@@ -165,9 +166,15 @@ backward-error tolerance, not the residual tolerance.
 Iterative methods drift. After enough restarts the returned basis can lose
 orthogonality even when each per-pair residual is small. The certificate
 records `max_abs(V* V - I)` (or `max_abs(V* B V - I)`); its acceptance
-tolerance is `sqrt(eps)` by default. Even one passing residual should be
-treated with suspicion if orthogonality has collapsed: clustered or repeated
-eigenvalues will silently get returned as duplicates.
+tolerance is `max(tol, sqrt(eps))`. A passing residual should be
+interpreted alongside the orthogonality field. If orthogonality loss exceeds
+its tolerance, clustered or repeated eigenvalues may be represented by nearly
+duplicate vectors even when individual residuals are small.
+
+A certificate evaluates the pairs the solver returned. It does not prove that
+those pairs are the requested largest, smallest, or nearest eigenvalues. When
+target identity is consequential, inspect the method and target in the plan
+and compare against an independent oracle on a tractable instance.
 
 ## Reading common certificate states
 
@@ -255,10 +262,11 @@ spectrum — request a larger `k` (so the cluster is fully covered by the
 returned basis) and slice afterwards. Here, lifting `maxit` from 15 to 40 is
 enough.
 
-### Withheld: stochastic norm in the denominator
+### Estimated scale: `passed` remains false
 
 `norm_bound_type` names what the certificate used as the scale in the
-backward-error ratio. The common values, from most to least trustworthy:
+backward-error ratio. The common values identify exact, metadata-derived, and
+estimated scales:
 
 - `frobenius_exact` — the Frobenius norm of an explicit dense matrix.
 - `frobenius_metadata` — exact Frobenius norm derived from sparse/diagonal
@@ -270,9 +278,8 @@ backward-error ratio. The common values, from most to least trustworthy:
 A matrix-free operator (one wrapped via `linear_operator()` with no exact norm
 metadata) forces eigencore onto that last, stochastic estimate of `||A||`.
 Because the *denominator* of the backward-error ratio is then a sample, not a
-deterministic upper bound, eigencore *withholds* `passed` even if every
-sampled residual ratio is below `tol` — this is what `scale_is_estimate`
-flags:
+deterministic upper bound, the certificate sets `passed = FALSE` even if every
+sampled residual ratio is below `tol`. `scale_is_estimate` records why:
 
 ```{r withheld}
 set.seed(2)
@@ -296,10 +303,11 @@ fit_mf$certificate$passed
 fit_mf$certificate$notes
 ```
 
-eigencore does not have a clean Frobenius bound for this operator without
-paying for a full second pass over the matrix, so it falls back to a Hutchinson
-stochastic estimate. The honest output is "all evidence is consistent with
-convergence, but the certificate was not produced by an exact bound."
+eigencore does not have a deterministic Frobenius bound for this operator
+without paying for a full second pass over the matrix, so it uses a Hutchinson
+stochastic estimate. The result therefore reports `scale_is_estimate = TRUE`
+and keeps `passed = FALSE`, even when the sampled residual ratios are below the
+requested tolerance.
 
 What to do: if you need a hard `passed = TRUE`, switch to a problem class
 where eigencore can carry exact norm metadata (built-in dense / `dgCMatrix`
@@ -308,9 +316,9 @@ where eigencore can carry exact norm metadata (built-in dense / `dgCMatrix`
 ### Generalized SPD: B-orthogonality matters
 
 For `A v = lambda B v`, the certificate's orthogonality field is in the
-**B-inner product**: `max_abs(V* B V - I)`. A passing certificate guarantees
-both the residual contract and B-orthogonality of the returned vectors —
-which is what downstream linear-algebra code typically needs.
+**B-inner product**: `max_abs(V* B V - I)`. For this certificate type,
+`passed = TRUE` requires both the residual threshold and B-orthogonality of the
+returned vectors.
 
 ```{r generalized}
 set.seed(4)
@@ -348,15 +356,16 @@ without changing call sites.
 
 | You see                             | What it means                                                            | What to do                                                |
 |-------------------------------------|--------------------------------------------------------------------------|-----------------------------------------------------------|
-| `passed = TRUE`, `scale_is_estimate = FALSE` | Trust the result.                                                         | Use the values/vectors.                                    |
+| `passed = TRUE`, `scale_is_estimate = FALSE` | All checks required by this certificate type passed with an exact scale. | Use the values/vectors within the stated certificate scope. |
 | `passed = FALSE`, `scale_is_estimate = FALSE`, `failed_indices` non-empty | Some pairs hit `maxit` before converging.                                  | Increase `maxit`, raise `tol`, or request a wider `k`.    |
-| `passed` withheld, `scale_is_estimate = TRUE` | Norm bound is stochastic; evidence is consistent with convergence.        | Use a problem class with deterministic norm metadata, or run a verification pass. |
+| `passed = FALSE`, `scale_is_estimate = TRUE` | The backward-error scale is stochastic, so the certificate does not report a pass. | Use a problem class with deterministic norm metadata, or run a verification pass. |
 | `max_orthogonality_loss` near `sqrt(eps)` but residuals tiny | Iterative drift; clustered eigenvalues at risk of duplicates.             | Increase `maxit`; check whether there are repeated eigenvalues. |
-| `failed_indices` is the *first* few pairs | Convergence has not started yet.                                          | Almost certainly a `maxit` problem.                       |
-| `failed_indices` is the *last* few pairs | Convergence stalled near the requested cluster.                           | Increase `k`, request a wider window, or use `lobpcg()` with a preconditioner. |
+| `failed_indices` includes the first returned pairs | Some leading returned pairs exceed the tolerance. | Inspect `convergence_history`; increase `maxit` if the errors are still declining. |
+| `failed_indices` includes the last returned pairs | Some trailing returned pairs exceed the tolerance. | Inspect the spectral gap; a wider `k` may help when the target boundary cuts through a cluster. |
 
-The certificate is the bridge between "I called a solver" and "I have a
-trustworthy partial spectrum." Read it.
+The certificate records which numerical checks were run, the scale used for
+each backward error, and whether those checks passed. Use those fields together
+with the solver plan and the requirements of your downstream analysis.
 
 ## Where to go next
 

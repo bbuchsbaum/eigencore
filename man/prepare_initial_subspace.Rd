@@ -31,7 +31,7 @@ accepted basis for the invariant-subspace safety guard.
 \description{
 Produces an \verb{n x width} start block for the Lanczos paths together with
 provenance counts. Orthonormalization happens here at the solver boundary
-for rank detection and honest reporting; the native kernel
+for rank detection and explicit reporting; the native kernel
 re-orthonormalizes and rank-guards the block again before iterating.
 }
 \details{

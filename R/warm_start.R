@@ -73,7 +73,7 @@ validate_initial_subspace_plan_support <- function(problem, plan) {
 #'
 #' Produces an `n x width` start block for the Lanczos paths together with
 #' provenance counts. Orthonormalization happens here at the solver boundary
-#' for rank detection and honest reporting; the native kernel
+#' for rank detection and explicit reporting; the native kernel
 #' re-orthonormalizes and rank-guards the block again before iterating.
 #'
 #' When the accepted numerical rank exceeds `width` (e.g. a k-column

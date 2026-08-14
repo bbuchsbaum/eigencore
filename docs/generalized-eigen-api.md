@@ -210,8 +210,8 @@ classified result records which one ran in `classification_policy`:
   `(A, B) -> (c A, c B)` and does not misclassify uniformly small or large
   pencils. Near-singular `B` has an explicit boundary: an eigenvalue is
   reported as `infinite` exactly when its `beta` falls below
-  `tol * norm_B`, rather than returned as an untrustworthy enormous finite
-  number.
+  `tol * norm_B`, rather than as a finite value beyond the documented
+  classification boundary.
 - `per_pair_magnitude` (fallback): `tol * max(1, |alpha|, |beta|)` per pair.
   This is used when no valid pencil norms are available, for example when
   classifying homogeneous pairs supplied directly by a caller.
