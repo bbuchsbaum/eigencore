@@ -115,4 +115,4 @@ articles:
   - generalized-eigenproblems
 - title: Performance
   contents:
-  - benchmarks
+  - articles/benchmarks

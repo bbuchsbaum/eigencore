@@ -2,11 +2,12 @@
 
 # Cold-versus-warm spectral continuation benchmark.
 #
-# Exercises dense and dgCMatrix Hermitian continuation across multiple sizes,
-# requested ranks, spectral-gap scales, and tolerances. Every row reports wall
-# time, exact operator block calls/columns, certification columns, restarts,
-# native operator workspace bytes, and agreement with a common certified answer.
-# Bounded cases are also checked against an independent dense eigen() oracle.
+# Exercises dense, dgCMatrix, and matrix-free Hermitian continuation across
+# multiple sizes, requested ranks, spectral-gap scales, and tolerances. Every
+# row reports wall time, exact operator block calls/columns, certification
+# columns, restarts, native operator workspace bytes, and agreement with a
+# common certified answer. Bounded cases are also checked against an
+# independent dense eigen() oracle.
 #
 # Usage:
 #   Rscript inst/benchmarks/bench-warm-start-continuation.R
@@ -32,12 +33,33 @@ laplacian_1d <- function(n, gap_scale) {
   as_dgc(Matrix::sparseMatrix(i = i, j = j, x = x, dims = c(n, n)))
 }
 
+as_matrix_free_hermitian <- function(M, name) {
+  linear_operator(
+    dim = dim(M),
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      out <- alpha * as.matrix(M %*% X)
+      if (!is.null(Y) && beta != 0) out <- out + beta * Y
+      out
+    },
+    apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) {
+      out <- alpha * as.matrix(M %*% X)
+      if (!is.null(Y) && beta != 0) out <- out + beta * Y
+      out
+    },
+    structure = hermitian(),
+    name = name,
+    metadata = list(frobenius_norm = as.numeric(Matrix::norm(M, type = "F")))
+  )
+}
+
 case_specs <- if (args$quick) {
   list(
     list(id = "csc_quick", storage = "dgCMatrix", n = 200L, k = 6L,
          gap_scale = 1, tol = 1e-8, reps = 2L),
     list(id = "dense_quick", storage = "dense", n = 160L, k = 4L,
-         gap_scale = 4, tol = 1e-6, reps = 2L)
+         gap_scale = 4, tol = 1e-6, reps = 2L),
+    list(id = "matrix_free_quick", storage = "matrix_free", n = 180L, k = 4L,
+         gap_scale = 2, tol = 1e-7, reps = 2L)
   )
 } else {
   list(
@@ -48,7 +70,9 @@ case_specs <- if (args$quick) {
     list(id = "dense_n600_k8_tight", storage = "dense",
          n = 600L, k = 8L, gap_scale = 1, tol = 1e-8, reps = 5L),
     list(id = "dense_n1000_k12_loose", storage = "dense",
-         n = 1000L, k = 12L, gap_scale = 4, tol = 1e-6, reps = 5L)
+         n = 1000L, k = 12L, gap_scale = 4, tol = 1e-6, reps = 5L),
+    list(id = "matrix_free_n600_k8_tight", storage = "matrix_free",
+         n = 600L, k = 8L, gap_scale = 2, tol = 1e-8, reps = 5L)
   )
 }
 
@@ -93,6 +117,14 @@ for (case_index in seq_along(case_specs)) {
     L <- as.matrix(L_sparse)
     V <- as.matrix(V_sparse)
     function(rho) L - rho * V
+  } else if (identical(spec$storage, "matrix_free")) {
+    function(rho) {
+      M <- as_dgc(L_sparse - rho * V_sparse)
+      as_matrix_free_hermitian(
+        M,
+        name = sprintf("matrix-free continuation rho=%g", rho)
+      )
+    }
   } else {
     function(rho) as_dgc(L_sparse - rho * V_sparse)
   }
@@ -111,9 +143,15 @@ for (case_index in seq_along(case_specs)) {
       seed = base_seed, initial_subspace = start
     )
   }
-  oracle_values <- function(op) {
+  oracle_matrix <- function(op, rho) {
+    if (identical(spec$storage, "matrix_free")) {
+      return(as.matrix(L_sparse - rho * V_sparse))
+    }
+    as.matrix(op)
+  }
+  oracle_values <- function(op, rho) {
     if (n > 1200L) return(NULL)
-    sort(eigen(as.matrix(op), symmetric = TRUE)$values)[seq_len(k)]
+    sort(eigen(oracle_matrix(op, rho), symmetric = TRUE)$values)[seq_len(k)]
   }
 
   prev_vectors <- NULL
@@ -135,14 +173,14 @@ for (case_index in seq_along(case_specs)) {
 
     cold_values <- sort(values(cold))
     warm_values <- if (is.null(warm)) NULL else sort(values(warm))
-    oracle <- oracle_values(op)
+    oracle <- oracle_values(op, rho)
     overlap <- if (is.null(prev_vectors)) NA_real_ else {
       subspace_overlap(prev_vectors, vectors(cold))
     }
     oracle_gap <- if (is.null(oracle) || length(oracle) < k) {
       NA_real_
     } else {
-      full <- sort(eigen(as.matrix(op), symmetric = TRUE,
+      full <- sort(eigen(oracle_matrix(op, rho), symmetric = TRUE,
                          only.values = TRUE)$values)
       full[[k + 1L]] - full[[k]]
     }
@@ -163,6 +201,27 @@ for (case_index in seq_along(case_specs)) {
       cold_certified = certified(cold),
       warm_certified = if (is.null(warm)) NA else certified(warm),
       warm_start_source = if (is.null(warm)) "cold" else warm$start_source,
+      cold_method = cold$method,
+      warm_method = if (is.null(warm)) NA_character_ else warm$method,
+      cold_native = startsWith(
+        cold$method,
+        "native block Hermitian Lanczos"
+      ),
+      warm_native = if (is.null(warm)) {
+        NA
+      } else {
+        startsWith(warm$method, "native block Hermitian Lanczos")
+      },
+      cold_matrix_free = grepl(
+        "matrix-free callback",
+        cold$method,
+        fixed = TRUE
+      ),
+      warm_matrix_free = if (is.null(warm)) {
+        NA
+      } else {
+        grepl("matrix-free callback", warm$method, fixed = TRUE)
+      },
       cold_operator_block_calls = cold$operator_block_calls,
       warm_operator_block_calls =
         if (is.null(warm)) NA_integer_ else warm$operator_block_calls,
@@ -286,13 +345,25 @@ accounting_ok <-
   all(rows$cold_certification_columns <= rows$cold_operator_columns) &&
   all(warm_rows$warm_certification_columns <=
         warm_rows$warm_operator_columns)
+coverage_ok <- all(c("dense", "dgCMatrix", "matrix_free") %in% rows$storage)
+matrix_free_rows <- rows[rows$storage == "matrix_free", , drop = FALSE]
+provenance_ok <-
+  all(rows$cold_native) &&
+  all(warm_rows$warm_native) &&
+  nrow(matrix_free_rows) > 0L &&
+  all(matrix_free_rows$cold_matrix_free) &&
+  all(matrix_free_rows$warm_matrix_free[!is.na(matrix_free_rows$warm_matrix_free)])
 
 cat(
   "\ncorrectness_ok=", correctness_ok,
-  " overlap_loss_real_and_honest=", overlap_ok,
-  " accounting_ok=", accounting_ok, "\n", sep = ""
+  " overlap_loss_exercised=", overlap_ok,
+  " accounting_ok=", accounting_ok,
+  " coverage_ok=", coverage_ok,
+  " provenance_ok=", provenance_ok, "\n", sep = ""
 )
-if (args$strict && !(correctness_ok && overlap_ok && accounting_ok)) {
+if (args$strict && !(
+    correctness_ok && overlap_ok && accounting_ok && coverage_ok &&
+      provenance_ok)) {
   stop("Warm-start continuation benchmark failed strict invariants.",
        call. = FALSE)
 }

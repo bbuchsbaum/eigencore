@@ -1767,6 +1767,10 @@ benchmark_svd_case <- function(A, rank, methods = NULL, iterations = 3L,
       materialized_gram = result_restart_logical(fit, "materialized_gram"),
       certified_in_original_coordinates =
         result_restart_logical(fit, "certified_in_original_coordinates"),
+      implicit_gram_certificate_passed =
+        result_restart_logical(fit, "implicit_gram_certificate_passed"),
+      implicit_gram_max_backward_error =
+        result_restart_numeric(fit, "implicit_gram_max_backward_error"),
       native_implicit_normal_lanczos_max_backward_error =
         result_restart_numeric(fit, "native_implicit_normal_lanczos_max_backward_error"),
       native_implicit_normal_lanczos_iterations =
