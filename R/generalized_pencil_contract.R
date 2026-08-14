@@ -183,7 +183,15 @@ generalized_pencil_apply_for_residual <- function(op, vectors) {
   op <- as_operator(op)
   source <- source_or_null(op) %||% op$metadata$matrix %||% NULL
   if (is.complex(vectors) && !is.null(source)) {
-    return(as.matrix(as.matrix(source) %*% vectors))
+    if (inherits(source, "sparseMatrix") && !is.complex(source)) {
+      # Supported Matrix releases differ in whether a real sparse matrix can
+      # multiply a complex dense block directly. Split the block so the source
+      # remains sparse without requiring a zgeMatrix representation.
+      real_part <- as.matrix(source %*% Re(vectors))
+      imaginary_part <- as.matrix(source %*% Im(vectors))
+      return(real_part + 1i * imaginary_part)
+    }
+    return(as.matrix(source %*% vectors))
   }
   apply_operator(op, vectors)
 }

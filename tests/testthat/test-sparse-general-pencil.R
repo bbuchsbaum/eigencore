@@ -96,6 +96,21 @@ test_that("real sparse general pencils can return certified complex pairs", {
     dims = c(3, 3)
   )
   B <- Matrix::Diagonal(x = c(1, 2, 3))
+  dense_A <- as.matrix(A)
+  dense_B <- as.matrix(B)
+
+  sparse_as_matrix_calls <- 0L
+  invisible(trace(
+    "as.matrix",
+    tracer = quote({
+      if (inherits(x, "sparseMatrix")) {
+        sparse_as_matrix_calls <<- sparse_as_matrix_calls + 1L
+      }
+    }),
+    print = FALSE,
+    where = asNamespace("Matrix")
+  ))
+  on.exit(untrace("as.matrix", where = asNamespace("Matrix")), add = TRUE)
 
   fit <- eig_partial(
     A,
@@ -112,6 +127,16 @@ test_that("real sparse general pencils can return certified complex pairs", {
   expect_true(certificate(fit)$passed)
   expect_equal(fit$classification, "finite")
   expect_false(fit$restart$materialized_dense_operator)
+  expect_equal(sparse_as_matrix_calls, 0L)
+
+  V <- vectors(fit)
+  lambda <- values(fit)
+  dense_residual <- dense_A %*% V - sweep(dense_B %*% V, 2L, lambda, `*`)
+  expect_equal(
+    fit$certificate$residuals,
+    sqrt(colSums(Mod(dense_residual)^2)),
+    tolerance = 1e-12
+  )
 })
 
 test_that("unsupported sparse general pencils fail before dense fallback", {
