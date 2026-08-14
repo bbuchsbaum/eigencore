@@ -111,6 +111,152 @@ certify_dense_generalized_pencil <- function(A, B, alpha, beta, vectors,
 }
 
 #' @keywords internal
+certify_dense_generalized_pencil_left <- function(A, B, pencil,
+                                                   left_vectors,
+                                                   right_vectors,
+                                                   tol = 1e-8) {
+  A <- as.matrix(A)
+  B <- as.matrix(B)
+  left_vectors <- as.matrix(left_vectors)
+  right_vectors <- as.matrix(right_vectors)
+  k <- length(pencil$values)
+  generalized_pencil_validate_dimensions(A, B, left_vectors, k)
+  generalized_pencil_validate_dimensions(A, B, right_vectors, k)
+
+  # LAPACK normalizes left and right vectors independently. Biorthonormalize
+  # each finite left eigenspace against its paired B V block. Treating a
+  # repeated eigenvalue as a block matters because LAPACK may choose different
+  # bases for its left and right eigenspaces. The transformation preserves the
+  # eigenspace and makes the generalized biorthogonality contract inspectable.
+  Bv <- B %*% right_vectors
+  finite_idx <- which(pencil$finite)
+  stable <- rep(FALSE, k)
+  if (length(finite_idx)) {
+    clusters <- generalized_pencil_value_clusters(
+      pencil$values,
+      finite_idx
+    )
+    for (cluster in clusters) {
+      W <- left_vectors[, cluster, drop = FALSE]
+      Bv_cluster <- Bv[, cluster, drop = FALSE]
+      gram <- certificate_gram(W, Bv_cluster)
+      singular_values <- tryCatch(
+        svd(gram, nu = 0L, nv = 0L)$d,
+        error = function(e) numeric()
+      )
+      pairing_scale <- matrix_norm(W) * matrix_norm(Bv_cluster)
+      reciprocal_condition <- tryCatch(
+        rcond(gram),
+        error = function(e) 0
+      )
+      pairing_is_resolvable <- length(singular_values) &&
+        all(is.finite(singular_values)) &&
+        min(singular_values) > 100 * .Machine$double.eps *
+          pmax(pairing_scale, .Machine$double.xmin)
+      transform <- if (pairing_is_resolvable &&
+                       is.finite(reciprocal_condition) &&
+                       reciprocal_condition > 100 * .Machine$double.eps) {
+        tryCatch(Conj(t(solve(gram))), error = function(e) NULL)
+      } else {
+        NULL
+      }
+      if (!is.null(transform) && all(is.finite(Mod(transform)))) {
+        left_vectors[, cluster] <- W %*% transform
+        stable[cluster] <- TRUE
+      }
+    }
+  }
+
+  left_residuals <- rep(Inf, k)
+  scale <- rep(Inf, k)
+  backward <- rep(Inf, k)
+  if (length(finite_idx)) {
+    W <- left_vectors[, finite_idx, drop = FALSE]
+    residual_matrix <- Conj(t(A)) %*% W - sweep(
+      Conj(t(B)) %*% W,
+      2L,
+      Conj(pencil$values[finite_idx]),
+      `*`
+    )
+    left_residuals[finite_idx] <- col_norms(residual_matrix)
+    scale[finite_idx] <- eigen_backward_scale(
+      matrix_norm(A),
+      matrix_norm(B),
+      pencil$values[finite_idx],
+      W
+    )
+    backward[finite_idx] <- left_residuals[finite_idx] /
+      pmax(scale[finite_idx], .Machine$double.eps)
+  }
+
+  biorthogonality <- certificate_gram(left_vectors, Bv)
+  biorthogonality_loss <- numeric()
+  if (length(finite_idx)) {
+    finite_cross <- biorthogonality[finite_idx, finite_idx, drop = FALSE]
+    biorthogonality_loss <- max(
+      abs(finite_cross - diag(length(finite_idx)))
+    )
+  }
+  notes <- c(
+    generalized_pencil_certificate_notes(pencil),
+    paste(
+      "left residual uses A^H w - conj(lambda) B^H w in original",
+      "coordinates; biorthogonality uses W^H B V"
+    )
+  )
+  if (any(pencil$finite & !stable)) {
+    notes <- c(
+      notes,
+      paste(
+        "one or more finite left/right eigenspaces could not be stably",
+        "biorthonormalized"
+      )
+    )
+  }
+  cert <- new_certificate(
+    tol = tol,
+    residuals = list(left = left_residuals),
+    backward_error = backward,
+    orthogonality = biorthogonality_loss,
+    converged = pencil$finite & stable & backward <= tol,
+    scale = scale,
+    notes = notes,
+    certificate_type = "generalized_pencil_left_residual_biorthogonal_backward_error",
+    norm_bound_type = "frobenius_exact+frobenius_exact",
+    scale_is_estimate = FALSE,
+    require_orthogonality = TRUE
+  )
+
+  list(
+    vectors = left_vectors,
+    certificate = cert,
+    biorthogonality = biorthogonality
+  )
+}
+
+#' @keywords internal
+generalized_pencil_value_clusters <- function(values, finite_idx) {
+  clusters <- list()
+  for (idx in finite_idx) {
+    matched <- FALSE
+    for (cluster_id in seq_along(clusters)) {
+      representative <- clusters[[cluster_id]][[1L]]
+      scale <- max(1, Mod(values[[idx]]), Mod(values[[representative]]))
+      if (Mod(values[[idx]] - values[[representative]]) <=
+          100 * .Machine$double.eps * scale) {
+        clusters[[cluster_id]] <- c(clusters[[cluster_id]], idx)
+        matched <- TRUE
+        break
+      }
+    }
+    if (!matched) {
+      clusters[[length(clusters) + 1L]] <- idx
+    }
+  }
+  clusters
+}
+
+#' @keywords internal
 certify_generalized_pencil_operator <- function(Aop, Bop, alpha, beta, vectors,
                                                 tol = 1e-8,
                                                 beta_tol = sqrt(.Machine$double.eps)) {

@@ -17,7 +17,10 @@
 #' @return An `eigencore_eigen_result`. Dense general-pencil results
 #'   additionally carry `alpha`, `beta`, `classification`,
 #'   `classification_policy`, `left_vectors` (left generalized eigenvectors
-#'   satisfying `w^H A = lambda w^H B`), and `conditioning`. For real pencils
+#'   satisfying `w^H A = lambda w^H B`), `left_certificate`,
+#'   `biorthogonality` (`W^H B V`), and `conditioning`. The left certificate
+#'   checks `A^H w - Conj(lambda) B^H w` in the original coordinates and uses
+#'   the same backward-error scale as the right certificate. For real pencils
 #'   the decomposition runs through the expert LAPACK driver `DGGEVX` with
 #'   balancing, so `conditioning` contains reciprocal condition numbers
 #'   `rconde`/`rcondv` and the balanced pencil norms `abnrm`/`bbnrm`. Complex
@@ -174,6 +177,18 @@ eig_full_generalized <- function(A, B, structure, vectors, tol) {
   } else {
     empty_certificate(tol, note = "vectors not returned; residual certificate not computed")
   }
+  left_contract <- if (isTRUE(vectors)) {
+    certify_dense_generalized_pencil_left(
+      A,
+      B,
+      pencil,
+      left_vectors = eig$left_vectors,
+      right_vectors = vecs,
+      tol = tol
+    )
+  } else {
+    NULL
+  }
   conditioning <- eig_full_pencil_conditioning(eig, complex_pencil)
   eig_full_result(
     values = pencil$values,
@@ -198,7 +213,9 @@ eig_full_generalized <- function(A, B, structure, vectors, tol) {
         norm_A = pencil$norm_A,
         norm_B = pencil$norm_B
       ),
-      left_vectors = if (isTRUE(vectors)) eig$left_vectors else NULL,
+      left_vectors = left_contract$vectors %||% NULL,
+      left_certificate = left_contract$certificate %||% NULL,
+      biorthogonality = left_contract$biorthogonality %||% NULL,
       conditioning = conditioning
     ),
     controls_extra = list(

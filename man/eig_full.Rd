@@ -36,7 +36,10 @@ fallback contract for \code{eig_full()}.}
 An \code{eigencore_eigen_result}. Dense general-pencil results
 additionally carry \code{alpha}, \code{beta}, \code{classification},
 \code{classification_policy}, \code{left_vectors} (left generalized eigenvectors
-satisfying \verb{w^H A = lambda w^H B}), and \code{conditioning}. For real pencils
+satisfying \verb{w^H A = lambda w^H B}), \code{left_certificate},
+\code{biorthogonality} (\verb{W^H B V}), and \code{conditioning}. The left certificate
+checks \verb{A^H w - Conj(lambda) B^H w} in the original coordinates and uses
+the same backward-error scale as the right certificate. For real pencils
 the decomposition runs through the expert LAPACK driver \code{DGGEVX} with
 balancing, so \code{conditioning} contains reciprocal condition numbers
 \code{rconde}/\code{rcondv} and the balanced pencil norms \code{abnrm}/\code{bbnrm}. Complex

@@ -47,6 +47,13 @@ expect_eigen_result_contract <- function(fit, expected_method = NULL) {
     ) %in% names(diag)))
     expect_identical(diag$left_certificate, fit$left_certificate)
     expect_identical(diag$biorthogonality, fit$biorthogonality)
+  } else if (!is.null(fit$left_vectors) && !is.null(fit$left_certificate)) {
+    expect_true(all(c(
+      "left_vectors", "left_certificate", "biorthogonality"
+    ) %in% names(diag)))
+    expect_identical(diag$left_vectors, fit$left_vectors)
+    expect_identical(diag$left_certificate, fit$left_certificate)
+    expect_identical(diag$biorthogonality, fit$biorthogonality)
   }
 }
 
@@ -121,6 +128,18 @@ test_that("eigen result diagnostics are stable across current public paths", {
   expect_true(generalized$restart$generalized)
   expect_true(generalized$restart$native)
   expect_equal(diagnostics(generalized)$preconditioner_calls, generalized$preconditioner_calls)
+
+  dense_pencil <- eig_full(
+    rbind(c(4, 1), c(0, 2)),
+    B = diag(2),
+    structure = general()
+  )
+  expect_eigen_result_contract(
+    dense_pencil,
+    eigencore:::native_dense_generalized_pencil_full_label()
+  )
+  expect_true(dense_pencil$left_certificate$passed)
+  expect_equal(dense_pencil$biorthogonality, diag(2L) + 0i, tolerance = 1e-8)
 
   shifted <- eig_partial(
     diag(c(1, 3, 7)),

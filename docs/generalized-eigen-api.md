@@ -85,7 +85,16 @@ General dense-pencil results extend that shape rather than replace it:
 - `left_vectors` contains left generalized eigenvectors satisfying
   `w^H A = lambda w^H B` when the native backend computes them. Both the
   real (`DGGEVX`) and complex (`ZGGEV`) dense pencil paths compute left
-  vectors; they are dropped when `vectors = FALSE`.
+  vectors; they are dropped when `vectors = FALSE`. Finite left eigenspaces
+  are scaled against their paired right eigenspaces so that `W^H B V = I`
+  whenever that block pairing is numerically resolvable, including repeated
+  diagonalizable eigenvalues.
+- `left_certificate` checks the original-coordinate adjoint residual
+  `A^H w - conj(lambda) B^H w` using the same `eigen_backward_scale()`
+  definition as right-vector certification. It also requires the finite
+  block of the reported `biorthogonality` matrix `W^H B V` to be close to
+  identity. Singular/defective pairings and infinite or undefined eigenvalues
+  remain explicit certificate failures rather than being silently accepted.
 - `conditioning` carries eigenvalue/eigenvector reciprocal condition
   numbers when the selected LAPACK routine provides them. The real dense
   pencil path runs `DGGEVX` with balancing and `sense = 'B'`, so

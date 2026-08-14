@@ -57,6 +57,10 @@ diagnostics <- function(x, ...) {
     out$left_eigenvectors <- x$left_eigenvectors
     out$left_certificate <- x$left_certificate
     out$biorthogonality <- x$biorthogonality
+  } else if (!is.null(x$left_vectors) && !is.null(x$left_certificate)) {
+    out$left_vectors <- x$left_vectors
+    out$left_certificate <- x$left_certificate
+    out$biorthogonality <- x$biorthogonality
   }
   out
 }

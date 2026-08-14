@@ -170,6 +170,23 @@ test_that("eig_full returns certified left generalized eigenvectors for real pen
   left_residual <- Conj(t(W)) %*% A - diag(values(fit)) %*% (Conj(t(W)) %*% B)
   expect_lt(max(Mod(left_residual)), 1e-10)
   expect_true(certificate(fit)$passed)
+  expect_identical(
+    fit$left_certificate$certificate_type,
+    "generalized_pencil_left_residual_biorthogonal_backward_error"
+  )
+  expect_true(fit$left_certificate$passed)
+  expect_equal(
+    fit$left_certificate$residuals$left,
+    eigencore:::col_norms(Conj(t(left_residual))),
+    tolerance = 1e-14
+  )
+  expect_equal(fit$biorthogonality, Conj(t(W)) %*% (B %*% vectors(fit)),
+               tolerance = 1e-14)
+  expect_equal(fit$biorthogonality, diag(5L) + 0i, tolerance = 1e-8)
+  diag <- diagnostics(fit)
+  expect_identical(diag$left_vectors, W)
+  expect_identical(diag$left_certificate, fit$left_certificate)
+  expect_identical(diag$biorthogonality, fit$biorthogonality)
 })
 
 test_that("eig_full returns left generalized eigenvectors for complex pencils", {
@@ -182,6 +199,10 @@ test_that("eig_full returns left generalized eigenvectors for complex pencils", 
   W <- left_vectors(fit)
   left_residual <- Conj(t(W)) %*% A - diag(values(fit)) %*% (Conj(t(W)) %*% B)
   expect_lt(max(Mod(left_residual)), 1e-10)
+  expect_true(fit$left_certificate$passed)
+  expect_equal(fit$biorthogonality, Conj(t(W)) %*% (B %*% vectors(fit)),
+               tolerance = 1e-14)
+  expect_equal(fit$biorthogonality, diag(3L) + 0i, tolerance = 1e-8)
   # ZGGEV path: left vectors are available, conditioning diagnostics are not.
   expect_false(fit$conditioning$available)
   expect_match(fit$conditioning$note, "ZGGEVX|DGGEVX|expert")
@@ -196,6 +217,8 @@ test_that("eig_full omits left vectors and residual certificate when vectors = F
 
   expect_null(vectors(fit))
   expect_null(fit$left_vectors)
+  expect_null(fit$left_certificate)
+  expect_null(fit$biorthogonality)
   expect_false(certificate(fit)$passed)
 })
 
@@ -234,7 +257,32 @@ test_that("conditioning diagnostics flag sensitivity that right residuals miss",
   expect_true(certificate(fit)$passed)
   expect_lt(max(fit$certificate$backward_error), 1e-12)
   expect_lt(max(fit$conditioning$rconde), 1e-12)
+  expect_false(fit$left_certificate$passed)
   expect_gt(min(well$conditioning$rconde), 0.1)
+})
+
+test_that("left certification biorthonormalizes repeated eigenspaces as blocks", {
+  set.seed(36)
+  basis <- matrix(rnorm(16), 4, 4)
+  while (abs(det(basis)) < 0.1) {
+    basis <- matrix(rnorm(16), 4, 4)
+  }
+  B <- crossprod(matrix(rnorm(16), 4, 4)) + diag(4)
+  A <- B %*% basis %*% diag(c(2, 2, 3, 4)) %*% solve(basis)
+
+  fit <- eig_full(A, B = B, structure = general(), tol = 1e-8)
+
+  expect_true(fit$left_certificate$passed)
+  expect_equal(sort(Re(values(fit))), c(2, 2, 3, 4), tolerance = 1e-10)
+  expect_equal(fit$biorthogonality, diag(4L) + 0i, tolerance = 1e-8)
+  W <- left_vectors(fit)
+  adjoint_residual <- Conj(t(A)) %*% W - sweep(
+    Conj(t(B)) %*% W,
+    2L,
+    Conj(values(fit)),
+    `*`
+  )
+  expect_lt(max(Mod(adjoint_residual)), 1e-9)
 })
 
 test_that("alpha/beta classification is invariant under joint pencil rescaling", {
