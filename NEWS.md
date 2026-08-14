@@ -1,4 +1,4 @@
-# eigencore (development version)
+# eigencore 1.1.0
 
 ## New features
 
@@ -82,7 +82,32 @@
   `--enable-memory-profiling`). `bench::mark()` memory measurement is now
   requested only when `capabilities("profmem")` is `TRUE`; timing still runs
   otherwise and `mem_alloc` is reported as `NA`. Benchmark smoke tests also use
-  `testthat::skip_on_cran()`. Backported to the 1.0.1 CRAN patch release.
+  `testthat::skip_on_cran()`. Backported in 1.0.1 and completed in 1.0.2.
+
+# eigencore 1.0.2
+
+* Complete the no-memory-profiling fix from 1.0.1. The CRAN benchmark
+  vignette and the installed README benchmark now also request
+  `bench::mark()` memory measurements only when `capabilities("profmem")` is
+  true. The vignette's summary tables also report unavailable results instead
+  of failing when a benchmark regime has no successful methods.
+* Add a regression test that audits every shipped benchmark entry point for
+  unconditional `memory = TRUE` and exercises the package timing helper on the
+  current R build.
+
+# eigencore 1.0.1
+
+* Fix an R CMD check ERROR on R builds without memory profiling (for example
+  the r-devel Linux fedora flavors, which are configured without
+  `--enable-memory-profiling`). The internal benchmark/validation timing
+  helpers passed `memory = TRUE` to `bench::mark()`, which calls
+  `utils::Rprofmem()` and aborts with "memory profiling is not available on
+  this system" on those platforms. Memory measurement is now requested only
+  when `capabilities("profmem")` is `TRUE`; elsewhere timing still runs and
+  `mem_alloc` is reported as `NA`.
+* Benchmark smoke tests now use `testthat::skip_on_cran()` so they are skipped
+  on CRAN as intended (the previous `Sys.getenv("CRAN")` guard never fired on
+  the CRAN check farm).
 
 # eigencore 1.0.0
 

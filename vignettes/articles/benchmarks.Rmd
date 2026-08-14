@@ -103,7 +103,7 @@ bench_eval <- function(expr, iterations = benchmark_iterations) {
       last_result <- eval(expr, env),
       iterations = iterations,
       check = FALSE,
-      memory = TRUE,
+      memory = isTRUE(capabilities("profmem")),
       filter_gc = FALSE
     ),
     error = function(e) e
@@ -295,6 +295,9 @@ timing_table <- function(rows) {
       c("method", "median_ms"),
       drop = FALSE
     ]
+    if (!nrow(current)) {
+      return(NA_character_)
+    }
     current$method[[which.min(current$median_ms)]]
   }, character(1))
   out[, c("regime", "lowest_median", method_columns)]
@@ -305,6 +308,16 @@ quality_table <- function(rows) {
   do.call(rbind, lapply(regimes, function(regime) {
     current <- rows[rows$regime == regime, , drop = FALSE]
     ok <- current[current$status == "ok", , drop = FALSE]
+    if (!nrow(ok)) {
+      return(data.frame(
+        regime = regime,
+        successful_methods = sprintf("0/%d", nrow(current)),
+        max_relative_error = NA_character_,
+        max_backward_error = NA_character_,
+        residual_checks = "not available",
+        stringsAsFactors = FALSE
+      ))
+    }
     data.frame(
       regime = regime,
       successful_methods = sprintf("%d/%d", nrow(ok), nrow(current)),
