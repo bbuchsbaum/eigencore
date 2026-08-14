@@ -131,7 +131,13 @@ GSVD results use their own class and field names rather than the partial-SVD
 result shape:
 
 - `alpha`, `beta`, `values`, and `classification` describe generalized
-  singular values in homogeneous form.
+  singular values in homogeneous form. These vectors retain LAPACK's full
+  length-`n` structural layout: when `k + l < n`, trailing `(0, 0)` pairs are
+  `undefined` and appear as `NA` in `values()` rather than being dropped.
+- `classification_policy$policy` is `gsvd_structural_exact`: only LAPACK's
+  exact structural zeros are classified as zero, positive `beta` remains
+  finite however small it is, and the public `tol` controls factor
+  certification rather than GSVD value classification.
 - `U`, `V`, and `Q` are the orthogonal factors.
 - `D1`, `D2`, `R`, and `zero_R` expose the reconstructable LAPACK `dggsvd`
   factors: `A = U D1 zero_R t(Q)` and `B = V D2 zero_R t(Q)` for the real
@@ -209,6 +215,12 @@ classified result records which one ran in `classification_policy`:
 - `per_pair_magnitude` (fallback): `tol * max(1, |alpha|, |beta|)` per pair.
   This is used when no valid pencil norms are available, for example when
   classifying homogeneous pairs supplied directly by a caller.
+- `gsvd_structural_exact` (dense GSVD): exact-zero classification with
+  `tol = 0`; structural `(0, 0)` padding stays visible and small positive
+  `beta` values stay finite.
+- `exact_beta_one` (transformed sparse pencil): the Arnoldi solve returns
+  homogeneous pairs as `lambda / 1`, so every returned value is finite by
+  construction. The policy records `tol = 0` and explains that provenance.
 
 `classification_policy` exposes `policy`, `tolerance`, the per-coordinate
 zero thresholds, and the norms used, and `alpha_beta()` passes it through so

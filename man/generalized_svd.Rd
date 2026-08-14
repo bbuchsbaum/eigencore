@@ -18,8 +18,11 @@ certification tolerance.}
 }
 \value{
 An \code{eigencore_gsvd_result} with fields \code{alpha}, \code{beta}, \code{values},
-\code{classification}, \code{U}, \code{V}, \code{Q}, \code{D1}, \code{D2}, \code{R}, \code{zero_R}, \code{A_factor},
-\code{B_factor}, \code{k}, \code{l}, \code{rank}, \code{method}, \code{plan}, and \code{certificate}.
+\code{classification}, \code{classification_policy}, \code{U}, \code{V}, \code{Q}, \code{D1}, \code{D2},
+\code{R}, \code{zero_R}, \code{A_factor}, \code{B_factor}, \code{k}, \code{l}, \code{rank}, \code{method}, \code{plan},
+and \code{certificate}. \code{alpha}, \code{beta}, and \code{values} always have length
+\code{ncol(A)}: LAPACK's trailing structural \verb{(0, 0)} pairs are retained as
+\code{undefined}, so \code{values} contains \code{NA} padding when \code{k + l < ncol(A)}.
 }
 \description{
 \code{generalized_svd()} is eigencore's dense GSVD compatibility surface for

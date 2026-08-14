@@ -37,11 +37,46 @@ test_that("result and certificate field names are frozen", {
   efit <- eig_partial(diag(c(3, 2, 1)), k = 2, target = largest())
   sfit <- svd_partial(matrix(c(2, 0, 0, 0, 1, 0), 3, 2), rank = 1,
                       target = largest())
+  pencil_fit <- eig_full(
+    rbind(c(4, 1), c(0, 2)),
+    B = diag(2),
+    structure = general()
+  )
+  qz_fit <- generalized_schur(diag(c(2, 3)), diag(c(1, 0)))
+  sparse_A <- Matrix::sparseMatrix(
+    i = c(1, 1, 2),
+    j = c(1, 2, 2),
+    x = c(4, 1, 2),
+    dims = c(2, 2)
+  )
+  sparse_pencil_fit <- eig_partial(
+    sparse_A,
+    B = Matrix::Diagonal(x = c(1, 2)),
+    k = 1,
+    target = largest_real(),
+    allow_dense_fallback = "never"
+  )
+  gsvd_fit <- generalized_svd(diag(2), diag(2))
+  nonsymmetric_fit <- eig_partial(
+    rbind(c(0, -1), c(1, 0)),
+    k = 2,
+    target = largest_imaginary()
+  )
   expect_snapshot({
     cat("eigen result:\n")
     writeLines(sort(names(efit)))
     cat("svd result:\n")
     writeLines(sort(names(sfit)))
+    cat("dense general-pencil result:\n")
+    writeLines(sort(names(pencil_fit)))
+    cat("generalized Schur result:\n")
+    writeLines(sort(names(qz_fit)))
+    cat("sparse general-pencil result:\n")
+    writeLines(sort(names(sparse_pencil_fit)))
+    cat("GSVD result:\n")
+    writeLines(sort(names(gsvd_fit)))
+    cat("nonsymmetric left-vector result:\n")
+    writeLines(sort(names(nonsymmetric_fit)))
     cat("certificate:\n")
     writeLines(sort(names(efit$certificate)))
   })

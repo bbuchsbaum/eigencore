@@ -129,6 +129,166 @@
       values
       warnings
     Code
+      cat("dense general-pencil result:\n")
+    Output
+      dense general-pencil result:
+    Code
+      writeLines(sort(names(pencil_fit)))
+    Output
+      alpha
+      backward_error
+      beta
+      biorthogonality
+      certificate
+      classification
+      classification_policy
+      conditioning
+      finite
+      generalized
+      infinite
+      iterations
+      left_certificate
+      left_vectors
+      matvecs
+      method
+      nconv
+      orthogonality
+      plan
+      requested
+      residuals
+      target
+      undefined
+      values
+      vectors
+      warnings
+    Code
+      cat("generalized Schur result:\n")
+    Output
+      generalized Schur result:
+    Code
+      writeLines(sort(names(qz_fit)))
+    Output
+      Q
+      S
+      T
+      Z
+      alpha
+      beta
+      certificate
+      classification
+      classification_policy
+      finite
+      infinite
+      method
+      plan
+      sdim
+      sort
+      undefined
+      values
+      warnings
+    Code
+      cat("sparse general-pencil result:\n")
+    Output
+      sparse general-pencil result:
+    Code
+      writeLines(sort(names(sparse_pencil_fit)))
+    Output
+      alpha
+      backward_error
+      beta
+      certificate
+      classification
+      classification_policy
+      finite
+      generalized
+      infinite
+      iterations
+      locked
+      matvecs
+      method
+      nconv
+      orthogonality
+      plan
+      requested
+      residuals
+      restart
+      restarts
+      right_hand_pencil
+      target
+      transform
+      undefined
+      values
+      vectors
+      warnings
+    Code
+      cat("GSVD result:\n")
+    Output
+      GSVD result:
+    Code
+      writeLines(sort(names(gsvd_fit)))
+    Output
+      A_factor
+      B_factor
+      D1
+      D2
+      Q
+      R
+      U
+      V
+      alpha
+      backward_error
+      beta
+      certificate
+      classification
+      classification_policy
+      dimensions
+      finite
+      infinite
+      iterations
+      k
+      l
+      matvecs
+      method
+      nconv
+      orthogonality
+      plan
+      rank
+      requested
+      residuals
+      target
+      undefined
+      values
+      warnings
+      zero_R
+    Code
+      cat("nonsymmetric left-vector result:\n")
+    Output
+      nonsymmetric left-vector result:
+    Code
+      writeLines(sort(names(nonsymmetric_fit)))
+    Output
+      backward_error
+      biorthogonality
+      certificate
+      iterations
+      left_certificate
+      left_vectors
+      locked
+      matvecs
+      method
+      nconv
+      orthogonality
+      plan
+      requested
+      residuals
+      restart
+      restarts
+      right_vectors
+      target
+      values
+      vectors
+      warnings
+    Code
       cat("certificate:\n")
     Output
       certificate:

@@ -142,7 +142,8 @@ test_that("defective nonsymmetric spectra do not report false biorthogonal succe
 
   expect_equal(values(fit), c(3, 3), tolerance = 1e-8)
   expect_true(fit$certificate$passed)
-  expect_true(fit$left_eigenvectors$supported)
+  expect_false(is.null(left_vectors(fit)))
+  expect_false("left_eigenvectors" %in% names(fit))
   expect_false(fit$left_certificate$passed)
   expect_gte(fit$left_certificate$max_orthogonality_loss, 0.5)
   expect_match(fit$warnings, "left residuals or biorthogonality did not pass certificate")

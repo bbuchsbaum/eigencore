@@ -16,8 +16,9 @@ A list containing \code{alpha}, \code{beta}, and any available \code{values},
 \code{classification}, \code{finite}, \code{infinite}, and \code{undefined} fields. Results
 that record how the finite/infinite/undefined labels were decided also
 include a \code{classification_policy} list with the policy name, the
-tolerance, the per-coordinate zero thresholds, and the pencil norms used
-for norm-scaled classification.
+tolerance, the per-coordinate zero thresholds, and any pencil norms used
+for norm-scaled classification. A \code{reason} explains exact structural
+policies used by GSVD and transformed sparse-pencil results.
 }
 \description{
 Generalized dense-pencil and generalized Schur results store eigenvalues in

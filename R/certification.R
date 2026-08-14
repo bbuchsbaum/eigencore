@@ -53,11 +53,7 @@ diagnostics <- function(x, ...) {
     out$operator_columns <- x$operator_columns
     out$certification_operator_columns <- x$certification_operator_columns
   }
-  if (!is.null(x$left_eigenvectors)) {
-    out$left_eigenvectors <- x$left_eigenvectors
-    out$left_certificate <- x$left_certificate
-    out$biorthogonality <- x$biorthogonality
-  } else if (!is.null(x$left_vectors) && !is.null(x$left_certificate)) {
+  if (!is.null(x$left_vectors) && !is.null(x$left_certificate)) {
     out$left_vectors <- x$left_vectors
     out$left_certificate <- x$left_certificate
     out$biorthogonality <- x$biorthogonality
@@ -92,8 +88,9 @@ values <- function(x, ...) {
 #'   `classification`, `finite`, `infinite`, and `undefined` fields. Results
 #'   that record how the finite/infinite/undefined labels were decided also
 #'   include a `classification_policy` list with the policy name, the
-#'   tolerance, the per-coordinate zero thresholds, and the pencil norms used
-#'   for norm-scaled classification.
+#'   tolerance, the per-coordinate zero thresholds, and any pencil norms used
+#'   for norm-scaled classification. A `reason` explains exact structural
+#'   policies used by GSVD and transformed sparse-pencil results.
 #' @examples
 #' A <- diag(c(2, 3, 0))
 #' B <- diag(c(1, 0, 0))

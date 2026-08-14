@@ -41,19 +41,15 @@ expect_eigen_result_contract <- function(fit, expected_method = NULL) {
       fit$certification_operator_columns
     )
   }
-  if (!is.null(fit$left_eigenvectors)) {
-    expect_true(all(c(
-      "left_eigenvectors", "left_certificate", "biorthogonality"
-    ) %in% names(diag)))
-    expect_identical(diag$left_certificate, fit$left_certificate)
-    expect_identical(diag$biorthogonality, fit$biorthogonality)
-  } else if (!is.null(fit$left_vectors) && !is.null(fit$left_certificate)) {
+  if (!is.null(fit$left_vectors) && !is.null(fit$left_certificate)) {
     expect_true(all(c(
       "left_vectors", "left_certificate", "biorthogonality"
     ) %in% names(diag)))
     expect_identical(diag$left_vectors, fit$left_vectors)
     expect_identical(diag$left_certificate, fit$left_certificate)
     expect_identical(diag$biorthogonality, fit$biorthogonality)
+    expect_identical(diag$left_vectors, left_vectors(fit))
+    expect_false("left_eigenvectors" %in% names(fit))
   }
 }
 

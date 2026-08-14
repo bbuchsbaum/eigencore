@@ -86,6 +86,25 @@ generalized_pencil_values <- function(alpha, beta,
 }
 
 #' @keywords internal
+generalized_pencil_classification_policy <- function(
+    pencil,
+    policy = pencil$tolerance_policy,
+    reason = NULL) {
+  out <- list(
+    policy = policy,
+    tolerance = pencil$tolerance,
+    alpha_threshold = pencil$alpha_threshold,
+    beta_threshold = pencil$beta_threshold,
+    norm_A = pencil$norm_A,
+    norm_B = pencil$norm_B
+  )
+  if (!is.null(reason)) {
+    out$reason <- reason
+  }
+  out
+}
+
+#' @keywords internal
 certify_dense_generalized_pencil <- function(A, B, alpha, beta, vectors,
                                              tol = 1e-8,
                                              beta_tol = sqrt(.Machine$double.eps),

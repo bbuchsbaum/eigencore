@@ -13,8 +13,11 @@
 #'   certification tolerance.
 #' @param ... Reserved for future options.
 #' @return An `eigencore_gsvd_result` with fields `alpha`, `beta`, `values`,
-#'   `classification`, `U`, `V`, `Q`, `D1`, `D2`, `R`, `zero_R`, `A_factor`,
-#'   `B_factor`, `k`, `l`, `rank`, `method`, `plan`, and `certificate`.
+#'   `classification`, `classification_policy`, `U`, `V`, `Q`, `D1`, `D2`,
+#'   `R`, `zero_R`, `A_factor`, `B_factor`, `k`, `l`, `rank`, `method`, `plan`,
+#'   and `certificate`. `alpha`, `beta`, and `values` always have length
+#'   `ncol(A)`: LAPACK's trailing structural `(0, 0)` pairs are retained as
+#'   `undefined`, so `values` contains `NA` padding when `k + l < ncol(A)`.
 #' @examples
 #' A <- matrix(c(1, 2, 3, 3, 2, 1), nrow = 2, byrow = TRUE)
 #' B <- matrix(1:9, nrow = 3)
@@ -80,7 +83,10 @@ generalized_svd_result <- function(raw, A, B, tol) {
       dense_fallback_policy = "none; dense GSVD surface is the native path",
       lapack_driver = "dggsvd",
       lapack_driver_requirement = "linked LAPACK must provide deprecated dggsvd",
-      alpha_beta_semantics = "LAPACK GSVD structural alpha/beta; no near-zero reclassification"
+      alpha_beta_semantics = paste(
+        "LAPACK GSVD structural alpha/beta with exact-zero classification;",
+        "values retain length-n structural padding"
+      )
     )
   )
   class(plan) <- "eigencore_plan"
@@ -103,6 +109,15 @@ generalized_svd_result <- function(raw, A, B, tol) {
     finite = pencil$finite,
     infinite = pencil$infinite,
     undefined = pencil$undefined,
+    classification_policy = generalized_pencil_classification_policy(
+      pencil,
+      policy = "gsvd_structural_exact",
+      reason = paste(
+        "GSVD classification uses exact structural alpha/beta zeros from",
+        "LAPACK; positive beta remains finite and tol controls only factor",
+        "certification"
+      )
+    ),
     U = raw$U,
     V = raw$V,
     Q = raw$Q,

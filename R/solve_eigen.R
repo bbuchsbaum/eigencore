@@ -429,8 +429,7 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
       right_vectors = iter$vectors,
       left_vectors = left_contract$vectors,
       left_certificate = left_contract$certificate,
-      biorthogonality = left_contract$biorthogonality,
-      left_eigenvectors = left_contract
+      biorthogonality = left_contract$biorthogonality
     )
   )
 }
@@ -504,7 +503,7 @@ solve_eigen_sparse_general_pencil_arnoldi <- function(a, k, method, tol, maxit,
   vecs_for_cert <- iter$vectors
   alpha <- vals
   beta <- rep(1, length(vals))
-  pencil <- generalized_pencil_values(alpha, beta)
+  pencil <- generalized_pencil_values(alpha, beta, tol = 0)
   cert <- if (isTRUE(certify) && !is.null(vecs_for_cert) &&
       ncol(vecs_for_cert) > 0L) {
     certify_generalized_pencil_operator(
@@ -570,6 +569,14 @@ solve_eigen_sparse_general_pencil_arnoldi <- function(a, k, method, tol, maxit,
       finite = pencil$finite,
       infinite = pencil$infinite,
       undefined = pencil$undefined,
+      classification_policy = generalized_pencil_classification_policy(
+        pencil,
+        policy = "exact_beta_one",
+        reason = paste(
+          "the transformed sparse Arnoldi path returns homogeneous pairs",
+          "lambda/1, so every returned value is finite by construction"
+        )
+      ),
       transform = list(
         kind = "sparse_general_pencil_diagonal_B",
         transformed_operator = "B^{-1} A",

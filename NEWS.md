@@ -77,6 +77,13 @@
 
 ## Bug fixes
 
+* Generalized result contracts are now consistent across dense pencils, QZ,
+  transformed sparse pencils, and GSVD. Every classified result exposes a
+  `classification_policy`; GSVD records exact structural-zero semantics and
+  documents its length-`n` `Inf`/`NA` value layout. Dense general-pencil left
+  vectors now carry an original-coordinate adjoint-residual certificate and
+  `W^H B V` diagnostics, and `diagnostics()` consistently exposes the same
+  `left_vectors` matrix returned by `left_vectors()`.
 * Benchmark/validation timing helpers no longer error on R builds without
   memory profiling (e.g. r-devel Linux fedora, configured without
   `--enable-memory-profiling`). `bench::mark()` memory measurement is now

@@ -36,6 +36,10 @@ test_that("generalized_svd computes finite real dense GSVD values", {
   expect_identical(fit$plan$controls$lapack_driver, "dggsvd")
   expect_false(fit$plan$controls$sparse_densified)
   expect_equal(coords$classification, rep("finite", 3L))
+  expect_identical(coords$classification_policy$policy,
+                   "gsvd_structural_exact")
+  expect_identical(coords$classification_policy$tolerance, 0)
+  expect_match(coords$classification_policy$reason, "tol controls only")
   expect_equal(coords$alpha^2 + coords$beta^2, rep(1, 3L), tolerance = 1e-12)
   expect_equal(sort(unname(values(fit))), sort(c(3 / 4, 4 / 3, 5 / 2)),
                tolerance = 1e-10)
@@ -88,6 +92,11 @@ test_that("generalized_svd covers geigen manual rectangular rank layout", {
   expect_equal(dim(fit$zero_R), c(fit$rank, ncol(A)))
   expect_true(any(coords$infinite))
   expect_true(any(coords$undefined))
+  expect_length(values(fit), ncol(A))
+  expect_equal(sum(is.na(values(fit))), ncol(A) - fit$rank)
+  expect_true(all(is.na(values(fit)[seq.int(fit$rank + 1L, ncol(A))])))
+  expect_identical(coords$classification_policy$policy,
+                   "gsvd_structural_exact")
   expect_true(certificate(fit)$passed)
   expect_gsvd_reconstruction(fit, A, B, tolerance = 1e-8)
 })

@@ -205,14 +205,7 @@ eig_full_generalized <- function(A, B, structure, vectors, tol) {
       finite = pencil$finite,
       infinite = pencil$infinite,
       undefined = pencil$undefined,
-      classification_policy = list(
-        policy = pencil$tolerance_policy,
-        tolerance = pencil$tolerance,
-        alpha_threshold = pencil$alpha_threshold,
-        beta_threshold = pencil$beta_threshold,
-        norm_A = pencil$norm_A,
-        norm_B = pencil$norm_B
-      ),
+      classification_policy = generalized_pencil_classification_policy(pencil),
       left_vectors = left_contract$vectors %||% NULL,
       left_certificate = left_contract$certificate %||% NULL,
       biorthogonality = left_contract$biorthogonality %||% NULL,
