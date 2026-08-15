@@ -8,6 +8,7 @@ on:
       - "docs/post-v1-benchmark-gates.md"
       - "inst/benchmarks/**"
       - "tests/testthat/test-bench-smoke.R"
+  pull_request:
   workflow_dispatch:
     inputs:
       tier:

@@ -1,6 +1,6 @@
 post_v1_gate_manifest <- list(
-  version = 1L,
-  generated_on = "2026-06-06",
+  version = 2L,
+  generated_on = "2026-08-14",
   purpose = paste(
     "Post-V1 benchmark truth surface for solver promotion decisions.",
     "Rows here are gates to run before broadening public planner labels beyond",
@@ -18,8 +18,16 @@ post_v1_gate_manifest <- list(
   ),
   tier_profile = list(
     smoke = list(
-      default_gate_ids = c("post_v1_operator_sidecars"),
-      description = "Fast local/CI boundary-truth smoke. Validates the manifest and runs the matrix-free operator sidecar strict gate."
+      default_gate_ids = c(
+        "post_v1_operator_sidecars",
+        "v1_1_warm_start_continuation",
+        "v1_1_implicit_gram_svd"
+      ),
+      description = paste(
+        "Fast local/CI boundary-truth smoke.",
+        "Validates matrix-free sidecars plus the 1.1 warm-start and",
+        "implicit-Gram SVD headline contracts."
+      )
     ),
     strict = list(
       default_gate_ids = "all",
@@ -43,7 +51,8 @@ post_v1_gate_manifest <- list(
   ),
   current_gate_owner_issue_ids = c(
     "bd-01KTE8G6RYE4RD5F6CN7SNKKC6",
-    "bd-01KVWKVFC8QFZSTR6KFQ3MM3NH"
+    "bd-01KVWKVFC8QFZSTR6KFQ3MM3NH",
+    "bd-01KY8K2D51DMVMMZSZAFRKKN6H"
   ),
   gates = list(
     list(
@@ -129,6 +138,84 @@ post_v1_gate_manifest <- list(
         max_backward_error_lte_tol = TRUE,
         planner_label_exact = TRUE,
         native_boundary_exact = TRUE
+      )
+    ),
+    list(
+      id = "v1_1_warm_start_continuation",
+      owner_issue = "bd-01KY8K2D51DMVMMZSZAFRKKN6H",
+      surface = "v1_1_warm_start_continuation",
+      script = "inst/benchmarks/bench-warm-start-continuation.R",
+      command = paste(
+        "R_LIBS=/tmp/eigencore-bench-lib Rscript",
+        "inst/benchmarks/bench-warm-start-continuation.R",
+        "--iterations=3 --strict --save"
+      ),
+      quick_smoke_command = paste(
+        "Rscript inst/benchmarks/bench-warm-start-continuation.R",
+        "--quick --iterations=1 --strict"
+      ),
+      long_command = paste(
+        "R_LIBS=/tmp/eigencore-bench-lib Rscript",
+        "inst/benchmarks/bench-warm-start-continuation.R",
+        "--iterations=10 --strict --save"
+      ),
+      cases = c(
+        "csc_n1000_k10_tight",
+        "csc_n2000_k20_loose",
+        "dense_n600_k8_tight",
+        "dense_n1000_k12_loose",
+        "matrix_free_n600_k8_tight"
+      ),
+      baselines = c("cold_start", "warm_start", "base::eigen_bounded_oracle"),
+      artifacts = c("warm-start-continuation-rows.rds"),
+      thresholds = list(
+        cold_and_warm_certified = TRUE,
+        common_answer_agreement = TRUE,
+        overlap_loss_exercised = TRUE,
+        operator_accounting_exact = TRUE,
+        planner_provenance_exact = TRUE,
+        fresh_original_coordinate_certificates = TRUE
+      )
+    ),
+    list(
+      id = "v1_1_implicit_gram_svd",
+      owner_issue = "bd-01KY8K2D51DMVMMZSZAFRKKN6H",
+      surface = "v1_1_implicit_gram_svd",
+      script = "inst/benchmarks/bench-implicit-gram-svd.R",
+      command = paste(
+        "R_LIBS=/tmp/eigencore-bench-lib Rscript",
+        "inst/benchmarks/bench-implicit-gram-svd.R",
+        "--iterations=3 --strict --save"
+      ),
+      quick_smoke_command = paste(
+        "Rscript inst/benchmarks/bench-implicit-gram-svd.R",
+        "--quick --iterations=1 --strict"
+      ),
+      long_command = paste(
+        "R_LIBS=/tmp/eigencore-bench-lib Rscript",
+        "inst/benchmarks/bench-implicit-gram-svd.R",
+        "--iterations=10 --strict --save"
+      ),
+      cases = c(
+        "dense_tall_implicit:4000x1000",
+        "dense_square_implicit:2000x2000",
+        "sparse_tall_implicit_k10:20000x5000",
+        "sparse_tall_implicit_k50:20000x5000",
+        "sparse_wide_implicit:1500x10000",
+        "dense_rank_deficient_fallback:180x100"
+      ),
+      baselines = c("RSpectra", "irlba", "native_Golub_Kahan_fallback"),
+      artifacts = c(
+        "implicit-gram-svd-rows.rds",
+        "implicit-gram-svd-contracts.rds"
+      ),
+      thresholds = list(
+        certificate_passed = TRUE,
+        nconv_equals_requested = TRUE,
+        normal_operator_implicit = TRUE,
+        materialized_gram_allowed = FALSE,
+        original_coordinate_certificate = TRUE,
+        fallback_provenance_exact = TRUE
       )
     ),
     list(

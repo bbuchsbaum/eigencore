@@ -251,6 +251,23 @@ test_that("native validation smoke script is available for sanitizer runs", {
   for (needle in required) {
     expect_true(any(grepl(needle, lines, fixed = TRUE)), info = needle)
   }
+
+  makevars <- test_path("../../src/Makevars")
+  skip_if_not(
+    file.exists(makevars),
+    "source Makevars is unavailable in installed-package checks"
+  )
+  makevars_lines <- readLines(makevars, warn = FALSE)
+  expect_true(any(grepl(
+    "EIGENCORE_SANITIZER_CXXFLAGS",
+    makevars_lines,
+    fixed = TRUE
+  )))
+  expect_true(any(grepl(
+    "EIGENCORE_SANITIZER_LIBS",
+    makevars_lines,
+    fixed = TRUE
+  )))
 })
 
 test_that("generalized LOBPCG benchmark exposes native B-orthogonal diagnostics", {
@@ -479,11 +496,18 @@ test_that("post-V1 benchmark gate manifest covers hard promotion surfaces", {
   manifest <- env$post_v1_gate_manifest
 
   expect_type(manifest, "list")
-  expect_equal(manifest$version, 1L)
-  expect_equal(manifest$generated_on, "2026-06-06")
+  expect_equal(manifest$version, 2L)
+  expect_equal(manifest$generated_on, "2026-08-14")
   expect_true(grepl("YYYYMMDD-", manifest$artifact_policy$naming, fixed = TRUE))
   expect_true(all(c("smoke", "strict", "long") %in% names(manifest$tier_profile)))
-  expect_equal(manifest$tier_profile$smoke$default_gate_ids, "post_v1_operator_sidecars")
+  expect_equal(
+    manifest$tier_profile$smoke$default_gate_ids,
+    c(
+      "post_v1_operator_sidecars",
+      "v1_1_warm_start_continuation",
+      "v1_1_implicit_gram_svd"
+    )
+  )
   expect_equal(manifest$tier_profile$strict$default_gate_ids, "all")
   expect_equal(manifest$tier_profile$long$default_gate_ids, "all")
   expect_true(all(c(
@@ -499,7 +523,8 @@ test_that("post-V1 benchmark gate manifest covers hard promotion surfaces", {
   ) %in% manifest$required_metrics))
   current_gate_owners <- c(
     "bd-01KTE8G6RYE4RD5F6CN7SNKKC6",
-    "bd-01KVWKVFC8QFZSTR6KFQ3MM3NH"
+    "bd-01KVWKVFC8QFZSTR6KFQ3MM3NH",
+    "bd-01KY8K2D51DMVMMZSZAFRKKN6H"
   )
   expect_equal(manifest$current_gate_owner_issue_ids, current_gate_owners)
 
@@ -508,6 +533,8 @@ test_that("post-V1 benchmark gate manifest covers hard promotion surfaces", {
   expect_true(all(c(
     "post_v1_svd_hard_surface",
     "post_v1_operator_sidecars",
+    "v1_1_warm_start_continuation",
+    "v1_1_implicit_gram_svd",
     "post_v1_randomized_svd_hard_surface",
     "post_v1_generalized_preconditioned_surface",
     "post_v1_generalized_eigen_surface",
@@ -548,6 +575,21 @@ test_that("post-V1 benchmark gate manifest covers hard promotion surfaces", {
   expect_true(any(grepl("matrix_free_b", operator_gate$cases, fixed = TRUE)))
   expect_true(operator_gate$thresholds$planner_label_exact)
   expect_true(operator_gate$thresholds$native_boundary_exact)
+
+  warm_gate <- gates[[match("v1_1_warm_start_continuation", gate_ids)]]
+  expect_match(warm_gate$quick_smoke_command, "--quick --iterations=1 --strict", fixed = TRUE)
+  expect_true(any(grepl("matrix_free", warm_gate$cases, fixed = TRUE)))
+  expect_true(warm_gate$thresholds$overlap_loss_exercised)
+  expect_true(warm_gate$thresholds$operator_accounting_exact)
+  expect_true(warm_gate$thresholds$fresh_original_coordinate_certificates)
+
+  gram_gate <- gates[[match("v1_1_implicit_gram_svd", gate_ids)]]
+  expect_match(gram_gate$quick_smoke_command, "--quick --iterations=1 --strict", fixed = TRUE)
+  expect_true(any(grepl("sparse_wide", gram_gate$cases, fixed = TRUE)))
+  expect_true(any(grepl("rank_deficient_fallback", gram_gate$cases, fixed = TRUE)))
+  expect_true(gram_gate$thresholds$normal_operator_implicit)
+  expect_false(gram_gate$thresholds$materialized_gram_allowed)
+  expect_true(gram_gate$thresholds$fallback_provenance_exact)
 
   closed_owner_ids <- c(
     "bd-01KTE8J396W5SGK6FQBSQX7BY8",
@@ -598,6 +640,7 @@ test_that("post-V1 benchmark profile runner and workflow are wired", {
   expect_true(file.exists(workflow))
   workflow_lines <- readLines(workflow, warn = FALSE)
   required_workflow <- c(
+    "pull_request:",
     "workflow_dispatch",
     "schedule:",
     "post-v1-benchmarks.yaml",

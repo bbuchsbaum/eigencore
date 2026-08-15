@@ -75,6 +75,12 @@ case_specs <- if (args$quick) {
          n = 600L, k = 8L, gap_scale = 2, tol = 1e-8, reps = 5L)
   )
 }
+if (!is.na(args$iterations)) {
+  case_specs <- lapply(case_specs, function(spec) {
+    spec$reps <- args$iterations
+    spec
+  })
+}
 
 median_time <- function(thunk, reps) {
   thunk()
