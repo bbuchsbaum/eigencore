@@ -566,6 +566,7 @@ test_that("post-V1 benchmark gate manifest covers hard promotion surfaces", {
   expect_true(any(grepl("slow_decay_dense", svd_gate$cases, fixed = TRUE)))
   expect_true("RSpectra" %in% svd_gate$baselines)
   expect_true("irlba" %in% svd_gate$baselines)
+  expect_false("PRIMME" %in% svd_gate$baselines)
   expect_equal(svd_gate$thresholds$speed_ratio_min, 1.10)
 
   operator_gate <- gates[[match("post_v1_operator_sidecars", gate_ids)]]
@@ -654,6 +655,7 @@ test_that("post-V1 benchmark profile runner and workflow are wired", {
   for (needle in required_workflow) {
     expect_true(any(grepl(needle, workflow_lines, fixed = TRUE)), info = needle)
   }
+  expect_false(any(grepl("any::PRIMME", workflow_lines, fixed = TRUE)))
 })
 
 test_that("post-V1 operator sidecar benchmark gates matrix-free boundaries", {

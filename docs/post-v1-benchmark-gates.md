@@ -34,12 +34,16 @@ also be summarized in `benchmarks/RELEASES.md`.
 
 | Gate | Script | Required regimes | Baselines | Promotion threshold |
 |---|---|---|---|---|
-| Hard SVD surface | `inst/benchmarks/bench-svd-surface.R` | tall/wide sparse, rank-deficient sparse, clustered dense, slow-decay dense, low-rank sparse | RSpectra, PRIMME, irlba, base LAPACK for small truth | Future-promotion gate only: certified requested rank, exact two-sided SVD residuals, no normal-equation default unless explicitly labelled, at least `1.10x` time-to-certified-answer, no worse memory than the best certified reference. Current PRD broad thick-restart promotion is closed as diagnostic-only. |
+| Hard SVD surface | `inst/benchmarks/bench-svd-surface.R` | tall/wide sparse, rank-deficient sparse, clustered dense, slow-decay dense, low-rank sparse | RSpectra, irlba, base LAPACK for small truth | Future-promotion gate only: certified requested rank, exact two-sided SVD residuals, no normal-equation default unless explicitly labelled, at least `1.10x` time-to-certified-answer, no worse memory than the best certified reference. Current PRD broad thick-restart promotion is closed as diagnostic-only. |
 | Operator sidecars | `inst/benchmarks/bench-post-v1-operator-sidecars.R` | matrix-free SVD, matrix-free nonsymmetric, matrix-free generalized B | Current planner labels and exact certificates | Certificate passes, planner label exactly matches expected native/reference boundary, native provenance matches the documented surface. |
 | Randomized SVD hard surface | `inst/benchmarks/bench-randomized-rsvd.R` | exact low rank, nearly low rank, slow decay, sparse low rank | rsvd, irlba | Certified baseline required, no worse accuracy/subspace error, at least `2.00x` time-to-certified-answer where randomized is planner-promoted. |
 | Generalized/preconditioned SPD | `inst/benchmarks/bench-generalized-lobpcg.R` | sparse largest/smallest, `adversarial_explicit_spd_matrix_free_b_smallest`, ill-conditioned diagonal B, sparse CSC B | base dense generalized solve, generalized Lanczos reference | Certificate and B-orthogonality pass, no sparse densification, at least `1.25x` speed and `4.00x` memory versus dense baseline for promoted sparse rows. |
 | Shift-invert boundaries | `inst/benchmarks/bench-shift-invert.R` | `sparse_general_reference`, `sparse_general_diagonal_b_reference`, `matrix_free_user_solve_reference` | Matrix::lu, user solve, dense base small truth | Original-coordinate certificate passes, `shift_invert_factorization_contract_v1` metadata is present, and native labels are allowed only where the contract provider is `eigencore_native_factorization`. |
 | Nonsymmetric Arnoldi | `inst/benchmarks/bench-nonsymmetric.R` plus operator sidecar | matrix-free nonnormal, dense native Arnoldi, sparse native Arnoldi | RSpectra, base LAPACK small truth, current native callback Arnoldi | Boundary-regression gate for the current Arnoldi surface: right-residual certificate passes, restart diagnostics are present, dense/sparse CSC rows carry native refined-Ritz provenance, and matrix-free real-operator rows carry the native callback projected-Ritz label. This is not a full Krylov-Schur, harmonic/interior, or matrix-free refined-extraction promotion gate. |
+
+PRIMME remains supported by the benchmark helpers when installed, but it is no
+longer an automated dependency or required reference because it is not
+currently available from CRAN.
 
 ## Closed No-Promotion Decisions
 
@@ -112,12 +116,12 @@ Rscript inst/benchmarks/run-post-v1-gates.R --tier=smoke
 Rscript inst/benchmarks/run-post-v1-gates.R --tier=smoke --load-all
 ```
 
-By default the smoke tier runs `post_v1_operator_sidecars`, which is fast enough
-for local and CI use. It is not a performance signoff. It proves the current
-boundary truth remains executable: matrix-free SVD now carries its native
-callback-boundary label, the matrix-free nonsymmetric native callback boundary
-and the matrix-free generalized-B native contract remain certified, and the
-strict gate fails if provenance drifts.
+By default the smoke tier runs `post_v1_operator_sidecars`,
+`v1_1_warm_start_continuation`, and `v1_1_implicit_gram_svd`, which are fast
+enough for local and CI use. This is not a performance signoff. It proves that
+the matrix-free sidecar boundary, warm-start continuation invariants, and the
+implicit-Gram SVD production/fallback contracts remain executable and
+certified.
 
 To smoke every structured release surface from the source tree, run:
 
@@ -140,7 +144,8 @@ Rscript -e 'pkgload::load_all("."); testthat::test_file("tests/testthat/test-ben
 ## CI And Nightly Profiles
 
 The GitHub Actions workflow is `.github/workflows/post-v1-benchmarks.yaml`.
-It runs the smoke tier on a weekly schedule and supports manual dispatch with:
+It runs the smoke tier on pull requests and a weekly schedule, and supports
+manual dispatch with:
 
 - `tier=smoke`: local/CI boundary-truth gate.
 - `tier=strict`: installed-package strict profile using each gate's strict

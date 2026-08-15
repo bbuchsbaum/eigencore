@@ -56,7 +56,7 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::bench, any::pkgload, any::testthat, any::RSpectra, any::irlba, any::rsvd, any::PRIMME, local::.
+          extra-packages: any::bench, any::pkgload, any::testthat, any::RSpectra, any::irlba, any::rsvd, local::.
           needs: none
 
       - name: Install package for installed-gate commands

@@ -64,7 +64,7 @@ post_v1_gate_manifest <- list(
         "R_LIBS=/tmp/eigencore-bench-lib Rscript",
         "inst/benchmarks/bench-svd-surface.R",
         "--iterations=3 --h-candidate",
-        "--methods=eigencore,RSpectra,PRIMME,irlba",
+        "--methods=eigencore,RSpectra,irlba",
         "--cases=tall_sparse,wide_sparse,rank_deficient_sparse,clustered_dense,slow_decay_dense,low_rank_sparse",
         "--subject=eigencore --strict --save"
       ),
@@ -79,7 +79,7 @@ post_v1_gate_manifest <- list(
         "R_LIBS=/tmp/eigencore-bench-lib Rscript",
         "inst/benchmarks/bench-svd-surface.R",
         "--iterations=10 --h-candidate",
-        "--methods=eigencore,RSpectra,PRIMME,irlba",
+        "--methods=eigencore,RSpectra,irlba",
         "--cases=tall_sparse,wide_sparse,rank_deficient_sparse,clustered_dense,slow_decay_dense,low_rank_sparse",
         "--subject=eigencore --strict --save"
       ),
@@ -91,7 +91,7 @@ post_v1_gate_manifest <- list(
         "slow_decay_dense:2000x500",
         "low_rank_sparse:10000x500"
       ),
-      baselines = c("RSpectra", "PRIMME", "irlba", "base_LAPACK_small"),
+      baselines = c("RSpectra", "irlba", "base_LAPACK_small"),
       artifacts = c(
         "post-v1-svd-hard-surface-rows.rds",
         "post-v1-svd-hard-surface-gates.rds",
