@@ -1,4 +1,4 @@
-# eigencore 1.1.0
+# eigencore 1.1.0 (2026-08-24)
 
 ## New features
 

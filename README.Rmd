@@ -224,14 +224,14 @@ numerical evidence and what to do when a check fails.
 
 ## Status
 
-eigencore 1.0.0 is headed for CRAN. The exported API is stable — it is frozen
-by a snapshot test, and breaking changes follow semantic versioning from here.
-Numerical behavior is covered by adversarial and reference tests, while solver
-results expose certificate and planner provenance on every call. Problem
-classes without a native kernel yet — general matrix-free SVD, interior
-eigenvalues at scale, nonsymmetric Krylov–Schur — are labeled `reference` in
-`fit$method`. The package vignettes describe the workflow map, benchmark
-evidence, and current boundaries.
+eigencore 1.1.0 is the current release. Its additive API includes certified
+Hermitian warm starts and mid-sweep Lanczos checks; eligible large largest-SVD
+problems also gain an implicit-Gram native route with exact original-coordinate
+certification and an explicit fallback. The exported API is frozen by snapshot
+tests, and breaking changes follow semantic versioning. Unsupported or
+prototype solver families remain visibly labeled `reference` in `fit$method`.
+The package vignettes describe the workflow map, benchmark evidence, and
+current boundaries.
 
 ## License
 
