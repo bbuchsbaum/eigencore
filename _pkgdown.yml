@@ -44,6 +44,7 @@ reference:
   - eigen_problem
   - svd_problem
   - plan_solver
+  - solve.eigencore_plan
   - solve.eigencore_eigen_problem
   - solve.eigencore_svd_problem
 - title: Operators
@@ -51,6 +52,7 @@ reference:
   contents:
   - linear_operator
   - as_operator
+  - operator_identity
   - adjoint
   - check_adjoint
   - compose
@@ -104,6 +106,12 @@ reference:
   - left_vectors
   - right_vectors
   - diagnostics
+- title: Reusable workflows and work accounting
+  desc: Persist certified basis state, inspect its memory, and compare typed solver work.
+  contents:
+  - restart_state
+  - retained_bytes
+  - work
 articles:
 - title: Get started
   navbar: ~

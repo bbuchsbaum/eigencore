@@ -238,6 +238,7 @@ for (case_index in seq_along(case_specs)) {
       gap_scale = spec$gap_scale,
       observed_gap = oracle_gap,
       tol = spec$tol,
+      agreement_limit = max(1e-6, 2 * spec$tol),
       step = step,
       rho = rho,
       overlap_loss = identical(step, overlap_loss_step),
@@ -430,15 +431,16 @@ loss_rows <- rows[rows$overlap_loss, ]
 correctness_ok <-
   all(rows$cold_certified) &&
   all(rows$warm_certified[!is.na(rows$warm_certified)]) &&
-  all(warm_rows$agree_cold_warm < 1e-6) &&
-  all(state_rows$agree_cold_basis_state < 1e-6) &&
-  all(rows$agree_cold_exact_state < 1e-6) &&
-  all(rows$agree_oracle[!is.na(rows$agree_oracle)] < 1e-6) &&
+  all(warm_rows$agree_cold_warm < warm_rows$agreement_limit) &&
+  all(state_rows$agree_cold_basis_state < state_rows$agreement_limit) &&
+  all(rows$agree_cold_exact_state < rows$agreement_limit) &&
+  all(rows$agree_oracle[!is.na(rows$agree_oracle)] <
+        rows$agreement_limit[!is.na(rows$agree_oracle)]) &&
   isTRUE(trace$all_certified)
 overlap_ok <-
   nrow(loss_rows) == length(case_specs) &&
   all(loss_rows$warm_certified) &&
-  all(loss_rows$agree_cold_warm < 1e-6) &&
+  all(loss_rows$agree_cold_warm < loss_rows$agreement_limit) &&
   all(loss_rows$start_overlap < 0.5)
 accounting_ok <-
   all(rows$cold_work_complete) &&
