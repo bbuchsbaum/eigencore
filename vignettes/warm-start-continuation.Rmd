@@ -173,6 +173,82 @@ warm solve can cost about as much as a cold one. The reproducible benchmark
 `inst/benchmarks/bench-warm-start-continuation.R` includes both high-overlap
 continuation and a deliberate overlap-loss jump.
 
+## When should you use a restart state?
+
+`initial_subspace` is the direct basis-hint interface. Use a restart state when
+the basis should be a versioned, integrity-checked artifact with explicit
+identity, invalidation, transition, serialization, and retained-memory
+records. Restart-state execution goes through an executable plan.
+
+```{r restart-state}
+state_plan <- plan_solver(
+  eigen_problem(A - 0.02 * B, target = smallest()),
+  k = k,
+  method = method,
+  tol = 1e-8
+)
+state_first <- solve(state_plan, retain_state = "same_operator")
+state <- restart_state(state_first, retention = "same_operator")
+
+same_operator <- solve(
+  state_plan,
+  restart_state = state,
+  reuse = "same_operator"
+)
+
+next_plan <- plan_solver(
+  eigen_problem(A - 0.04 * B, target = smallest()),
+  k = k,
+  method = method,
+  tol = 1e-8
+)
+changed_operator <- solve(
+  next_plan,
+  restart_state = state,
+  reuse = "auto"
+)
+
+data.frame(
+  solve = c("same operator", "changed operator"),
+  relation = c(
+    same_operator$state_transition$relation,
+    changed_operator$state_transition$relation
+  ),
+  basis_used = c(
+    same_operator$state_transition$basis_used,
+    changed_operator$state_transition$basis_used
+  ),
+  method_state_used = c(
+    same_operator$state_transition$method_state_used,
+    changed_operator$state_transition$method_state_used
+  )
+)
+```
+
+The exact-revision solve may consume the retained fitted start block. The
+changed matrix has a new built-in operator identity, so `auto` keeps only the
+coordinate-compatible public basis and invalidates every operator-dependent
+claim. Both results have a fresh current-operator certificate. The state owns
+ordinary R data only in version 1, so `retained_bytes(state)` is complete and
+reports zero native bytes.
+
+```{r restart-state-checks, include = FALSE}
+stopifnot(
+  certificate(same_operator)$passed,
+  certificate(changed_operator)$passed,
+  same_operator$state_transition$method_state_used,
+  changed_operator$state_transition$basis_used,
+  !changed_operator$state_transition$method_state_used,
+  attr(retained_bytes(state), "memory")$complete,
+  attr(retained_bytes(state), "memory")$native_bytes == 0
+)
+```
+
+Version 1 deliberately has no receiving adapter for SVD, generalized,
+shift-invert, Arnoldi, LOBPCG, structured, or dense-fallback routes. Supplying
+a state to one of those routes is an error; it is never treated as a silent
+cold start.
+
 ## How can you tell what happened to the start?
 
 `diagnostics()` exposes the start source and the boundary-processing counts.

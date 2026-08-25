@@ -1,5 +1,23 @@
+expect_workflow_result_contract <- function(fit) {
+  expect_s3_class(fit$state_transition, "eigencore_state_transition")
+  expect_named(
+    fit$state_transition,
+    c(
+      "schema_version", "relation", "basis_used", "method_state_used",
+      "invalidated", "reason", "source_operator_identity",
+      "destination_operator_identity", "reuse", "adapter"
+    )
+  )
+  expect_identical(fit$state_transition$schema_version, 1L)
+  expect_s3_class(fit$state_transition$reason, "eigencore_state_reason")
+  expect_true("restart_state" %in% names(fit))
+  expect_s3_class(fit$memory, "eigencore_memory")
+  expect_gt(retained_bytes(fit), 0)
+}
+
 expect_eigen_result_contract <- function(fit, expected_method = NULL) {
   expect_s3_class(fit, "eigencore_eigen_result")
+  expect_workflow_result_contract(fit)
   expect_equal(length(values(fit)), fit$requested)
   if (!is.null(vectors(fit))) {
     expect_equal(ncol(vectors(fit)), fit$requested)
@@ -67,6 +85,7 @@ expect_eigen_result_contract <- function(fit, expected_method = NULL) {
 
 expect_svd_result_contract <- function(fit, expected_method = NULL) {
   expect_s3_class(fit, "eigencore_svd_result")
+  expect_workflow_result_contract(fit)
   expect_equal(values(fit), fit$d)
   expect_equal(length(values(fit)), fit$requested)
   if (!is.null(left_vectors(fit))) {

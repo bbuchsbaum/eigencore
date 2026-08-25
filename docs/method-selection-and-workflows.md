@@ -37,6 +37,42 @@ and appears unchanged as `work(fit)$legacy_matvecs`; it is not a common unit
 for eigen, SVD, metric, and preconditioned methods. A record with unknown native
 components uses `NA` and `complete = FALSE` rather than estimating them.
 
+## Reusable restart state
+
+Use an executable plan when a certified basis should become an explicit,
+versioned input to a later solve:
+
+```r
+plan <- eigencore::plan_solver(
+  eigencore::eigen_problem(A, target = eigencore::largest()),
+  k = 5,
+  method = eigencore::lanczos(block = 5)
+)
+first <- solve(plan, retain_state = "same_operator")
+state <- eigencore::restart_state(first, retention = "same_operator")
+second <- solve(plan, restart_state = state, reuse = "same_operator")
+```
+
+The stable part of a restart state is an orthonormal basis in the original
+problem coordinates. Version 1 may also retain a method-width-fitted Lanczos
+start block for the exact same operator and controls. It does not retain a
+recurrence, locked values, cached operator actions, convergence, residuals, or
+a certificate. Inspect `second$state_transition` to see whether the public
+basis and method payload were actually consumed, and use
+`retained_bytes(state)` for retained-memory accounting.
+
+| Receiving route | Version-1 behavior |
+|---|---|
+| Standard real Hermitian Lanczos on dense double, `dgCMatrix`, or callback operators | Accepts coordinate-compatible public bases; exact operator/control matches may consume the fitted start payload. |
+| Changed revision or lineage with the same coordinate signature | `auto` or `basis_only` uses only the basis and invalidates every operator-dependent claim. |
+| SVD, generalized, shift-invert, Arnoldi, LOBPCG, structured, or dense fallback | Rejects the supplied state with a typed error before operator work. |
+
+`reuse = "same_operator"` is strict and never downgrades. `reuse = "auto"`
+may invalidate stale method state and continue with the public basis, but it
+never turns an incompatible state into a silent cold start. Every accepted
+solve recomputes projections, ordering, residuals, convergence, and a fresh
+current-operator certificate.
+
 ## Standard Hermitian Eigenproblems
 
 Use `eig_partial()` when the input is symmetric/Hermitian and the eigenproblem

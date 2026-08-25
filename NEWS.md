@@ -26,6 +26,15 @@
   including native callback cycles; `matvecs` remains unchanged as
   `legacy_matvecs`. Routes whose native controller cannot yet prove a split
   use `NA` and `complete = FALSE` rather than inventing equivalent work.
+* `restart_state()` constructs immutable, schema-versioned basis states only
+  from freshly certified eigen or SVD results, while `retained_bytes()` reports
+  their exact version-1 R retention. `solve(plan, restart_state = ...)` admits
+  basis reuse only for standard real Hermitian Lanczos on dense double, CSC,
+  and callback operators. Exact-revision reuse may retain a deterministic,
+  target-safe fitted start block, but never recurrence, locks, cached operator
+  actions, convergence, or certificates. Changed revisions and lineages use
+  only the public basis; incompatible and unsupported routes fail before the
+  current operator is applied.
 
 # eigencore 1.1.0 (2026-08-24)
 

@@ -654,14 +654,36 @@ new_fallback_reason <- function(code, message, planned_method, attempted_method,
 }
 
 #' @keywords internal
-new_state_transition <- function(relation = "cold_start", reason = "no restart state supplied") {
+new_state_reason <- function(code, message, details = list()) {
+  structure(list(
+    schema_version = 1L,
+    code = code,
+    message = message,
+    details = details
+  ), class = "eigencore_state_reason")
+}
+
+#' @keywords internal
+new_state_transition <- function(
+    relation = "cold_start", basis_used = FALSE, method_state_used = FALSE,
+    invalidated = character(),
+    reason = new_state_reason("cold_start", "no restart state supplied"),
+    source_operator_identity = NULL, destination_operator_identity = NULL,
+    reuse = "auto", adapter = NULL) {
+  if (is.character(reason)) {
+    reason <- new_state_reason(relation, reason)
+  }
   structure(list(
     schema_version = 1L,
     relation = relation,
-    basis_used = FALSE,
-    method_state_used = FALSE,
-    invalidated = character(),
-    reason = reason
+    basis_used = isTRUE(basis_used),
+    method_state_used = isTRUE(method_state_used),
+    invalidated = unique(as.character(invalidated)),
+    reason = reason,
+    source_operator_identity = deep_copy_record(source_operator_identity),
+    destination_operator_identity = deep_copy_record(destination_operator_identity),
+    reuse = reuse,
+    adapter = deep_copy_record(adapter)
   ), class = "eigencore_state_transition")
 }
 
@@ -710,7 +732,20 @@ result_workflow_fields <- function(plan, actual_method, iter, result = NULL) {
     fallback_reason = fallback_reason,
     work = typed_work_record(iter, result, plan),
     memory = new_memory_record(list(metadata = list(plan = planned_method))),
-    state_transition = new_state_transition(),
+    state_transition = new_state_transition(
+      relation = if (is.null(plan$execution$initial_subspace)) {
+        "cold_start"
+      } else {
+        "initial_subspace"
+      },
+      reason = if (is.null(plan$execution$initial_subspace)) {
+        new_state_reason("cold_start", "no restart state supplied")
+      } else {
+        new_state_reason(
+          "initial_subspace", "plan contains an initial_subspace basis hint"
+        )
+      }
+    ),
     restart_state = NULL
   )
 }

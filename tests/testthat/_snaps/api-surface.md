@@ -38,6 +38,8 @@
       operator_identity(x)
       plan_solver(problem, ...)
       randomized(oversample = 10, n_iter = 2, block = NULL, normalizer = c("qr", "lu", "none"), refine = TRUE)
+      restart_state(x, retention = c("basis", "same_operator"))
+      retained_bytes(x)
       right_vectors(x, ...)
       scale_cols(A, weights, name = NULL)
       scale_rows(A, weights, name = NULL)

@@ -19,12 +19,21 @@
 
 \item{b}{Unused second argument reserved by the base \code{\link[=solve]{solve()}} generic.}
 
-\item{restart_state}{Optional reusable state. Implemented by the reusable-
-restart-state layer.}
+\item{restart_state}{Optional \code{\link[=restart_state]{restart_state()}} built from a certified result.
+Version 1 accepts the public basis only on admitted standard real Hermitian
+Lanczos routes and validates it before applying the destination operator.}
 
-\item{reuse}{Reuse policy for an optional restart state.}
+\item{reuse}{Reuse policy for an optional restart state. \code{"basis_only"}
+always fits the public basis to the receiving method, \code{"same_operator"}
+requires a matching operator identity and compatible retained method state,
+and \code{"auto"} uses eligible same-operator method state or downgrades to the
+public basis. No policy reuses convergence, locked vectors, operator
+actions, residuals, or a certificate.}
 
-\item{retain_state}{State-retention request for the returned result.}
+\item{retain_state}{State-retention request for the returned result. \code{"basis"}
+retains only the certified public basis; \code{"same_operator"} also requests
+an eligible versioned method payload. Unsupported producer routes still
+return a basis-only state.}
 
 \item{replan}{Whether to create and execute a new plan from the embedded
 problem under current policy. The original plan is not modified.}

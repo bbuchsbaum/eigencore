@@ -1,13 +1,13 @@
 #!/usr/bin/env Rscript
 
-# Cold-versus-warm spectral continuation benchmark.
+# Cold, direct-basis, reusable-basis, and exact-revision continuation benchmark.
 #
 # Exercises dense, dgCMatrix, and matrix-free Hermitian continuation across
 # multiple sizes, requested ranks, spectral-gap scales, and tolerances. Every
 # row reports wall time, exact operator block calls/columns, certification
-# columns, restarts, native operator workspace bytes, and agreement with a
-# common certified answer. Bounded cases are also checked against an
-# independent dense eigen() oracle.
+# columns, typed restart-state transitions, retained bytes, restarts, native
+# operator workspace bytes, and agreement with a common certified answer.
+# Bounded cases are also checked against an independent dense eigen() oracle.
 #
 # Usage:
 #   Rscript inst/benchmarks/bench-warm-start-continuation.R
@@ -33,7 +33,7 @@ laplacian_1d <- function(n, gap_scale) {
   as_dgc(Matrix::sparseMatrix(i = i, j = j, x = x, dims = c(n, n)))
 }
 
-as_matrix_free_hermitian <- function(M, name) {
+as_matrix_free_hermitian <- function(M, name, operator_id, revision) {
   linear_operator(
     dim = dim(M),
     apply = function(X, alpha = 1, beta = 0, Y = NULL) {
@@ -48,6 +48,9 @@ as_matrix_free_hermitian <- function(M, name) {
     },
     structure = hermitian(),
     name = name,
+    operator_id = operator_id,
+    revision = revision,
+    portable = TRUE,
     metadata = list(frobenius_norm = as.numeric(Matrix::norm(M, type = "F")))
   )
 }
@@ -128,7 +131,9 @@ for (case_index in seq_along(case_specs)) {
       M <- as_dgc(L_sparse - rho * V_sparse)
       as_matrix_free_hermitian(
         M,
-        name = sprintf("matrix-free continuation rho=%g", rho)
+        name = sprintf("matrix-free continuation rho=%g", rho),
+        operator_id = paste0("warm-benchmark-", spec$id),
+        revision = sprintf("rho=%.17g", rho)
       )
     }
   } else {
@@ -161,6 +166,7 @@ for (case_index in seq_along(case_specs)) {
   }
 
   prev_vectors <- NULL
+  previous_state <- NULL
   for (step in seq_along(rho_seq)) {
     rho <- rho_seq[[step]]
     op <- shifted_operator(rho)
@@ -171,11 +177,39 @@ for (case_index in seq_along(case_specs)) {
 
     cold <- solve_once(op)
     warm <- if (is.null(prev_vectors)) NULL else solve_once(op, prev_vectors)
+    current_state <- eigencore::restart_state(
+      cold, retention = "same_operator"
+    )
+    basis_reuse <- if (is.null(previous_state)) NULL else {
+      solve(
+        cold$plan,
+        restart_state = previous_state,
+        reuse = "basis_only"
+      )
+    }
+    exact_reuse <- solve(
+      cold$plan,
+      restart_state = current_state,
+      reuse = "same_operator"
+    )
     cold_sec <- median_time(function() solve_once(op), spec$reps)
     warm_sec <- if (is.null(prev_vectors)) NA_real_ else {
       start <- prev_vectors
       median_time(function() solve_once(op, start), spec$reps)
     }
+    basis_state_sec <- if (is.null(previous_state)) NA_real_ else {
+      state <- previous_state
+      stats::median(vapply(seq_len(spec$reps), function(i) {
+        as.numeric(system.time(solve(
+          cold$plan, restart_state = state, reuse = "basis_only"
+        ))[["elapsed"]])
+      }, numeric(1L)))
+    }
+    exact_state_sec <- stats::median(vapply(seq_len(spec$reps), function(i) {
+      as.numeric(system.time(solve(
+        cold$plan, restart_state = current_state, reuse = "same_operator"
+      ))[["elapsed"]])
+    }, numeric(1L)))
 
     cold_values <- sort(values(cold))
     warm_values <- if (is.null(warm)) NULL else sort(values(warm))
@@ -192,6 +226,8 @@ for (case_index in seq_along(case_specs)) {
     }
     cold_work <- eigencore::work(cold)
     warm_work <- if (is.null(warm)) NULL else eigencore::work(warm)
+    basis_work <- if (is.null(basis_reuse)) NULL else eigencore::work(basis_reuse)
+    exact_work <- eigencore::work(exact_reuse)
 
     row_index <- row_index + 1L
     all_rows[[row_index]] <- data.frame(
@@ -233,6 +269,9 @@ for (case_index in seq_along(case_specs)) {
       cold_work_complete = cold_work$complete,
       warm_work_complete =
         if (is.null(warm_work)) NA else warm_work$complete,
+      basis_state_work_complete =
+        if (is.null(basis_work)) NA else basis_work$complete,
+      exact_state_work_complete = exact_work$complete,
       cold_operator_block_calls = cold_work$operator_block_calls,
       warm_operator_block_calls =
         if (is.null(warm_work)) NA_integer_ else warm_work$operator_block_calls,
@@ -255,6 +294,34 @@ for (case_index in seq_along(case_specs)) {
       } else {
         warm_work$certification_operator_block_calls
       },
+      basis_state_operator_columns = if (is.null(basis_work)) {
+        NA_integer_
+      } else {
+        basis_work$operator_columns
+      },
+      exact_state_operator_columns = exact_work$operator_columns,
+      basis_state_certification_columns = if (is.null(basis_work)) {
+        NA_integer_
+      } else {
+        basis_work$certification_operator_columns
+      },
+      exact_state_certification_columns =
+        exact_work$certification_operator_columns,
+      basis_state_relation = if (is.null(basis_reuse)) {
+        NA_character_
+      } else {
+        basis_reuse$state_transition$relation
+      },
+      exact_state_relation = exact_reuse$state_transition$relation,
+      basis_state_used = if (is.null(basis_reuse)) {
+        NA
+      } else {
+        basis_reuse$state_transition$basis_used
+      },
+      exact_method_state_used =
+        exact_reuse$state_transition$method_state_used,
+      state_retained_bytes =
+        as.numeric(eigencore::retained_bytes(current_state)),
       cold_restarts = cold$restart$restarts_used %||% 0L,
       warm_restarts = if (is.null(warm)) {
         NA_integer_
@@ -270,12 +337,21 @@ for (case_index in seq_along(case_specs)) {
       },
       cold_sec = cold_sec,
       warm_sec = warm_sec,
+      basis_state_sec = basis_state_sec,
+      exact_state_sec = exact_state_sec,
       speedup = if (is.na(warm_sec)) NA_real_ else cold_sec / warm_sec,
       agree_cold_warm = if (is.null(warm_values)) {
         NA_real_
       } else {
         max(abs(cold_values - warm_values))
       },
+      agree_cold_basis_state = if (is.null(basis_reuse)) {
+        NA_real_
+      } else {
+        max(abs(cold_values - sort(values(basis_reuse))))
+      },
+      agree_cold_exact_state =
+        max(abs(cold_values - sort(values(exact_reuse)))),
       agree_oracle = if (is.null(oracle)) {
         NA_real_
       } else {
@@ -284,6 +360,10 @@ for (case_index in seq_along(case_specs)) {
       stringsAsFactors = FALSE
     )
     prev_vectors <- vectors(if (is.null(warm)) cold else warm)
+    previous_state <- eigencore::restart_state(
+      if (is.null(warm)) cold else warm,
+      retention = "same_operator"
+    )
   }
 }
 
@@ -345,11 +425,14 @@ if (args$save) {
 }
 
 warm_rows <- rows[!is.na(rows$agree_cold_warm), ]
+state_rows <- rows[!is.na(rows$basis_state_used), , drop = FALSE]
 loss_rows <- rows[rows$overlap_loss, ]
 correctness_ok <-
   all(rows$cold_certified) &&
   all(rows$warm_certified[!is.na(rows$warm_certified)]) &&
   all(warm_rows$agree_cold_warm < 1e-6) &&
+  all(state_rows$agree_cold_basis_state < 1e-6) &&
+  all(rows$agree_cold_exact_state < 1e-6) &&
   all(rows$agree_oracle[!is.na(rows$agree_oracle)] < 1e-6) &&
   isTRUE(trace$all_certified)
 overlap_ok <-
@@ -360,18 +443,31 @@ overlap_ok <-
 accounting_ok <-
   all(rows$cold_work_complete) &&
   all(warm_rows$warm_work_complete) &&
+  all(state_rows$basis_state_work_complete) &&
+  all(rows$exact_state_work_complete) &&
   all(rows$cold_operator_columns >= rows$cold_operator_block_calls) &&
   all(warm_rows$warm_operator_columns >=
         warm_rows$warm_operator_block_calls) &&
   all(rows$cold_certification_columns >=
         rows$cold_certification_block_calls) &&
   all(warm_rows$warm_certification_columns >=
-        warm_rows$warm_certification_block_calls)
+        warm_rows$warm_certification_block_calls) &&
+  all(state_rows$basis_state_operator_columns >= 0L) &&
+  all(rows$exact_state_operator_columns >= 0L) &&
+  all(state_rows$basis_state_certification_columns >= 0L) &&
+  all(rows$exact_state_certification_columns >= 0L)
 coverage_ok <- all(c("dense", "dgCMatrix", "matrix_free") %in% rows$storage)
 matrix_free_rows <- rows[rows$storage == "matrix_free", , drop = FALSE]
 provenance_ok <-
   all(rows$cold_native) &&
   all(warm_rows$warm_native) &&
+  nrow(state_rows) > 0L &&
+  all(state_rows$basis_state_used) &&
+  all(rows$exact_method_state_used) &&
+  all(rows$exact_state_relation == "same_operator") &&
+  all(state_rows$basis_state_relation %in%
+        c("changed_revision", "changed_operator")) &&
+  all(rows$state_retained_bytes > 0) &&
   nrow(matrix_free_rows) > 0L &&
   all(matrix_free_rows$cold_matrix_free) &&
   all(matrix_free_rows$warm_matrix_free[!is.na(matrix_free_rows$warm_matrix_free)])

@@ -210,10 +210,19 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
 #'
 #' @param a An executable `eigencore_plan`.
 #' @param b Unused second argument reserved by the base [solve()] generic.
-#' @param restart_state Optional reusable state. Implemented by the reusable-
-#'   restart-state layer.
-#' @param reuse Reuse policy for an optional restart state.
-#' @param retain_state State-retention request for the returned result.
+#' @param restart_state Optional [restart_state()] built from a certified result.
+#'   Version 1 accepts the public basis only on admitted standard real Hermitian
+#'   Lanczos routes and validates it before applying the destination operator.
+#' @param reuse Reuse policy for an optional restart state. `"basis_only"`
+#'   always fits the public basis to the receiving method, `"same_operator"`
+#'   requires a matching operator identity and compatible retained method state,
+#'   and `"auto"` uses eligible same-operator method state or downgrades to the
+#'   public basis. No policy reuses convergence, locked vectors, operator
+#'   actions, residuals, or a certificate.
+#' @param retain_state State-retention request for the returned result. `"basis"`
+#'   retains only the certified public basis; `"same_operator"` also requests
+#'   an eligible versioned method payload. Unsupported producer routes still
+#'   return a basis-only state.
 #' @param replan Whether to create and execute a new plan from the embedded
 #'   problem under current policy. The original plan is not modified.
 #' @param ... Must be empty; execution controls are frozen in the plan.
@@ -249,19 +258,15 @@ solve.eigencore_plan <- function(
     a <- replan_eigencore_plan(a)
     validate_eigencore_plan(a)
   }
-  if (!is.null(restart_state) || !identical(reuse, "auto") ||
-      !identical(retain_state, "none")) {
-    stop(
-      "Reusable restart-state execution is reserved by the approved 1.2 contract but is not available in this implementation slice yet.",
-      call. = FALSE
-    )
-  }
+  restart_preparation <- prepare_restart_state_for_plan(
+    restart_state, a, reuse = reuse
+  )
   setup_seconds <- proc.time()[["elapsed"]] - setup_started
   context <- new_work_context(a)
   execution_started <- proc.time()[["elapsed"]]
   result <- with_work_context(context, with_execution_policy(a$planner_policy, {
     if (identical(a$problem_type, "eigen")) {
-      execute_eigen_plan(a)
+      execute_eigen_plan(a, restart_preparation = restart_preparation)
     } else {
       execute_svd_plan(a)
     }
@@ -274,6 +279,17 @@ solve.eigencore_plan <- function(
     execution_seconds = finished - execution_started,
     total_seconds = finished - total_started
   )
+  result$state_transition <- finalize_restart_transition(
+    result, restart_preparation
+  )
+  result["restart_state"] <- list(
+    if (identical(retain_state, "none")) {
+      NULL
+    } else {
+      construct_restart_state(result, retention = retain_state)
+    }
+  )
+  result$memory <- result_memory_record(result)
   result
 }
 
@@ -299,7 +315,7 @@ replan_eigencore_plan <- function(plan) {
 }
 
 #' @keywords internal
-execute_eigen_plan <- function(plan) {
+execute_eigen_plan <- function(plan, restart_preparation = NULL) {
   a <- plan$problem
   execution <- plan$execution
   k <- plan$requested
@@ -309,7 +325,12 @@ execute_eigen_plan <- function(plan) {
   vectors <- execution$vectors
   certify <- execution$certify
   allow_dense_fallback <- execution$allow_dense_fallback
-  initial_subspace <- execution$initial_subspace
+  prepared_restart <- restart_preparation$prepared_start %||% NULL
+  initial_subspace <- if (is.null(prepared_restart)) {
+    execution$initial_subspace
+  } else {
+    NULL
+  }
   if (is_transform_method(a$transform) &&
       identical(a$transform$kind, "shift_invert")) {
     a <- shift_invert_prepare_tridiagonal(a)
@@ -343,7 +364,8 @@ execute_eigen_plan <- function(plan) {
   if (plan_dispatches_lanczos(plan)) {
     return(solve_eigen_lanczos(
       a, k, method, tol, maxit, vectors, certify, plan,
-      initial_subspace = initial_subspace
+      initial_subspace = initial_subspace,
+      prepared_restart = prepared_restart
     ))
   }
   if (plan_dispatches_sparse_general_pencil_arnoldi(plan)) {

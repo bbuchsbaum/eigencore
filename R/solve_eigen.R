@@ -105,7 +105,8 @@ solve_eigen_lobpcg <- function(a, k, method, tol, maxit, vectors, certify, plan)
 
 #' @keywords internal
 solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan,
-                                initial_subspace = NULL) {
+                                initial_subspace = NULL,
+                                prepared_restart = NULL) {
   controls <- plan$controls %||% list()
   method_maxit <- controls$max_subspace %||%
     if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$max_subspace else NULL
@@ -125,10 +126,34 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
   # a non-NULL start here is guaranteed to reach a standard Hermitian Lanczos
   # dispatch (native dense/CSC, native block matrix-free callback, or scalar
   # matrix-free reference); the defensive stop keeps that invariant local.
-  warm <- !is.null(initial_subspace)
+  warm <- !is.null(initial_subspace) || !is.null(prepared_restart)
   start_block <- NULL
   start_provenance <- warm_start_cold_provenance()
-  if (warm) {
+  if (!is.null(prepared_restart)) {
+    start_block <- as.matrix(prepared_restart$start)
+    start_provenance <- prepared_restart$provenance
+    guard <- warm_start_invariant_guard(
+      a$A, prepared_restart$guard_basis %||% start_block, tol = tol
+    )
+    start_provenance$invariant_guard_used <- TRUE
+    start_provenance$invariant_relative_residual <- guard$relative_residual
+    start_provenance$guard_operator_block_calls <- guard$operator_block_calls
+    start_provenance$guard_operator_columns <- guard$operator_columns
+    if (isTRUE(guard$discard)) {
+      if (isTRUE(prepared_restart$strict_same_operator)) {
+        restart_state_error(
+          "stale_method_state", "method_state$payload$start_block",
+          "a target-safe non-invariant start block", guard$relative_residual,
+          "The retained same-operator start block was rejected by the current invariant-subspace safety guard."
+        )
+      }
+      start_block <- NULL
+      start_provenance$start_source <- paste0(
+        start_provenance$start_source,
+        "_discarded_invariant_guard"
+      )
+    }
+  } else if (warm) {
     rng_state_before_prepare <- if (exists(".Random.seed", envir = .GlobalEnv,
                                            inherits = FALSE)) {
       get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
@@ -239,7 +264,13 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
   # The certificate-rescue fallback recomputes from a fresh start, discarding
   # the supplied subspace; report that honestly rather than claiming it was used.
   if (warm && isTRUE(iter$restart$fallback_used)) {
-    start_provenance$start_source <- "user_supplied_discarded_on_fallback"
+    start_provenance$start_source <- if (startsWith(
+      start_provenance$start_source, "restart_state_"
+    )) {
+      paste0(start_provenance$start_source, "_discarded_on_fallback")
+    } else {
+      "user_supplied_discarded_on_fallback"
+    }
   }
 
   guard_block_calls <- start_provenance$guard_operator_block_calls %||% 0L

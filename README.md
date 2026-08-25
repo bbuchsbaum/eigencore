@@ -138,6 +138,35 @@ Use `work(result)` for cross-solver accounting. It keeps forward, adjoint,
 metric, preconditioner, and certification calls and columns separate;
 `result$matvecs` remains the route-specific compatibility field.
 
+For repeated standard Hermitian Lanczos solves, opt into reusable state through
+an executable plan. The retained object is an acceleration hint, not a saved
+certificate: every solve still applies and certifies the current operator.
+
+``` r
+workflow_matrix <- diag(seq(60, 1))
+workflow_plan <- plan_solver(
+  eigen_problem(workflow_matrix, target = largest()),
+  k = 3,
+  method = lanczos(block = 3, max_subspace = 24),
+  tol = 1e-8
+)
+first_workflow <- solve(workflow_plan, retain_state = "same_operator")
+second_workflow <- solve(
+  workflow_plan,
+  restart_state = restart_state(first_workflow, retention = "same_operator"),
+  reuse = "same_operator"
+)
+stopifnot(
+  certificate(second_workflow)$passed,
+  second_workflow$state_transition$method_state_used
+)
+```
+
+`reuse = "auto"` keeps only the public basis after a coordinate-compatible
+operator revision; `reuse = "basis_only"` always ignores method payloads.
+Unsupported SVD, generalized, transformed, Arnoldi, LOBPCG, and dense-fallback
+receiving routes fail rather than silently running cold.
+
 ## Smallest eigenvalues of a symmetric operator
 
 The same interface handles symmetric eigenproblems. Here is a sparse

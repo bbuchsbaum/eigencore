@@ -7,8 +7,9 @@
 # spectral-continuation surface for operator-only `A - rho * B` sequences).
 # The subspace is only a starting hint; every solve recomputes
 # projected quantities, residuals, orthogonality, convergence, and a fresh
-# current-operator certificate. Reusable restart objects, recurrence reuse,
-# and generalized/transformed promotion are V3.
+# current-operator certificate. The 1.2 restart-state layer reuses this admitted
+# basis seam; it does not broaden generalized/transformed support or expose
+# recurrence state.
 
 #' Cold-start provenance record.
 #'
