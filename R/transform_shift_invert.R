@@ -785,6 +785,7 @@ native_dense_shift_invert_lanczos <- function(problem, k, sigma, tol, maxit,
       history_max_residual = native$history_max_residual
     )
   )
+  result <- finalize_workflow_result(result, plan)
   class(result) <- "eigencore_eigen_result"
   result
 }
@@ -914,6 +915,7 @@ native_tridiagonal_shift_invert_lanczos <- function(problem, k, sigma, tol,
       history_max_residual = native$history_max_residual
     )
   )
+  result <- finalize_workflow_result(result, plan)
   class(result) <- "eigencore_eigen_result"
   result
 }
@@ -1146,6 +1148,7 @@ native_tridiagonal_generalized_shift_invert_lanczos <- function(problem, k,
       history_max_residual = native$history_max_residual
     )
   )
+  result <- finalize_workflow_result(result, plan)
   class(result) <- "eigencore_eigen_result"
   result
 }
@@ -1282,6 +1285,7 @@ native_dense_generalized_shift_invert_lanczos <- function(problem, k, sigma,
       history_max_residual = native$history_max_residual
     )
   )
+  result <- finalize_workflow_result(result, plan)
   class(result) <- "eigencore_eigen_result"
   result
 }
@@ -1418,6 +1422,7 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
       prep$label_kind, "); native shift-invert hot loop not yet implemented"
     )
   )
+  result <- finalize_workflow_result(result, plan)
   class(result) <- "eigencore_eigen_result"
   result
 }

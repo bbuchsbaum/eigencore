@@ -42,7 +42,13 @@ solve_svd_randomized <- function(a, rank, method, tol, vectors, certify, plan) {
       n_iter = controls$n_iter %||% method$n_iter,
       vectors = vectors,
       refine = controls$refine %||% method$refine,
-      normalizer = controls$normalizer %||% method$normalizer
+      normalizer = controls$normalizer %||% method$normalizer,
+      record_stages = planner_policy_value(
+        plan, "eigencore.randomized_stage_timing"
+      ),
+      adaptive_stop = planner_policy_value(
+        plan, "eigencore.randomized_adaptive_stop"
+      )
     )
   }
   cert <- if (isTRUE(certify) && !is.null(iter[["u"]]) && !is.null(iter[["v"]])) {
@@ -107,11 +113,18 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
   if (!isTRUE(policy$eligible)) {
     return(NULL)
   }
+  op <- as_operator(A)
+  plan <- native_gram_svd_fast_plan(
+    op,
+    rank,
+    target,
+    tol = tol,
+    vectors = vectors,
+    certify = certify
+  )
 
   target_kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
   if (target_kind %in% c("smallest", "smallest_magnitude")) {
-    op <- as_operator(A)
-    plan <- native_gram_svd_fast_plan(op, rank, target)
     return(solve_svd_gram(
       list(A = op, target = target),
       rank = rank,
@@ -134,6 +147,13 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
       PACKAGE = "eigencore"
     )
     if (!is.null(fast_native)) {
+      fast_native$plan <- plan
+      workflow <- result_workflow_fields(
+        plan, fast_native$method, fast_native, fast_native
+      )
+      for (name in names(workflow)) {
+        fast_native[[name]] <- workflow[[name]]
+      }
       return(fast_native)
     }
   }
@@ -150,6 +170,13 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
         PACKAGE = "eigencore"
       )
       if (!is.null(fast_native)) {
+        fast_native$plan <- plan
+        workflow <- result_workflow_fields(
+          plan, fast_native$method, fast_native, fast_native
+        )
+        for (name in names(workflow)) {
+          fast_native[[name]] <- workflow[[name]]
+        }
         return(fast_native)
       }
     }
@@ -165,8 +192,6 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
     )
     zero_tol <- gram_svd_zero_tolerance(native$d, tol)
     if (any(native$d <= zero_tol)) {
-      op <- as_operator(A)
-      plan <- native_gram_svd_fast_plan(op, rank, target)
       return(solve_svd_gram(
         list(A = op, target = target),
         rank = rank,
@@ -177,7 +202,6 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
       ))
     }
 
-    plan <- native_gram_svd_fast_plan_from_dims(dim(A), rank, target)
     cert <- if (isTRUE(certify) && identical(vectors, "both")) {
       new_certificate(
         tol = tol,
@@ -233,8 +257,6 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
       gram_max_backward_error = cert$max_backward_error
     )
     if (isTRUE(certify) && identical(vectors, "both") && !isTRUE(cert$passed)) {
-      op <- as_operator(A)
-      plan <- native_gram_svd_fast_plan(op, rank, target)
       return(solve_svd_gram(
         list(A = op, target = target),
         rank = rank,
@@ -244,28 +266,27 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
         plan = plan
       ))
     }
-    out <- list(
+    iter <- list(
       d = native$d,
       u = u,
       v = v,
-      values = native$d,
-      residuals = cert$residuals,
-      backward_error = cert$backward_error,
-      orthogonality = cert$orthogonality,
-      nconv = sum(cert$converged),
-      requested = rank,
       iterations = 1L,
       matvecs = 1L,
       stage_seconds = native$stage_seconds,
-      method = plan$method,
-      target = target_label(target),
-      plan = plan,
-      certificate = cert,
-      restart = restart,
-      warnings = "using native certified Gram SVD special case; residuals certified in original coordinates"
+      restart = restart
     )
-    class(out) <- "eigencore_svd_result"
-    return(out)
+    return(make_svd_result(
+      d = native$d,
+      u = u,
+      v = v,
+      certificate = cert,
+      iter = iter,
+      requested = rank,
+      method_label = plan$method,
+      target_label_value = target_label(target),
+      plan = plan,
+      warnings = "using native certified Gram SVD special case; residuals certified in original coordinates"
+    ))
   }
 
   native <- .Call(
@@ -280,8 +301,6 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
   )
   zero_tol <- gram_svd_zero_tolerance(native$d, tol)
   if (any(native$d <= zero_tol)) {
-    op <- as_operator(A)
-    plan <- native_gram_svd_fast_plan(op, rank, target)
     return(solve_svd_gram(
       list(A = op, target = target),
       rank = rank,
@@ -292,7 +311,6 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
     ))
   }
 
-  plan <- native_gram_svd_fast_plan_from_dims(dim(A), rank, target)
   cert <- if (isTRUE(certify) && identical(vectors, "both")) {
     new_certificate(
       tol = tol,
@@ -347,35 +365,35 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
     gram_certificate_passed = isTRUE(cert$passed),
     gram_max_backward_error = cert$max_backward_error
   )
-  out <- list(
+  iter <- list(
     d = native$d,
     u = u,
     v = v,
-    values = native$d,
-    residuals = cert$residuals,
-    backward_error = cert$backward_error,
-    orthogonality = cert$orthogonality,
-    nconv = sum(cert$converged),
-    requested = rank,
     iterations = 1L,
     matvecs = 1L,
     stage_seconds = native$stage_seconds,
-    method = plan$method,
-    target = target_label(target),
-    plan = plan,
+    restart = restart
+  )
+  make_svd_result(
+    d = native$d,
+    u = u,
+    v = v,
     certificate = cert,
-    restart = restart,
+    iter = iter,
+    requested = rank,
+    method_label = plan$method,
+    target_label_value = target_label(target),
+    plan = plan,
     warnings = "using native certified Gram SVD special case; residuals certified in original coordinates"
   )
-  class(out) <- "eigencore_svd_result"
-  out
 }
 
 #' @keywords internal
-native_gram_svd_fast_plan <- function(op, rank, target) {
+native_gram_svd_fast_plan <- function(op, rank, target, tol = 1e-8,
+                                      vectors = "both", certify = TRUE) {
   dims <- op$dim
   full <- max(dims)
-  problem <- list(type = "svd", A = op, target = target)
+  problem <- svd_problem(op, target = target)
   chosen <- "native certified Gram SVD special case"
   controls <- svd_plan_controls(problem, rank = rank, method = auto(), chosen = chosen)
   controls$svd_partial_fastpath <- TRUE
@@ -384,6 +402,7 @@ native_gram_svd_fast_plan <- function(op, rank, target) {
     problem,
     k = as.integer(rank),
     method = chosen,
+    method_descriptor = auto(),
     reasons = c(
       paste0("target: ", target_label(target)),
       "rectangular SVD problem",
@@ -396,37 +415,14 @@ native_gram_svd_fast_plan <- function(op, rank, target) {
       "opt-in implicit candidate retries explicit Gram;",
       "native Golub-Kahan if Gram remains uncertified"
     ),
-    controls = controls
-  )
-}
-
-#' @keywords internal
-native_gram_svd_fast_plan_from_dims <- function(dims, rank, target) {
-  dims <- as.integer(dims)
-  problem <- list(type = "svd", target = target)
-  controls <- gram_svd_plan_controls(
-    dims,
-    rank,
-    target,
-    svd_partial_fastpath = TRUE
-  )
-  new_plan(
-    problem,
-    k = as.integer(rank),
-    method = "native certified Gram SVD special case",
-    reasons = c(
-      paste0("target: ", target_label(target)),
-      "rectangular SVD problem",
-      "adjoint is available",
-      "bounded smaller-side normal problem with exact original-coordinate certification; explicit Gram is the production default",
-      "built-in sparse CSC operator has native block apply",
-      "direct svd_partial() fast path avoids S3 dispatch overhead"
-    ),
-    fallback = paste(
-      "opt-in implicit candidate retries explicit Gram;",
-      "native Golub-Kahan if Gram remains uncertified"
-    ),
-    controls = controls
+    controls = controls,
+    execution = new_plan_execution(
+      "svd",
+      tol = tol,
+      vectors = vectors,
+      certify = certify,
+      allow_dense_fallback = "auto"
+    )
   )
 }
 
@@ -459,7 +455,13 @@ solve_svd_gram <- function(a, rank, tol, vectors, certify, plan) {
         target = a$target,
         tol = tol,
         maxit = NULL,
-        vectors = vectors
+        vectors = vectors,
+        projected_stop = planner_policy_value(
+          plan, "eigencore.golub_kahan_projected_stop"
+        ),
+        prefix_diagnostics = planner_policy_value(
+          plan, "eigencore.golub_kahan_prefix_diagnostics"
+        )
       ),
       error = function(e) {
         structure(list(error = conditionMessage(e)), class = "eigencore_fallback_error")
@@ -547,7 +549,13 @@ solve_svd_implicit_gram <- function(a, rank, tol, vectors, certify, plan) {
         target = a$target,
         tol = tol,
         maxit = NULL,
-        vectors = "both"
+        vectors = "both",
+        projected_stop = planner_policy_value(
+          plan, "eigencore.golub_kahan_projected_stop"
+        ),
+        prefix_diagnostics = planner_policy_value(
+          plan, "eigencore.golub_kahan_prefix_diagnostics"
+        )
       ),
       error = function(e) {
         structure(list(error = conditionMessage(e)), class = "eigencore_fallback_error")
@@ -673,7 +681,13 @@ solve_svd_golub_kahan <- function(a, rank, method, tol, vectors, certify, plan) 
       tol = tol,
       maxit = method_maxit,
       vectors = vectors,
-      reorthogonalize = method_reorth
+      reorthogonalize = method_reorth,
+      projected_stop = planner_policy_value(
+        plan, "eigencore.golub_kahan_projected_stop"
+      ),
+      prefix_diagnostics = planner_policy_value(
+        plan, "eigencore.golub_kahan_prefix_diagnostics"
+      )
     )
   } else {
     reference_golub_kahan_svd(
@@ -747,7 +761,11 @@ solve_svd_golub_kahan <- function(a, rank, method, tol, vectors, certify, plan) 
 
 #' @keywords internal
 solve_svd_dense <- function(a, rank, tol, vectors, certify, allow_dense_fallback, plan) {
-  A <- materialize_dense_fallbacks(list(A = a$A), allow = allow_dense_fallback)$A
+  A <- materialize_dense_fallbacks(
+    list(A = a$A),
+    budget = plan$execution$dense_fallback_budget_bytes,
+    allow = allow_dense_fallback
+  )$A
   decomp <- if (identical(plan$method, "native dense LAPACK SVD fallback")) {
     native_dense_svd(A)
   } else if (identical(plan$method, native_dense_complex_svd_label())) {

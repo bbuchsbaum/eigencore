@@ -1,3 +1,25 @@
+# eigencore 1.2.0.9000
+
+## Reusable solver workflows
+
+* `plan_solver()` now returns a schema-versioned executable plan containing
+  the problem, original method descriptor, selected route, canonical controls,
+  execution arguments, all 20 route-affecting package options, operator
+  identity/revision records, serialization capability, and retained-memory
+  metadata. `solve(plan)` validates and executes that frozen route without
+  invoking the planner. `replan = TRUE` is the explicit opt-in to a fresh
+  decision under current policy; execution arguments cannot be overridden.
+* `linear_operator()` gains `operator_id`, `revision`, and `portable` provenance.
+  Matrix-backed and built-in composite operators derive deterministic portable
+  identities from dimensions, structure, transformation parameters, and
+  values. Callback operators without explicit provenance receive opaque
+  session-local identities and restored cross-session plans fail before the
+  callback is invoked. `operator_identity()` exposes the typed records.
+* Eigen and SVD results distinguish `planned_method` from `actual_method`
+  (`method` remains the compatibility alias for the latter), report
+  `fallback_used` and a typed `fallback_reason`, and retain the exact immutable
+  plan that governed execution. Legacy result fields remain available.
+
 # eigencore 1.1.0 (2026-08-24)
 
 ## New features

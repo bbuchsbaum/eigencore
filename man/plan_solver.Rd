@@ -12,12 +12,22 @@ plan_solver(problem, ...)
 \item{...}{Additional planning arguments passed to methods.}
 }
 \value{
-An \code{eigencore_plan} list describing the requested problem, chosen
-method label, target, planner reasons, fallback label, and control
-metadata used by solver dispatch.
+A schema-versioned executable \code{eigencore_plan} containing the
+problem, requested size, original method descriptor, frozen route,
+canonical controls and planner policy, execution arguments, operator
+identity, serialization capability, and retained-memory metadata.
 }
 \description{
 Plan a solver for a problem.
+}
+\details{
+The eigen and SVD methods accept their usual request and method
+arguments plus execution controls through \code{...}. Eigen plans freeze
+\code{tol}, \code{maxit}, \code{vectors}, \code{certify}, \code{allow_dense_fallback}, and an
+optional \code{initial_subspace}; SVD plans freeze \code{tol}, \code{vectors}, \code{certify},
+and \code{allow_dense_fallback}. Use \code{solve(plan)} to execute those values or
+\code{solve(plan, replan = TRUE)} to make a fresh decision under current
+policy.
 }
 \examples{
 A <- diag(c(4, 3, 2, 1))

@@ -11,7 +11,10 @@ linear_operator(
   dtype = "double",
   structure = general(),
   name = NULL,
-  metadata = list()
+  metadata = list(),
+  operator_id = NULL,
+  revision = NULL,
+  portable = FALSE
 )
 }
 \arguments{
@@ -31,6 +34,16 @@ the adjoint operator.}
 \item{name}{Optional operator label used in plans and diagnostics.}
 
 \item{metadata}{Optional list of implementation metadata.}
+
+\item{operator_id}{Optional non-empty character identity for a logical
+callback-operator lineage. Supply together with \code{revision}.}
+
+\item{revision}{Optional non-empty character revision for the values and
+behavior implemented by the callback. Supply together with \code{operator_id}.}
+
+\item{portable}{Whether an explicitly identified callback operator may be
+restored and validated in another R session. Built-in matrix-backed
+operators derive portable deterministic identity automatically.}
 }
 \value{
 An \code{eigencore_operator} list containing dimensions, apply callbacks,

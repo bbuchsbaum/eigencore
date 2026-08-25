@@ -198,23 +198,37 @@ spectral target (`largest()`, `smallest()`, `nearest()`, ...).
 P <- eigen_problem(A, structure = hermitian(), target = largest())
 ```
 
-**3. Plans.** `plan_solver()` chooses a method and tells you *exactly*
-which kernel will run, before you pay for the computation. There is no
-silent dispatch.
+**3. Plans.** `plan_solver()` chooses a method and returns an executable,
+frozen record. It stores the problem, requested size, method descriptor,
+execution controls, operator identity, and the planner-policy snapshot that
+selected the route. Changing `options(eigencore.*)` later does not alter
+`solve(plan)`.
 
 ```{r plan}
 plan <- plan_solver(P, k = 5)
 plan
 ```
 
-**4. Solve.** `solve()` on a problem is what `eig_partial()` calls
-internally — reach for it when you've already built a `plan` or `problem`
-you want to reuse.
+**4. Solve.** Solve the plan when you want the inspected route and controls to
+govern execution. The result distinguishes that planned route from the route
+that actually returned the certified values; they differ only when an allowed
+runtime fallback is used.
 
 ```{r solve}
-same_fit <- solve(P, k = 5)
-isTRUE(all.equal(same_fit$values, fit$values))
+planned_fit <- solve(plan)
+c(
+  planned = planned_fit$planned_method,
+  actual = planned_fit$actual_method,
+  fallback = planned_fit$fallback_used
+)
+isTRUE(all.equal(planned_fit$values, fit$values))
 ```
+
+A problem is reusable but not frozen: `solve(P, k = 5)` creates a fresh plan
+under current package options on every call, which is also what
+`eig_partial()` does internally. Use `solve(plan, replan = TRUE)` only when
+you deliberately want a fresh decision from the embedded problem; the old
+plan is not modified.
 
 ## Where to go next
 

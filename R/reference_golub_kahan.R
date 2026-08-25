@@ -1275,7 +1275,13 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
                                    maxit = NULL,
                                    vectors = c("both", "left", "right", "none"),
                                    reorthogonalize = TRUE,
-                                   internal_start = NULL) {
+                                   internal_start = NULL,
+                                   projected_stop = execution_policy_option(
+                                     "eigencore.golub_kahan_projected_stop", FALSE
+                                   ),
+                                   prefix_diagnostics = execution_policy_option(
+                                     "eigencore.golub_kahan_prefix_diagnostics", FALSE
+                                   )) {
   vectors <- match.arg(vectors)
   op <- as_operator(op)
   if (is.null(op$apply_adjoint)) {
@@ -1336,7 +1342,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   storage <- op$metadata$storage %||% NULL
   source <- source_or_null(op)
   native_callback_path <- native_matrix_free_golub_kahan_available(op)
-  projected_stop_requested <- isTRUE(getOption("eigencore.golub_kahan_projected_stop", FALSE))
+  projected_stop_requested <- isTRUE(projected_stop)
   projected_stop_disable_reason <- NULL
   if (identical(storage, "dgCMatrix") && m >= 4L * n) {
     projected_stop_disable_reason <- "disabled for high-aspect tall sparse operators"
@@ -1345,7 +1351,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     !isTRUE(interior_target) &&
     !fixed_maxit &&
     is.null(projected_stop_disable_reason)
-  prefix_diagnostics <- isTRUE(getOption("eigencore.golub_kahan_prefix_diagnostics", FALSE))
+  prefix_diagnostics <- isTRUE(prefix_diagnostics)
   reorthogonalization_mode <- if (isTRUE(reorthogonalize)) {
     "full_two_sided"
   } else {
@@ -2214,8 +2220,14 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
                                      oversample = 10L, n_iter = 2L,
                                      vectors = c("both", "left", "right", "none"),
                                      refine = TRUE,
-                                     normalizer = c("qr", "lu", "none")) {
-  record_stages <- isTRUE(getOption("eigencore.randomized_stage_timing", FALSE))
+                                     normalizer = c("qr", "lu", "none"),
+                                     record_stages = execution_policy_option(
+                                       "eigencore.randomized_stage_timing", FALSE
+                                     ),
+                                     adaptive_stop = execution_policy_option(
+                                       "eigencore.randomized_adaptive_stop", TRUE
+                                     )) {
+  record_stages <- isTRUE(record_stages)
   stage_seconds <- c(
     random = 0,
     apply = 0,
@@ -2245,7 +2257,7 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
   n_iter <- max(0L, as.integer(n_iter))
   l <- min(limit, rank + oversample)
   apply_pair <- randomized_svd_apply_pair(op)
-  adaptive_stop <- isTRUE(getOption("eigencore.randomized_adaptive_stop", TRUE))
+  adaptive_stop <- isTRUE(adaptive_stop)
   adaptive_candidate_allowed <- adaptive_stop && identical(normalizer, "qr")
 
   candidate_from_Q <- function(Q) {

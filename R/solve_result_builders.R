@@ -17,6 +17,7 @@ make_eigen_result <- function(values,
                               plan,
                               warnings,
                               extras = list()) {
+  method_label <- runtime_actual_method(plan, method_label, iter)
   base <- list(
     values = values,
     vectors = vectors,
@@ -33,6 +34,7 @@ make_eigen_result <- function(values,
     certificate = certificate,
     warnings = warnings
   )
+  base <- c(base, result_workflow_fields(plan, method_label, iter, base))
   result <- modifyList(base, extras %||% list())
   class(result) <- "eigencore_eigen_result"
   result
@@ -50,6 +52,7 @@ make_svd_result <- function(d,
                             plan,
                             warnings,
                             extras = list()) {
+  method_label <- runtime_actual_method(plan, method_label, iter)
   base <- list(
     d = d,
     u = u,
@@ -70,6 +73,7 @@ make_svd_result <- function(d,
     restart = iter$restart,
     warnings = warnings
   )
+  base <- c(base, result_workflow_fields(plan, method_label, iter, base))
   result <- modifyList(base, extras %||% list())
   class(result) <- "eigencore_svd_result"
   result

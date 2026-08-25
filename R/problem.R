@@ -106,9 +106,17 @@ svd_problem <- function(A, domain = NULL, codomain = NULL, target = largest()) {
 #'
 #' @param problem Eigencore eigen or SVD problem object.
 #' @param ... Additional planning arguments passed to methods.
-#' @return An `eigencore_plan` list describing the requested problem, chosen
-#'   method label, target, planner reasons, fallback label, and control
-#'   metadata used by solver dispatch.
+#' @return A schema-versioned executable `eigencore_plan` containing the
+#'   problem, requested size, original method descriptor, frozen route,
+#'   canonical controls and planner policy, execution arguments, operator
+#'   identity, serialization capability, and retained-memory metadata.
+#' @details The eigen and SVD methods accept their usual request and method
+#'   arguments plus execution controls through `...`. Eigen plans freeze
+#'   `tol`, `maxit`, `vectors`, `certify`, `allow_dense_fallback`, and an
+#'   optional `initial_subspace`; SVD plans freeze `tol`, `vectors`, `certify`,
+#'   and `allow_dense_fallback`. Use `solve(plan)` to execute those values or
+#'   `solve(plan, replan = TRUE)` to make a fresh decision under current
+#'   policy.
 #' @examples
 #' A <- diag(c(4, 3, 2, 1))
 #' plan <- plan_solver(eigen_problem(A), k = 2)
@@ -119,7 +127,23 @@ plan_solver <- function(problem, ...) {
 }
 
 #' @export
-plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...) {
+plan_solver.eigencore_eigen_problem <- function(
+    problem, k, method = auto(), tol = 1e-8, maxit = NULL, vectors = TRUE,
+    certify = TRUE,
+    allow_dense_fallback = c("auto", "never", "always"),
+    initial_subspace = NULL, ...) {
+  method_descriptor <- method
+  planner_policy <- planner_policy_snapshot()
+  allow_dense_fallback <- match.arg(allow_dense_fallback)
+  execution <- new_plan_execution(
+    "eigen",
+    tol = tol,
+    maxit = maxit,
+    vectors = vectors,
+    certify = certify,
+    allow_dense_fallback = allow_dense_fallback,
+    initial_subspace = initial_subspace
+  )
   auto_shift <- auto_shift_invert_route(problem, method)
   problem <- auto_shift$problem
   method <- auto_shift$method
@@ -321,13 +345,20 @@ plan_solver.eigencore_eigen_problem <- function(problem, k, method = auto(), ...
   if (grepl("LOBPCG", chosen, fixed = TRUE)) {
     controls <- lobpcg_plan_controls(method)
   }
+  if (!is.null(initial_subspace) &&
+      warm_start_plan_consumes_start(problem, list(method = chosen))) {
+    controls$initial_subspace_supported <- TRUE
+  }
   new_plan(
     problem,
     k = k,
     method = chosen,
+    method_descriptor = method_descriptor,
     reasons = reasons,
     fallback = fallback,
-    controls = controls
+    controls = controls,
+    execution = execution,
+    planner_policy = planner_policy
   )
 }
 
@@ -584,7 +615,21 @@ tridiagonal_edge_shift_sigma <- function(parts, target_kind) {
 }
 
 #' @export
-plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ...) {
+plan_solver.eigencore_svd_problem <- function(
+    problem, rank, method = auto(), tol = 1e-8,
+    vectors = c("both", "left", "right", "none"), certify = TRUE,
+    allow_dense_fallback = c("auto", "never", "always"), ...) {
+  method_descriptor <- method
+  planner_policy <- planner_policy_snapshot()
+  vectors <- match.arg(vectors)
+  allow_dense_fallback <- match.arg(allow_dense_fallback)
+  execution <- new_plan_execution(
+    "svd",
+    tol = tol,
+    vectors = vectors,
+    certify = certify,
+    allow_dense_fallback = allow_dense_fallback
+  )
   source_matrix <- source_or_null(problem$A)
   is_dense_source <- is.matrix(source_matrix) && is.double(source_matrix)
   is_complex_dense_source <- is.matrix(source_matrix) && is.complex(source_matrix)
@@ -694,13 +739,23 @@ plan_solver.eigencore_svd_problem <- function(problem, rank, method = auto(), ..
     "dense oracle prototype"
   }
   controls <- svd_plan_controls(problem, rank = rank, method = method, chosen = chosen)
-  new_plan(
+  plan <- new_plan(
     problem,
     k = rank,
     method = chosen,
+    method_descriptor = method_descriptor,
     reasons = reasons,
     fallback = fallback,
-    controls = controls
+    controls = controls,
+    execution = execution,
+    planner_policy = planner_policy
+  )
+  validate_or_route_svd_target_plan(
+    problem,
+    plan = plan,
+    rank = rank,
+    method = method,
+    allow_dense_fallback = allow_dense_fallback
   )
 }
 
@@ -770,15 +825,63 @@ operator_kernel_reason <- function(op) {
 
 #' @keywords internal
 new_plan <- function(problem, k, method, reasons, fallback = "dense oracle prototype",
-                     controls = list()) {
+                     controls = list(), method_descriptor = auto(),
+                     execution = NULL, planner_policy = NULL) {
+  if (is.null(execution)) {
+    execution <- new_plan_execution(problem$type %||% "svd")
+  }
+  if (is.null(planner_policy)) {
+    planner_policy <- planner_policy_snapshot()
+  }
+  execution$dense_fallback_budget_bytes <-
+    planner_policy[["eigencore.dense_fallback_mb"]] * 1e6
+  identities <- if (inherits(problem, c("eigencore_eigen_problem", "eigencore_svd_problem"))) {
+    operator_identity(problem)
+  } else if (!is.null(problem$A)) {
+    list(A = operator_identity(problem$A))
+  } else {
+    list()
+  }
+  controls <- deep_copy_record(controls)
+  planner_policy <- deep_copy_record(planner_policy)
+  execution <- deep_copy_record(execution)
+  serialization <- new_plan_serialization(
+    identities,
+    method,
+    method_descriptor = method_descriptor,
+    controls = controls,
+    execution = execution,
+    planner_policy = planner_policy
+  )
   plan <- list(
+    schema_version = 1L,
+    problem = problem,
     problem_type = problem$type,
-    requested = k,
+    requested = as.integer(k),
+    method_descriptor = method_descriptor,
+    planned_method = method,
     method = method,
     target = target_label(problem$target),
     reasons = reasons,
     fallback = fallback,
-    controls = controls
+    controls = controls,
+    execution = execution,
+    planner_policy = planner_policy,
+    operator_identity = identities,
+    serialization = serialization,
+    memory = new_memory_record(
+      list(
+        problem = problem,
+        controls = controls,
+        policy = planner_policy,
+        metadata = list(
+          schema_version = 1L,
+          method_descriptor = method_descriptor,
+          execution = execution,
+          serialization = serialization
+        )
+      )
+    )
   )
   class(plan) <- "eigencore_plan"
   plan

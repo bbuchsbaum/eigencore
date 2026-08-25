@@ -32,9 +32,10 @@
       largest_magnitude()
       largest_real()
       left_vectors(x, ...)
-      linear_operator(dim, apply, apply_adjoint = NULL, dtype = "double", structure = general(), name = NULL, metadata = list())
+      linear_operator(dim, apply, apply_adjoint = NULL, dtype = "double", structure = general(), name = NULL, metadata = list(), operator_id = NULL, revision = NULL, portable = FALSE)
       lobpcg(maxit = 200L, preconditioner = NULL, constraints = NULL)
       nearest(sigma)
+      operator_identity(x)
       plan_solver(problem, ...)
       randomized(oversample = 10, n_iter = 2, block = NULL, normalizer = c("qr", "lu", "none"), refine = TRUE)
       right_vectors(x, ...)
@@ -78,6 +79,7 @@
       residuals.eigencore_eigen_result
       residuals.eigencore_svd_result
       solve.eigencore_eigen_problem
+      solve.eigencore_plan
       solve.eigencore_svd_problem
 
 # result and certificate field names are frozen
@@ -89,21 +91,29 @@
     Code
       writeLines(sort(names(efit)))
     Output
+      actual_method
       backward_error
       certificate
+      fallback_reason
+      fallback_used
       iterations
       matvecs
+      memory
       method
       nconv
       orthogonality
       plan
+      planned_method
       requested
       residuals
       restart
+      restart_state
+      state_transition
       target
       values
       vectors
       warnings
+      work
     Code
       cat("svd result:\n")
     Output
@@ -111,23 +121,31 @@
     Code
       writeLines(sort(names(sfit)))
     Output
+      actual_method
       backward_error
       certificate
       d
+      fallback_reason
+      fallback_used
       iterations
       matvecs
+      memory
       method
       nconv
       orthogonality
       plan
+      planned_method
       requested
       residuals
+      restart_state
       stage_seconds
+      state_transition
       target
       u
       v
       values
       warnings
+      work
     Code
       cat("dense general-pencil result:\n")
     Output
@@ -135,6 +153,7 @@
     Code
       writeLines(sort(names(pencil_fit)))
     Output
+      actual_method
       alpha
       backward_error
       beta
@@ -143,6 +162,8 @@
       classification
       classification_policy
       conditioning
+      fallback_reason
+      fallback_used
       finite
       generalized
       infinite
@@ -150,17 +171,22 @@
       left_certificate
       left_vectors
       matvecs
+      memory
       method
       nconv
       orthogonality
       plan
+      planned_method
       requested
       residuals
+      restart_state
+      state_transition
       target
       undefined
       values
       vectors
       warnings
+      work
     Code
       cat("generalized Schur result:\n")
     Output
@@ -193,33 +219,41 @@
     Code
       writeLines(sort(names(sparse_pencil_fit)))
     Output
+      actual_method
       alpha
       backward_error
       beta
       certificate
       classification
       classification_policy
+      fallback_reason
+      fallback_used
       finite
       generalized
       infinite
       iterations
       locked
       matvecs
+      memory
       method
       nconv
       orthogonality
       plan
+      planned_method
       requested
       residuals
       restart
+      restart_state
       restarts
       right_hand_pencil
+      state_transition
       target
       transform
       undefined
       values
       vectors
       warnings
+      work
     Code
       cat("GSVD result:\n")
     Output
@@ -267,27 +301,35 @@
     Code
       writeLines(sort(names(nonsymmetric_fit)))
     Output
+      actual_method
       backward_error
       biorthogonality
       certificate
+      fallback_reason
+      fallback_used
       iterations
       left_certificate
       left_vectors
       locked
       matvecs
+      memory
       method
       nconv
       orthogonality
       plan
+      planned_method
       requested
       residuals
       restart
+      restart_state
       restarts
       right_vectors
+      state_transition
       target
       values
       vectors
       warnings
+      work
     Code
       cat("certificate:\n")
     Output

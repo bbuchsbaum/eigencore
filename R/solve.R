@@ -146,65 +146,18 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
                                           allow_dense_fallback = c("auto", "never", "always"),
                                           initial_subspace = NULL, ...) {
   allow_dense_fallback <- match.arg(allow_dense_fallback)
-  auto_shift <- auto_shift_invert_route(a, method)
-  a <- auto_shift$problem
-  method <- auto_shift$method
-  if (is_transform_method(a$transform) &&
-      identical(a$transform$kind, "shift_invert")) {
-    a <- shift_invert_prepare_tridiagonal(a)
-  }
-  plan <- plan_solver(a, k = k, method = method)
-  plan <- validate_complex_eigen_plan(a, plan)
-  if (!is.null(initial_subspace)) {
-    validate_initial_subspace_plan_support(a, plan)
-  }
-  if (is_transform_method(a$transform)) {
-    if (identical(a$transform$kind, "shift_invert")) {
-      return(solve_shift_invert_hermitian(
-        a, k = k, method = a$transform, tol = tol,
-        maxit = maxit, vectors = vectors, certify = certify, plan = plan
-      ))
-    }
-    stop(
-      "transform method '", a$transform$kind,
-      "' is registered in transform_method_kinds() but has no solver dispatch wired in solve.eigencore_eigen_problem.",
-      call. = FALSE
-    )
-  }
-  if (plan_dispatches_lobpcg(plan)) {
-    return(solve_eigen_lobpcg(a, k, method, tol, maxit, vectors, certify, plan))
-  }
-  if (plan_dispatches_structured_grid_laplacian_2d(plan)) {
-    return(solve_eigen_grid_laplacian_2d(a, k, tol, vectors, certify, plan))
-  }
-  if (plan_dispatches_native_tridiagonal_eigen(plan)) {
-    return(solve_eigen_native_tridiagonal_hermitian(a, k, tol, vectors, certify, plan))
-  }
-  if (plan_dispatches_lanczos(plan)) {
-    return(solve_eigen_lanczos(a, k, method, tol, maxit, vectors, certify, plan,
-                               initial_subspace = initial_subspace))
-  }
-  if (plan_dispatches_sparse_general_pencil_arnoldi(plan)) {
-    return(solve_eigen_sparse_general_pencil_arnoldi(
-      a, k, method, tol, maxit, vectors, certify, plan
-    ))
-  }
-  if (plan_rejects_sparse_general_pencil(plan)) {
-    stop(sparse_general_pencil_unsupported_message(a), call. = FALSE)
-  }
-  if (plan_dispatches_arnoldi(plan)) {
-    return(solve_eigen_arnoldi(a, k, method, tol, maxit, vectors, certify, plan))
-  }
-  if (plan$method %in% c("native dense Hermitian LAPACK fallback",
-                         native_dense_complex_hermitian_label())) {
-    return(solve_eigen_native_dense_hermitian(a, k, tol, vectors, certify,
-                                              allow_dense_fallback, plan))
-  }
-  if (identical(plan$method, native_dense_complex_general_label())) {
-    return(solve_eigen_native_dense_general(a, k, tol, vectors, certify,
-                                            allow_dense_fallback, plan))
-  }
-  solve_eigen_dense_oracle(a, k, tol, vectors, certify, allow_dense_fallback, plan)
+  plan <- plan_solver(
+    a,
+    k = k,
+    method = method,
+    tol = tol,
+    maxit = maxit,
+    vectors = vectors,
+    certify = certify,
+    allow_dense_fallback = allow_dense_fallback,
+    initial_subspace = initial_subspace
+  )
+  solve(plan)
 }
 
 #' Solve a planned SVD problem.
@@ -232,15 +185,187 @@ solve.eigencore_svd_problem <- function(a, b, rank, method = auto(), tol = 1e-8,
                                         allow_dense_fallback = c("auto", "never", "always"), ...) {
   vectors <- match.arg(vectors)
   allow_dense_fallback <- match.arg(allow_dense_fallback)
-  plan <- plan_solver(a, rank = rank, method = method)
-  plan <- validate_complex_svd_plan(a, plan)
-  plan <- validate_or_route_svd_target_plan(
+  plan <- plan_solver(
     a,
-    plan = plan,
     rank = rank,
     method = method,
+    tol = tol,
+    vectors = vectors,
+    certify = certify,
     allow_dense_fallback = allow_dense_fallback
   )
+  solve(plan)
+}
+
+#' Execute a frozen eigencore solver plan.
+#'
+#' `solve(plan)` validates and runs the problem, method, controls, policy, and
+#' execution arguments captured by [plan_solver()]. It never invokes the
+#' planner unless `replan = TRUE`. Execution arguments cannot be overridden
+#' through `...`.
+#'
+#' @param a An executable `eigencore_plan`.
+#' @param b Unused second argument reserved by the base [solve()] generic.
+#' @param restart_state Optional reusable state. Implemented by the reusable-
+#'   restart-state layer.
+#' @param reuse Reuse policy for an optional restart state.
+#' @param retain_state State-retention request for the returned result.
+#' @param replan Whether to create and execute a new plan from the embedded
+#'   problem under current policy. The original plan is not modified.
+#' @param ... Must be empty; execution controls are frozen in the plan.
+#' @return An `eigencore_eigen_result` or `eigencore_svd_result` containing the
+#'   exact plan that governed execution.
+#' @export
+solve.eigencore_plan <- function(
+    a, b, restart_state = NULL,
+    reuse = c("auto", "basis_only", "same_operator"),
+    retain_state = c("none", "basis", "same_operator"),
+    replan = FALSE, ...) {
+  reuse <- match.arg(reuse)
+  retain_state <- match.arg(retain_state)
+  dots <- list(...)
+  if (length(dots)) {
+    field <- names(dots)[[1L]] %||% "..."
+    if (!nzchar(field)) {
+      field <- "..."
+    }
+    plan_error(
+      "execution_override", field, "frozen plan value", dots[[1L]],
+      paste0("Execution argument '", field,
+             "' is frozen in the plan. Create a new plan or use replan = TRUE.")
+    )
+  }
+  if (!is.logical(replan) || length(replan) != 1L || is.na(replan)) {
+    plan_error("corrupt_plan", "replan", "TRUE or FALSE", replan)
+  }
+  validate_eigencore_plan(a)
+  if (isTRUE(replan)) {
+    a <- replan_eigencore_plan(a)
+    validate_eigencore_plan(a)
+  }
+  if (!is.null(restart_state) || !identical(reuse, "auto") ||
+      !identical(retain_state, "none")) {
+    stop(
+      "Reusable restart-state execution is reserved by the approved 1.2 contract but is not available in this implementation slice yet.",
+      call. = FALSE
+    )
+  }
+  with_execution_policy(a$planner_policy, {
+    if (identical(a$problem_type, "eigen")) {
+      execute_eigen_plan(a)
+    } else {
+      execute_svd_plan(a)
+    }
+  })
+}
+
+#' @keywords internal
+replan_eigencore_plan <- function(plan) {
+  execution <- plan$execution
+  args <- list(
+    problem = plan$problem,
+    method = plan$method_descriptor,
+    tol = execution$tol,
+    vectors = execution$vectors,
+    certify = execution$certify,
+    allow_dense_fallback = execution$allow_dense_fallback
+  )
+  if (identical(plan$problem_type, "eigen")) {
+    args$k <- plan$requested
+    args$maxit <- execution$maxit
+    args$initial_subspace <- execution$initial_subspace
+  } else {
+    args$rank <- plan$requested
+  }
+  do.call(plan_solver, args)
+}
+
+#' @keywords internal
+execute_eigen_plan <- function(plan) {
+  a <- plan$problem
+  execution <- plan$execution
+  k <- plan$requested
+  method <- plan$method_descriptor
+  tol <- execution$tol
+  maxit <- execution$maxit
+  vectors <- execution$vectors
+  certify <- execution$certify
+  allow_dense_fallback <- execution$allow_dense_fallback
+  initial_subspace <- execution$initial_subspace
+  if (is_transform_method(a$transform) &&
+      identical(a$transform$kind, "shift_invert")) {
+    a <- shift_invert_prepare_tridiagonal(a)
+  }
+  validate_complex_eigen_plan(a, plan)
+  if (!is.null(initial_subspace)) {
+    validate_initial_subspace_plan_support(a, plan)
+  }
+  if (is_transform_method(a$transform)) {
+    if (identical(a$transform$kind, "shift_invert")) {
+      return(solve_shift_invert_hermitian(
+        a, k = k, method = a$transform, tol = tol,
+        maxit = maxit, vectors = vectors, certify = certify, plan = plan
+      ))
+    }
+    stop(
+      "transform method '", a$transform$kind,
+      "' is registered in transform_method_kinds() but has no executable plan dispatch.",
+      call. = FALSE
+    )
+  }
+  if (plan_dispatches_lobpcg(plan)) {
+    return(solve_eigen_lobpcg(a, k, method, tol, maxit, vectors, certify, plan))
+  }
+  if (plan_dispatches_structured_grid_laplacian_2d(plan)) {
+    return(solve_eigen_grid_laplacian_2d(a, k, tol, vectors, certify, plan))
+  }
+  if (plan_dispatches_native_tridiagonal_eigen(plan)) {
+    return(solve_eigen_native_tridiagonal_hermitian(a, k, tol, vectors, certify, plan))
+  }
+  if (plan_dispatches_lanczos(plan)) {
+    return(solve_eigen_lanczos(
+      a, k, method, tol, maxit, vectors, certify, plan,
+      initial_subspace = initial_subspace
+    ))
+  }
+  if (plan_dispatches_sparse_general_pencil_arnoldi(plan)) {
+    return(solve_eigen_sparse_general_pencil_arnoldi(
+      a, k, method, tol, maxit, vectors, certify, plan
+    ))
+  }
+  if (plan_rejects_sparse_general_pencil(plan)) {
+    stop(sparse_general_pencil_unsupported_message(a), call. = FALSE)
+  }
+  if (plan_dispatches_arnoldi(plan)) {
+    return(solve_eigen_arnoldi(a, k, method, tol, maxit, vectors, certify, plan))
+  }
+  if (plan$method %in% c("native dense Hermitian LAPACK fallback",
+                         native_dense_complex_hermitian_label())) {
+    return(solve_eigen_native_dense_hermitian(
+      a, k, tol, vectors, certify, allow_dense_fallback, plan
+    ))
+  }
+  if (identical(plan$method, native_dense_complex_general_label())) {
+    return(solve_eigen_native_dense_general(
+      a, k, tol, vectors, certify, allow_dense_fallback, plan
+    ))
+  }
+  solve_eigen_dense_oracle(
+    a, k, tol, vectors, certify, allow_dense_fallback, plan
+  )
+}
+
+#' @keywords internal
+execute_svd_plan <- function(plan) {
+  a <- plan$problem
+  execution <- plan$execution
+  rank <- plan$requested
+  method <- plan$method_descriptor
+  tol <- execution$tol
+  vectors <- execution$vectors
+  certify <- execution$certify
+  allow_dense_fallback <- execution$allow_dense_fallback
+  validate_complex_svd_plan(a, plan)
   if (identical(plan$method, "reference randomized SVD prototype") ||
       identical(plan$method, native_dense_randomized_svd_label()) ||
       identical(plan$method, native_csc_randomized_svd_label())) {
@@ -480,6 +605,54 @@ plan_dispatches_golub_kahan <- function(plan) {
 }
 
 #' @keywords internal
+plan_dispatch_available <- function(plan) {
+  if (identical(plan$problem_type, "eigen")) {
+    problem <- plan$problem
+    if (is_transform_method(problem$transform)) {
+      return(identical(problem$transform$kind, "shift_invert"))
+    }
+    if (plan_dispatches_lobpcg(plan) ||
+        plan_dispatches_structured_grid_laplacian_2d(plan) ||
+        plan_dispatches_native_tridiagonal_eigen(plan) ||
+        plan_dispatches_lanczos(plan) ||
+        plan_dispatches_sparse_general_pencil_arnoldi(plan) ||
+        plan_rejects_sparse_general_pencil(plan) ||
+        plan_dispatches_arnoldi(plan)) {
+      return(TRUE)
+    }
+    if (plan$method %in% c(
+      "native dense Hermitian LAPACK fallback",
+      native_dense_complex_hermitian_label(),
+      native_dense_complex_general_label(),
+      "native dense generalized SPD LAPACK fallback"
+    )) {
+      return(TRUE)
+    }
+    return(grepl(
+      "^(dense LAPACK|dense generalized SPD LAPACK)",
+      plan$method
+    ))
+  }
+  if (!identical(plan$problem_type, "svd")) {
+    return(FALSE)
+  }
+  if (plan$method %in% c(
+    "reference randomized SVD prototype",
+    native_dense_randomized_svd_label(),
+    native_csc_randomized_svd_label(),
+    "native certified Gram SVD special case",
+    native_implicit_gram_svd_label(),
+    native_retained_golub_kahan_diagnostic_label(),
+    "native dense LAPACK SVD fallback",
+    native_dense_complex_svd_label()
+  )) {
+    return(TRUE)
+  }
+  plan_dispatches_golub_kahan(plan) ||
+    grepl("^dense LAPACK SVD", plan$method)
+}
+
+#' @keywords internal
 validate_complex_eigen_plan <- function(problem, plan) {
   if (!identical(problem$A$dtype, "complex")) {
     return(plan)
@@ -533,6 +706,7 @@ svd_route_explicit_dense_interior_fallback <- function(problem, plan, rank,
   } else {
     "dense LAPACK SVD oracle (prototype fallback)"
   }
+  plan$planned_method <- plan$method
   plan$reasons <- c(
     plan$reasons,
     paste0(
@@ -545,6 +719,25 @@ svd_route_explicit_dense_interior_fallback <- function(problem, plan, rank,
   plan$controls <- svd_plan_controls(problem, rank = rank, method = method, chosen = plan$method)
   plan$controls$interior_svd_dense_fallback <- TRUE
   plan$controls$interior_svd_previous_method <- old_method
+  plan$serialization <- new_plan_serialization(
+    plan$operator_identity,
+    plan$planned_method,
+    method_descriptor = plan$method_descriptor,
+    controls = plan$controls,
+    execution = plan$execution,
+    planner_policy = plan$planner_policy
+  )
+  plan$memory <- new_memory_record(list(
+    problem = plan$problem,
+    controls = plan$controls,
+    policy = plan$planner_policy,
+    metadata = list(
+      schema_version = plan$schema_version,
+      method_descriptor = plan$method_descriptor,
+      execution = plan$execution,
+      serialization = plan$serialization
+    )
+  ))
   plan
 }
 

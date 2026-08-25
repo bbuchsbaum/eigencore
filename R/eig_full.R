@@ -255,15 +255,18 @@ eig_full_pencil_conditioning <- function(eig, complex_pencil) {
 eig_full_result <- function(values, vectors, certificate, method, n, warnings,
                             extras = list(), controls_extra = list()) {
   problem <- list(type = "eigen", target = largest())
-  plan <- new_plan(
-    problem = problem,
-    k = n,
-    method = method,
-    reasons = c("full dense eigendecomposition requested through eig_full()"),
-    fallback = "none",
-    controls = c(list(full = TRUE, dense = TRUE), controls_extra)
+  plan <- structure(
+    list(
+      problem_type = problem$type,
+      requested = n,
+      method = method,
+      target = "all",
+      reasons = c("full dense eigendecomposition requested through eig_full()"),
+      fallback = "none",
+      controls = c(list(full = TRUE, dense = TRUE), controls_extra)
+    ),
+    class = "eigencore_plan"
   )
-  plan$target <- "all"
   make_eigen_result(
     values = values,
     vectors = vectors,

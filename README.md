@@ -122,11 +122,15 @@ svd_partial(A_centered, rank = 5, target = largest())$d
 
 Build operators with `linear_operator()`, combine them with `compose()`,
 `crossprod_operator()`, `scale_cols()`, `center()`, and friends. The
-planner picks the kernel from the structure; `plan_solver()` shows the
-choice before you commit to a long solve:
+planner picks the kernel from the structure. `plan_solver()` returns an
+executable, frozen record: `solve(plan)` runs that inspected route, while
+`solve(problem)` creates a fresh plan under current policy. Results report
+both the planned and actual runtime methods when a certification fallback
+is needed:
 
 ``` r
-plan_solver(svd_problem(A_centered, target = largest()), rank = 5)$method
+plan <- plan_solver(svd_problem(A_centered, target = largest()), rank = 5)
+plan$method
 #> [1] "native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary)"
 ```
 

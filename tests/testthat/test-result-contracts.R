@@ -8,7 +8,16 @@ expect_eigen_result_contract <- function(fit, expected_method = NULL) {
   expect_equal(fit$residuals, certificate(fit)$residuals)
   expect_equal(fit$backward_error, certificate(fit)$backward_error)
   expect_equal(fit$nconv, sum(certificate(fit)$converged))
-  expect_identical(fit$method, fit$plan$method)
+  expect_identical(fit$method, fit$actual_method)
+  expect_identical(fit$planned_method,
+                   fit$plan$planned_method %||% fit$plan$method)
+  expect_identical(fit$fallback_used,
+                   !identical(fit$actual_method, fit$planned_method))
+  if (fit$fallback_used) {
+    expect_s3_class(fit$fallback_reason, "eigencore_fallback_reason")
+  } else {
+    expect_null(fit$fallback_reason)
+  }
   if (!is.null(expected_method)) {
     expect_identical(fit$method, expected_method)
   }
@@ -67,7 +76,16 @@ expect_svd_result_contract <- function(fit, expected_method = NULL) {
   expect_equal(fit$residuals, certificate(fit)$residuals)
   expect_equal(fit$backward_error, certificate(fit)$backward_error)
   expect_equal(fit$nconv, sum(certificate(fit)$converged))
-  expect_identical(fit$method, fit$plan$method)
+  expect_identical(fit$method, fit$actual_method)
+  expect_identical(fit$planned_method,
+                   fit$plan$planned_method %||% fit$plan$method)
+  expect_identical(fit$fallback_used,
+                   !identical(fit$actual_method, fit$planned_method))
+  if (fit$fallback_used) {
+    expect_s3_class(fit$fallback_reason, "eigencore_fallback_reason")
+  } else {
+    expect_null(fit$fallback_reason)
+  }
   if (!is.null(expected_method)) {
     expect_identical(fit$method, expected_method)
   }

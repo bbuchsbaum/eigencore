@@ -10,6 +10,13 @@
 #'   [hermitian()].
 #' @param name Optional operator label used in plans and diagnostics.
 #' @param metadata Optional list of implementation metadata.
+#' @param operator_id Optional non-empty character identity for a logical
+#'   callback-operator lineage. Supply together with `revision`.
+#' @param revision Optional non-empty character revision for the values and
+#'   behavior implemented by the callback. Supply together with `operator_id`.
+#' @param portable Whether an explicitly identified callback operator may be
+#'   restored and validated in another R session. Built-in matrix-backed
+#'   operators derive portable deterministic identity automatically.
 #' @return An `eigencore_operator` list containing dimensions, apply callbacks,
 #'   scalar type, structure metadata, a display name, and implementation
 #'   metadata.
@@ -28,12 +35,26 @@
 #' values(fit)
 linear_operator <- function(dim, apply, apply_adjoint = NULL, dtype = "double",
                             structure = general(), name = NULL,
-                            metadata = list()) {
+                            metadata = list(), operator_id = NULL,
+                            revision = NULL, portable = FALSE) {
   stopifnot(is.numeric(dim), length(dim) == 2L)
   stopifnot(is.function(apply))
   if (!is.null(apply_adjoint)) {
     stopifnot(is.function(apply_adjoint))
   }
+  if (!is.list(metadata)) {
+    stop("metadata must be a list.", call. = FALSE)
+  }
+
+  identity <- make_operator_identity(
+    dim = dim,
+    dtype = dtype,
+    structure = structure,
+    metadata = metadata,
+    operator_id = operator_id,
+    revision = revision,
+    portable = portable
+  )
 
   op <- list(
     dim = as.integer(dim),
@@ -42,7 +63,8 @@ linear_operator <- function(dim, apply, apply_adjoint = NULL, dtype = "double",
     dtype = dtype,
     structure = structure,
     name = name %||% "linear_operator",
-    metadata = metadata
+    metadata = metadata,
+    identity = identity
   )
   class(op) <- "eigencore_operator"
   op

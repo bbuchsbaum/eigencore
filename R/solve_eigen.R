@@ -13,7 +13,9 @@ solve_eigen_lobpcg <- function(a, k, method, tol, maxit, vectors, certify, plan)
   method_preconditioner <- if (method_is_lobpcg) method$preconditioner else NULL
   method_constraints <- if (method_is_lobpcg) method$constraints else NULL
   method_maxit <- maxit %||% controls$maxit %||%
-    if (method_is_lobpcg) method$maxit else getOption("eigencore.lobpcg_maxit", 200L)
+    if (method_is_lobpcg) method$maxit else execution_policy_option(
+      "eigencore.lobpcg_maxit", 200L
+    )
   iter <- if (identical(plan$method, native_standard_lobpcg_label())) {
     native_lobpcg_hermitian(
       a$A,
@@ -252,9 +254,6 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
   iter$certification_operator_columns <- as.integer(
     iter$certification_operator_columns %||% 0L
   )
-  plan$initial_subspace <- start_provenance
-  plan$controls$initial_subspace_supported <- TRUE
-
   warning_msg <- if (native_generalized_path) {
     if (!isTRUE(iter$certificate$passed)) {
       paste0(
@@ -640,7 +639,11 @@ solve_eigen_grid_laplacian_2d <- function(a, k, tol, vectors, certify, plan) {
 #' @keywords internal
 solve_eigen_native_dense_hermitian <- function(a, k, tol, vectors, certify,
                                                 allow_dense_fallback, plan) {
-  A <- materialize_dense_fallbacks(list(A = a$A), allow = allow_dense_fallback)$A
+  A <- materialize_dense_fallbacks(
+    list(A = a$A),
+    budget = plan$execution$dense_fallback_budget_bytes,
+    allow = allow_dense_fallback
+  )$A
   target_kind <- if (inherits(a$target, "eigencore_target")) {
     a$target$kind
   } else {
@@ -710,7 +713,11 @@ solve_eigen_native_dense_hermitian <- function(a, k, tol, vectors, certify,
 #' @keywords internal
 solve_eigen_native_dense_general <- function(a, k, tol, vectors, certify,
                                              allow_dense_fallback, plan) {
-  A <- materialize_dense_fallbacks(list(A = a$A), allow = allow_dense_fallback)$A
+  A <- materialize_dense_fallbacks(
+    list(A = a$A),
+    budget = plan$execution$dense_fallback_budget_bytes,
+    allow = allow_dense_fallback
+  )$A
   if (!is.complex(A)) {
     stop("native dense complex general eigensolver requires a complex dense matrix.", call. = FALSE)
   }
@@ -795,6 +802,7 @@ solve_eigen_dense_oracle <- function(a, k, tol, vectors, certify,
                                      allow_dense_fallback, plan) {
   dense_inputs <- materialize_dense_fallbacks(
     if (is.null(a$metric)) list(A = a$A) else list(A = a$A, B = a$metric),
+    budget = plan$execution$dense_fallback_budget_bytes,
     allow = allow_dense_fallback
   )
   A <- dense_inputs$A
