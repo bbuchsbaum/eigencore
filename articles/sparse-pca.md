@@ -158,6 +158,12 @@ Acs <- scale_cols(Ac, w)
 fit_scaled <- svd_partial(Acs, rank = 5, target = largest())
 fit_scaled$d
 #> [1] 75.68299 71.50447 68.85755 66.99968 65.85421
+fit_scaled$certificate$passed
+#> [1] TRUE
+fit_scaled$certificate$norm_bound_type
+#> [1] "frobenius_metadata"
+fit_scaled$certificate$scale_is_estimate
+#> [1] FALSE
 ```
 
 [`center()`](https://bbuchsbaum.github.io/eigencore/reference/center.md)
@@ -165,7 +171,11 @@ and
 [`scale_cols()`](https://bbuchsbaum.github.io/eigencore/reference/scale_cols.md)
 compose freely because both return the same `eigencore_operator` type
 that every solver accepts — there’s no separate “scaled matrix” object
-to keep track of.
+to keep track of. For this column-centered CSC composition, eigencore
+also reuses the sparse column moments to compute the exact Frobenius
+norm `sum_j w_j^2 sum_i (A_ij - mean_j)^2`. The scaled solve can
+therefore pass its certificate without a stochastic scale estimate, even
+though the centered matrix itself is never formed.
 
 ## What did the planner actually do?
 
@@ -176,23 +186,25 @@ method selection, densification, or fallback behavior matters:
 
 plan <- plan_solver(svd_problem(Acs), rank = 5, target = largest())
 plan$method
-#> [1] "native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary)"
+#> [1] "native prototype Golub-Kahan"
 plan$reasons
-#> [1] "target: largest"                                                                                                                                  
-#> [2] "rectangular SVD problem"                                                                                                                          
-#> [3] "adjoint is available"                                                                                                                             
-#> [4] "matrix-free operator uses a native Golub-Kahan callback cycle with native Ritz extraction; sparse/matrix-free performance promotion remains gated"
-#> [5] "operator uses R-level apply path in current prototype"
+#> [1] "target: largest"                                                                                                                           
+#> [2] "rectangular SVD problem"                                                                                                                   
+#> [3] "adjoint is available"                                                                                                                      
+#> [4] "default avoids normal equations"                                                                                                           
+#> [5] "centered-plus-column-scaled CSC operator has a fused native block apply and direct native Golub-Kahan cycle without an R callback boundary"
 ```
 
-Centering and scaling a sparse matrix still fuse into a single native,
-non-densifying construction. But once that composed operator reaches the
-solver, eigencore drives it through a matrix-free Golub-Kahan callback
-cycle rather than a fully block-native kernel — the `reasons` say so
-explicitly rather than leaving you to infer it from timing.
+Centering and scaling a CSC matrix fuse into a single native,
+non-densifying construction. The planner routes that operator to a
+direct native Golub-Kahan cycle: the C++ hot loop consumes the original
+CSC slots, column means, and scale weights without an R callback
+boundary. Inspect `plan$controls$fused_centered_scaled_csc` and
+`plan$controls$callback_boundary` for the machine-readable contract; the
+human-readable `reasons` state the same boundary.
 [`plan_solver()`](https://bbuchsbaum.github.io/eigencore/reference/plan_solver.md)
 takes the same problem/rank/target arguments as the solve itself, so you
-can always check the plan before paying for the computation.
+can check the route before paying for the computation.
 
 ## Going fully matrix-free
 

@@ -154,7 +154,7 @@ str(res, max.level = 1)
 #>  $ nops       : int 62
 #>  $ certificate:List of 18
 #>   ..- attr(*, "class")= chr "eigencore_certificate"
-#>  $ diagnostics:List of 20
+#>  $ diagnostics:List of 21
 ```
 
 ``` r
@@ -229,8 +229,10 @@ P <- eigen_problem(A, structure = hermitian(), target = largest())
 
 **3. Plans.**
 [`plan_solver()`](https://bbuchsbaum.github.io/eigencore/reference/plan_solver.md)
-chooses a method and tells you *exactly* which kernel will run, before
-you pay for the computation. There is no silent dispatch.
+chooses a method and returns an executable, frozen record. It stores the
+problem, requested size, method descriptor, execution controls, operator
+identity, and the planner-policy snapshot that selected the route.
+Changing `options(eigencore.*)` later does not alter `solve(plan)`.
 
 ``` r
 
@@ -255,19 +257,35 @@ plan
 #>   fallback: dense oracle prototype if unsupported
 ```
 
-**4. Solve.**
-[`solve()`](https://rdrr.io/pkg/Matrix/man/solve-methods.html) on a
-problem is what
-[`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md)
-calls internally — reach for it when you’ve already built a `plan` or
-`problem` you want to reuse.
+**4. Solve.** Solve the plan when you want the inspected route and
+controls to govern execution. The result distinguishes that planned
+route from the route that actually returned the certified values; they
+differ only when an allowed runtime fallback is used.
 
 ``` r
 
-same_fit <- solve(P, k = 5)
-isTRUE(all.equal(same_fit$values, fit$values))
+planned_fit <- solve(plan)
+c(
+  planned = planned_fit$planned_method,
+  actual = planned_fit$actual_method,
+  fallback = planned_fit$fallback_used
+)
+#>                                         planned 
+#> "native scalar thick-restart Hermitian Lanczos" 
+#>                                          actual 
+#> "native scalar thick-restart Hermitian Lanczos" 
+#>                                        fallback 
+#>                                         "FALSE"
+isTRUE(all.equal(planned_fit$values, fit$values))
 #> [1] TRUE
 ```
+
+A problem is reusable but not frozen: `solve(P, k = 5)` creates a fresh
+plan under current package options on every call, which is also what
+[`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md)
+does internally. Use `solve(plan, replan = TRUE)` only when you
+deliberately want a fresh decision from the embedded problem; the old
+plan is not modified.
 
 ## Where to go next
 

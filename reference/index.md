@@ -40,6 +40,8 @@ Build problem descriptors and inspect the solver plan.
   : Define an SVD problem.
 - [`plan_solver()`](https://bbuchsbaum.github.io/eigencore/reference/plan_solver.md)
   : Plan a solver for a problem.
+- [`solve(`*`<eigencore_plan>`*`)`](https://bbuchsbaum.github.io/eigencore/reference/solve.eigencore_plan.md)
+  : Execute a frozen eigencore solver plan.
 - [`solve(`*`<eigencore_eigen_problem>`*`)`](https://bbuchsbaum.github.io/eigencore/reference/solve.eigencore_eigen_problem.md)
   : Solve a planned eigenproblem.
 - [`solve(`*`<eigencore_svd_problem>`*`)`](https://bbuchsbaum.github.io/eigencore/reference/solve.eigencore_svd_problem.md)
@@ -53,6 +55,8 @@ Block-native linear operators and operator algebra.
   : Create a block-native linear operator.
 - [`as_operator()`](https://bbuchsbaum.github.io/eigencore/reference/as_operator.md)
   : Convert an object to an eigencore operator.
+- [`operator_identity()`](https://bbuchsbaum.github.io/eigencore/reference/operator_identity.md)
+  : Return operator identity and revision provenance.
 - [`adjoint()`](https://bbuchsbaum.github.io/eigencore/reference/adjoint.md)
   : Return the adjoint operator.
 - [`check_adjoint()`](https://bbuchsbaum.github.io/eigencore/reference/check_adjoint.md)
@@ -156,3 +160,15 @@ Inspecting solver output and the numerical evidence.
   : Extract right singular vectors.
 - [`diagnostics()`](https://bbuchsbaum.github.io/eigencore/reference/diagnostics.md)
   : Extract diagnostics.
+
+## Reusable workflows and work accounting
+
+Persist certified basis state, inspect its memory, and compare typed
+solver work.
+
+- [`restart_state()`](https://bbuchsbaum.github.io/eigencore/reference/restart_state.md)
+  : Extract a reusable spectral restart state.
+- [`retained_bytes()`](https://bbuchsbaum.github.io/eigencore/reference/retained_bytes.md)
+  : Return retained-memory accounting.
+- [`work()`](https://bbuchsbaum.github.io/eigencore/reference/work.md) :
+  Extract typed logical work diagnostics.

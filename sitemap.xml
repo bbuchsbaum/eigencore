@@ -51,6 +51,7 @@
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/mgs2.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/native_implicit_gram_svd.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/nearest.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/reference/operator_identity.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/operator_scale.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/operator_sum.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/orthogonality_loss.html</loc></url>
@@ -59,6 +60,8 @@
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/randomized.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/rayleigh_ritz.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/residuals.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/reference/restart_state.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/reference/retained_bytes.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/right_vectors.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/scale_cols.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/scale_rows.html</loc></url>
@@ -71,6 +74,7 @@
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/smallest_magnitude.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/smallest_real.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/solve.eigencore_eigen_problem.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/reference/solve.eigencore_plan.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/solve.eigencore_svd_problem.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/svd_partial.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/svd_problem.html</loc></url>
@@ -84,5 +88,6 @@
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/warm_start_cold_provenance.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/warm_start_invariant_guard.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/warm_start_plan_consumes_start.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/reference/work.html</loc></url>
 </urlset>
 

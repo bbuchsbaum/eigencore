@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -45,9 +45,29 @@
   <main id="main" class="col-md-9"><div class="page-header">
 
       <h1>Changelog</h1>
-      <small>Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/v1.1.0/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
+      <small>Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="1.2.0" id="eigencore-120-2026-08-25">eigencore 1.2.0 (2026-08-25)<a class="anchor" aria-label="anchor" href="#eigencore-120-2026-08-25"></a></h2>
+<div class="section level3">
+<h3 id="reusable-solver-workflows-1-2-0">Reusable solver workflows<a class="anchor" aria-label="anchor" href="#reusable-solver-workflows-1-2-0"></a></h3>
+<ul><li>
+<code><a href="../reference/plan_solver.html">plan_solver()</a></code> now returns a schema-versioned executable plan containing the problem, original method descriptor, selected route, canonical controls, execution arguments, all 20 route-affecting package options, operator identity/revision records, serialization capability, and retained-memory metadata. <code>solve(plan)</code> validates and executes that frozen route without invoking the planner. <code>replan = TRUE</code> is the explicit opt-in to a fresh decision under current policy; execution arguments cannot be overridden.</li>
+<li>
+<code><a href="../reference/linear_operator.html">linear_operator()</a></code> gains <code>operator_id</code>, <code>revision</code>, and <code>portable</code> provenance. Matrix-backed and built-in composite operators derive deterministic portable identities from dimensions, structure, transformation parameters, and values. Callback operators without explicit provenance receive opaque session-local identities and restored cross-session plans fail before the callback is invoked. <code><a href="../reference/operator_identity.html">operator_identity()</a></code> exposes the typed records.</li>
+<li>Eigen and SVD results distinguish <code>planned_method</code> from <code>actual_method</code> (<code>method</code> remains the compatibility alias for the latter), report <code>fallback_used</code> and a typed <code>fallback_reason</code>, and retain the exact immutable plan that governed execution. Legacy result fields remain available.</li>
+<li>
+<code><a href="../reference/work.html">work()</a></code> returns a schema-versioned <code>eigencore_work</code> record with separate logical block-call and column counts for the operator, adjoint, metric, preconditioner, and current-certificate phases, plus iterations, restarts, and phase timings. Callback counts are captured at the operator boundary, including native callback cycles; <code>matvecs</code> remains unchanged as <code>legacy_matvecs</code>. Routes whose native controller cannot yet prove a split use <code>NA</code> and <code>complete = FALSE</code> rather than inventing equivalent work.</li>
+<li>
+<code><a href="../reference/restart_state.html">restart_state()</a></code> constructs immutable, schema-versioned basis states only from freshly certified eigen or SVD results, while <code><a href="../reference/retained_bytes.html">retained_bytes()</a></code> reports their exact version-1 R retention. <code>solve(plan, restart_state = ...)</code> admits basis reuse only for standard real Hermitian Lanczos on dense double, CSC, and callback operators. Exact-revision reuse may retain a deterministic, target-safe fitted start block, but never recurrence, locks, cached operator actions, convergence, or certificates. Changed revisions and lineages use only the public basis; incompatible and unsupported routes fail before the current operator is applied.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="sparse-operator-performance-1-2-0">Sparse operator performance<a class="anchor" aria-label="anchor" href="#sparse-operator-performance-1-2-0"></a></h3>
+<ul><li>
+<code>scale_cols(center(A, columns = TRUE), weights)</code> now recognizes a real <code>dgCMatrix</code> and builds one fused native operator for <code>(A - 1 mu^T) D</code>. Forward and adjoint block application, including <code>alpha</code>/<code>beta</code> accumulation, stay in C++; native Golub-Kahan consumes the sparse matrix, means, and weights directly, without materializing the centered matrix or crossing an R callback boundary inside the iteration. One CSC moments pass supplies exact centered-and-scaled Frobenius metadata, so the resulting two-sided SVD certificate reports <code>norm_bound_type = "frobenius_metadata"</code> and <code>scale_is_estimate = FALSE</code>. Zero columns, zero/negative/extreme finite weights, transpose algebra, planner provenance, and strict installed-package execution are covered by the v1.2 sparse-PCA gate.</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="1.1.0" id="eigencore-110-2026-08-24">eigencore 1.1.0 (2026-08-24)<a class="anchor" aria-label="anchor" href="#eigencore-110-2026-08-24"></a></h2>
 <div class="section level3">

@@ -93,8 +93,8 @@ for (i in seq_along(rhos)) {
   )
   rows[[i]] <- data.frame(
     rho = rhos[[i]],
-    cold_columns = cold$operator_columns,
-    warm_columns = warm$operator_columns,
+    cold_columns = work(cold)$operator_columns,
+    warm_columns = work(warm)$operator_columns,
     max_value_difference = max(abs(sort(values(cold)) - sort(values(warm))))
   )
   start <- vectors(warm)
@@ -110,10 +110,13 @@ comparison <- do.call(rbind, rows)
 
 On this reproducible family, every continuation step uses fewer operator
 columns than its cold counterpart and agrees on the requested values
-well within the solve tolerance. These counts include the work used to
-guard and certify the supplied subspace; `operator_block_calls` is a
+well within the solve tolerance.
+[`work()`](https://bbuchsbaum.github.io/eigencore/reference/work.md)
+separates solve columns from current- certificate columns, adjoint work,
+metric work, and preconditioner work; `operator_block_calls` is a
 different metric because one block call may apply the operator to
-several columns.
+several columns. The legacy `matvecs` field remains unchanged and should
+not be compared across solver families.
 
 Do not assume the same speedup for every sweep. When the target
 eigenspace changes abruptly or the supplied directions have little
@@ -121,6 +124,75 @@ overlap with it, a warm solve can cost about as much as a cold one. The
 reproducible benchmark `inst/benchmarks/bench-warm-start-continuation.R`
 includes both high-overlap continuation and a deliberate overlap-loss
 jump.
+
+## When should you use a restart state?
+
+`initial_subspace` is the direct basis-hint interface. Use a restart
+state when the basis should be a versioned, integrity-checked artifact
+with explicit identity, invalidation, transition, serialization, and
+retained-memory records. Restart-state execution goes through an
+executable plan.
+
+``` r
+
+state_plan <- plan_solver(
+  eigen_problem(A - 0.02 * B, target = smallest()),
+  k = k,
+  method = method,
+  tol = 1e-8
+)
+state_first <- solve(state_plan, retain_state = "same_operator")
+state <- restart_state(state_first, retention = "same_operator")
+
+same_operator <- solve(
+  state_plan,
+  restart_state = state,
+  reuse = "same_operator"
+)
+
+next_plan <- plan_solver(
+  eigen_problem(A - 0.04 * B, target = smallest()),
+  k = k,
+  method = method,
+  tol = 1e-8
+)
+changed_operator <- solve(
+  next_plan,
+  restart_state = state,
+  reuse = "auto"
+)
+
+data.frame(
+  solve = c("same operator", "changed operator"),
+  relation = c(
+    same_operator$state_transition$relation,
+    changed_operator$state_transition$relation
+  ),
+  basis_used = c(
+    same_operator$state_transition$basis_used,
+    changed_operator$state_transition$basis_used
+  ),
+  method_state_used = c(
+    same_operator$state_transition$method_state_used,
+    changed_operator$state_transition$method_state_used
+  )
+)
+#>              solve         relation basis_used method_state_used
+#> 1    same operator    same_operator       TRUE              TRUE
+#> 2 changed operator changed_operator       TRUE             FALSE
+```
+
+The exact-revision solve may consume the retained fitted start block.
+The changed matrix has a new built-in operator identity, so `auto` keeps
+only the coordinate-compatible public basis and invalidates every
+operator-dependent claim. Both results have a fresh current-operator
+certificate. The state owns ordinary R data only in version 1, so
+`retained_bytes(state)` is complete and reports zero native bytes.
+
+Version 1 deliberately has no receiving adapter for SVD, generalized,
+shift-invert, Arnoldi, LOBPCG, structured, or dense-fallback routes.
+Supplying a state to one of those routes is an error; it is never
+treated as a silent cold start.
 
 ## How can you tell what happened to the start?
 

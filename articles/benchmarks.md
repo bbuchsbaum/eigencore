@@ -85,11 +85,11 @@ unrounded measurements and reports the smallest value in each row.
 
 | case                  | lowest median | eigencore | RSpectra |   irlba | base R |
 |:----------------------|:--------------|----------:|---------:|--------:|-------:|
-| dense Hermitian       | RSpectra      |    1.6080 |   0.4832 | not run |  1.925 |
-| sparse path Laplacian | eigencore     |    2.4310 |   8.0040 | not run | 12.630 |
-| dense low-rank SVD    | RSpectra      |    1.6290 |   0.2363 |  0.3658 |  1.606 |
-| tall sparse SVD       | RSpectra      |    0.5634 |   0.3534 |  0.7562 |  1.758 |
-| wide sparse SVD       | RSpectra      |    0.5672 |   0.4547 |  1.0330 |  2.821 |
+| dense Hermitian       | RSpectra      |     4.868 |   0.4799 | not run |  1.945 |
+| sparse path Laplacian | eigencore     |     4.803 |   8.0000 | not run | 13.660 |
+| dense low-rank SVD    | RSpectra      |     4.942 |   0.2258 |  0.3950 |  1.674 |
+| tall sparse SVD       | RSpectra      |     2.650 |   0.3625 |  0.7717 |  1.766 |
+| wide sparse SVD       | RSpectra      |     2.729 |   0.4257 |  0.9561 |  2.489 |
 
 Median solver-call time in milliseconds from 3 iterations per method.
 {.table style="width:100%;"}
@@ -149,11 +149,11 @@ do not measure peak resident memory.
 
 | case                  | eigencore | RSpectra |   irlba | base R |
 |:----------------------|----------:|---------:|--------:|-------:|
-| dense Hermitian       |   0.98700 |  0.06661 | not run | 0.4240 |
-| sparse path Laplacian |   1.38000 |  0.01991 | not run | 3.1880 |
-| dense low-rank SVD    |   1.22600 |  0.09405 |  0.5606 | 0.5942 |
-| tall sparse SVD       |   0.01906 |  0.02502 |  0.1760 | 0.8979 |
-| wide sparse SVD       |   0.02360 |  0.02246 |  0.1542 | 0.9098 |
+| dense Hermitian       |    2.4950 |  0.06661 | not run | 0.4240 |
+| sparse path Laplacian |    1.7390 |  0.01991 | not run | 3.1880 |
+| dense low-rank SVD    |    1.8020 |  0.09405 |  0.5606 | 0.5942 |
+| tall sparse SVD       |    0.2094 |  0.02502 |  0.1760 | 0.8979 |
+| wide sparse SVD       |    0.2190 |  0.02246 |  0.1542 | 0.9098 |
 
 Allocated memory in megabytes. {.table}
 

@@ -21,7 +21,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -74,7 +74,7 @@
       <h1>PCA on sparse data without densifying</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/v1.1.0/vignettes/sparse-pca.Rmd" class="external-link"><code>vignettes/sparse-pca.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/vignettes/sparse-pca.Rmd" class="external-link"><code>vignettes/sparse-pca.Rmd</code></a></small>
       <div class="d-none name"><code>sparse-pca.Rmd</code></div>
     </div>
 
@@ -208,11 +208,21 @@ already have:</p>
 <span><span class="va">Acs</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/scale_cols.html">scale_cols</a></span><span class="op">(</span><span class="va">Ac</span>, <span class="va">w</span><span class="op">)</span></span>
 <span><span class="va">fit_scaled</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/svd_partial.html">svd_partial</a></span><span class="op">(</span><span class="va">Acs</span>, rank <span class="op">=</span> <span class="fl">5</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="va">fit_scaled</span><span class="op">$</span><span class="va">d</span></span>
-<span><span class="co">#&gt; [1] 75.68299 71.50447 68.85755 66.99968 65.85421</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] 75.68299 71.50447 68.85755 66.99968 65.85421</span></span>
+<span><span class="va">fit_scaled</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
+<span><span class="co">#&gt; [1] TRUE</span></span>
+<span><span class="va">fit_scaled</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
+<span><span class="co">#&gt; [1] "frobenius_metadata"</span></span>
+<span><span class="va">fit_scaled</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">scale_is_estimate</span></span>
+<span><span class="co">#&gt; [1] FALSE</span></span></code></pre></div>
 <p><code><a href="../reference/center.html">center()</a></code> and <code><a href="../reference/scale_cols.html">scale_cols()</a></code> compose freely
 because both return the same <code>eigencore_operator</code> type that
 every solver accepts — there’s no separate “scaled matrix” object to
-keep track of.</p>
+keep track of. For this column-centered CSC composition, eigencore also
+reuses the sparse column moments to compute the exact Frobenius norm
+<code>sum_j w_j^2 sum_i (A_ij - mean_j)^2</code>. The scaled solve can
+therefore pass its certificate without a stochastic scale estimate, even
+though the centered matrix itself is never formed.</p>
 </div>
 <div class="section level2">
 <h2 id="what-did-the-planner-actually-do">What did the planner actually do?<a class="anchor" aria-label="anchor" href="#what-did-the-planner-actually-do"></a>
@@ -222,21 +232,23 @@ method selection, densification, or fallback behavior matters:</p>
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plan</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/plan_solver.html">plan_solver</a></span><span class="op">(</span><span class="fu"><a href="../reference/svd_problem.html">svd_problem</a></span><span class="op">(</span><span class="va">Acs</span><span class="op">)</span>, rank <span class="op">=</span> <span class="fl">5</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="va">plan</span><span class="op">$</span><span class="va">method</span></span>
-<span><span class="co">#&gt; [1] "native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary)"</span></span>
+<span><span class="co">#&gt; [1] "native prototype Golub-Kahan"</span></span>
 <span><span class="va">plan</span><span class="op">$</span><span class="va">reasons</span></span>
-<span><span class="co">#&gt; [1] "target: largest"                                                                                                                                  </span></span>
-<span><span class="co">#&gt; [2] "rectangular SVD problem"                                                                                                                          </span></span>
-<span><span class="co">#&gt; [3] "adjoint is available"                                                                                                                             </span></span>
-<span><span class="co">#&gt; [4] "matrix-free operator uses a native Golub-Kahan callback cycle with native Ritz extraction; sparse/matrix-free performance promotion remains gated"</span></span>
-<span><span class="co">#&gt; [5] "operator uses R-level apply path in current prototype"</span></span></code></pre></div>
-<p>Centering and scaling a sparse matrix still fuse into a single
-native, non-densifying construction. But once that composed operator
-reaches the solver, eigencore drives it through a matrix-free
-Golub-Kahan callback cycle rather than a fully block-native kernel — the
-<code>reasons</code> say so explicitly rather than leaving you to infer
-it from timing. <code><a href="../reference/plan_solver.html">plan_solver()</a></code> takes the same
-problem/rank/target arguments as the solve itself, so you can always
-check the plan before paying for the computation.</p>
+<span><span class="co">#&gt; [1] "target: largest"                                                                                                                           </span></span>
+<span><span class="co">#&gt; [2] "rectangular SVD problem"                                                                                                                   </span></span>
+<span><span class="co">#&gt; [3] "adjoint is available"                                                                                                                      </span></span>
+<span><span class="co">#&gt; [4] "default avoids normal equations"                                                                                                           </span></span>
+<span><span class="co">#&gt; [5] "centered-plus-column-scaled CSC operator has a fused native block apply and direct native Golub-Kahan cycle without an R callback boundary"</span></span></code></pre></div>
+<p>Centering and scaling a CSC matrix fuse into a single native,
+non-densifying construction. The planner routes that operator to a
+direct native Golub-Kahan cycle: the C++ hot loop consumes the original
+CSC slots, column means, and scale weights without an R callback
+boundary. Inspect <code>plan$controls$fused_centered_scaled_csc</code>
+and <code>plan$controls$callback_boundary</code> for the
+machine-readable contract; the human-readable <code>reasons</code> state
+the same boundary. <code><a href="../reference/plan_solver.html">plan_solver()</a></code> takes the same
+problem/rank/target arguments as the solve itself, so you can check the
+route before paying for the computation.</p>
 </div>
 <div class="section level2">
 <h2 id="going-fully-matrix-free">Going fully matrix-free<a class="anchor" aria-label="anchor" href="#going-fully-matrix-free"></a>

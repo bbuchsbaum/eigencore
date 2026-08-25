@@ -20,9 +20,20 @@ plan_solver(problem, ...)
 
 ## Value
 
-An `eigencore_plan` list describing the requested problem, chosen method
-label, target, planner reasons, fallback label, and control metadata
-used by solver dispatch.
+A schema-versioned executable `eigencore_plan` containing the problem,
+requested size, original method descriptor, frozen route, canonical
+controls and planner policy, execution arguments, operator identity,
+serialization capability, and retained-memory metadata.
+
+## Details
+
+The eigen and SVD methods accept their usual request and method
+arguments plus execution controls through `...`. Eigen plans freeze
+`tol`, `maxit`, `vectors`, `certify`, `allow_dense_fallback`, and an
+optional `initial_subspace`; SVD plans freeze `tol`, `vectors`,
+`certify`, and `allow_dense_fallback`. Use `solve(plan)` to execute
+those values or `solve(plan, replan = TRUE)` to make a fresh decision
+under current policy.
 
 ## Examples
 

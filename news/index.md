@@ -1,5 +1,69 @@
 # Changelog
 
+## eigencore 1.2.0 (2026-08-25)
+
+### Reusable solver workflows
+
+- [`plan_solver()`](https://bbuchsbaum.github.io/eigencore/reference/plan_solver.md)
+  now returns a schema-versioned executable plan containing the problem,
+  original method descriptor, selected route, canonical controls,
+  execution arguments, all 20 route-affecting package options, operator
+  identity/revision records, serialization capability, and
+  retained-memory metadata. `solve(plan)` validates and executes that
+  frozen route without invoking the planner. `replan = TRUE` is the
+  explicit opt-in to a fresh decision under current policy; execution
+  arguments cannot be overridden.
+- [`linear_operator()`](https://bbuchsbaum.github.io/eigencore/reference/linear_operator.md)
+  gains `operator_id`, `revision`, and `portable` provenance.
+  Matrix-backed and built-in composite operators derive deterministic
+  portable identities from dimensions, structure, transformation
+  parameters, and values. Callback operators without explicit provenance
+  receive opaque session-local identities and restored cross-session
+  plans fail before the callback is invoked.
+  [`operator_identity()`](https://bbuchsbaum.github.io/eigencore/reference/operator_identity.md)
+  exposes the typed records.
+- Eigen and SVD results distinguish `planned_method` from
+  `actual_method` (`method` remains the compatibility alias for the
+  latter), report `fallback_used` and a typed `fallback_reason`, and
+  retain the exact immutable plan that governed execution. Legacy result
+  fields remain available.
+- [`work()`](https://bbuchsbaum.github.io/eigencore/reference/work.md)
+  returns a schema-versioned `eigencore_work` record with separate
+  logical block-call and column counts for the operator, adjoint,
+  metric, preconditioner, and current-certificate phases, plus
+  iterations, restarts, and phase timings. Callback counts are captured
+  at the operator boundary, including native callback cycles; `matvecs`
+  remains unchanged as `legacy_matvecs`. Routes whose native controller
+  cannot yet prove a split use `NA` and `complete = FALSE` rather than
+  inventing equivalent work.
+- [`restart_state()`](https://bbuchsbaum.github.io/eigencore/reference/restart_state.md)
+  constructs immutable, schema-versioned basis states only from freshly
+  certified eigen or SVD results, while
+  [`retained_bytes()`](https://bbuchsbaum.github.io/eigencore/reference/retained_bytes.md)
+  reports their exact version-1 R retention.
+  `solve(plan, restart_state = ...)` admits basis reuse only for
+  standard real Hermitian Lanczos on dense double, CSC, and callback
+  operators. Exact-revision reuse may retain a deterministic,
+  target-safe fitted start block, but never recurrence, locks, cached
+  operator actions, convergence, or certificates. Changed revisions and
+  lineages use only the public basis; incompatible and unsupported
+  routes fail before the current operator is applied.
+
+### Sparse operator performance
+
+- `scale_cols(center(A, columns = TRUE), weights)` now recognizes a real
+  `dgCMatrix` and builds one fused native operator for `(A - 1 mu^T) D`.
+  Forward and adjoint block application, including `alpha`/`beta`
+  accumulation, stay in C++; native Golub-Kahan consumes the sparse
+  matrix, means, and weights directly, without materializing the
+  centered matrix or crossing an R callback boundary inside the
+  iteration. One CSC moments pass supplies exact centered-and-scaled
+  Frobenius metadata, so the resulting two-sided SVD certificate reports
+  `norm_bound_type = "frobenius_metadata"` and
+  `scale_is_estimate = FALSE`. Zero columns, zero/negative/extreme
+  finite weights, transpose algebra, planner provenance, and strict
+  installed-package execution are covered by the v1.2 sparse-PCA gate.
+
 ## eigencore 1.1.0 (2026-08-24)
 
 ### New features

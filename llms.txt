@@ -133,15 +133,56 @@ combine them with
 [`crossprod_operator()`](https://bbuchsbaum.github.io/eigencore/reference/crossprod_operator.md),
 [`scale_cols()`](https://bbuchsbaum.github.io/eigencore/reference/scale_cols.md),
 [`center()`](https://bbuchsbaum.github.io/eigencore/reference/center.md),
-and friends. The planner picks the kernel from the structure;
+and friends. The planner picks the kernel from the structure.
 [`plan_solver()`](https://bbuchsbaum.github.io/eigencore/reference/plan_solver.md)
-shows the choice before you commit to a long solve:
+returns an executable, frozen record: `solve(plan)` runs that inspected
+route, while `solve(problem)` creates a fresh plan under current policy.
+Results report both the planned and actual runtime methods when a
+certification fallback is needed:
 
 ``` r
 
-plan_solver(svd_problem(A_centered, target = largest()), rank = 5)$method
+plan <- plan_solver(svd_problem(A_centered, target = largest()), rank = 5)
+plan$method
 #> [1] "native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary)"
 ```
+
+Use `work(result)` for cross-solver accounting. It keeps forward,
+adjoint, metric, preconditioner, and certification calls and columns
+separate; `result$matvecs` remains the route-specific compatibility
+field.
+
+For repeated standard Hermitian Lanczos solves, opt into reusable state
+through an executable plan. The retained object is an acceleration hint,
+not a saved certificate: every solve still applies and certifies the
+current operator.
+
+``` r
+
+workflow_matrix <- diag(seq(60, 1))
+workflow_plan <- plan_solver(
+  eigen_problem(workflow_matrix, target = largest()),
+  k = 3,
+  method = lanczos(block = 3, max_subspace = 24),
+  tol = 1e-8
+)
+first_workflow <- solve(workflow_plan, retain_state = "same_operator")
+second_workflow <- solve(
+  workflow_plan,
+  restart_state = restart_state(first_workflow, retention = "same_operator"),
+  reuse = "same_operator"
+)
+stopifnot(
+  certificate(second_workflow)$passed,
+  second_workflow$state_transition$method_state_used
+)
+```
+
+`reuse = "auto"` keeps only the public basis after a
+coordinate-compatible operator revision; `reuse = "basis_only"` always
+ignores method payloads. Unsupported SVD, generalized, transformed,
+Arnoldi, LOBPCG, and dense-fallback receiving routes fail rather than
+silently running cold.
 
 ## Smallest eigenvalues of a symmetric operator
 
@@ -316,6 +357,8 @@ Build problem descriptors and inspect the solver plan.
   : Define an SVD problem.
 - [`plan_solver()`](https://bbuchsbaum.github.io/eigencore/reference/plan_solver.md)
   : Plan a solver for a problem.
+- [`solve(`*`<eigencore_plan>`*`)`](https://bbuchsbaum.github.io/eigencore/reference/solve.eigencore_plan.md)
+  : Execute a frozen eigencore solver plan.
 - [`solve(`*`<eigencore_eigen_problem>`*`)`](https://bbuchsbaum.github.io/eigencore/reference/solve.eigencore_eigen_problem.md)
   : Solve a planned eigenproblem.
 - [`solve(`*`<eigencore_svd_problem>`*`)`](https://bbuchsbaum.github.io/eigencore/reference/solve.eigencore_svd_problem.md)
@@ -329,6 +372,8 @@ Block-native linear operators and operator algebra.
   : Create a block-native linear operator.
 - [`as_operator()`](https://bbuchsbaum.github.io/eigencore/reference/as_operator.md)
   : Convert an object to an eigencore operator.
+- [`operator_identity()`](https://bbuchsbaum.github.io/eigencore/reference/operator_identity.md)
+  : Return operator identity and revision provenance.
 - [`adjoint()`](https://bbuchsbaum.github.io/eigencore/reference/adjoint.md)
   : Return the adjoint operator.
 - [`check_adjoint()`](https://bbuchsbaum.github.io/eigencore/reference/check_adjoint.md)
@@ -432,6 +477,18 @@ Inspecting solver output and the numerical evidence.
   : Extract right singular vectors.
 - [`diagnostics()`](https://bbuchsbaum.github.io/eigencore/reference/diagnostics.md)
   : Extract diagnostics.
+
+## Reusable workflows and work accounting
+
+Persist certified basis state, inspect its memory, and compare typed
+solver work.
+
+- [`restart_state()`](https://bbuchsbaum.github.io/eigencore/reference/restart_state.md)
+  : Extract a reusable spectral restart state.
+- [`retained_bytes()`](https://bbuchsbaum.github.io/eigencore/reference/retained_bytes.md)
+  : Return retained-memory accounting.
+- [`work()`](https://bbuchsbaum.github.io/eigencore/reference/work.md) :
+  Extract typed logical work diagnostics.
 
 # Articles
 

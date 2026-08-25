@@ -21,7 +21,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -74,7 +74,7 @@
       <h1>Get started with eigencore</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/v1.1.0/vignettes/eigencore.Rmd" class="external-link"><code>vignettes/eigencore.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/vignettes/eigencore.Rmd" class="external-link"><code>vignettes/eigencore.Rmd</code></a></small>
       <div class="d-none name"><code>eigencore.Rmd</code></div>
     </div>
 
@@ -213,7 +213,7 @@ adding <code>certificate</code> and <code>diagnostics</code>:</p>
 <span><span class="co">#&gt;  $ nops       : int 62</span></span>
 <span><span class="co">#&gt;  $ certificate:List of 18</span></span>
 <span><span class="co">#&gt;   ..- attr(*, "class")= chr "eigencore_certificate"</span></span>
-<span><span class="co">#&gt;  $ diagnostics:List of 20</span></span></code></pre></div>
+<span><span class="co">#&gt;  $ diagnostics:List of 21</span></span></code></pre></div>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">res</span><span class="op">$</span><span class="va">certificate</span></span>
 <span><span class="co">#&gt; eigencore certificate</span></span>
@@ -264,8 +264,11 @@ the spectral target (<code><a href="../reference/largest.html">largest()</a></co
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">P</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eigen_problem.html">eigen_problem</a></span><span class="op">(</span><span class="va">A</span>, structure <span class="op">=</span> <span class="fu"><a href="../reference/hermitian.html">hermitian</a></span><span class="op">(</span><span class="op">)</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
 <p><strong>3. Plans.</strong> <code><a href="../reference/plan_solver.html">plan_solver()</a></code> chooses a
-method and tells you <em>exactly</em> which kernel will run, before you
-pay for the computation. There is no silent dispatch.</p>
+method and returns an executable, frozen record. It stores the problem,
+requested size, method descriptor, execution controls, operator
+identity, and the planner-policy snapshot that selected the route.
+Changing <code>options(eigencore.*)</code> later does not alter
+<code>solve(plan)</code>.</p>
 <div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plan</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/plan_solver.html">plan_solver</a></span><span class="op">(</span><span class="va">P</span>, k <span class="op">=</span> <span class="fl">5</span><span class="op">)</span></span>
 <span><span class="va">plan</span></span>
@@ -286,14 +289,31 @@ pay for the computation. There is no silent dispatch.</p>
 <span><span class="co">#&gt;    - check_stride : 0 </span></span>
 <span><span class="co">#&gt;    - reorthogonalize : TRUE </span></span>
 <span><span class="co">#&gt;   fallback: dense oracle prototype if unsupported</span></span></code></pre></div>
-<p><strong>4. Solve.</strong> <code><a href="https://rdrr.io/pkg/Matrix/man/solve-methods.html" class="external-link">solve()</a></code> on a problem is what
-<code><a href="../reference/eig_partial.html">eig_partial()</a></code> calls internally — reach for it when you’ve
-already built a <code>plan</code> or <code>problem</code> you want to
-reuse.</p>
+<p><strong>4. Solve.</strong> Solve the plan when you want the inspected
+route and controls to govern execution. The result distinguishes that
+planned route from the route that actually returned the certified
+values; they differ only when an allowed runtime fallback is used.</p>
 <div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">same_fit</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/solve-methods.html" class="external-link">solve</a></span><span class="op">(</span><span class="va">P</span>, k <span class="op">=</span> <span class="fl">5</span><span class="op">)</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/Logic.html" class="external-link">isTRUE</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/all.equal-methods.html" class="external-link">all.equal</a></span><span class="op">(</span><span class="va">same_fit</span><span class="op">$</span><span class="va">values</span>, <span class="va">fit</span><span class="op">$</span><span class="va">values</span><span class="op">)</span><span class="op">)</span></span>
+<code class="sourceCode R"><span><span class="va">planned_fit</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/solve-methods.html" class="external-link">solve</a></span><span class="op">(</span><span class="va">plan</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span></span>
+<span>  planned <span class="op">=</span> <span class="va">planned_fit</span><span class="op">$</span><span class="va">planned_method</span>,</span>
+<span>  actual <span class="op">=</span> <span class="va">planned_fit</span><span class="op">$</span><span class="va">actual_method</span>,</span>
+<span>  fallback <span class="op">=</span> <span class="va">planned_fit</span><span class="op">$</span><span class="va">fallback_used</span></span>
+<span><span class="op">)</span></span>
+<span><span class="co">#&gt;                                         planned </span></span>
+<span><span class="co">#&gt; "native scalar thick-restart Hermitian Lanczos" </span></span>
+<span><span class="co">#&gt;                                          actual </span></span>
+<span><span class="co">#&gt; "native scalar thick-restart Hermitian Lanczos" </span></span>
+<span><span class="co">#&gt;                                        fallback </span></span>
+<span><span class="co">#&gt;                                         "FALSE"</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/Logic.html" class="external-link">isTRUE</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/all.equal-methods.html" class="external-link">all.equal</a></span><span class="op">(</span><span class="va">planned_fit</span><span class="op">$</span><span class="va">values</span>, <span class="va">fit</span><span class="op">$</span><span class="va">values</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
+<p>A problem is reusable but not frozen: <code>solve(P, k = 5)</code>
+creates a fresh plan under current package options on every call, which
+is also what <code><a href="../reference/eig_partial.html">eig_partial()</a></code> does internally. Use
+<code>solve(plan, replan = TRUE)</code> only when you deliberately want
+a fresh decision from the embedded problem; the old plan is not
+modified.</p>
 </div>
 <div class="section level2">
 <h2 id="where-to-go-next">Where to go next<a class="anchor" aria-label="anchor" href="#where-to-go-next"></a>

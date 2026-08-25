@@ -12,7 +12,10 @@ linear_operator(
   dtype = "double",
   structure = general(),
   name = NULL,
-  metadata = list()
+  metadata = list(),
+  operator_id = NULL,
+  revision = NULL,
+  portable = FALSE
 )
 ```
 
@@ -49,6 +52,22 @@ linear_operator(
 - metadata:
 
   Optional list of implementation metadata.
+
+- operator_id:
+
+  Optional non-empty character identity for a logical callback-operator
+  lineage. Supply together with `revision`.
+
+- revision:
+
+  Optional non-empty character revision for the values and behavior
+  implemented by the callback. Supply together with `operator_id`.
+
+- portable:
+
+  Whether an explicitly identified callback operator may be restored and
+  validated in another R session. Built-in matrix-backed operators
+  derive portable deterministic identity automatically.
 
 ## Value
 
