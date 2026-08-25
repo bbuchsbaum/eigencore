@@ -134,6 +134,10 @@ plan$method
 #> [1] "native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary)"
 ```
 
+Use `work(result)` for cross-solver accounting. It keeps forward, adjoint,
+metric, preconditioner, and certification calls and columns separate;
+`result$matvecs` remains the route-specific compatibility field.
+
 ## Smallest eigenvalues of a symmetric operator
 
 The same interface handles symmetric eigenproblems. Here is a sparse

@@ -19,11 +19,23 @@ fit$method
 fit$plan
 fit$certificate
 eigencore::diagnostics(fit)
+eigencore::work(fit)
 ```
 
 The method string tells you what actually ran. The certificate tells you
 whether the returned values and vectors passed residual, backward-error, and
 orthogonality checks.
+
+## Work diagnostics
+
+Use `work(fit)` when comparing computation across routes. The typed record
+keeps forward operator, adjoint, metric, preconditioner, and certification work
+separate, and reports both logical block calls and the number of vector columns
+processed. One block call can process many columns, so calls and columns answer
+different questions. `fit$matvecs` remains the historical route-specific field
+and appears unchanged as `work(fit)$legacy_matvecs`; it is not a common unit
+for eigen, SVD, metric, and preconditioned methods. A record with unknown native
+components uses `NA` and `complete = FALSE` rather than estimating them.
 
 ## Standard Hermitian Eigenproblems
 

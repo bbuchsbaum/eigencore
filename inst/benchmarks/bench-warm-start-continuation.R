@@ -190,6 +190,8 @@ for (case_index in seq_along(case_specs)) {
                          only.values = TRUE)$values)
       full[[k + 1L]] - full[[k]]
     }
+    cold_work <- eigencore::work(cold)
+    warm_work <- if (is.null(warm)) NULL else eigencore::work(warm)
 
     row_index <- row_index + 1L
     all_rows[[row_index]] <- data.frame(
@@ -228,20 +230,30 @@ for (case_index in seq_along(case_specs)) {
       } else {
         grepl("matrix-free callback", warm$method, fixed = TRUE)
       },
-      cold_operator_block_calls = cold$operator_block_calls,
+      cold_work_complete = cold_work$complete,
+      warm_work_complete =
+        if (is.null(warm_work)) NA else warm_work$complete,
+      cold_operator_block_calls = cold_work$operator_block_calls,
       warm_operator_block_calls =
-        if (is.null(warm)) NA_integer_ else warm$operator_block_calls,
-      cold_operator_columns = cold$operator_columns,
+        if (is.null(warm_work)) NA_integer_ else warm_work$operator_block_calls,
+      cold_operator_columns = cold_work$operator_columns,
       warm_operator_columns =
-        if (is.null(warm)) NA_integer_ else warm$operator_columns,
-      operator_column_ratio = if (is.null(warm)) NA_real_ else {
-        warm$operator_columns / max(cold$operator_columns, 1L)
+        if (is.null(warm_work)) NA_integer_ else warm_work$operator_columns,
+      operator_column_ratio = if (is.null(warm_work)) NA_real_ else {
+        warm_work$operator_columns / max(cold_work$operator_columns, 1L)
       },
-      cold_certification_columns = cold$certification_operator_columns,
-      warm_certification_columns = if (is.null(warm)) {
+      cold_certification_columns = cold_work$certification_operator_columns,
+      cold_certification_block_calls =
+        cold_work$certification_operator_block_calls,
+      warm_certification_columns = if (is.null(warm_work)) {
         NA_integer_
       } else {
-        warm$certification_operator_columns
+        warm_work$certification_operator_columns
+      },
+      warm_certification_block_calls = if (is.null(warm_work)) {
+        NA_integer_
+      } else {
+        warm_work$certification_operator_block_calls
       },
       cold_restarts = cold$restart$restarts_used %||% 0L,
       warm_restarts = if (is.null(warm)) {
@@ -300,9 +312,10 @@ trace_fun <- function(fixture) {
       initial_subspace = start
     )
     start <- eigencore::vectors(fit)
-    total_columns <- total_columns + fit$operator_columns
+    fit_work <- eigencore::work(fit)
+    total_columns <- total_columns + fit_work$operator_columns
     total_certification_columns <- total_certification_columns +
-      fit$certification_operator_columns
+      fit_work$certification_operator_columns
     certified_rows <- c(certified_rows, certified(fit))
   }
   list(
@@ -345,12 +358,15 @@ overlap_ok <-
   all(loss_rows$agree_cold_warm < 1e-6) &&
   all(loss_rows$start_overlap < 0.5)
 accounting_ok <-
+  all(rows$cold_work_complete) &&
+  all(warm_rows$warm_work_complete) &&
   all(rows$cold_operator_columns >= rows$cold_operator_block_calls) &&
   all(warm_rows$warm_operator_columns >=
         warm_rows$warm_operator_block_calls) &&
-  all(rows$cold_certification_columns <= rows$cold_operator_columns) &&
-  all(warm_rows$warm_certification_columns <=
-        warm_rows$warm_operator_columns)
+  all(rows$cold_certification_columns >=
+        rows$cold_certification_block_calls) &&
+  all(warm_rows$warm_certification_columns >=
+        warm_rows$warm_certification_block_calls)
 coverage_ok <- all(c("dense", "dgCMatrix", "matrix_free") %in% rows$storage)
 matrix_free_rows <- rows[rows$storage == "matrix_free", , drop = FALSE]
 provenance_ok <-

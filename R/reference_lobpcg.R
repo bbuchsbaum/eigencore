@@ -80,6 +80,7 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
       R
     } else {
       preconditioner_calls <- preconditioner_calls + 1L
+      work_record_preconditioner_call(R)
       as.matrix(preconditioner(R))
     }
     if (!identical(dim(W), dim(R))) {

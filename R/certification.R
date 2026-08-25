@@ -34,6 +34,7 @@ diagnostics <- function(x, ...) {
     nconv = x$nconv,
     iterations = x$iterations,
     matvecs = x$matvecs,
+    work = work(x),
     preconditioner_calls = x$preconditioner_calls,
     convergence_history = x$convergence_history,
     restart = restart,
@@ -259,6 +260,8 @@ certify_dense_eigen_r_residual <- function(A, values, vectors, B = NULL,
 
 #' @keywords internal
 certify_eigen_operator <- function(Aop, values, vectors, Bop = NULL, tol = 1e-8) {
+  work_phase <- work_phase_enter("certification")
+  on.exit(work_phase_exit(work_phase), add = TRUE)
   native <- native_builtin_eigen_certificate(Aop, values, vectors, Bop = Bop, tol = tol)
   if (!is.null(native)) {
     diag <- native$diagnostics
@@ -336,6 +339,8 @@ certify_dense_general_eigen <- function(A, values, vectors, tol = 1e-8) {
 
 #' @keywords internal
 certify_general_eigen_operator <- function(Aop, values, vectors, tol = 1e-8) {
+  work_phase <- work_phase_enter("certification")
+  on.exit(work_phase_exit(work_phase), add = TRUE)
   values <- as.vector(values)
   vectors <- as.matrix(vectors)
   source <- source_or_null(Aop) %||% Aop$metadata$matrix %||% NULL
@@ -369,6 +374,8 @@ certify_general_eigen_operator <- function(Aop, values, vectors, tol = 1e-8) {
 #' @keywords internal
 certify_left_eigen_operator <- function(Aop, values, left_vectors,
                                         right_vectors = NULL, tol = 1e-8) {
+  work_phase <- work_phase_enter("certification")
+  on.exit(work_phase_exit(work_phase), add = TRUE)
   values <- as.vector(values)
   left_vectors <- as.matrix(left_vectors)
   if (ncol(left_vectors) != length(values)) {
@@ -413,6 +420,8 @@ certify_left_eigen_operator <- function(Aop, values, left_vectors,
 #' @keywords internal
 certify_eigen_operator_residuals <- function(Aop, values, vectors, residuals,
                                              Bop = NULL, tol = 1e-8) {
+  work_phase <- work_phase_enter("certification")
+  on.exit(work_phase_exit(work_phase), add = TRUE)
   norm_A <- operator_norm_for_certificate_info(Aop)
   norm_B <- if (is.null(Bop)) {
     list(value = 1, norm_bound_type = "identity_exact", scale_is_estimate = FALSE)
@@ -479,6 +488,8 @@ certify_svd <- function(A, d, u, v, tol = 1e-8) {
 
 #' @keywords internal
 certify_svd_operator <- function(Aop, d, u, v, tol = 1e-8) {
+  work_phase <- work_phase_enter("certification")
+  on.exit(work_phase_exit(work_phase), add = TRUE)
   native <- native_builtin_svd_certificate(Aop, d, u, v, tol = tol)
   if (!is.null(native)) {
     diag <- native$diagnostics
@@ -518,6 +529,8 @@ certify_svd_operator <- function(Aop, d, u, v, tol = 1e-8) {
 #' @keywords internal
 certify_svd_operator_cached_av <- function(Aop, d, u, v, Av, tol = 1e-8,
                                            return_residual_vectors = FALSE) {
+  work_phase <- work_phase_enter("certification")
+  on.exit(work_phase_exit(work_phase), add = TRUE)
   if (is.null(Av)) {
     cert <- certify_svd_operator(Aop, d, u, v, tol = tol)
     if (isTRUE(return_residual_vectors)) {
@@ -588,6 +601,8 @@ certify_svd_operator_cached_av <- function(Aop, d, u, v, Av, tol = 1e-8,
 #' @keywords internal
 certify_svd_operator_cached_sides <- function(Aop, d, u, v, Av, Atu,
                                              tol = 1e-8) {
+  work_phase <- work_phase_enter("certification")
+  on.exit(work_phase_exit(work_phase), add = TRUE)
   Av <- as.matrix(Av)
   Atu <- as.matrix(Atu)
   # Same trust contract as certify_svd_operator_cached_av: stale or non-finite

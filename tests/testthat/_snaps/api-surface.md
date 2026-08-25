@@ -55,6 +55,7 @@
       symmetric_operator(A, validate = TRUE, tol = 1e-10)
       values(x, ...)
       vectors(x, ...)
+      work(x, ...)
 
 # S3 method registrations are frozen
 

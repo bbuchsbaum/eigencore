@@ -56,10 +56,36 @@ linear_operator <- function(dim, apply, apply_adjoint = NULL, dtype = "double",
     portable = portable
   )
 
+  adjoint_view <- identical(metadata$fused %||% NULL, "adjoint")
+  raw_apply <- apply
+  raw_apply_adjoint <- apply_adjoint
+  wrapped_apply <- function(X, alpha = 1, beta = 0, Y = NULL) {
+    token <- work_operator_enter(
+      identity,
+      kind = if (adjoint_view) "adjoint" else "operator",
+      X = X
+    )
+    on.exit(work_operator_exit(token), add = TRUE)
+    raw_apply(X, alpha = alpha, beta = beta, Y = Y)
+  }
+  wrapped_apply_adjoint <- if (is.null(raw_apply_adjoint)) {
+    NULL
+  } else {
+    function(X, alpha = 1, beta = 0, Y = NULL) {
+      token <- work_operator_enter(
+        identity,
+        kind = if (adjoint_view) "operator" else "adjoint",
+        X = X
+      )
+      on.exit(work_operator_exit(token), add = TRUE)
+      raw_apply_adjoint(X, alpha = alpha, beta = beta, Y = Y)
+    }
+  }
+
   op <- list(
     dim = as.integer(dim),
-    apply = apply,
-    apply_adjoint = apply_adjoint,
+    apply = wrapped_apply,
+    apply_adjoint = wrapped_apply_adjoint,
     dtype = dtype,
     structure = structure,
     name = name %||% "linear_operator",

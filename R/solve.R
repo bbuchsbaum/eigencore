@@ -88,6 +88,7 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
                         allow_dense_fallback = c("auto", "never", "always")) {
   vectors <- match.arg(vectors)
   allow_dense_fallback <- match.arg(allow_dense_fallback)
+  fast_started <- proc.time()[["elapsed"]]
   fast <- try_svd_partial_native_gram_fastpath(
     A = A,
     rank = rank,
@@ -98,6 +99,9 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
     certify = certify
   )
   if (!is.null(fast)) {
+    work_values <- unclass(fast$work)
+    work_values$total_seconds <- proc.time()[["elapsed"]] - fast_started
+    fast$work <- new_typed_work_record(work_values)
     return(fast)
   }
   if (!is.null(seed)) {
@@ -221,6 +225,8 @@ solve.eigencore_plan <- function(
     reuse = c("auto", "basis_only", "same_operator"),
     retain_state = c("none", "basis", "same_operator"),
     replan = FALSE, ...) {
+  total_started <- proc.time()[["elapsed"]]
+  setup_started <- total_started
   reuse <- match.arg(reuse)
   retain_state <- match.arg(retain_state)
   dots <- list(...)
@@ -250,13 +256,25 @@ solve.eigencore_plan <- function(
       call. = FALSE
     )
   }
-  with_execution_policy(a$planner_policy, {
+  setup_seconds <- proc.time()[["elapsed"]] - setup_started
+  context <- new_work_context(a)
+  execution_started <- proc.time()[["elapsed"]]
+  result <- with_work_context(context, with_execution_policy(a$planner_policy, {
     if (identical(a$problem_type, "eigen")) {
       execute_eigen_plan(a)
     } else {
       execute_svd_plan(a)
     }
-  })
+  }))
+  finished <- proc.time()[["elapsed"]]
+  result$work <- finalize_work_record(
+    result,
+    context,
+    setup_seconds = setup_seconds,
+    execution_seconds = finished - execution_started,
+    total_seconds = finished - total_started
+  )
+  result
 }
 
 #' @keywords internal

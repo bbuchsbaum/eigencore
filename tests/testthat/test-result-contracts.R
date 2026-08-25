@@ -5,6 +5,8 @@ expect_eigen_result_contract <- function(fit, expected_method = NULL) {
     expect_equal(ncol(vectors(fit)), fit$requested)
   }
   expect_s3_class(certificate(fit), "eigencore_certificate")
+  expect_s3_class(work(fit), "eigencore_work")
+  expect_identical(work(fit)$legacy_matvecs, fit$matvecs)
   expect_equal(fit$residuals, certificate(fit)$residuals)
   expect_equal(fit$backward_error, certificate(fit)$backward_error)
   expect_equal(fit$nconv, sum(certificate(fit)$converged))
@@ -30,6 +32,7 @@ expect_eigen_result_contract <- function(fit, expected_method = NULL) {
     "preconditioner", "locked", "method", "plan", "warnings"
   )
   expect_true(all(required_diag %in% names(diag)))
+  expect_identical(diag$work, work(fit))
   expect_identical(diag$method, fit$method)
   expect_identical(diag$plan, fit$plan)
   expect_equal(diag$nconv, fit$nconv)
@@ -73,6 +76,8 @@ expect_svd_result_contract <- function(fit, expected_method = NULL) {
     expect_equal(ncol(right_vectors(fit)), fit$requested)
   }
   expect_s3_class(certificate(fit), "eigencore_certificate")
+  expect_s3_class(work(fit), "eigencore_work")
+  expect_identical(work(fit)$legacy_matvecs, fit$matvecs)
   expect_equal(fit$residuals, certificate(fit)$residuals)
   expect_equal(fit$backward_error, certificate(fit)$backward_error)
   expect_equal(fit$nconv, sum(certificate(fit)$converged))
@@ -95,12 +100,13 @@ expect_svd_result_contract <- function(fit, expected_method = NULL) {
     diag,
     c(
       "residuals", "backward_error", "orthogonality", "nconv",
-      "iterations", "matvecs", "preconditioner_calls",
+      "iterations", "matvecs", "work", "preconditioner_calls",
       "convergence_history", "restart", "stage_seconds",
       "preconditioner", "locked", "method", "plan", "warnings"
     )
   )
   expect_identical(diag$method, fit$method)
+  expect_identical(diag$work, work(fit))
   expect_identical(diag$plan, fit$plan)
   expect_equal(diag$nconv, fit$nconv)
   expect_equal(diag$residuals, fit$residuals)

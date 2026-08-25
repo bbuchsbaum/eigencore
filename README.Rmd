@@ -131,6 +131,10 @@ plan <- plan_solver(svd_problem(A_centered, target = largest()), rank = 5)
 plan$method
 ```
 
+Use `work(result)` for cross-solver accounting. It keeps forward, adjoint,
+metric, preconditioner, and certification calls and columns separate;
+`result$matvecs` remains the route-specific compatibility field.
+
 ## Smallest eigenvalues of a symmetric operator
 
 The same interface handles symmetric eigenproblems. Here is a sparse

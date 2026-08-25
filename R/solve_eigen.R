@@ -408,6 +408,12 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
       sep = "; "
     )
   }
+  iter$adjoint_block_calls <- left_contract$adjoint_block_calls %||% 0L
+  iter$adjoint_columns <- left_contract$adjoint_columns %||% 0L
+  iter$certification_adjoint_block_calls <-
+    left_contract$certification_adjoint_block_calls %||% 0L
+  iter$certification_adjoint_columns <-
+    left_contract$certification_adjoint_columns %||% 0L
   make_eigen_result(
     values = iter$values,
     vectors = iter$vectors,

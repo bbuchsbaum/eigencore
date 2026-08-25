@@ -126,8 +126,8 @@ for (i in seq_along(rhos)) {
   )
   rows[[i]] <- data.frame(
     rho = rhos[[i]],
-    cold_columns = cold$operator_columns,
-    warm_columns = warm$operator_columns,
+    cold_columns = work(cold)$operator_columns,
+    warm_columns = work(warm)$operator_columns,
     max_value_difference = max(abs(sort(values(cold)) - sort(values(warm))))
   )
   start <- vectors(warm)
@@ -161,9 +161,11 @@ knitr::kable(
 
 On this reproducible family, every continuation step uses fewer operator
 columns than its cold counterpart and agrees on the requested values well
-within the solve tolerance. These counts include the work used to guard and
-certify the supplied subspace; `operator_block_calls` is a different metric
-because one block call may apply the operator to several columns.
+within the solve tolerance. `work()` separates solve columns from current-
+certificate columns, adjoint work, metric work, and preconditioner work;
+`operator_block_calls` is a different metric because one block call may apply
+the operator to several columns. The legacy `matvecs` field remains unchanged
+and should not be compared across solver families.
 
 Do not assume the same speedup for every sweep. When the target eigenspace
 changes abruptly or the supplied directions have little overlap with it, a

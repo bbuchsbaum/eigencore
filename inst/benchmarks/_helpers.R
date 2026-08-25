@@ -752,7 +752,21 @@ result_preconditioner_field <- function(x, field) {
 }
 
 result_preconditioner_calls <- function(x) {
+  if (inherits(x$work, "eigencore_work")) {
+    return(x$work$preconditioner_calls)
+  }
   x$preconditioner_calls %||% x$restart$preconditioner_calls %||% NA_integer_
+}
+
+result_operator_columns <- function(x, include_certification = FALSE) {
+  if (!inherits(x$work, "eigencore_work")) {
+    return(x$operator_columns %||% NA_integer_)
+  }
+  columns <- x$work$operator_columns
+  if (isTRUE(include_certification)) {
+    columns <- columns + x$work$certification_operator_columns
+  }
+  columns
 }
 
 result_restart_field <- function(x, field) {

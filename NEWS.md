@@ -19,6 +19,13 @@
   (`method` remains the compatibility alias for the latter), report
   `fallback_used` and a typed `fallback_reason`, and retain the exact immutable
   plan that governed execution. Legacy result fields remain available.
+* `work()` returns a schema-versioned `eigencore_work` record with separate
+  logical block-call and column counts for the operator, adjoint, metric,
+  preconditioner, and current-certificate phases, plus iterations, restarts,
+  and phase timings. Callback counts are captured at the operator boundary,
+  including native callback cycles; `matvecs` remains unchanged as
+  `legacy_matvecs`. Routes whose native controller cannot yet prove a split
+  use `NA` and `complete = FALSE` rather than inventing equivalent work.
 
 # eigencore 1.1.0 (2026-08-24)
 

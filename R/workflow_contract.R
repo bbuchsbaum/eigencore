@@ -666,34 +666,6 @@ new_state_transition <- function(relation = "cold_start", reason = "no restart s
 }
 
 #' @keywords internal
-legacy_work_record <- function(iter, result = NULL) {
-  matvecs <- iter$matvecs %||% result$matvecs %||% 0L
-  structure(list(
-    schema_version = 1L,
-    complete = FALSE,
-    operator_block_calls = NA_integer_,
-    operator_columns = NA_integer_,
-    adjoint_block_calls = NA_integer_,
-    adjoint_columns = NA_integer_,
-    metric_block_calls = NA_integer_,
-    metric_columns = NA_integer_,
-    preconditioner_calls = iter$preconditioner_calls %||% result$preconditioner_calls %||% 0L,
-    preconditioner_columns = NA_integer_,
-    certification_operator_block_calls = NA_integer_,
-    certification_operator_columns = NA_integer_,
-    certification_adjoint_block_calls = NA_integer_,
-    certification_adjoint_columns = NA_integer_,
-    iterations = iter$iterations %||% result$iterations %||% 1L,
-    restarts = iter$restarts %||% result$restarts %||% 0L,
-    setup_seconds = NA_real_,
-    solve_seconds = NA_real_,
-    certification_seconds = NA_real_,
-    total_seconds = NA_real_,
-    legacy_matvecs = as.integer(matvecs)
-  ), class = "eigencore_work")
-}
-
-#' @keywords internal
 runtime_actual_method <- function(plan, method_label, iter) {
   planned <- plan$planned_method %||% plan$method %||% method_label
   if (!identical(method_label, planned)) {
@@ -736,7 +708,7 @@ result_workflow_fields <- function(plan, actual_method, iter, result = NULL) {
     actual_method = actual_method,
     fallback_used = fallback_used,
     fallback_reason = fallback_reason,
-    work = legacy_work_record(iter, result),
+    work = typed_work_record(iter, result, plan),
     memory = new_memory_record(list(metadata = list(plan = planned_method))),
     state_transition = new_state_transition(),
     restart_state = NULL

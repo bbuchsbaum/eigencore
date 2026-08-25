@@ -172,6 +172,12 @@ arnoldi_left_eigen_contract <- function(op, values, right_vectors, target,
     tol = tol
   )
   biorthogonality <- crossprod(left_vectors, as.matrix(right_vectors))
+  left_certification_columns <- as.integer(
+    (left_iter$certification_operator_columns %||% k) + k
+  )
+  left_certification_block_calls <- as.integer(
+    (left_iter$certification_operator_block_calls %||% 1L) + 1L
+  )
   list(
     supported = TRUE,
     reason = "left eigenvectors computed from the adjoint operator",
@@ -180,7 +186,11 @@ arnoldi_left_eigen_contract <- function(op, values, right_vectors, target,
     vectors = left_vectors,
     certificate = cert,
     biorthogonality = biorthogonality,
-    method = left_iter$restart$kind %||% "adjoint_arnoldi"
+    method = left_iter$restart$kind %||% "adjoint_arnoldi",
+    adjoint_block_calls = as.integer(left_iter$matvecs %||% 0L),
+    adjoint_columns = as.integer(left_iter$matvecs %||% 0L),
+    certification_adjoint_block_calls = left_certification_block_calls,
+    certification_adjoint_columns = left_certification_columns
   )
 }
 
