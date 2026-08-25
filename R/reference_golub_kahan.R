@@ -1263,7 +1263,8 @@ native_matrix_free_golub_kahan_label <- function() {
 #' @keywords internal
 native_matrix_free_golub_kahan_available <- function(op) {
   op <- as_operator(op)
-  is.null(source_or_null(op)) &&
+  !has_native_kernel(op) &&
+    is.null(source_or_null(op)) &&
     is.null(op$metadata$matrix) &&
     is.function(op$apply) &&
     is.function(op$apply_adjoint) &&
@@ -1342,9 +1343,10 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   storage <- op$metadata$storage %||% NULL
   source <- source_or_null(op)
   native_callback_path <- native_matrix_free_golub_kahan_available(op)
+  fused_centered_scaled_csc <- identical(storage, "centered_scaled_dgCMatrix")
   projected_stop_requested <- isTRUE(projected_stop)
   projected_stop_disable_reason <- NULL
-  if (identical(storage, "dgCMatrix") && m >= 4L * n) {
+  if (isTRUE(storage %in% c("dgCMatrix", "centered_scaled_dgCMatrix")) && m >= 4L * n) {
     projected_stop_disable_reason <- "disabled for high-aspect tall sparse operators"
   }
   projected_stop_enabled <- projected_stop_requested &&
@@ -1362,7 +1364,27 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   run_native <- function(active_maxit) {
     iteration_target <- native_svd_iteration_target_kind(target)
     use_basis_iteration <- isTRUE(interior_target)
-    if (identical(storage, "dgCMatrix")) {
+    if (isTRUE(fused_centered_scaled_csc)) {
+      A <- op$metadata$base_matrix
+      .Call(
+        "eigencore_golub_kahan_centered_scaled_csc",
+        methods::slot(A, "i"),
+        methods::slot(A, "p"),
+        methods::slot(A, "x"),
+        methods::slot(A, "Dim"),
+        as.numeric(op$metadata$col_means),
+        as.numeric(op$metadata$weights),
+        as.integer(active_maxit),
+        as.numeric(start),
+        as.integer(rank),
+        as.integer(iteration_target),
+        as.numeric(tol),
+        as.logical(projected_stop_enabled),
+        as.logical(reorthogonalize_u),
+        as.logical(reorthogonalize_v),
+        PACKAGE = "eigencore"
+      )
+    } else if (identical(storage, "dgCMatrix")) {
       A <- op$metadata$matrix
       if (isTRUE(prefix_diagnostics) || isTRUE(use_basis_iteration)) {
         .Call(
@@ -1606,6 +1628,8 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     matrix_free = native_callback_path,
     native_callback = native_callback_path,
     callback_boundary = native_callback_path,
+    operator_storage = storage %||% if (is.matrix(source)) "dense" else NA_character_,
+    fused_centered_scaled_csc = fused_centered_scaled_csc,
     ritz_native = TRUE,
     restart_policy = "grow subspace until certificate convergence or limit",
     retries = retries,

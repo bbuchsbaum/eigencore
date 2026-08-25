@@ -204,6 +204,15 @@ scale_cols <- function(A, weights, name = NULL) {
   if (length(weights) != A$dim[2L]) {
     stop("column weights length must equal operator column dimension.", call. = FALSE)
   }
+  if (any(!is.finite(weights))) {
+    stop("column weights must be finite.", call. = FALSE)
+  }
+  fused <- native_centered_scaled_csc_operator_or_null(
+    A, weights, name = name
+  )
+  if (!is.null(fused)) {
+    return(fused)
+  }
   fused <- native_scaled_operator_or_null(A, weights, axis = "cols", name = name)
   if (!is.null(fused)) {
     return(fused)
@@ -393,6 +402,34 @@ csc_centered_block_apply <- function(A, X, alpha = 1, beta = 0, Y = NULL,
   )
 }
 
+#' @keywords internal
+csc_centered_scaled_block_apply <- function(
+    A, col_means, weights, X, alpha = 1, beta = 0, Y = NULL,
+    transpose = FALSE) {
+  X <- as.matrix(X)
+  if (is.null(Y)) {
+    out_nrow <- if (transpose) ncol(A) else nrow(A)
+    Y <- matrix(0, out_nrow, ncol(X))
+  } else {
+    Y <- as.matrix(Y)
+  }
+  .Call(
+    "eigencore_csc_centered_scaled_block_apply",
+    methods::slot(A, "i"),
+    methods::slot(A, "p"),
+    methods::slot(A, "x"),
+    methods::slot(A, "Dim"),
+    as.numeric(col_means),
+    as.numeric(weights),
+    X,
+    as.numeric(alpha),
+    as.numeric(beta),
+    Y,
+    isTRUE(transpose),
+    PACKAGE = "eigencore"
+  )
+}
+
 #' Mark an operator as symmetric/Hermitian.
 #'
 #' @param A Operator-like object.
@@ -504,13 +541,19 @@ is_dense_double_matrix <- function(x) {
 
 #' @keywords internal
 #' Classifies an eigencore_operator into the native kernel kind it can be
-#' fed to: "csc" (dgCMatrix metadata), "dense" (dense double source), or
-#' NA_character_ when no native kernel is available. Centralizes the
+#' fed to: "csc" (dgCMatrix metadata), "centered_scaled_csc" (the native
+#' sparse-PCA fusion), "dense" (dense double source), or NA_character_ when no
+#' native kernel is available. Centralizes the
 #' `identical(storage, "dgCMatrix") || (is.matrix(source) && is.double(source))`
 #' pattern that recurs across solve.R / reference_*.R predicates.
 native_kernel_kind <- function(op) {
   if (identical(op$metadata$storage %||% NULL, "dgCMatrix")) {
     return("csc")
+  }
+  if (identical(
+    op$metadata$storage %||% NULL, "centered_scaled_dgCMatrix"
+  )) {
+    return("centered_scaled_csc")
   }
   src <- source_or_null(op)
   if (is.matrix(src) && is.double(src)) {
@@ -750,7 +793,99 @@ native_centered_sparse_operator_or_null <- function(A, rows, columns,
       col_means = col_means,
       native = TRUE,
       storage = "centered_dgCMatrix",
-      low_rank_correction = TRUE
+      low_rank_correction = TRUE,
+      column_sums = A$metadata$column_sums,
+      column_sum_squares = A$metadata$column_sum_squares,
+      column_means = A$metadata$column_means,
+      column_centered_sum_squares = A$metadata$column_centered_sum_squares
+    )
+  )
+}
+
+#' @keywords internal
+native_centered_scaled_csc_operator_or_null <- function(A, weights,
+                                                        name = NULL) {
+  if (!isTRUE(A$metadata$native) ||
+      !identical(A$metadata$storage %||% NULL, "centered_dgCMatrix") ||
+      !isTRUE(A$metadata$columns) || isTRUE(A$metadata$rows)) {
+    return(NULL)
+  }
+  matrix <- A$metadata$base_matrix %||% NULL
+  if (!inherits(matrix, "dgCMatrix")) {
+    return(NULL)
+  }
+  col_means <- as.numeric(A$metadata$col_means %||% numeric())
+  if (length(col_means) != ncol(matrix)) {
+    return(NULL)
+  }
+  column_sums <- A$metadata$column_sums %||% NULL
+  column_sum_squares <- A$metadata$column_sum_squares %||% NULL
+  base_means <- A$metadata$column_means %||% NULL
+  base_centered_sum_squares <-
+    A$metadata$column_centered_sum_squares %||% NULL
+  if (is.null(column_sums) || is.null(column_sum_squares) ||
+      is.null(base_means) || is.null(base_centered_sum_squares)) {
+    moments <- csc_column_moments(matrix)
+    column_sums <- moments$sum
+    column_sum_squares <- moments$sum_squares
+    base_means <- moments$mean
+    base_centered_sum_squares <- moments$centered_sum_squares
+  }
+  centered_sum_squares <- base_centered_sum_squares +
+    nrow(matrix) * (base_means - col_means)^2
+  roundoff <- 64 * .Machine$double.eps * pmax(
+    abs(column_sum_squares),
+    abs(2 * col_means * column_sums),
+    abs(nrow(matrix) * col_means^2),
+    1
+  )
+  if (any(centered_sum_squares < -roundoff)) {
+    stop(
+      "Centered CSC column moments are internally inconsistent.",
+      call. = FALSE
+    )
+  }
+  centered_sum_squares <- pmax(centered_sum_squares, 0)
+  scaled_sum_squares <- weights^2 * centered_sum_squares
+  frobenius_norm <- sqrt(sum(scaled_sum_squares))
+  if (!is.finite(frobenius_norm)) {
+    frobenius_norm <- NULL
+  }
+
+  linear_operator(
+    dim = A$dim,
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      csc_centered_scaled_block_apply(
+        matrix, col_means, weights, X,
+        alpha = alpha, beta = beta, Y = Y, transpose = FALSE
+      )
+    },
+    apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) {
+      csc_centered_scaled_block_apply(
+        matrix, col_means, weights, X,
+        alpha = alpha, beta = beta, Y = Y, transpose = TRUE
+      )
+    },
+    dtype = A$dtype,
+    structure = general(),
+    name = name %||% paste0("scale_cols(", A$name, ")"),
+    metadata = list(
+      parent = A,
+      base_matrix = matrix,
+      fused = "center_scale_cols",
+      rows = FALSE,
+      columns = TRUE,
+      col_means = col_means,
+      weights = weights,
+      native = TRUE,
+      storage = "centered_scaled_dgCMatrix",
+      native_entry_point = "eigencore_golub_kahan_centered_scaled_csc",
+      callback_boundary = FALSE,
+      materialized_centered_matrix = FALSE,
+      low_rank_correction = TRUE,
+      column_sums = weights * (column_sums - nrow(matrix) * col_means),
+      column_sum_squares = scaled_sum_squares,
+      frobenius_norm = frobenius_norm
     )
   )
 }

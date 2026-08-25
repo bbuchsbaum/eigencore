@@ -194,11 +194,19 @@ w <- 1 / sqrt(col_var + 1e-6)
 Acs <- scale_cols(Ac, w)
 fit_scaled <- svd_partial(Acs, rank = 5, target = largest())
 fit_scaled$d
+fit_scaled$certificate$passed
+fit_scaled$certificate$norm_bound_type
+fit_scaled$certificate$scale_is_estimate
 ```
 
 `center()` and `scale_cols()` compose freely because both return the same
 `eigencore_operator` type that every solver accepts — there's no separate
-"scaled matrix" object to keep track of.
+"scaled matrix" object to keep track of. For this column-centered CSC
+composition, eigencore also reuses the sparse column moments to compute the
+exact Frobenius norm
+`sum_j w_j^2 sum_i (A_ij - mean_j)^2`. The scaled solve can therefore pass its
+certificate without a stochastic scale estimate, even though the centered
+matrix itself is never formed.
 
 ## What did the planner actually do?
 
@@ -211,13 +219,15 @@ plan$method
 plan$reasons
 ```
 
-Centering and scaling a sparse matrix still fuse into a single native,
-non-densifying construction. But once that composed operator reaches the
-solver, eigencore drives it through a matrix-free Golub-Kahan callback
-cycle rather than a fully block-native kernel — the `reasons` say so
-explicitly rather than leaving you to infer it from timing. `plan_solver()`
-takes the same problem/rank/target arguments as the solve itself, so you
-can always check the plan before paying for the computation.
+Centering and scaling a CSC matrix fuse into a single native, non-densifying
+construction. The planner routes that operator to a direct native
+Golub-Kahan cycle: the C++ hot loop consumes the original CSC slots, column
+means, and scale weights without an R callback boundary. Inspect
+`plan$controls$fused_centered_scaled_csc` and
+`plan$controls$callback_boundary` for the machine-readable contract; the
+human-readable `reasons` state the same boundary. `plan_solver()` takes the
+same problem/rank/target arguments as the solve itself, so you can check the
+route before paying for the computation.
 
 ## Going fully matrix-free
 

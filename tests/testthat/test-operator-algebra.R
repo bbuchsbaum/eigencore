@@ -291,6 +291,119 @@ test_that("sparse centering uses native low-rank correction without densifying",
   expect_true(check_adjoint(op, seed = 37)$passed)
 })
 
+test_that("centered and column-scaled CSC operators fuse without densifying", {
+  dense <- matrix(c(
+    4, 0, -2, 0, 1, 0, 3, 0,
+    0, 5, 0, -1, 0, 2, 0, 6,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    1e-8, 0, -2e-8, 0, 3e-8, 0, -4e-8, 0,
+    0, -3, 7, 0, 2, 0, -1, 5
+  ), nrow = 8)
+  A <- methods::as(Matrix::Matrix(dense, sparse = TRUE), "dgCMatrix")
+  weights <- c(0, -2, 1e6, 1e-6, 3)
+  centered_scaled <- sweep(
+    sweep(dense, 2L, colMeans(dense), `-`),
+    2L, weights, `*`
+  )
+  X <- matrix(seq(-1.5, 2, length.out = 15), nrow = 5)
+  Y <- matrix(seq(0.8, -0.4, length.out = 24), nrow = 8)
+  Z <- matrix(seq(-2, 1, length.out = 24), nrow = 8)
+  W <- matrix(seq(1.2, -0.6, length.out = 15), nrow = 5)
+
+  op <- scale_cols(center(A, columns = TRUE), weights)
+
+  expect_true(op$metadata$native)
+  expect_identical(op$metadata$fused, "center_scale_cols")
+  expect_identical(op$metadata$storage, "centered_scaled_dgCMatrix")
+  expect_identical(eigencore:::native_kernel_kind(op), "centered_scaled_csc")
+  expect_true(eigencore:::has_native_kernel(op))
+  expect_s4_class(op$metadata$base_matrix, "dgCMatrix")
+  expect_null(op$metadata$matrix)
+  expect_null(eigencore:::source_or_null(op))
+  expect_false(op$metadata$materialized_centered_matrix)
+  expect_false(op$metadata$callback_boundary)
+  expect_equal(op$metadata$column_sum_squares, colSums(centered_scaled^2),
+               tolerance = 1e-13)
+  expect_equal(op$metadata$frobenius_norm, norm(centered_scaled, "F"),
+               tolerance = 1e-13)
+
+  expect_equal(
+    op$apply(X, alpha = -1.75, beta = 0.25, Y = Y),
+    -1.75 * centered_scaled %*% X + 0.25 * Y,
+    tolerance = 1e-12
+  )
+  expect_equal(
+    op$apply_adjoint(Z, alpha = 2.5, beta = -0.5, Y = W),
+    2.5 * crossprod(centered_scaled, Z) - 0.5 * W,
+    tolerance = 1e-12
+  )
+  expect_equal(op$apply(X, alpha = 0, beta = -2, Y = Y), -2 * Y)
+  expect_equal(op$apply_adjoint(Z, alpha = 0, beta = 0.5, Y = W), 0.5 * W)
+  expect_true(check_adjoint(op, trials = 4, seed = 38)$passed)
+
+  offset_dense <- outer(
+    seq_len(20L), seq_len(4L),
+    function(i, j) 1e12 + i * j / 10
+  )
+  offset_A <- methods::as(
+    Matrix::Matrix(offset_dense, sparse = TRUE), "dgCMatrix"
+  )
+  offset_weights <- c(1, -2, 1e6, 1e-6)
+  offset_op <- scale_cols(center(offset_A, columns = TRUE), offset_weights)
+  offset_oracle <- sweep(
+    sweep(offset_dense, 2L, colMeans(offset_dense), `-`),
+    2L, offset_weights, `*`
+  )
+  expect_equal(
+    offset_op$metadata$column_sum_squares,
+    colSums(offset_oracle^2),
+    tolerance = 2e-5
+  )
+  expect_equal(
+    offset_op$metadata$frobenius_norm,
+    norm(offset_oracle, "F"),
+    tolerance = 2e-5
+  )
+})
+
+test_that("fused centered-scaled CSC SVD uses a direct certified native cycle", {
+  set.seed(3901)
+  dense <- matrix(0, 32, 7)
+  dense[sample.int(length(dense), 65)] <- rnorm(65)
+  dense[, 4] <- 0
+  A <- methods::as(Matrix::Matrix(dense, sparse = TRUE), "dgCMatrix")
+  weights <- c(-2, 0.5, 0, 1e6, 1e-6, 3, -0.25)
+  op <- scale_cols(center(A, columns = TRUE), weights)
+  oracle <- sweep(sweep(dense, 2L, colMeans(dense), `-`), 2L, weights, `*`)
+
+  plan <- plan_solver(
+    svd_problem(op),
+    rank = 3L,
+    method = golub_kahan(max_subspace = ncol(A)),
+    tol = 1e-8,
+    allow_dense_fallback = "never"
+  )
+  expect_identical(plan$method, "native prototype Golub-Kahan")
+  expect_true(plan$controls$fused_centered_scaled_csc)
+  expect_false(plan$controls$matrix_free_native)
+  expect_false(plan$controls$callback_boundary)
+  expect_true(any(grepl("direct native Golub-Kahan", plan$reasons, fixed = TRUE)))
+
+  fit <- solve(plan)
+  oracle_d <- svd(oracle, nu = 0, nv = 0)$d[seq_len(3L)]
+
+  expect_true(fit$certificate$passed)
+  expect_identical(fit$certificate$norm_bound_type, "frobenius_metadata")
+  expect_false(fit$certificate$scale_is_estimate)
+  expect_equal(fit$d, oracle_d, tolerance = 1e-9)
+  expect_true(fit$restart$native)
+  expect_false(fit$restart$matrix_free)
+  expect_false(fit$restart$native_callback)
+  expect_false(fit$restart$callback_boundary)
+  expect_true(fit$restart$fused_centered_scaled_csc)
+  expect_identical(fit$restart$operator_storage, "centered_scaled_dgCMatrix")
+})
+
 test_that("crossprod fuses native explicit dense and sparse operators", {
   dense <- matrix(rnorm(20), nrow = 5)
   sparse <- Matrix::rsparsematrix(6, 4, density = 0.35)
@@ -331,6 +444,7 @@ test_that("operator algebra rejects incompatible or unsupported operator contrac
   expect_error(eigencore:::operator_scale(A, Inf), "finite numeric")
   expect_error(scale_rows(A, c(1, 2)), "row weights length")
   expect_error(scale_cols(A, c(1, 2, 3)), "column weights length")
+  expect_error(scale_cols(A, c(1, Inf)), "column weights must be finite")
   expect_error(crossprod_operator(no_adjoint), "apply_adjoint")
   expect_error(check_adjoint(no_adjoint), "apply_adjoint")
   expect_error(check_adjoint(bad_adjoint, trials = 2, seed = 47),

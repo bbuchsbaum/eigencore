@@ -1872,6 +1872,132 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   return out_;
 }
 
+extern "C" SEXP eigencore_golub_kahan_centered_scaled_csc(
+    SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP col_means_, SEXP col_weights_,
+    SEXP maxit_, SEXP start_, SEXP rank_, SEXP target_kind_, SEXP tol_,
+    SEXP projected_stop_, SEXP reorthogonalize_u_, SEXP reorthogonalize_v_) {
+  if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
+      LENGTH(dim_) != 2 || !isReal(col_means_) || !isReal(col_weights_) ||
+      !isReal(start_)) {
+    error("invalid centered-scaled CSC Golub-Kahan inputs");
+  }
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  if (m < 1 || n < 1 || LENGTH(p_) != n + 1 || LENGTH(col_means_) != n ||
+      LENGTH(col_weights_) != n || LENGTH(start_) != n ||
+      XLENGTH(i_) != XLENGTH(x_) || INTEGER(p_)[n] != XLENGTH(x_)) {
+    error("non-conformable centered-scaled CSC Golub-Kahan inputs");
+  }
+  for (int col = 0; col < n; ++col) {
+    if (!R_FINITE(REAL(col_means_)[col]) || !R_FINITE(REAL(col_weights_)[col])) {
+      error("centered-scaled CSC moments and weights must be finite");
+    }
+  }
+  const int limit = (m < n) ? m : n;
+  const int maxit = static_cast<int>(asInteger(maxit_));
+  const int rank = static_cast<int>(asInteger(rank_));
+  const int target_kind = static_cast<int>(asInteger(target_kind_));
+  const double tol = asReal(tol_);
+  const int enable_projected_stop = asLogical(projected_stop_) == TRUE;
+  const int reorthogonalize_u = asLogical(reorthogonalize_u_) == TRUE;
+  const int reorthogonalize_v = asLogical(reorthogonalize_v_) == TRUE;
+  if (maxit < 1 || maxit > limit) {
+    error("maxit must be between 1 and min(dim(A))");
+  }
+  if (rank < 1 || rank > maxit) {
+    error("rank must be between 1 and maxit");
+  }
+
+  std::vector<double> U_work(static_cast<size_t>(m) * static_cast<size_t>(maxit), 0.0);
+  std::vector<double> V_work(static_cast<size_t>(n) * static_cast<size_t>(maxit), 0.0);
+  std::vector<double> alpha_work(static_cast<size_t>(maxit), 0.0);
+  std::vector<double> beta_work(static_cast<size_t>(maxit), 0.0);
+  const double native_workspace_bytes =
+    static_cast<double>(sizeof(double)) *
+    static_cast<double>(
+      (static_cast<int64_t>(m) + static_cast<int64_t>(n) + 2) *
+      static_cast<int64_t>(maxit) + static_cast<int64_t>(2 * m + 2 * n)
+    );
+
+  CenteredScaledCSCOperator impl = {
+    {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)},
+    REAL(col_means_),
+    REAL(col_weights_)
+  };
+  int iterations = 0;
+  int matvecs = 0;
+  int projected_stop = 0;
+  int projected_nconv = 0;
+  double projected_max_residual = R_PosInf;
+  int projected_checks = 0;
+  double projected_seconds = 0.0;
+  double stage_apply_seconds = 0.0;
+  double stage_recurrence_seconds = 0.0;
+  double stage_reorthogonalization_seconds = 0.0;
+  int reorthogonalization_passes = 0;
+  const int status = native_golub_kahan_run(
+    &impl, eigencore_centered_scaled_csc_apply, m, n, maxit, rank,
+    target_kind, tol, enable_projected_stop, 1, REAL(start_), U_work.data(),
+    V_work.data(), alpha_work.data(), beta_work.data(), &iterations, &matvecs,
+    &projected_stop, &projected_nconv, &projected_max_residual,
+    &projected_checks, &projected_seconds, &stage_apply_seconds,
+    &stage_recurrence_seconds, &stage_reorthogonalization_seconds,
+    &reorthogonalization_passes, reorthogonalize_u, reorthogonalize_v
+  );
+  if (status != 0) {
+    error("native centered-scaled CSC Golub-Kahan failed with status=%d", status);
+  }
+
+  SEXP U_ = PROTECT(allocMatrix(REALSXP, m, iterations));
+  SEXP V_ = PROTECT(allocMatrix(REALSXP, n, iterations));
+  SEXP alpha_ = PROTECT(allocVector(REALSXP, iterations));
+  SEXP beta_ = PROTECT(allocVector(REALSXP, iterations));
+  for (int col = 0; col < iterations; ++col) {
+    std::memcpy(REAL(U_) + static_cast<size_t>(col) * static_cast<size_t>(m),
+                U_work.data() + static_cast<size_t>(col) * static_cast<size_t>(m),
+                sizeof(double) * static_cast<size_t>(m));
+    std::memcpy(REAL(V_) + static_cast<size_t>(col) * static_cast<size_t>(n),
+                V_work.data() + static_cast<size_t>(col) * static_cast<size_t>(n),
+                sizeof(double) * static_cast<size_t>(n));
+  }
+  std::memcpy(REAL(alpha_), alpha_work.data(),
+              sizeof(double) * static_cast<size_t>(iterations));
+  std::memcpy(REAL(beta_), beta_work.data(),
+              sizeof(double) * static_cast<size_t>(iterations));
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 16));
+  SET_VECTOR_ELT(out_, 0, U_);
+  SET_VECTOR_ELT(out_, 1, V_);
+  SET_VECTOR_ELT(out_, 2, alpha_);
+  SET_VECTOR_ELT(out_, 3, beta_);
+  SET_VECTOR_ELT(out_, 4, ScalarInteger(iterations));
+  SET_VECTOR_ELT(out_, 5, ScalarInteger(matvecs));
+  SET_VECTOR_ELT(out_, 6, ScalarLogical(projected_stop));
+  SET_VECTOR_ELT(out_, 7, ScalarInteger(projected_nconv));
+  SET_VECTOR_ELT(out_, 8, ScalarReal(projected_max_residual));
+  SET_VECTOR_ELT(out_, 9, ScalarInteger(projected_checks));
+  SET_VECTOR_ELT(out_, 10, ScalarReal(projected_seconds));
+  SET_VECTOR_ELT(out_, 11, ScalarReal(native_workspace_bytes));
+  SET_VECTOR_ELT(out_, 12, ScalarReal(stage_apply_seconds));
+  SET_VECTOR_ELT(out_, 13, ScalarReal(stage_recurrence_seconds));
+  SET_VECTOR_ELT(out_, 14, ScalarReal(stage_reorthogonalization_seconds));
+  SET_VECTOR_ELT(out_, 15, ScalarInteger(reorthogonalization_passes));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 16));
+  const char* names[] = {
+    "U", "V", "alpha", "beta", "iterations", "matvecs", "projected_stop",
+    "projected_nconv", "projected_max_residual", "projected_checks",
+    "projected_seconds", "native_workspace_bytes", "stage_apply_seconds",
+    "stage_recurrence_seconds", "stage_reorthogonalization_seconds",
+    "reorthogonalization_passes"
+  };
+  for (int index = 0; index < 16; ++index) {
+    SET_STRING_ELT(names_, index, mkChar(names[index]));
+  }
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(6);
+  return out_;
+}
+
 extern "C" SEXP eigencore_golub_kahan_r_operator(
     SEXP dim_, SEXP apply_, SEXP apply_adjoint_, SEXP maxit_, SEXP start_,
     SEXP rank_, SEXP target_kind_, SEXP tol_, SEXP projected_stop_,

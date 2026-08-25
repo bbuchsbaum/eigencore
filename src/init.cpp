@@ -14,7 +14,9 @@ extern "C" SEXP eigencore_csc_randomized_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEX
 extern "C" SEXP eigencore_csc_randomized_sketch(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_randomized_project_transposed(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_randomized_svd_controller(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_csc_column_moments(SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_centered_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_csc_centered_scaled_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_diagonal_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_native_apply_noalloc_check(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_apply_int_guard_check();
@@ -35,6 +37,7 @@ extern "C" SEXP eigencore_shift_invert_lanczos_dense_generalized(SEXP, SEXP, SEX
 extern "C" SEXP eigencore_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_golub_kahan_centered_scaled_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_r_operator(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -129,7 +132,9 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_csc_randomized_sketch", (DL_FUNC) &eigencore_csc_randomized_sketch, 5},
   {"eigencore_csc_randomized_project_transposed", (DL_FUNC) &eigencore_csc_randomized_project_transposed, 5},
   {"eigencore_csc_randomized_svd_controller", (DL_FUNC) &eigencore_csc_randomized_svd_controller, 9},
+  {"eigencore_csc_column_moments", (DL_FUNC) &eigencore_csc_column_moments, 3},
   {"eigencore_csc_centered_block_apply", (DL_FUNC) &eigencore_csc_centered_block_apply, 13},
+  {"eigencore_csc_centered_scaled_block_apply", (DL_FUNC) &eigencore_csc_centered_scaled_block_apply, 11},
   {"eigencore_diagonal_block_apply", (DL_FUNC) &eigencore_diagonal_block_apply, 7},
   {"eigencore_native_apply_noalloc_check", (DL_FUNC) &eigencore_native_apply_noalloc_check, 4},
   {"eigencore_dense_apply_int_guard_check", (DL_FUNC) &eigencore_dense_apply_int_guard_check, 0},
@@ -150,6 +155,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_lanczos_csc", (DL_FUNC) &eigencore_lanczos_csc, 9},
   {"eigencore_golub_kahan_dense", (DL_FUNC) &eigencore_golub_kahan_dense, 7},
   {"eigencore_golub_kahan_csc", (DL_FUNC) &eigencore_golub_kahan_csc, 10},
+  {"eigencore_golub_kahan_centered_scaled_csc", (DL_FUNC) &eigencore_golub_kahan_centered_scaled_csc, 14},
   {"eigencore_golub_kahan_r_operator", (DL_FUNC) &eigencore_golub_kahan_r_operator, 11},
   {"eigencore_golub_kahan_dense_fit", (DL_FUNC) &eigencore_golub_kahan_dense_fit, 9},
   {"eigencore_golub_kahan_csc_fit", (DL_FUNC) &eigencore_golub_kahan_csc_fit, 12},

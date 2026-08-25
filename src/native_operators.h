@@ -26,6 +26,15 @@ struct CSCOperator {
   const double* values;
 };
 
+// Column-centered and right-scaled CSC map (A - 1 mu^T) D. The base CSC
+// storage, means, and weights are borrowed from R for the duration of a native
+// call; the apply function owns no heap allocation or cached operator action.
+struct CenteredScaledCSCOperator {
+  CSCOperator base;
+  const double* col_means;
+  const double* col_weights;
+};
+
 struct DiagonalOperator {
   int64_t rows;
   const double* values;
@@ -165,6 +174,18 @@ extern "C" int eigencore_csc_apply(void* impl,
                                     double* Y,
                                     int64_t ldy,
                                     EigencoreWorkspace* workspace);
+
+extern "C" int eigencore_centered_scaled_csc_apply(
+    void* impl,
+    EigencoreTranspose op,
+    int64_t block_cols,
+    const double* X,
+    int64_t ldx,
+    double alpha,
+    double beta,
+    double* Y,
+    int64_t ldy,
+    EigencoreWorkspace* workspace);
 
 extern "C" int eigencore_diagonal_apply(void* impl,
                                          EigencoreTranspose op,

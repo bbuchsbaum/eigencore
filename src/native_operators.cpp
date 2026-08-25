@@ -1,5 +1,6 @@
 #include <cstring>
 #include <cmath>
+#include <cfloat>
 #include <climits>
 #include <vector>
 #include <R.h>
@@ -480,6 +481,83 @@ extern "C" int eigencore_csc_apply(void* impl,
             yptr[block][col] += alpha * acc[block];
           }
         }
+      }
+    }
+  }
+  return 0;
+}
+
+extern "C" int eigencore_centered_scaled_csc_apply(
+    void* impl,
+    EigencoreTranspose op,
+    int64_t block_cols,
+    const double* X,
+    int64_t ldx,
+    double alpha,
+    double beta,
+    double* Y,
+    int64_t ldy,
+    EigencoreWorkspace* workspace) {
+  (void) workspace;
+  CenteredScaledCSCOperator* fused =
+    static_cast<CenteredScaledCSCOperator*>(impl);
+  CSCOperator* csc = &fused->base;
+  if (op != EIGENCORE_TRANSPOSE_NONE &&
+      op != EIGENCORE_TRANSPOSE_ADJOINT) {
+    return -1;
+  }
+  const int64_t out_rows =
+    (op == EIGENCORE_TRANSPOSE_ADJOINT) ? csc->cols : csc->rows;
+  const int64_t inner =
+    (op == EIGENCORE_TRANSPOSE_ADJOINT) ? csc->rows : csc->cols;
+  if (block_cols < 0 || ldx < inner || ldy < out_rows ||
+      fused->col_means == nullptr || fused->col_weights == nullptr) {
+    return -1;
+  }
+
+  scale_or_zero_output(Y, out_rows, block_cols, beta);
+  if (alpha == 0.0) {
+    return 0;
+  }
+
+  if (op == EIGENCORE_TRANSPOSE_NONE) {
+    // Y <- alpha (A - 1 mu^T) D X + beta Y.
+    for (int64_t block = 0; block < block_cols; ++block) {
+      const double* x_col = X + block * ldx;
+      double* y_col = Y + block * ldy;
+      double correction = 0.0;
+      for (int64_t col = 0; col < csc->cols; ++col) {
+        const double scaled_x = fused->col_weights[col] * x_col[col];
+        correction += fused->col_means[col] * scaled_x;
+        if (scaled_x == 0.0) {
+          continue;
+        }
+        const double coefficient = alpha * scaled_x;
+        for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
+          y_col[csc->row_idx[pos]] += coefficient * csc->values[pos];
+        }
+      }
+      correction *= alpha;
+      for (int64_t row = 0; row < csc->rows; ++row) {
+        y_col[row] -= correction;
+      }
+    }
+  } else {
+    // Y <- alpha D (A^T X - mu 1^T X) + beta Y.
+    for (int64_t block = 0; block < block_cols; ++block) {
+      const double* x_col = X + block * ldx;
+      double* y_col = Y + block * ldy;
+      double x_sum = 0.0;
+      for (int64_t row = 0; row < csc->rows; ++row) {
+        x_sum += x_col[row];
+      }
+      for (int64_t col = 0; col < csc->cols; ++col) {
+        double dot = 0.0;
+        for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
+          dot += csc->values[pos] * x_col[csc->row_idx[pos]];
+        }
+        y_col[col] += alpha * fused->col_weights[col] *
+          (dot - fused->col_means[col] * x_sum);
       }
     }
   }
@@ -1906,6 +1984,81 @@ extern "C" SEXP eigencore_csc_randomized_project_transposed(
   return out_;
 }
 
+extern "C" SEXP eigencore_csc_column_moments(SEXP p_, SEXP x_, SEXP dim_) {
+  if (!isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
+      LENGTH(dim_) != 2) {
+    error("invalid CSC column-moment inputs");
+  }
+  const int n = INTEGER(dim_)[1];
+  const int m = INTEGER(dim_)[0];
+  if (m < 0 || n < 0 || LENGTH(p_) != n + 1 || INTEGER(p_)[0] != 0 ||
+      INTEGER(p_)[n] != XLENGTH(x_)) {
+    error("inconsistent CSC column pointers");
+  }
+
+  SEXP sums_ = PROTECT(allocVector(REALSXP, n));
+  SEXP sum_squares_ = PROTECT(allocVector(REALSXP, n));
+  SEXP means_ = PROTECT(allocVector(REALSXP, n));
+  SEXP centered_sum_squares_ = PROTECT(allocVector(REALSXP, n));
+  const int* col_ptr = INTEGER(p_);
+  const double* values = REAL(x_);
+  for (int col = 0; col < n; ++col) {
+    long double sum = 0.0L;
+    long double sum_squares = 0.0L;
+    const int begin = col_ptr[col];
+    const int end = col_ptr[col + 1];
+    const int nonzero = end - begin;
+    if (nonzero < 0 || nonzero > m) {
+      error("inconsistent CSC column occupancy");
+    }
+    const long double shift = nonzero ?
+      static_cast<long double>(values[begin]) : 0.0L;
+    long double shifted_sum =
+      -static_cast<long double>(m - nonzero) * shift;
+    long double shifted_sum_squares =
+      static_cast<long double>(m - nonzero) * shift * shift;
+    for (int pos = begin; pos < end; ++pos) {
+      const long double value = static_cast<long double>(values[pos]);
+      sum += value;
+      sum_squares += value * value;
+      const long double delta = value - shift;
+      shifted_sum += delta;
+      shifted_sum_squares += delta * delta;
+    }
+    const long double mean = m > 0 ?
+      shift + shifted_sum / static_cast<long double>(m) : 0.0L;
+    const long double mean_correction = m > 0 ?
+      shifted_sum * shifted_sum / static_cast<long double>(m) : 0.0L;
+    long double centered_sum_squares =
+      shifted_sum_squares - mean_correction;
+    const long double central_roundoff = 64.0L * LDBL_EPSILON *
+      (fabsl(shifted_sum_squares) + fabsl(mean_correction) + 1.0L);
+    if (centered_sum_squares < 0.0L &&
+        centered_sum_squares >= -central_roundoff) {
+      centered_sum_squares = 0.0L;
+    }
+    REAL(sums_)[col] = static_cast<double>(sum);
+    REAL(sum_squares_)[col] = static_cast<double>(sum_squares);
+    REAL(means_)[col] = static_cast<double>(mean);
+    REAL(centered_sum_squares_)[col] =
+      static_cast<double>(centered_sum_squares);
+  }
+
+  SEXP out_ = PROTECT(allocVector(VECSXP, 4));
+  SET_VECTOR_ELT(out_, 0, sums_);
+  SET_VECTOR_ELT(out_, 1, sum_squares_);
+  SET_VECTOR_ELT(out_, 2, means_);
+  SET_VECTOR_ELT(out_, 3, centered_sum_squares_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 4));
+  SET_STRING_ELT(names_, 0, mkChar("sum"));
+  SET_STRING_ELT(names_, 1, mkChar("sum_squares"));
+  SET_STRING_ELT(names_, 2, mkChar("mean"));
+  SET_STRING_ELT(names_, 3, mkChar("centered_sum_squares"));
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(6);
+  return out_;
+}
+
 extern "C" SEXP eigencore_csc_centered_block_apply(
     SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP row_means_, SEXP col_means_,
     SEXP rows_, SEXP columns_, SEXP X_, SEXP alpha_, SEXP beta_, SEXP Y_,
@@ -2024,6 +2177,60 @@ extern "C" SEXP eigencore_csc_centered_block_apply(
     }
   }
 
+  UNPROTECT(1);
+  return out_;
+}
+
+extern "C" SEXP eigencore_csc_centered_scaled_block_apply(
+    SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP col_means_, SEXP weights_,
+    SEXP X_, SEXP alpha_, SEXP beta_, SEXP Y_, SEXP transpose_) {
+  if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
+      !isReal(col_means_) || !isReal(weights_) || !isReal(X_) ||
+      !isReal(alpha_) || !isReal(beta_) || !isReal(Y_) ||
+      !isLogical(transpose_)) {
+    error("invalid centered-scaled CSC block apply inputs");
+  }
+  SEXP dimX = getAttrib(X_, R_DimSymbol);
+  SEXP dimY = getAttrib(Y_, R_DimSymbol);
+  if (dimX == R_NilValue || dimY == R_NilValue) {
+    error("X and Y must be matrices");
+  }
+
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  const bool transpose = LOGICAL(transpose_)[0];
+  const int xr = INTEGER(dimX)[0];
+  const int xc = INTEGER(dimX)[1];
+  const int yr = INTEGER(dimY)[0];
+  const int yc = INTEGER(dimY)[1];
+  const int out_rows = transpose ? n : m;
+  const int inner = transpose ? m : n;
+  if (LENGTH(col_means_) != n || LENGTH(weights_) != n || xr != inner ||
+      yr != out_rows || yc != xc) {
+    error("non-conformable centered-scaled CSC block apply inputs");
+  }
+
+  SEXP out_ = PROTECT(duplicate(Y_));
+  CenteredScaledCSCOperator impl = {
+    {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)},
+    REAL(col_means_),
+    REAL(weights_)
+  };
+  const int status = eigencore_centered_scaled_csc_apply(
+    &impl,
+    transpose ? EIGENCORE_TRANSPOSE_ADJOINT : EIGENCORE_TRANSPOSE_NONE,
+    xc,
+    REAL(X_),
+    xr,
+    REAL(alpha_)[0],
+    REAL(beta_)[0],
+    REAL(out_),
+    out_rows,
+    nullptr
+  );
+  if (status != 0) {
+    eigencore_apply_status_error("centered-scaled CSC block apply", status);
+  }
   UNPROTECT(1);
   return out_;
 }

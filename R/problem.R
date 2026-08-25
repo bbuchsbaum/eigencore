@@ -633,7 +633,8 @@ plan_solver.eigencore_svd_problem <- function(
   source_matrix <- source_or_null(problem$A)
   is_dense_source <- is.matrix(source_matrix) && is.double(source_matrix)
   is_complex_dense_source <- is.matrix(source_matrix) && is.complex(source_matrix)
-  is_native_csc <- identical(problem$A$metadata$storage, "dgCMatrix")
+  is_native_csc <- native_kernel_kind(problem$A) %in%
+    c("csc", "centered_scaled_csc")
   is_native_matrix_free_gk <- native_matrix_free_golub_kahan_available(problem$A)
   is_smallest_svd_target <- svd_target_is_smallest(problem$target)
   is_interior_svd_target <- svd_target_is_interior(problem$target)
@@ -812,6 +813,11 @@ operator_kernel_reason <- function(op) {
   storage <- op$metadata$storage %||% NULL
   if (identical(storage, "dgCMatrix")) {
     "built-in sparse CSC operator has native block apply"
+  } else if (identical(storage, "centered_scaled_dgCMatrix")) {
+    paste(
+      "centered-plus-column-scaled CSC operator has a fused native block apply",
+      "and direct native Golub-Kahan cycle without an R callback boundary"
+    )
   } else if (identical(storage, "ddiMatrix")) {
     "built-in diagonal operator has native block apply"
   } else if (identical(storage, "complex_dense_matrix")) {
@@ -1248,7 +1254,9 @@ svd_plan_controls <- function(problem, rank, method, chosen) {
   if (grepl("Golub-Kahan", chosen, fixed = TRUE)) {
     is_gk <- inherits(method, "eigencore_method") && identical(method$kind, "golub_kahan")
     is_auto <- inherits(method, "eigencore_method") && identical(method$kind, "auto")
-    is_native_csc <- identical(problem$A$metadata$storage %||% NULL, "dgCMatrix")
+    native_kind <- native_kernel_kind(problem$A)
+    is_native_csc <- native_kind %in% c("csc", "centered_scaled_csc")
+    is_fused_centered_scaled_csc <- identical(native_kind, "centered_scaled_csc")
     is_native_matrix_free <- identical(chosen, native_matrix_free_golub_kahan_label()) ||
       identical(chosen, native_matrix_free_smallest_golub_kahan_label()) ||
       identical(chosen, native_matrix_free_interior_golub_kahan_label())
@@ -1277,6 +1285,21 @@ svd_plan_controls <- function(problem, rank, method, chosen) {
       requires_adjoint = TRUE,
       default_normal_equations = FALSE
     ))
+    if (is_fused_centered_scaled_csc) {
+      controls$fused_centered_scaled_csc <- TRUE
+      controls$matrix_free_native <- FALSE
+      controls$callback_boundary <- FALSE
+      controls$operator_norm <- "exact centered-and-scaled CSC Frobenius metadata"
+      controls$promotion_status <- "production_fused_centered_scaled_csc"
+      controls$promotion_gate <- "v1.2_sparse_pca_fused_operator"
+      controls$promotion_gate_issue <- "bd-01KXNNKHB7XJFFHE0BDYTDVQQ2"
+      controls$promotion_requires <- c(
+        "forward and adjoint block oracles pass for alpha and beta",
+        "exact non-estimated norm certificate passes",
+        "centered matrix is never materialized",
+        "native Golub-Kahan hot loop has no R callback boundary"
+      )
+    }
     if (identical(chosen, native_retained_golub_kahan_diagnostic_label())) {
       controls$retained_restart <- TRUE
       controls$thick_restart <- TRUE

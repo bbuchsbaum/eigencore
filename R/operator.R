@@ -345,6 +345,17 @@ csc_block_apply <- function(A, X, alpha = 1, beta = 0, Y = NULL, transpose = FAL
 }
 
 #' @keywords internal
+csc_column_moments <- function(A) {
+  .Call(
+    "eigencore_csc_column_moments",
+    methods::slot(A, "p"),
+    methods::slot(A, "x"),
+    methods::slot(A, "Dim"),
+    PACKAGE = "eigencore"
+  )
+}
+
+#' @keywords internal
 csc_native_matrix <- function(x) {
   if (inherits(x, "dsCMatrix") || inherits(x, "symmetricMatrix")) {
     return(methods::as(methods::as(x, "generalMatrix"), "CsparseMatrix"))
@@ -357,12 +368,21 @@ csc_matrix_as_operator <- function(x) {
   dim_x <- dim(x)
   input_storage <- class(x)[[1L]]
   symmetric_storage <- inherits(x, "symmetricMatrix")
-  frobenius_norm <- if (inherits(x, "dgCMatrix") && !inherits(x, "symmetricMatrix")) {
-    sqrt(sum(methods::slot(x, "x")^2))
+  moments <- if (inherits(x, "dgCMatrix") &&
+                 !inherits(x, "symmetricMatrix")) {
+    csc_column_moments(x)
   } else {
+    NULL
+  }
+  frobenius_norm <- if (is.null(moments)) {
     as.numeric(Matrix::norm(x, type = "F"))
+  } else {
+    sqrt(sum(moments$sum_squares))
   }
   x <- csc_native_matrix(x)
+  if (is.null(moments)) {
+    moments <- csc_column_moments(x)
+  }
   linear_operator(
     dim = dim_x,
     apply = function(X, alpha = 1, beta = 0, Y = NULL) {
@@ -380,7 +400,11 @@ csc_matrix_as_operator <- function(x) {
       storage = "dgCMatrix",
       input_storage = input_storage,
       symmetric_storage = symmetric_storage,
-      frobenius_norm = frobenius_norm
+      frobenius_norm = frobenius_norm,
+      column_sums = moments$sum,
+      column_sum_squares = moments$sum_squares,
+      column_means = moments$mean,
+      column_centered_sum_squares = moments$centered_sum_squares
     )
   )
 }

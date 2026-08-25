@@ -844,6 +844,9 @@ should_use_native_lanczos <- function(problem, method, k = NULL) {
   if (!has_native_kernel(problem$A)) {
     return(FALSE)
   }
+  if (!(native_kernel_kind(problem$A) %in% c("csc", "dense"))) {
+    return(FALSE)
+  }
   if (!native_lanczos_target_supported(problem$target)) {
     return(FALSE)
   }
@@ -1126,7 +1129,7 @@ should_use_native_golub_kahan <- function(problem, method) {
   }
   inherits(method, "eigencore_method") &&
     identical(method$kind, "auto") &&
-    identical(native_kernel_kind(problem$A), "csc")
+    native_kernel_kind(problem$A) %in% c("csc", "centered_scaled_csc")
 }
 
 #' @keywords internal
@@ -1332,6 +1335,9 @@ should_use_native_gram_svd <- function(problem, method, rank = NULL) {
     return(FALSE)
   }
   if (!has_native_kernel(problem$A)) {
+    return(FALSE)
+  }
+  if (!(native_kernel_kind(problem$A) %in% c("csc", "dense"))) {
     return(FALSE)
   }
   kind <- if (inherits(problem$target, "eigencore_target")) problem$target$kind else "largest"

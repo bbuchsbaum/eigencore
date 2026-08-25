@@ -36,6 +36,21 @@
   only the public basis; incompatible and unsupported routes fail before the
   current operator is applied.
 
+## Sparse operator performance
+
+* `scale_cols(center(A, columns = TRUE), weights)` now recognizes a real
+  `dgCMatrix` and builds one fused native operator for
+  `(A - 1 mu^T) D`. Forward and adjoint block application, including
+  `alpha`/`beta` accumulation, stay in C++; native Golub-Kahan consumes the
+  sparse matrix, means, and weights directly, without materializing the
+  centered matrix or crossing an R callback boundary inside the iteration.
+  One CSC moments pass supplies exact centered-and-scaled Frobenius metadata,
+  so the resulting two-sided SVD certificate reports
+  `norm_bound_type = "frobenius_metadata"` and
+  `scale_is_estimate = FALSE`. Zero columns, zero/negative/extreme finite
+  weights, transpose algebra, planner provenance, and strict installed-package
+  execution are covered by the v1.2 sparse-PCA gate.
+
 # eigencore 1.1.0 (2026-08-24)
 
 ## New features

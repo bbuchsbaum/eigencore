@@ -1,6 +1,6 @@
 # Method Selection And Workflows
 
-Date: 2026-06-07
+Date: 2026-08-25
 
 This guide gives the current user-facing path through eigencore. It covers the
 main workflows required for the V2 CRAN release: partial eigen, partial SVD,
@@ -175,6 +175,18 @@ Method guidance:
 | `method = auto()` | Uses the certified tiny sparse Gram special case where bounded and certified, native Golub-Kahan prototypes for supported explicit operators, the native callback boundary for real matrix-free operators with adjoints, or dense LAPACK fallback for dense/small cases. |
 | `method = golub_kahan()` | Requests the Golub-Kahan SVD path; explicit dense/CSC operators can use a native prototype, and real matrix-free operators with adjoints use the native callback boundary. |
 | `method = randomized()` | Dense double and sparse CSC QR-normalized requests for largest singular values use native randomized controllers with exact residual certification diagnostics and native q=0 early stop. Matrix-free, LU/none-normalized, and other unpromoted randomized regimes use the reference-control randomized SVD prototype with native sketch/projection/projected-core kernels where available. |
+
+For sparse PCA, the specific composition
+`scale_cols(center(A, columns = TRUE), weights)` on a real `dgCMatrix` has a
+stronger v1.2 contract than a general matrix-free composition. It is one fused
+native `(A - 1 mu^T) D` operator: block apply and adjoint honor `alpha` and
+`beta`, the native Golub-Kahan hot loop receives the CSC slots, means, and
+weights directly, and no centered matrix or R callback is introduced. A
+single sparse column-moments traversal also gives an exact Frobenius norm, so
+certificates use `frobenius_metadata` with `scale_is_estimate = FALSE`.
+`plan$controls$fused_centered_scaled_csc` and
+`fit$restart$fused_centered_scaled_csc` identify this route; both planner and
+restart diagnostics report `callback_boundary = FALSE`.
 
 Current limitation: production thick-restart SVD for general sparse and
 matrix-free workloads remains open. Do not treat `native prototype Golub-Kahan`,

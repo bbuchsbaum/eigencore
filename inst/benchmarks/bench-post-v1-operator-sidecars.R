@@ -164,7 +164,10 @@ matrix_free_nonsymmetric_case <- function() {
     )
   } else {
     A <- diag(seq(30, 1))
-    A[cbind(seq_len(29L), seq_len(29L) + 1L)] <- 4
+    # Keep the general-eigen sidecar nonsymmetric without making it so
+    # nonnormal that the fixture, rather than the advertised callback
+    # boundary, dominates the strict residual gate.
+    A[cbind(seq_len(29L), seq_len(29L) + 1L)] <- 0.05
     A
   }
   op <- linear_operator(
@@ -239,10 +242,56 @@ matrix_free_generalized_b_case <- function() {
   )
 }
 
+fused_sparse_pca_case <- function() {
+  m <- if (args$quick) 64L else 2000L
+  n <- if (args$quick) 8L else 64L
+  entries_per_column <- if (args$quick) 4L else 20L
+  active_columns <- n - 1L
+  j <- rep(seq_len(active_columns), each = entries_per_column)
+  i <- ((seq_along(j) * 37L + j * 101L) %% m) + 1L
+  x <- sin(seq_along(j) / 7) + 0.5 * cos(j)
+  A <- Matrix::sparseMatrix(i = i, j = j, x = x, dims = c(m, n))
+  A <- methods::as(A, "dgCMatrix")
+  weights <- c(seq(8, 1, length.out = active_columns), 0)
+  op <- scale_cols(center(A, columns = TRUE), weights)
+
+  run_sidecar_case(
+    gate_id = "v1.2_sparse_pca_fused_operator",
+    surface = "fused_centered_scaled_csc_svd",
+    case_id = paste0("fused_sparse_pca:", m, "x", n),
+    requested = min(5L, n - 1L),
+    expected_label = "native prototype Golub-Kahan",
+    expected_native = TRUE,
+    seed = 9104L,
+    expr = svd_partial(
+      op,
+      rank = min(5L, n - 1L),
+      tol = tol,
+      seed = 9104L,
+      allow_dense_fallback = "never"
+    ),
+    extra_gate = function(fit) {
+      cert <- fit$certificate
+      restart <- fit$restart %||% list()
+      controls <- fit$plan$controls %||% list()
+      identical(cert$norm_bound_type, "frobenius_metadata") &&
+        identical(cert$scale_is_estimate, FALSE) &&
+        isTRUE(restart$fused_centered_scaled_csc) &&
+        identical(restart$operator_storage, "centered_scaled_dgCMatrix") &&
+        identical(restart$matrix_free, FALSE) &&
+        identical(restart$native_callback, FALSE) &&
+        identical(restart$callback_boundary, FALSE) &&
+        isTRUE(controls$fused_centered_scaled_csc) &&
+        identical(controls$callback_boundary, FALSE)
+    }
+  )
+}
+
 rows <- do.call(rbind, list(
   matrix_free_svd_case(),
   matrix_free_nonsymmetric_case(),
-  matrix_free_generalized_b_case()
+  matrix_free_generalized_b_case(),
+  fused_sparse_pca_case()
 ))
 row.names(rows) <- NULL
 print(rows)
