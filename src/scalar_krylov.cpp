@@ -1130,12 +1130,11 @@ extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal(
     error("native tridiagonal shift-invert factorization is near-singular; perturb sigma");
   }
 
-  SEXP Q_ = PROTECT(allocMatrix(REALSXP, n, maxit));
+  std::vector<double> Q(static_cast<size_t>(n) * static_cast<size_t>(maxit), 0.0);
   SEXP alpha_ = PROTECT(allocVector(REALSXP, maxit));
   SEXP beta_ = PROTECT(allocVector(REALSXP, maxit));
   SEXP history_nconv_ = PROTECT(allocVector(INTSXP, maxit));
   SEXP history_max_residual_ = PROTECT(allocVector(REALSXP, maxit));
-  std::memset(REAL(Q_), 0, sizeof(double) * static_cast<size_t>(n) * maxit);
   std::memset(REAL(alpha_), 0, sizeof(double) * static_cast<size_t>(maxit));
   std::memset(REAL(beta_), 0, sizeof(double) * static_cast<size_t>(maxit));
   std::memset(INTEGER(history_nconv_), 0, sizeof(int) * static_cast<size_t>(maxit));
@@ -1151,13 +1150,76 @@ extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal(
   int matvecs = 0;
   const int status = native_lanczos_run(
     &impl, eigencore_tridiagonal_shift_invert_apply, n, maxit,
-    k, target_kind, tol, REAL(start_), REAL(Q_), REAL(alpha_), REAL(beta_),
+    k, target_kind, tol, REAL(start_), Q.data(), REAL(alpha_), REAL(beta_),
     INTEGER(history_nconv_), REAL(history_max_residual_),
     &iterations, &matvecs
   );
   if (status != 0) {
     error("native tridiagonal shift-invert Lanczos failed with status=%d", status);
   }
+
+  // Finish the projected solve while the native basis is still available and
+  // return only the requested Ritz vectors. Returning the full n x iterations
+  // basis forced R to retain and copy an internal workspace before forming the
+  // n x k result.
+  std::vector<double> projected_values(
+    REAL(alpha_), REAL(alpha_) + static_cast<size_t>(iterations)
+  );
+  std::vector<double> projected_offdiag(
+    static_cast<size_t>((iterations > 1) ? iterations - 1 : 1), 0.0
+  );
+  if (iterations > 1) {
+    std::memcpy(
+      projected_offdiag.data(), REAL(beta_),
+      sizeof(double) * static_cast<size_t>(iterations - 1)
+    );
+  }
+  std::vector<double> projected_vectors(
+    static_cast<size_t>(iterations) * static_cast<size_t>(iterations), 0.0
+  );
+  std::vector<double> projected_work(
+    static_cast<size_t>((2 * iterations - 2 > 1) ? 2 * iterations - 2 : 1), 0.0
+  );
+  char projected_jobz = 'V';
+  int projected_info = 0;
+  int projected_n = iterations;
+  F77_CALL(dstev)(
+    &projected_jobz, &projected_n, projected_values.data(),
+    projected_offdiag.data(), projected_vectors.data(), &projected_n,
+    projected_work.data(), &projected_info FCONE
+  );
+  if (projected_info != 0) {
+    error("native tridiagonal shift-invert projected solve failed with info=%d", projected_info);
+  }
+
+  const int selected_count = (k < iterations) ? k : iterations;
+  std::vector<int> selected(static_cast<size_t>(selected_count), 0);
+  selected_ritz_indices(
+    projected_values.data(), iterations, selected_count, target_kind,
+    selected.data()
+  );
+  std::vector<double> selected_projected(
+    static_cast<size_t>(iterations) * static_cast<size_t>(selected_count), 0.0
+  );
+  SEXP ritz_values_ = PROTECT(allocVector(REALSXP, selected_count));
+  for (int col = 0; col < selected_count; ++col) {
+    const int source_col = selected[static_cast<size_t>(col)];
+    REAL(ritz_values_)[col] = projected_values[static_cast<size_t>(source_col)];
+    std::memcpy(
+      selected_projected.data() + static_cast<size_t>(col) * iterations,
+      projected_vectors.data() + static_cast<size_t>(source_col) * iterations,
+      sizeof(double) * static_cast<size_t>(iterations)
+    );
+  }
+  SEXP ritz_vectors_ = PROTECT(allocMatrix(REALSXP, n, selected_count));
+  const char notrans = 'N';
+  const double one = 1.0;
+  const double zero = 0.0;
+  F77_CALL(dgemm)(
+    &notrans, &notrans, &n, &selected_count, &iterations,
+    &one, Q.data(), &n, selected_projected.data(), &iterations,
+    &zero, REAL(ritz_vectors_), &n FCONE FCONE
+  );
 
   SEXP cache_ = PROTECT(allocVector(VECSXP, 5));
   SET_VECTOR_ELT(cache_, 0, mkString("native tridiagonal Thomas"));
@@ -1173,26 +1235,28 @@ extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal(
   SET_STRING_ELT(cache_names_, 4, mkChar("condition_estimate_max_pivot"));
   setAttrib(cache_, R_NamesSymbol, cache_names_);
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 8));
-  SET_VECTOR_ELT(out_, 0, Q_);
-  SET_VECTOR_ELT(out_, 1, alpha_);
-  SET_VECTOR_ELT(out_, 2, beta_);
-  SET_VECTOR_ELT(out_, 3, ScalarInteger(iterations));
-  SET_VECTOR_ELT(out_, 4, ScalarInteger(matvecs));
-  SET_VECTOR_ELT(out_, 5, history_nconv_);
-  SET_VECTOR_ELT(out_, 6, history_max_residual_);
-  SET_VECTOR_ELT(out_, 7, cache_);
-  SEXP names_ = PROTECT(allocVector(STRSXP, 8));
-  SET_STRING_ELT(names_, 0, mkChar("Q"));
-  SET_STRING_ELT(names_, 1, mkChar("alpha"));
-  SET_STRING_ELT(names_, 2, mkChar("beta"));
-  SET_STRING_ELT(names_, 3, mkChar("iterations"));
-  SET_STRING_ELT(names_, 4, mkChar("matvecs"));
-  SET_STRING_ELT(names_, 5, mkChar("history_nconv"));
-  SET_STRING_ELT(names_, 6, mkChar("history_max_residual"));
-  SET_STRING_ELT(names_, 7, mkChar("factorization_cache"));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 9));
+  SET_VECTOR_ELT(out_, 0, ritz_values_);
+  SET_VECTOR_ELT(out_, 1, ritz_vectors_);
+  SET_VECTOR_ELT(out_, 2, alpha_);
+  SET_VECTOR_ELT(out_, 3, beta_);
+  SET_VECTOR_ELT(out_, 4, ScalarInteger(iterations));
+  SET_VECTOR_ELT(out_, 5, ScalarInteger(matvecs));
+  SET_VECTOR_ELT(out_, 6, history_nconv_);
+  SET_VECTOR_ELT(out_, 7, history_max_residual_);
+  SET_VECTOR_ELT(out_, 8, cache_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 9));
+  SET_STRING_ELT(names_, 0, mkChar("ritz_values"));
+  SET_STRING_ELT(names_, 1, mkChar("ritz_vectors"));
+  SET_STRING_ELT(names_, 2, mkChar("alpha"));
+  SET_STRING_ELT(names_, 3, mkChar("beta"));
+  SET_STRING_ELT(names_, 4, mkChar("iterations"));
+  SET_STRING_ELT(names_, 5, mkChar("matvecs"));
+  SET_STRING_ELT(names_, 6, mkChar("history_nconv"));
+  SET_STRING_ELT(names_, 7, mkChar("history_max_residual"));
+  SET_STRING_ELT(names_, 8, mkChar("factorization_cache"));
   setAttrib(out_, R_NamesSymbol, names_);
-  UNPROTECT(9);
+  UNPROTECT(10);
   return out_;
 }
 

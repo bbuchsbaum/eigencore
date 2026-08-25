@@ -502,6 +502,50 @@ test_that("native tridiagonal shift-invert perturbs singular requested sigma", {
   expect_true(fit$restart$factorization_native)
 })
 
+test_that("native tridiagonal solve reuses parsed bands and returns only Ritz vectors", {
+  n <- 30L
+  L <- Matrix::bandSparse(
+    n,
+    n,
+    k = c(-1, 0, 1),
+    diagonals = list(rep(-1, n - 1L), rep(2, n), rep(-1, n - 1L))
+  )
+  problem <- eigen_problem(L, target = smallest())
+  prepared <- eigencore:::shift_invert_prepare_tridiagonal(problem)
+  cached <- prepared$A$metadata$shift_invert_tridiagonal_parts
+
+  expect_equal(cached, eigencore:::shift_invert_tridiagonal_parts(L))
+  expect_identical(
+    eigencore:::shift_invert_problem_tridiagonal_parts(prepared),
+    cached
+  )
+
+  native <- .Call(
+    "eigencore_shift_invert_lanczos_tridiagonal",
+    as.numeric(cached$lower),
+    as.numeric(cached$diag),
+    as.numeric(cached$upper),
+    20L,
+    rep(1 / sqrt(n), n),
+    2L,
+    as.integer(eigencore:::lanczos_target_kind(largest_magnitude())),
+    1e-8,
+    PACKAGE = "eigencore"
+  )
+
+  expect_named(
+    native,
+    c(
+      "ritz_values", "ritz_vectors", "alpha", "beta", "iterations",
+      "matvecs", "history_nconv", "history_max_residual",
+      "factorization_cache"
+    )
+  )
+  expect_length(native$ritz_values, 2L)
+  expect_equal(dim(native$ritz_vectors), c(n, 2L))
+  expect_false("Q" %in% names(native))
+})
+
 test_that("shift-invert recovers smallest eigenvalues of a 1D Laplacian", {
   # discrete 1D Laplacian -- the canonical Milestone L test case
   n <- 50L

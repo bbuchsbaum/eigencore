@@ -151,6 +151,8 @@ test_that("benchmark harness produces certificate-inclusive rows", {
   )
   expect_true(all(required_common %in% names(eigen_rows)))
   expect_true(all(required_svd %in% names(svd_rows)))
+  expect_true("retained_result_bytes" %in% names(eigen_rows))
+  expect_true(is.finite(eigen_rows$retained_result_bytes))
   expect_true(all(is.finite(eigen_rows$median)))
   expect_true(all(is.finite(svd_rows$median)))
   expect_equal(eigen_rows$median, eigen_rows$total_median)
@@ -2114,6 +2116,7 @@ test_that("native Hermitian gate separates RSpectra threshold from PRIMME parity
     method = c("eigencore", "RSpectra", "PRIMME"),
     median = c(1.0, 1.3, 0.9),
     mem_alloc = c(1.0, 1.1, 1.1),
+    retained_result_bytes = c(1.2, 1.0, 1.1),
     certificate_passed = c(TRUE, TRUE, TRUE),
     nconv = c(2L, 2L, 2L)
   )
@@ -2131,6 +2134,9 @@ test_that("native Hermitian gate separates RSpectra threshold from PRIMME parity
   expect_equal(gate$subject, "eigencore")
   expect_equal(gate$speed_reference_methods, "RSpectra")
   expect_equal(gate$parity_reference_methods, "PRIMME")
+  expect_equal(gate$memory_metric, "retained_result_bytes")
+  expect_true(gate$r_allocation_diagnostic_only)
+  expect_equal(gate$r_allocation_ratio_vs_best_reference, 1.1)
 })
 
 test_that("native Hermitian gate records uncertified references as failed rows", {
@@ -2144,6 +2150,7 @@ test_that("native Hermitian gate records uncertified references as failed rows",
     method = c("eigencore", "RSpectra", "PRIMME"),
     median = c(1.0, 0.5, 0.8),
     mem_alloc = c(1.0, 1.1, 1.1),
+    retained_result_bytes = c(1.2, 1.0, 1.1),
     certificate_passed = c(TRUE, FALSE, FALSE),
     nconv = c(2L, 0L, 0L)
   )

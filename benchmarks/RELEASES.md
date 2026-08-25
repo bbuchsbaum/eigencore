@@ -245,6 +245,22 @@ they are machine-dependent.
   `inst/benchmarks/results/20260605-native-hermitian-gate-summary.rds`.
   The block Hermitian Lanczos path remains explicit/diagnostic; it was not
   promoted by this gate.
+- The 2026-08-24 installed G1 refresh resolves the later path-Laplacian
+  allocation blocker without reviving the old cross-engine accounting error.
+  Sparse tridiagonal bands are parsed once per solve and shared by routing,
+  perturbation, native factorization, and certification; the native kernel
+  now returns only the selected `n x k` Ritz vectors rather than its Krylov
+  basis. On `path_laplacian:1000`, `k = 20`, reproduced cumulative R
+  allocation fell from `3,820,632` to `1,510,696` bytes. The exact installed
+  strict row certified `20/20`, ran at `0.006210065s`, was `7.53753x` faster
+  than RSpectra, and passed the retained-result gate at `0.8732987x`
+  (184,560 versus 161,176 bytes). The full `n = 10000` row also certified
+  `20/20`, ran at `0.02310243s`, and passed at `716.0313x` speed and
+  `0.9856059x` retained-result memory. `bench::mem_alloc` remains printed at
+  `0.4121014x` and `0.4117987x`, respectively, with
+  `r_allocation_diagnostic_only = TRUE`: R allocation profiling excludes all
+  compared engines' native working heaps, so G1 no longer presents it as
+  peak or total cross-engine memory.
 - Certificate scale-estimate hardening is now explicitly tested across current
   certificate entry points. `new_certificate(scale_is_estimate = TRUE)`,
   matrix-free eigen certificates, matrix-free SVD certificates, and

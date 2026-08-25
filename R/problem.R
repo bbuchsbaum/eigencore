@@ -480,7 +480,8 @@ auto_tridiagonal_edge_shift_invert <- function(problem, method) {
   if (!(inherits(A, "CsparseMatrix") || inherits(A, "diagonalMatrix"))) {
     return(list(problem = problem, method = method, implicit = FALSE, sigma = NULL))
   }
-  parts <- shift_invert_tridiagonal_parts(A, shift = 0)
+  problem <- shift_invert_prepare_tridiagonal(problem)
+  parts <- shift_invert_problem_tridiagonal_parts(problem)
   if (is.null(parts)) {
     return(list(problem = problem, method = method, implicit = FALSE, sigma = NULL))
   }

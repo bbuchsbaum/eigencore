@@ -149,6 +149,10 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
   auto_shift <- auto_shift_invert_route(a, method)
   a <- auto_shift$problem
   method <- auto_shift$method
+  if (is_transform_method(a$transform) &&
+      identical(a$transform$kind, "shift_invert")) {
+    a <- shift_invert_prepare_tridiagonal(a)
+  }
   plan <- plan_solver(a, k = k, method = method)
   plan <- validate_complex_eigen_plan(a, plan)
   if (!is.null(initial_subspace)) {

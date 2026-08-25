@@ -74,10 +74,38 @@ shift_invert_tridiagonal_parts <- function(A, shift = 0) {
 }
 
 #' @keywords internal
+shift_invert_problem_tridiagonal_parts <- function(problem) {
+  cached <- problem$A$metadata$shift_invert_tridiagonal_parts %||% NULL
+  if (!is.null(cached)) {
+    return(cached)
+  }
+  A <- problem$A$metadata$matrix %||% source_or_null(problem$A)
+  if (!(inherits(A, "CsparseMatrix") || inherits(A, "diagonalMatrix"))) {
+    return(NULL)
+  }
+  shift_invert_tridiagonal_parts(A, shift = 0)
+}
+
+#' Parse the sparse tridiagonal source once for one planned solve. The cached
+#' vectors are immutable solver metadata: shifted diagonals are derived from
+#' them, never written back into the operator.
+#' @keywords internal
+shift_invert_prepare_tridiagonal <- function(problem) {
+  if (!is.null(problem$A$metadata$shift_invert_tridiagonal_parts)) {
+    return(problem)
+  }
+  parts <- shift_invert_problem_tridiagonal_parts(problem)
+  if (!is.null(parts)) {
+    problem$A$metadata$shift_invert_tridiagonal_parts <- parts
+  }
+  problem
+}
+
+#' @keywords internal
 shift_invert_is_native_tridiagonal <- function(problem) {
   A <- problem$A$metadata$matrix %||% source_or_null(problem$A)
   (inherits(A, "CsparseMatrix") || inherits(A, "diagonalMatrix")) &&
-    !is.null(shift_invert_tridiagonal_parts(A, shift = 0))
+    !is.null(shift_invert_problem_tridiagonal_parts(problem))
 }
 
 #' @keywords internal
@@ -773,10 +801,11 @@ native_tridiagonal_shift_invert_lanczos <- function(problem, k, sigma, tol,
   if (!(inherits(A, "CsparseMatrix") || inherits(A, "diagonalMatrix"))) {
     stop("native tridiagonal shift-invert requires a CSC sparse or diagonal source.", call. = FALSE)
   }
-  parts <- shift_invert_tridiagonal_parts(A, shift = -as.numeric(sigma))
+  parts <- shift_invert_problem_tridiagonal_parts(problem)
   if (is.null(parts)) {
     stop("native tridiagonal shift-invert requires a symmetric tridiagonal CSC source.", call. = FALSE)
   }
+  parts$diag <- parts$diag - as.numeric(sigma)
 
   n <- Aop$dim[1L]
   effective_maxit <- maxit %||% min(n, max(20L, 4L * as.integer(k) + 20L))
@@ -795,12 +824,7 @@ native_tridiagonal_shift_invert_lanczos <- function(problem, k, sigma, tol,
   )
 
   iterations <- as.integer(native$iterations)
-  alpha <- native$alpha[seq_len(iterations)]
-  beta <- native$beta[seq_len(iterations)]
-  eig <- native_tridiagonal_eigen(alpha, beta)
-  idx <- order_indices(eig$values, largest_magnitude())
-  idx <- idx[seq_len(min(as.integer(k), length(idx)))]
-  mu <- eig$values[idx]
+  mu <- native$ritz_values
   if (any(abs(mu) < .Machine$double.eps)) {
     stop(
       "native tridiagonal shift_invert(sigma = ", sigma, ") produced a zero-magnitude ",
@@ -810,8 +834,7 @@ native_tridiagonal_shift_invert_lanczos <- function(problem, k, sigma, tol,
     )
   }
 
-  vec <- native$Q[, seq_len(iterations), drop = FALSE] %*%
-    eig$vectors[, idx, drop = FALSE]
+  vec <- native$ritz_vectors
   lambda <- sigma + 1 / mu
   ord <- order_indices(lambda, problem$target)
   if (length(ord) > k) ord <- ord[seq_len(k)]
@@ -925,8 +948,7 @@ native_tridiagonal_shift_invert_lanczos_with_perturbation <- function(problem, k
                                                                       vectors,
                                                                       certify,
                                                                       plan) {
-  A <- problem$A$metadata$matrix %||% source_or_null(problem$A)
-  parts <- shift_invert_tridiagonal_parts(A, shift = 0)
+  parts <- shift_invert_problem_tridiagonal_parts(problem)
   if (is.null(parts)) {
     return(native_tridiagonal_shift_invert_lanczos(
       problem, k = k, sigma = sigma, tol = tol, maxit = maxit,
@@ -1000,7 +1022,7 @@ native_tridiagonal_generalized_shift_invert_lanczos <- function(problem, k,
   if (length(metric_values) != Aop$dim[1L]) {
     stop("native generalized tridiagonal shift-invert requires conformable diagonal B.", call. = FALSE)
   }
-  parts <- shift_invert_tridiagonal_parts(A, shift = 0)
+  parts <- shift_invert_problem_tridiagonal_parts(problem)
   if (is.null(parts)) {
     stop("native generalized tridiagonal shift-invert requires a symmetric tridiagonal CSC source.", call. = FALSE)
   }

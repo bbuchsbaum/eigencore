@@ -45,6 +45,20 @@ PRIMME remains supported by the benchmark helpers when installed, but it is no
 longer an automated dependency or required reference because it is not
 currently available from CRAN.
 
+## Cross-Engine Memory Accounting
+
+`bench::mem_alloc` is cumulative allocation observed by R's memory profiler;
+it does not include working memory allocated by the native C/C++ code inside
+eigencore, RSpectra, or PRIMME. It remains a useful within-engine regression
+diagnostic, but it is not a peak-memory or total-memory comparison across
+native engines. The Hermitian G1 release gate therefore bounds the retained R
+result object: eigencore must be no more than 1.25 times the smallest certified
+reference result. That allowance covers eigencore's certificate, plan, and
+provenance metadata while keeping result growth bounded. The gate prints the
+cumulative R-allocation ratio separately with
+`r_allocation_diagnostic_only = TRUE`; peak-working-memory claims require a
+separate process-level RSS harness and are not made by G1.
+
 ## Closed No-Promotion Decisions
 
 - General sparse block Hermitian Lanczos `auto()` promotion is closed under

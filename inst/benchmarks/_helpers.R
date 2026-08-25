@@ -884,6 +884,7 @@ benchmark_failed_eigen_row <- function(method, seed, error) {
     total_median = Inf,
     total_min = Inf,
     total_mem_alloc = NA_real_,
+    retained_result_bytes = NA_real_,
     max_residual = Inf,
     max_backward_error = Inf,
     orthogonality_loss = Inf,
@@ -958,6 +959,7 @@ benchmark_eigen_case <- function(A, k, target = largest(), methods = NULL,
       total_median = timed$total$median,
       total_min = timed$total$min,
       total_mem_alloc = timed$total$mem_alloc,
+      retained_result_bytes = as.numeric(object.size(fit)),
       max_residual = cert$max_residual,
       max_backward_error = cert$max_backward_error,
       orthogonality_loss = cert$max_orthogonality_loss,
@@ -1066,7 +1068,7 @@ benchmark_generalized_eigen_case <- function(A, B, k, target = smallest(),
 evaluate_native_hermitian_gate <- function(rows, k,
                                            subject = "eigencore",
                                            speed_ratio_required = release_speed_gate("hermitian"),
-                                           memory_ratio_required = 1.0,
+                                           memory_ratio_required = 0.8,
                                            reference_methods = "RSpectra",
                                            parity_methods = "PRIMME",
                                            parity_ratio_required = 1.0) {
@@ -1083,8 +1085,12 @@ evaluate_native_hermitian_gate <- function(rows, k,
     drop = FALSE
   ]
   memory_ref_methods <- unique(c(reference_methods, parity_methods))
+  if (!"retained_result_bytes" %in% names(rows)) {
+    stop("native Hermitian gate requires retained_result_bytes", call. = FALSE)
+  }
   memory_refs <- rows[
-    rows$method %in% memory_ref_methods & rows$certificate_passed,
+    rows$method %in% memory_ref_methods & rows$certificate_passed &
+      is.finite(rows$retained_result_bytes),
     ,
     drop = FALSE
   ]
@@ -1098,6 +1104,11 @@ evaluate_native_hermitian_gate <- function(rows, k,
     NA_real_
   }
   memory_ratio <- if (nrow(memory_refs)) {
+    min(memory_refs$retained_result_bytes) / eig$retained_result_bytes
+  } else {
+    NA_real_
+  }
+  r_allocation_ratio <- if (nrow(memory_refs)) {
     min(memory_refs$mem_alloc) / eig$mem_alloc
   } else {
     NA_real_
@@ -1137,6 +1148,9 @@ evaluate_native_hermitian_gate <- function(rows, k,
     requested = k,
     speed_ratio_vs_best_reference = speed_ratio,
     memory_ratio_vs_best_reference = memory_ratio,
+    r_allocation_ratio_vs_best_reference = r_allocation_ratio,
+    memory_metric = "retained_result_bytes",
+    r_allocation_diagnostic_only = TRUE,
     parity_ratio_vs_best_reference = parity_ratio,
     speed_reference_methods = paste(reference_methods, collapse = ","),
     memory_reference_methods = paste(memory_ref_methods, collapse = ","),

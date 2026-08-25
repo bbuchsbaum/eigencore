@@ -32,6 +32,16 @@
 
 ## Performance
 
+* Sparse tridiagonal shift-invert now parses and validates the three matrix
+  bands once per solve and reuses that immutable representation for planning,
+  shift perturbation, factorization, and certification. The native kernel
+  forms and returns only the requested Ritz vectors instead of exposing its
+  full Krylov basis to R. On the installed `path_laplacian:1000`, `k = 20`
+  release row this reduced cumulative R allocation from 3.82 MB to 1.51 MB
+  while retaining a 20/20 original-coordinate certificate. The G1 gate now
+  uses retained result size for its bounded memory envelope and reports
+  `bench::mem_alloc` separately as diagnostic evidence, because R allocation
+  counters do not observe native C/C++ working heaps in any compared engine.
 * New production `auto` route for largest-target partial SVD: a native
   implicit normal-equations (Gram) thick-restart Lanczos that runs on
   \eqn{A^T A} or \eqn{A A^T} as an operator, without materializing the Gram

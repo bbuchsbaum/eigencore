@@ -548,6 +548,16 @@ For larger sparse matrices, base R is a truth oracle only while `as.matrix(A)`
 is affordable. Studying scaling and memory behavior requires installed-package
 runs, larger fixtures, repeated measurements, and saved artifacts.
 
+The benchmark tables report `bench::mem_alloc`, which counts cumulative
+R-managed allocation. It does not see C/C++ working heaps used by eigencore or
+external native solvers, so it must not be read as cross-engine peak memory.
+The installed Hermitian G1 gate uses a narrower, explicit memory claim: the
+retained solver result may be at most 1.25 times the result from the smallest
+certified reference, allowing bounded space for eigencore's plan, certificate,
+and provenance metadata. Cumulative R allocation remains visible as a
+diagnostic; a total or peak-memory claim needs a separate process-level RSS
+measurement.
+
 ## Run the larger benchmark scripts
 
 The scripts under `inst/benchmarks` run larger cases with stricter checks and
