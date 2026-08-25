@@ -25,7 +25,7 @@
 
     <a class="navbar-brand me-2" href="index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.0.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.1.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -38,9 +38,12 @@
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
-<li><a class="dropdown-item" href="articles/certificates.html">Certificates: reading the numerical evidence</a></li>
+<li><a class="dropdown-item" href="articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
+    <li><a class="dropdown-item" href="articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
+    <li><a class="dropdown-item" href="articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
-    <li><a class="dropdown-item" href="articles/benchmarks.html">Benchmark smoke tests</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item" href="articles/index.html">More articles...</a></li>
   </ul>
 </li>
 <li class="nav-item"><a class="nav-link" href="reference/index.html">Reference</a></li>
@@ -241,7 +244,7 @@
 <div class="section level2">
 <h2 id="status">Status<a class="anchor" aria-label="anchor" href="#status"></a>
 </h2>
-<p>eigencore 1.0.0 is headed for CRAN. The exported API is stable — it is frozen by a snapshot test, and breaking changes follow semantic versioning from here. Numerical behavior is covered by adversarial and reference tests, while solver results expose certificate and planner provenance on every call. Problem classes without a native kernel yet — general matrix-free SVD, interior eigenvalues at scale, nonsymmetric Krylov–Schur — are labeled <code>reference</code> in <code>fit$method</code>. The package vignettes describe the workflow map, benchmark evidence, and current boundaries.</p>
+<p>eigencore 1.1.0 is the current release. Its additive API includes certified Hermitian warm starts and mid-sweep Lanczos checks; eligible large largest-SVD problems also gain an implicit-Gram native route with exact original-coordinate certification and an explicit fallback. The exported API is frozen by snapshot tests, and breaking changes follow semantic versioning. Unsupported or prototype solver families remain visibly labeled <code>reference</code> in <code>fit$method</code>. The package vignettes describe the workflow map, benchmark evidence, and current boundaries.</p>
 </div>
 <div class="section level2">
 <h2 id="license">License<a class="anchor" aria-label="anchor" href="#license"></a>
@@ -252,6 +255,7 @@
   </main><aside class="col-md-3"><div class="links">
 <h2 data-toc-skip>Links</h2>
 <ul class="list-unstyled">
+<li><a href="https://cloud.r-project.org/package=eigencore" class="external-link">View on CRAN</a></li>
 <li><a href="https://github.com/bbuchsbaum/eigencore/" class="external-link">Browse source code</a></li>
 <li><a href="https://github.com/bbuchsbaum/eigencore/issues" class="external-link">Report a bug</a></li>
 </ul>

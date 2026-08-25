@@ -7,6 +7,14 @@ scalars $`\lambda`$ satisfying
 A x = \lambda B x.
 ```
 
+This form shows up whenever a problem needs a metric other than the
+standard inner product: whitened PCA and canonical correlation analysis
+weight by a covariance matrix, linear discriminant analysis weights by a
+within-class scatter matrix, and normalized graph Laplacians weight by a
+degree matrix. In each case `B` is not incidental — solving the plain
+eigenproblem `A x = lambda x` and ignoring `B` gives you the wrong
+answer.
+
 The second matrix $`B`$ may define a positive-definite metric, or it may
 be part of a more general matrix pencil. eigencore supports both cases,
 along with partial solves when you need only a few eigenpairs and QZ
@@ -40,18 +48,36 @@ Use
 [`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md)
 when you need only a few eigenpairs. A target such as
 [`smallest()`](https://bbuchsbaum.github.io/eigencore/reference/smallest.md)
-states which part of the spectrum to compute.
+states which part of the spectrum to compute. Scale the same idea up to
+a diagonal metric problem with 150 pairs, and ask for the 5 smallest:
 
 ``` r
 
-part <- eig_partial(A, B = B, k = 2, target = smallest())
-values(part)
-#> [1] 2 4
+n <- 150
+A_wide <- diag(seq(1, 150, length.out = n))
+B_wide <- diag(seq(1, 2, length.out = n))
+
+part <- eig_partial(A_wide, B = B_wide, k = 5, target = smallest())
+sort(Re(values(part)))
+#> [1] 1.000000 1.986667 2.960265 3.921053 4.869281
 part$method
 #> [1] "native dense generalized SPD LAPACK fallback"
 certificate(part)$passed
 #> [1] TRUE
 ```
+
+![Scatter plot of 150 generalized eigenvalues sorted descending in grey,
+with the five smallest highlighted in blue at the
+bottom-right.](generalized-eigenproblems_files/figure-html/partial-spd-spectrum-1.png)
+
+The five smallest generalized eigenvalues (blue) against the full
+150-pair spectrum of the pencil (A, B) (grey).
+
+With `n = 150` this computed 5 of 150 pairs. A whitened-PCA or
+normalized-Laplacian problem built from real data routinely has `n` in
+the tens or hundreds of thousands, where a full generalized
+eigendecomposition is not practical — the partial slice, certified, is
+the only result you can afford.
 
 The main choice is the structure of the problem and how much of its
 spectrum you need:
@@ -182,5 +208,10 @@ for QZ, and
 [`alpha_beta()`](https://bbuchsbaum.github.io/eigencore/reference/alpha_beta.md)
 to inspect homogeneous eigenvalue coordinates.
 
-For more on result validation, see
-[`vignette("certificates")`](https://bbuchsbaum.github.io/eigencore/articles/certificates.md).
+## Where to go next
+
+- [`vignette("sparse-pca")`](https://bbuchsbaum.github.io/eigencore/articles/sparse-pca.md)
+  covers operators and non-densifying centering for the standard
+  (non-generalized) eigenproblem and SVD.
+- For more on result validation, see
+  [`vignette("certificates")`](https://bbuchsbaum.github.io/eigencore/articles/certificates.md).

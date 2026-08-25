@@ -5,13 +5,13 @@
 <meta charset="utf-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-<title>Benchmark smoke tests • eigencore</title>
+<title>Benchmarks: what we measure and what it means • eigencore</title>
 <script src="../lightswitch.js"></script><script src="../deps/jquery-3.6.0/jquery-3.6.0.min.js"></script><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 <link href="../deps/bootstrap-5.3.8/bootstrap.min.css" rel="stylesheet">
 <script src="../deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="../deps/font-awesome-6.5.2/css/all.min.css" rel="stylesheet">
 <link href="../deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
 <script src="../deps/headroom-0.11.0/headroom.min.js"></script><script src="../deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="../deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="../deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="../deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="../deps/search-1.0.0/fuse.min.js"></script><script src="../deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="../pkgdown.js"></script><link href="../extra.css" rel="stylesheet">
-<script src="../extra.js"></script><meta property="og:title" content="Benchmark smoke tests">
+<script src="../extra.js"></script><meta property="og:title" content="Benchmarks: what we measure and what it means">
 </head>
 <body>
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
@@ -21,7 +21,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.0.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.1.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -34,9 +34,12 @@
 <li class="active nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
-<li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
+<li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
+    <li><a class="dropdown-item" href="../articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
+    <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="../articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
-    <li><a class="dropdown-item" href="../articles/benchmarks.html">Benchmark smoke tests</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item" href="../articles/index.html">More articles...</a></li>
   </ul>
 </li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
@@ -68,15 +71,19 @@
 <div class="row">
   <main id="main" class="col-md-9"><div class="page-header">
 
-      <h1>Benchmark smoke tests</h1>
+      <h1>Benchmarks: what we measure and what it means</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/vignettes/benchmarks.Rmd" class="external-link"><code>vignettes/benchmarks.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/vignettes/articles/benchmarks.Rmd" class="external-link"><code>vignettes/articles/benchmarks.Rmd</code></a></small>
       <div class="d-none name"><code>benchmarks.Rmd</code></div>
     </div>
 
     
     
+<p>This is a pkgdown-only article, not a CRAN vignette: it runs
+<code><a href="https://bench.r-lib.org/reference/mark.html" class="external-link">bench::mark()</a></code> at build time and is intentionally excluded
+from <code>R CMD check</code> (see <code>vignettes/articles/</code> in
+<code>.Rbuildignore</code>).</p>
 <script>document.addEventListener("DOMContentLoaded",function(){document.body.classList.remove("palette-red","palette-lapis","palette-ochre","palette-teal","palette-green","palette-violet","preset-homage","preset-interaction","preset-study","preset-structural","preset-adobe","preset-midnight");document.body.classList.add("palette-lapis","preset-homage");});</script><p>This vignette runs five small eigenvalue and SVD cases with
 eigencore, <code>RSpectra</code>, <code>irlba</code>, and base R. The
 matrices are intentionally small and each method is timed three times so
@@ -206,42 +213,42 @@ method.</caption>
 <tr class="odd">
 <td align="left">dense Hermitian</td>
 <td align="left">RSpectra</td>
-<td align="right">1.6790</td>
-<td align="right">0.4872</td>
+<td align="right">1.5550</td>
+<td align="right">0.4583</td>
 <td align="right">not run</td>
-<td align="right">1.949</td>
+<td align="right">2.094</td>
 </tr>
 <tr class="even">
 <td align="left">sparse path Laplacian</td>
 <td align="left">eigencore</td>
-<td align="right">2.5890</td>
-<td align="right">8.1770</td>
+<td align="right">2.4880</td>
+<td align="right">7.7660</td>
 <td align="right">not run</td>
-<td align="right">13.080</td>
+<td align="right">13.700</td>
 </tr>
 <tr class="odd">
 <td align="left">dense low-rank SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">1.6740</td>
-<td align="right">0.2294</td>
-<td align="right">0.3818</td>
-<td align="right">1.620</td>
+<td align="right">1.5720</td>
+<td align="right">0.2377</td>
+<td align="right">0.4108</td>
+<td align="right">1.716</td>
 </tr>
 <tr class="even">
 <td align="left">tall sparse SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">0.5592</td>
-<td align="right">0.3875</td>
-<td align="right">0.7626</td>
-<td align="right">1.776</td>
+<td align="right">0.5747</td>
+<td align="right">0.3260</td>
+<td align="right">0.7480</td>
+<td align="right">1.853</td>
 </tr>
 <tr class="odd">
 <td align="left">wide sparse SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">0.5700</td>
-<td align="right">0.4754</td>
-<td align="right">1.0530</td>
-<td align="right">2.856</td>
+<td align="right">0.5767</td>
+<td align="right">0.4067</td>
+<td align="right">1.0020</td>
+<td align="right">3.358</td>
 </tr>
 </tbody>
 </table>
@@ -306,21 +313,21 @@ They do not measure peak resident memory.</p>
 <tbody>
 <tr class="odd">
 <td align="left">dense Hermitian</td>
-<td align="right">1.07800</td>
+<td align="right">0.98700</td>
 <td align="right">0.06661</td>
 <td align="right">not run</td>
 <td align="right">0.4240</td>
 </tr>
 <tr class="even">
 <td align="left">sparse path Laplacian</td>
-<td align="right">1.84800</td>
+<td align="right">1.38000</td>
 <td align="right">0.01991</td>
 <td align="right">not run</td>
 <td align="right">3.1880</td>
 </tr>
 <tr class="odd">
 <td align="left">dense low-rank SVD</td>
-<td align="right">1.31100</td>
+<td align="right">1.22600</td>
 <td align="right">0.09405</td>
 <td align="right">0.5606</td>
 <td align="right">0.5942</td>
@@ -459,6 +466,16 @@ regressions. They do not prove large-scale speed claims.</p>
 <code>as.matrix(A)</code> is affordable. Studying scaling and memory
 behavior requires installed-package runs, larger fixtures, repeated
 measurements, and saved artifacts.</p>
+<p>The benchmark tables report <code>bench::mem_alloc</code>, which
+counts cumulative R-managed allocation. It does not see C/C++ working
+heaps used by eigencore or external native solvers, so it must not be
+read as cross-engine peak memory. The installed Hermitian G1 gate uses a
+narrower, explicit memory claim: the retained solver result may be at
+most 1.25 times the result from the smallest certified reference,
+allowing bounded space for eigencore’s plan, certificate, and provenance
+metadata. Cumulative R allocation remains visible as a diagnostic; a
+total or peak-memory claim needs a separate process-level RSS
+measurement.</p>
 </div>
 <div class="section level2">
 <h2 id="run-the-larger-benchmark-scripts">Run the larger benchmark scripts<a class="anchor" aria-label="anchor" href="#run-the-larger-benchmark-scripts"></a>

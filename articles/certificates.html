@@ -21,7 +21,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.0.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.1.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -34,9 +34,12 @@
 <li class="active nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
-<li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
+<li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
+    <li><a class="dropdown-item" href="../articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
+    <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="../articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
-    <li><a class="dropdown-item" href="../articles/benchmarks.html">Benchmark smoke tests</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item" href="../articles/index.html">More articles...</a></li>
   </ul>
 </li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
@@ -78,15 +81,13 @@
     
     
 <script>document.addEventListener("DOMContentLoaded",function(){document.body.classList.remove("palette-red","palette-lapis","palette-ochre","palette-teal","palette-green","palette-violet","preset-homage","preset-interaction","preset-study","preset-structural","preset-adobe","preset-midnight");document.body.classList.add("palette-lapis","preset-homage");});</script><p>Every result returned by eigencore carries a
-<strong>certificate</strong> — a small object that says how trustworthy
-the numbers are, not just what they are. Reading the certificate takes
-30 seconds and replaces the usual ritual of “recompute the residual
-yourself to be sure.”</p>
+<strong>certificate</strong>: a compact record of the residual,
+backward-error scale, orthogonality check, and tolerance used for that
+result. The certificate lets you inspect those checks without
+recomputing the residual. It does not certify spectral ordering or any
+property that its <code>certificate_type</code> does not name.</p>
 <p>This vignette walks through the certificate’s fields, the three
 things they measure, and what to do when one of them fails.</p>
-<p>For the V2 CRAN release, a certificate is not just display metadata.
-It is the evidence boundary that keeps promoted native paths, reference
-fallbacks, and V3 deferrals honest.</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://bbuchsbaum.github.io/eigencore/">eigencore</a></span><span class="op">)</span></span></code></pre></div>
 <div class="section level2">
@@ -111,47 +112,16 @@ fallbacks, and V3 deferrals honest.</p>
 <span><span class="co">#&gt;   max orthogonality loss: 1.776357e-15 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE</span></span></code></pre></div>
-<p>The fields, in order:</p>
+<p>The fields you act on, in order:</p>
 <ul>
 <li>
 <strong><code>passed</code></strong> — overall verdict.
-<code>TRUE</code> means every requested pair satisfies every check
-(residual, backward error, orthogonality) and the norm bound used to
-build the scale is exact, not estimated.</li>
+<code>TRUE</code> means every returned pair satisfies the checks
+required by this certificate type and the norm bound used to build the
+scale is exact, not estimated.</li>
 <li>
 <strong><code>tolerance</code></strong> — the user-requested
 tolerance. Defaults to <code>1e-8</code>.</li>
-<li>
-<strong><code>certificate_type</code></strong> — provenance: how the
-certificate was constructed. <code>"residual_backward_error"</code>
-means residuals are based on direct recomputation or native solver
-output, scaled by the shared backward-error denominator.
-<code>"uncomputed"</code> means vectors were not requested, so no
-certificate is possible.</li>
-<li>
-<strong><code>norm_bound_type</code></strong> — what was used as the
-norm in the scale. Common values:
-<ul>
-<li>
-<code>frobenius_exact</code> — the Frobenius norm of an explicit
-dense matrix.</li>
-<li>
-<code>frobenius_metadata</code> — exact Frobenius norm derived from
-sparse/diagonal metadata.</li>
-<li>
-<code>identity_exact</code> — the standard problem
-<code>B = I</code>.</li>
-<li>
-<code>frobenius_hutchinson_estimate</code> — a stochastic Hutchinson
-estimate, used for matrix-free operators that do not expose a norm.</li>
-</ul>
-</li>
-<li>
-<strong><code>scale_is_estimate</code></strong> — <code>TRUE</code>
-whenever the norm bound is stochastic. When this is <code>TRUE</code>,
-eigencore <em>withholds</em> <code>passed</code> even if every residual
-is below tolerance, because the denominator of the backward-error ratio
-is itself uncertain.</li>
 <li>
 <strong><code>max_residual</code></strong> — the worst absolute
 residual <code>||A v - lambda v||</code> (or
@@ -169,10 +139,15 @@ B-inner-product problems).</li>
 <li>
 <strong><code>failed_indices</code></strong> — which pairs failed.
 Empty when <code>passed = TRUE</code>.</li>
-<li>
-<strong><code>notes</code></strong> — free-form provenance text,
-used to explain unusual states.</li>
 </ul>
+<p>Two more fields explain <em>how</em> the verdict was reached rather
+than what it is: <code>norm_bound_type</code> names the scale used to
+compute backward error, and <code>scale_is_estimate</code> flags when
+that scale is itself a stochastic estimate rather than an exact bound —
+the “Withheld” section below shows exactly what that means for
+<code>passed</code>. <code>certificate_type</code> and
+<code>notes</code> carry provenance text for unusual states.
+<code><a href="../reference/certificate.html">?certificate</a></code> documents every field.</p>
 <p>The <code>max_*</code> fields are summaries. The certificate also
 keeps the underlying <em>per-pair</em> vectors
 (<code>cert$backward_error</code>, <code>cert$converged</code>), so you
@@ -215,7 +190,7 @@ captures “how big could a perturbation of <code>A</code> (and
 <code>B</code>) be that <em>exactly</em> makes <code>(lambda, v)</code>
 an eigenpair?”:</p>
 <blockquote>
-<p>eta_i = ||r_i|| / ( ||A|| + |lambda_i| ||B|| ).</p>
+<p>eta_i = ||r_i|| / ( (||A|| + |lambda_i| ||B||) ||v_i|| ).</p>
 </blockquote>
 <p>A pair “converges” when <code>eta_i &lt;= tol</code>. This is the
 criterion eigencore uses internally; the tolerance you pass to
@@ -229,9 +204,16 @@ the residual tolerance.</p>
 lose orthogonality even when each per-pair residual is small. The
 certificate records <code>max_abs(V* V - I)</code> (or
 <code>max_abs(V* B V - I)</code>); its acceptance tolerance is
-<code>sqrt(eps)</code> by default. Even one passing residual should be
-treated with suspicion if orthogonality has collapsed: clustered or
-repeated eigenvalues will silently get returned as duplicates.</p>
+<code>max(tol, sqrt(eps))</code>. A passing residual should be
+interpreted alongside the orthogonality field. If orthogonality loss
+exceeds its tolerance, clustered or repeated eigenvalues may be
+represented by nearly duplicate vectors even when individual residuals
+are small.</p>
+<p>A certificate evaluates the pairs the solver returned. It does not
+prove that those pairs are the requested largest, smallest, or nearest
+eigenvalues. When target identity is consequential, inspect the method
+and target in the plan and compare against an independent oracle on a
+tractable instance.</p>
 </div>
 </div>
 <div class="section level2">
@@ -314,15 +296,32 @@ afterwards. Here, lifting <code>maxit</code> from 15 to 40 is
 enough.</p>
 </div>
 <div class="section level3">
-<h3 id="withheld-stochastic-norm-in-the-denominator">Withheld: stochastic norm in the denominator<a class="anchor" aria-label="anchor" href="#withheld-stochastic-norm-in-the-denominator"></a>
+<h3 id="estimated-scale-passed-remains-false">Estimated scale: <code>passed</code> remains false<a class="anchor" aria-label="anchor" href="#estimated-scale-passed-remains-false"></a>
 </h3>
+<p><code>norm_bound_type</code> names what the certificate used as the
+scale in the backward-error ratio. The common values identify exact,
+metadata-derived, and estimated scales:</p>
+<ul>
+<li>
+<code>frobenius_exact</code> — the Frobenius norm of an explicit
+dense matrix.</li>
+<li>
+<code>frobenius_metadata</code> — exact Frobenius norm derived from
+sparse/diagonal metadata.</li>
+<li>
+<code>identity_exact</code> — the standard problem
+<code>B = I</code>.</li>
+<li>
+<code>frobenius_hutchinson_estimate</code> — a stochastic Hutchinson
+estimate, used for matrix-free operators that do not expose a norm.</li>
+</ul>
 <p>A matrix-free operator (one wrapped via
 <code><a href="../reference/linear_operator.html">linear_operator()</a></code> with no exact norm metadata) forces
-eigencore onto a Hutchinson stochastic estimate of <code>||A||</code>.
+eigencore onto that last, stochastic estimate of <code>||A||</code>.
 Because the <em>denominator</em> of the backward-error ratio is then a
-sample, not a deterministic upper bound, eigencore <em>withholds</em>
-<code>passed</code> even if every sampled residual ratio is below
-<code>tol</code>:</p>
+sample, not a deterministic upper bound, the certificate sets
+<code>passed = FALSE</code> even if every sampled residual ratio is
+below <code>tol</code>. <code>scale_is_estimate</code> records why:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">2</span><span class="op">)</span></span>
 <span><span class="va">op</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/linear_operator.html">linear_operator</a></span><span class="op">(</span></span>
@@ -347,11 +346,12 @@ sample, not a deterministic upper bound, eigencore <em>withholds</em>
 <span><span class="co">#&gt; [1] FALSE</span></span>
 <span><span class="va">fit_mf</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">notes</span></span>
 <span><span class="co">#&gt; [1] "certificate scale uses a stochastic norm estimate; passed is withheld"</span></span></code></pre></div>
-<p>eigencore does not have a clean Frobenius bound for this operator
-without paying for a full second pass over the matrix, so it falls back
-to a Hutchinson stochastic estimate. The honest output is “all evidence
-is consistent with convergence, but the certificate was not produced by
-an exact bound.”</p>
+<p>eigencore does not have a deterministic Frobenius bound for this
+operator without paying for a full second pass over the matrix, so it
+uses a Hutchinson stochastic estimate. The result therefore reports
+<code>scale_is_estimate = TRUE</code> and keeps
+<code>passed = FALSE</code>, even when the sampled residual ratios are
+below the requested tolerance.</p>
 <p>What to do: if you need a hard <code>passed = TRUE</code>, switch to
 a problem class where eigencore can carry exact norm metadata (built-in
 dense / <code>dgCMatrix</code> / <code>ddiMatrix</code> operators), or
@@ -362,9 +362,9 @@ refine with a deterministic verification pass.</p>
 </h3>
 <p>For <code>A v = lambda B v</code>, the certificate’s orthogonality
 field is in the <strong>B-inner product</strong>:
-<code>max_abs(V* B V - I)</code>. A passing certificate guarantees both
-the residual contract and B-orthogonality of the returned vectors —
-which is what downstream linear-algebra code typically needs.</p>
+<code>max_abs(V* B V - I)</code>. For this certificate type,
+<code>passed = TRUE</code> requires both the residual threshold and
+B-orthogonality of the returned vectors.</p>
 <div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">4</span><span class="op">)</span></span>
 <span><span class="va">B</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">5</span>, length.out <span class="op">=</span> <span class="va">n</span><span class="op">)</span><span class="op">)</span></span>
@@ -433,8 +433,9 @@ sites.</p>
 <code>passed = TRUE</code>,
 <code>scale_is_estimate = FALSE</code>
 </td>
-<td>Trust the result.</td>
-<td>Use the values/vectors.</td>
+<td>All checks required by this certificate type passed with an exact
+scale.</td>
+<td>Use the values/vectors within the stated certificate scope.</td>
 </tr>
 <tr class="even">
 <td>
@@ -446,11 +447,11 @@ wider <code>k</code>.</td>
 </tr>
 <tr class="odd">
 <td>
-<code>passed</code> withheld,
+<code>passed = FALSE</code>,
 <code>scale_is_estimate = TRUE</code>
 </td>
-<td>Norm bound is stochastic; evidence is consistent with
-convergence.</td>
+<td>The backward-error scale is stochastic, so the certificate does not
+report a pass.</td>
 <td>Use a problem class with deterministic norm metadata, or run a
 verification pass.</td>
 </tr>
@@ -464,21 +465,38 @@ eigenvalues.</td>
 </tr>
 <tr class="odd">
 <td>
-<code>failed_indices</code> is the <em>first</em> few pairs</td>
-<td>Convergence has not started yet.</td>
-<td>Almost certainly a <code>maxit</code> problem.</td>
+<code>failed_indices</code> includes the first returned pairs</td>
+<td>Some leading returned pairs exceed the tolerance.</td>
+<td>Inspect <code>convergence_history</code>; increase
+<code>maxit</code> if the errors are still declining.</td>
 </tr>
 <tr class="even">
 <td>
-<code>failed_indices</code> is the <em>last</em> few pairs</td>
-<td>Convergence stalled near the requested cluster.</td>
-<td>Increase <code>k</code>, request a wider window, or use
-<code><a href="../reference/lobpcg.html">lobpcg()</a></code> with a preconditioner.</td>
+<code>failed_indices</code> includes the last returned pairs</td>
+<td>Some trailing returned pairs exceed the tolerance.</td>
+<td>Inspect the spectral gap; a wider <code>k</code> may help when the
+target boundary cuts through a cluster.</td>
 </tr>
 </tbody>
 </table>
-<p>The certificate is the bridge between “I called a solver” and “I have
-a trustworthy partial spectrum.” Read it.</p>
+<p>The certificate records which numerical checks were run, the scale
+used for each backward error, and whether those checks passed. Use those
+fields together with the solver plan and the requirements of your
+downstream analysis.</p>
+</div>
+<div class="section level2">
+<h2 id="where-to-go-next">Where to go next<a class="anchor" aria-label="anchor" href="#where-to-go-next"></a>
+</h2>
+<ul>
+<li>
+<code><a href="../articles/sparse-pca.html">vignette("sparse-pca")</a></code> shows a realistic withheld
+certificate in context — centering a sparse matrix trades an exact norm
+bound for a stochastic one unless you supply metadata yourself.</li>
+<li>
+<code><a href="../articles/eigencore.html">vignette("eigencore")</a></code> and
+<code><a href="../articles/generalized-eigenproblems.html">vignette("generalized-eigenproblems")</a></code> cover the workflows
+that produce the certificates read here.</li>
+</ul>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>

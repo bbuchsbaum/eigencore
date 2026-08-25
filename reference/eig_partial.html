@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.0.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.1.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -18,9 +18,12 @@
       <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/eigencore.html">Get started</a></li>
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
-  <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
+  <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
+    <li><a class="dropdown-item" href="../articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
+    <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="../articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
-    <li><a class="dropdown-item" href="../articles/benchmarks.html">Benchmark smoke tests</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item" href="../articles/index.html">More articles...</a></li>
   </ul></li>
 <li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
@@ -63,7 +66,8 @@
 <span>  vectors <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  seed <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  certify <span class="op">=</span> <span class="cn">TRUE</span>,</span>
-<span>  allow_dense_fallback <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"auto"</span>, <span class="st">"never"</span>, <span class="st">"always"</span><span class="op">)</span></span>
+<span>  allow_dense_fallback <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"auto"</span>, <span class="st">"never"</span>, <span class="st">"always"</span><span class="op">)</span>,</span>
+<span>  initial_subspace <span class="op">=</span> <span class="cn">NULL</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -113,6 +117,30 @@
 
 <dt id="arg-allow-dense-fallback">allow_dense_fallback<a class="anchor" aria-label="anchor" href="#arg-allow-dense-fallback"></a></dt>
 <dd><p>Dense fallback policy.</p></dd>
+
+
+<dt id="arg-initial-subspace">initial_subspace<a class="anchor" aria-label="anchor" href="#arg-initial-subspace"></a></dt>
+<dd><p>Optional numeric matrix of starting directions
+(a warm start). Supported on standard real Hermitian Lanczos paths: the
+native paths for explicit dense double or <code>dgCMatrix</code> operators, the native
+matrix-free callback path selected by <code>lanczos(block &gt; 1)</code>, and the scalar
+matrix-free reference path selected by <code>lanczos(block = 1)</code>;
+supplying it on any other planned path (generalized, shift-invert, dense
+fallback) is an error. Pass <code>method = lanczos()</code> to guarantee a Lanczos
+route: with the default <code>method = auto()</code>, sparse or <code><a href="nearest.html">nearest()</a></code> problems
+may be planned as shift-invert, which does not consume a start and will
+reject the argument. The subspace is only a starting hint: projected
+quantities, residuals, orthogonality, convergence, and the certificate are
+recomputed for the current operator on every solve. The columns are
+orthonormalized at the solver boundary and fitted to the method's start
+block — when the accepted rank exceeds the block width the block is a
+seeded random rotation of the full accepted basis, so every supplied
+direction contributes. Because a residual certificate proves eigenpair
+accuracy but not target identity, a fully supplied subspace that is already
+invariant at <code>tol</code> is discarded in favor of a cold start; provenance
+records that guard decision. Diagnostics distinguish operator block calls,
+operator columns, and certification columns. <code>NULL</code> (the default)
+preserves the cold random start exactly.</p></dd>
 
 </dl></div>
     <div class="section level2">

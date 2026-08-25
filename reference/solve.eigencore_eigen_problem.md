@@ -23,6 +23,7 @@ solve(
   vectors = TRUE,
   certify = TRUE,
   allow_dense_fallback = c("auto", "never", "always"),
+  initial_subspace = NULL,
   ...
 )
 ```
@@ -66,6 +67,21 @@ solve(
 - allow_dense_fallback:
 
   Dense fallback policy.
+
+- initial_subspace:
+
+  Optional numeric matrix of starting directions (a warm start).
+  Supported on standard real Hermitian Lanczos paths — native dense
+  double / `dgCMatrix`, native matrix-free callbacks for
+  `lanczos(block > 1)`, and the scalar matrix-free reference path for
+  `lanczos(block = 1)`; supplying it on any other planned path is an
+  error. The subspace is only a starting hint, never a source of reused
+  convergence: every solve recomputes projected quantities, residuals,
+  orthogonality, convergence, and a fresh current-operator certificate.
+  An already-invariant supplied subspace is discarded to a cold start
+  because residual certification alone cannot establish that it contains
+  the requested extremal eigenpairs. `NULL` (the default) preserves the
+  cold random start exactly.
 
 - ...:
 

@@ -24,7 +24,7 @@ lobpcg(maxit = 200L, preconditioner = NULL, constraints = NULL)
   Optional matrix whose columns span a subspace to deflate. Iterates are
   kept orthogonal to this subspace in the Euclidean or generalized `B`
   inner product. Native constrained LOBPCG is not promoted yet;
-  constrained problems use the honest reference path.
+  constrained problems use the labelled reference path.
 
 ## Value
 

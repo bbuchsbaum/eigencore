@@ -1,4 +1,9 @@
-# Benchmark smoke tests
+# Benchmarks: what we measure and what it means
+
+This is a pkgdown-only article, not a CRAN vignette: it runs
+[`bench::mark()`](https://bench.r-lib.org/reference/mark.html) at build
+time and is intentionally excluded from `R CMD check` (see
+`vignettes/articles/` in `.Rbuildignore`).
 
 This vignette runs five small eigenvalue and SVD cases with eigencore,
 `RSpectra`, `irlba`, and base R. The matrices are intentionally small
@@ -80,11 +85,11 @@ unrounded measurements and reports the smallest value in each row.
 
 | case                  | lowest median | eigencore | RSpectra |   irlba | base R |
 |:----------------------|:--------------|----------:|---------:|--------:|-------:|
-| dense Hermitian       | RSpectra      |    1.6790 |   0.4872 | not run |  1.949 |
-| sparse path Laplacian | eigencore     |    2.5890 |   8.1770 | not run | 13.080 |
-| dense low-rank SVD    | RSpectra      |    1.6740 |   0.2294 |  0.3818 |  1.620 |
-| tall sparse SVD       | RSpectra      |    0.5592 |   0.3875 |  0.7626 |  1.776 |
-| wide sparse SVD       | RSpectra      |    0.5700 |   0.4754 |  1.0530 |  2.856 |
+| dense Hermitian       | RSpectra      |    1.5550 |   0.4583 | not run |  2.094 |
+| sparse path Laplacian | eigencore     |    2.4880 |   7.7660 | not run | 13.700 |
+| dense low-rank SVD    | RSpectra      |    1.5720 |   0.2377 |  0.4108 |  1.716 |
+| tall sparse SVD       | RSpectra      |    0.5747 |   0.3260 |  0.7480 |  1.853 |
+| wide sparse SVD       | RSpectra      |    0.5767 |   0.4067 |  1.0020 |  3.358 |
 
 Median solver-call time in milliseconds from 3 iterations per method.
 {.table style="width:100%;"}
@@ -144,9 +149,9 @@ do not measure peak resident memory.
 
 | case                  | eigencore | RSpectra |   irlba | base R |
 |:----------------------|----------:|---------:|--------:|-------:|
-| dense Hermitian       |   1.07800 |  0.06661 | not run | 0.4240 |
-| sparse path Laplacian |   1.84800 |  0.01991 | not run | 3.1880 |
-| dense low-rank SVD    |   1.31100 |  0.09405 |  0.5606 | 0.5942 |
+| dense Hermitian       |   0.98700 |  0.06661 | not run | 0.4240 |
+| sparse path Laplacian |   1.38000 |  0.01991 | not run | 3.1880 |
+| dense low-rank SVD    |   1.22600 |  0.09405 |  0.5606 | 0.5942 |
 | tall sparse SVD       |   0.01906 |  0.02502 |  0.1760 | 0.8979 |
 | wide sparse SVD       |   0.02360 |  0.02246 |  0.1542 | 0.9098 |
 
@@ -190,6 +195,17 @@ For larger sparse matrices, base R is a truth oracle only while
 `as.matrix(A)` is affordable. Studying scaling and memory behavior
 requires installed-package runs, larger fixtures, repeated measurements,
 and saved artifacts.
+
+The benchmark tables report `bench::mem_alloc`, which counts cumulative
+R-managed allocation. It does not see C/C++ working heaps used by
+eigencore or external native solvers, so it must not be read as
+cross-engine peak memory. The installed Hermitian G1 gate uses a
+narrower, explicit memory claim: the retained solver result may be at
+most 1.25 times the result from the smallest certified reference,
+allowing bounded space for eigencore’s plan, certificate, and provenance
+metadata. Cumulative R allocation remains visible as a diagnostic; a
+total or peak-memory claim needs a separate process-level RSS
+measurement.
 
 ## Run the larger benchmark scripts
 

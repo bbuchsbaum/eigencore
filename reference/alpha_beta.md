@@ -28,8 +28,9 @@ A list containing `alpha`, `beta`, and any available `values`,
 `classification`, `finite`, `infinite`, and `undefined` fields. Results
 that record how the finite/infinite/undefined labels were decided also
 include a `classification_policy` list with the policy name, the
-tolerance, the per-coordinate zero thresholds, and the pencil norms used
-for norm-scaled classification.
+tolerance, the per-coordinate zero thresholds, and any pencil norms used
+for norm-scaled classification. A `reason` explains exact structural
+policies used by GSVD and transformed sparse-pencil results.
 
 ## Examples
 

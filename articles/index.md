@@ -4,9 +4,16 @@
 
 - [Get started with
   eigencore](https://bbuchsbaum.github.io/eigencore/articles/eigencore.md):
+- [Reuse an eigenspace across a parameter
+  sweep](https://bbuchsbaum.github.io/eigencore/articles/warm-start-continuation.md):
+- [PCA on sparse data without
+  densifying](https://bbuchsbaum.github.io/eigencore/articles/sparse-pca.md):
 - [Certificates: reading the numerical
   evidence](https://bbuchsbaum.github.io/eigencore/articles/certificates.md):
 - [Generalized eigenvalue problems with
   eigencore](https://bbuchsbaum.github.io/eigencore/articles/generalized-eigenproblems.md):
-- [Benchmark smoke
-  tests](https://bbuchsbaum.github.io/eigencore/articles/benchmarks.md):
+
+### Performance
+
+- [Benchmarks: what we measure and what it
+  means](https://bbuchsbaum.github.io/eigencore/articles/benchmarks.md):

@@ -1,92 +1,28 @@
 # Get started with eigencore
 
-eigencore turns spectral computation into a five-step workflow:
-
-1.  **Build an operator** describing the action of `A`.
-2.  **Describe the problem** (eigen or SVD; metric `B`; spectral
-    target).
-3.  **Plan a solver** and inspect what it will run.
-4.  **Solve.**
-5.  **Inspect the certificate** — the numerical evidence that the result
-    is trustworthy.
-
-This vignette walks through the workflow on three problem classes: a
-standard Hermitian eigenproblem, a generalized SPD eigenproblem with a
-metric `B`, and a partial SVD. It also shows the RSpectra-compatible
-shim for users migrating from existing code.
-
-For the V2 CRAN release, planner labels are part of the contract:
-promoted paths are native and benchmark-backed in their documented
-regimes, while reference, prototype, oracle, and diagnostic paths remain
-clearly labelled.
+A matrix too large to fully diagonalize still has a handful of
+eigenvalues or singular values you actually need — the top few
+directions of variance, the leading modes of a graph, the dominant
+singular triplets behind a low-rank approximation. eigencore computes
+exactly that partial answer, and every result carries a certificate:
+residuals, a backward-error bound, and a pass/fail verdict for the
+checks named by the certificate type.
 
 ``` r
 
 library(eigencore)
 ```
 
-## 1. Standard Hermitian eigenproblem
+## Compute a certified partial eigendecomposition
 
-Build a small symmetric matrix and ask for the five largest eigenvalues.
+Build a symmetric matrix and ask for its five largest eigenvalues:
 
 ``` r
 
 set.seed(1)
 n <- 200
 A <- crossprod(matrix(rnorm(n * n), n, n)) / n + diag(n)
-```
-
-eigencore wraps the matrix in a *block-native operator* the moment you
-hand it to a problem constructor. You can do this explicitly:
-
-``` r
-
-Aop <- as_operator(A)
-Aop
-#> <eigencore operator>
-#>   name: dense_matrix 
-#>   dim: 200 x 200 
-#>   dtype: double 
-#>   structure: hermitian
-```
-
-The operator carries dimensions, structure tags, and a flag indicating
-whether the underlying storage has a native kernel (in this case dense
-double — yes).
-
-### Build the problem and inspect the plan
-
-``` r
-
-P    <- eigen_problem(A, structure = hermitian(), target = largest())
-plan <- plan_solver(P, k = 5)
-plan
-#> eigencore solver plan
-#>   problem: eigen 
-#>   requested: 5 
-#>   target: largest 
-#>   method: native scalar thick-restart Hermitian Lanczos 
-#>   reasons:
-#>    - structure: hermitian 
-#>    - target: largest 
-#>    - standard eigenproblem 
-#>    - built-in dense operator has native block apply 
-#>   controls:
-#>    - block : 1 
-#>    - max_subspace : 35 
-#>    - max_restarts : 100 
-#>    - reorthogonalize : TRUE 
-#>   fallback: dense oracle prototype if unsupported
-```
-
-The plan tells you *exactly* which kernel will be invoked. There is no
-silent dispatch.
-
-### Solve and read the certificate
-
-``` r
-
-fit <- solve(P, k = 5)
+fit <- eig_partial(A, k = 5, target = largest())
 fit
 #> Partial eigen decomposition
 #>   requested: 5 
@@ -103,54 +39,16 @@ fit
 #>   certificate: passed
 ```
 
-``` r
-
-fit$certificate
-#> eigencore certificate
-#>   passed: TRUE 
-#>   tolerance: 1e-08 
-#>   type: residual_backward_error 
-#>   norm bound: frobenius_exact+identity_exact 
-#>   scale estimated: FALSE 
-#>   max residual: 1.67046e-07 
-#>   max backward error: 4.546939e-09 
-#>   max orthogonality loss: 1.776357e-15 
-#>   orthogonality tolerance: 1.490116e-08 
-#>   orthogonality required: TRUE
-```
-
-A passing certificate means: every requested pair has
-
-- residual `||A v - lambda v|| / s` below `tol`, where `s` is the
-  labeled norm bound (here `frobenius_exact`),
-- backward error below `tol`,
-- inter-vector orthogonality loss below the orthogonality tolerance.
-
-The certificate is not one number — it is one verdict *per returned
-pair*. Plot the per-pair backward error and the tolerance becomes a line
-you can see every pair clearing.
-
-![Stem plot of backward error for five eigenpairs on a log scale; all
-five points fall far below the dashed tolerance line at
-1e-8.](eigencore_files/figure-html/cert-bars-1.png)
-
-Per-pair backward error for the five returned eigenpairs. Every pair
-sits well below the dashed tolerance line, so the overall certificate
-passes.
-
-If any pair were above the line, the certificate’s `failed_indices` slot
-would name it. Here the worst pair clears the tolerance by orders of
-magnitude.
+`fit$certificate$passed` reports whether these five returned pairs meet
+the certificate’s residual, backward-error, and orthogonality
+requirements. It does not by itself prove that they are the five largest
+eigenpairs; the solver target and plan describe that selection.
 
 ``` r
 
-fit$values
-#> [1] 5.010576 4.769169 4.700866 4.566055 4.504502
+fit$certificate$passed
+#> [1] TRUE
 ```
-
-These five values are a *certified slice* of a 200-dimensional spectrum.
-Plotting them against the full dense spectrum shows exactly which part
-of the problem you paid to compute.
 
 ![Scatter plot of all 200 eigenvalues sorted from largest to smallest in
 grey, with the five largest highlighted in blue at the
@@ -160,17 +58,17 @@ The five largest eigenvalues (blue) located within the full spectrum of
 A (grey). eigencore computes only the requested slice, then certifies
 it.
 
-With `n = 200` we asked for 5 of 200 pairs. In a production problem with
-`n = 1e6`, computing the full spectrum is impossible — the *partial*
-result is the only result, which is exactly why a certificate matters.
+With `n = 200` this computed 5 of 200 pairs. In a production problem
+with `n = 1e6`, computing the full spectrum is impossible — the
+*partial* result is the only result, which is exactly why a certificate
+matters.
 
-## 2. Generalized SPD eigenproblem (`A v = lambda B v`)
+## Generalized SPD eigenproblem (`A v = lambda B v`)
 
 Pass a metric `B` to
-[`eigen_problem()`](https://bbuchsbaum.github.io/eigencore/reference/eigen_problem.md)
-(or to
 [`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md)
-via the `B` argument).
+when the problem is `A v = lambda B v` rather than the standard
+`A v = lambda v`.
 
 ``` r
 
@@ -195,10 +93,11 @@ fit_gen
 
 The certificate’s residual is
 `||A v - lambda B v|| / (||A|| + |lambda| ||B||)`, and orthogonality is
-measured in the `B`-inner product where appropriate. The
-`norm_bound_type` now reports a bound for both `A` and `B`.
+measured in the `B`-inner product where appropriate. See
+[`vignette("generalized-eigenproblems")`](https://bbuchsbaum.github.io/eigencore/articles/generalized-eigenproblems.md)
+for dense pencils, singular `B`, and the QZ decomposition.
 
-## 3. Partial SVD
+## Partial SVD
 
 For rectangular problems use
 [`svd_partial()`](https://bbuchsbaum.github.io/eigencore/reference/svd_partial.md):
@@ -233,10 +132,10 @@ against the full singular-value spectrum of M (grey).
 
 The reported `method` identifies the path — for very small or
 near-square problems eigencore may use a dense LAPACK SVD fallback
-rather than running its iterative Golub–Kahan kernel. Either way the
+rather than running its iterative Golub-Kahan kernel. Either way the
 certificate covers both `||A v - sigma u||` and `||A^T u - sigma v||`.
 
-## 4. RSpectra-compatible workflow
+## RSpectra-compatible workflow
 
 If your existing code uses
 [`RSpectra::eigs_sym()`](https://rdrr.io/pkg/RSpectra/man/eigs.html),
@@ -255,7 +154,7 @@ str(res, max.level = 1)
 #>  $ nops       : int 62
 #>  $ certificate:List of 18
 #>   ..- attr(*, "class")= chr "eigencore_certificate"
-#>  $ diagnostics:List of 15
+#>  $ diagnostics:List of 20
 ```
 
 ``` r
@@ -280,11 +179,106 @@ and [`svds()`](https://bbuchsbaum.github.io/eigencore/reference/svds.md)
 accept the same `which` codes as `RSpectra` — `"LM"`, `"SM"`, `"LA"`,
 `"SA"`, `"LR"`, `"SR"`, `"LI"`, `"SI"`, and `"BE"`.
 
+## Under the hood: operators, problems, and plans
+
+[`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md)
+and
+[`svd_partial()`](https://bbuchsbaum.github.io/eigencore/reference/svd_partial.md)
+cover the common case, but every call you’ve made in this vignette runs
+through the same four-stage architecture, and you can drop down to it
+directly when you want to inspect or reuse a piece of that pipeline.
+
+**1. Operators.** Any matrix is wrapped in a *block-native operator* the
+moment you hand it to a problem constructor. You can do this explicitly:
+
+``` r
+
+Aop <- as_operator(A)
+Aop
+#> <eigencore operator>
+#>   name: dense_matrix 
+#>   dim: 200 x 200 
+#>   dtype: double 
+#>   structure: hermitian
+```
+
+The operator carries dimensions, structure tags, and a flag indicating
+whether the underlying storage has a native kernel (in this case dense
+double — yes).
+[`vignette("sparse-pca")`](https://bbuchsbaum.github.io/eigencore/articles/sparse-pca.md)
+builds operators that center and scale a sparse matrix without
+densifying it — the same object type, doing more work per call.
+
+**2. Problems.**
+[`eigen_problem()`](https://bbuchsbaum.github.io/eigencore/reference/eigen_problem.md)
+and
+[`svd_problem()`](https://bbuchsbaum.github.io/eigencore/reference/svd_problem.md)
+describe *what* to solve: the matrix, its structure
+([`hermitian()`](https://bbuchsbaum.github.io/eigencore/reference/hermitian.md),
+[`general()`](https://bbuchsbaum.github.io/eigencore/reference/general.md),
+…), and the spectral target
+([`largest()`](https://bbuchsbaum.github.io/eigencore/reference/largest.md),
+[`smallest()`](https://bbuchsbaum.github.io/eigencore/reference/smallest.md),
+[`nearest()`](https://bbuchsbaum.github.io/eigencore/reference/nearest.md),
+…).
+
+``` r
+
+P <- eigen_problem(A, structure = hermitian(), target = largest())
+```
+
+**3. Plans.**
+[`plan_solver()`](https://bbuchsbaum.github.io/eigencore/reference/plan_solver.md)
+chooses a method and tells you *exactly* which kernel will run, before
+you pay for the computation. There is no silent dispatch.
+
+``` r
+
+plan <- plan_solver(P, k = 5)
+plan
+#> eigencore solver plan
+#>   problem: eigen 
+#>   requested: 5 
+#>   target: largest 
+#>   method: native scalar thick-restart Hermitian Lanczos 
+#>   reasons:
+#>    - structure: hermitian 
+#>    - target: largest 
+#>    - standard eigenproblem 
+#>    - built-in dense operator has native block apply 
+#>   controls:
+#>    - block : 1 
+#>    - max_subspace : 35 
+#>    - max_restarts : 100 
+#>    - check_stride : 0 
+#>    - reorthogonalize : TRUE 
+#>   fallback: dense oracle prototype if unsupported
+```
+
+**4. Solve.**
+[`solve()`](https://rdrr.io/pkg/Matrix/man/solve-methods.html) on a
+problem is what
+[`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md)
+calls internally — reach for it when you’ve already built a `plan` or
+`problem` you want to reuse.
+
+``` r
+
+same_fit <- solve(P, k = 5)
+isTRUE(all.equal(same_fit$values, fit$values))
+#> [1] TRUE
+```
+
 ## Where to go next
 
+- [`vignette("sparse-pca")`](https://bbuchsbaum.github.io/eigencore/articles/sparse-pca.md)
+  — the flagship workflow: centering and scaling a sparse matrix without
+  densifying it, and building matrix-free operators by hand.
 - [`vignette("certificates")`](https://bbuchsbaum.github.io/eigencore/articles/certificates.md)
   is the deep dive on reading the numerical evidence — what each field
   means and what to do when a check fails.
+- [`vignette("generalized-eigenproblems")`](https://bbuchsbaum.github.io/eigencore/articles/generalized-eigenproblems.md)
+  covers dense pencils, singular `B`, and the QZ decomposition.
 - Run
   [`help(package = "eigencore")`](https://bbuchsbaum.github.io/eigencore/reference)
   to browse the installed help index.
@@ -293,8 +287,3 @@ accept the same `which` codes as `RSpectra` — `"LM"`, `"SM"`, `"LA"`,
 - [`?plan_solver`](https://bbuchsbaum.github.io/eigencore/reference/plan_solver.md)
   explains how operator structure, target, and method combine to choose
   a kernel.
-- [`linear_operator()`](https://bbuchsbaum.github.io/eigencore/reference/linear_operator.md)
-  lets you wrap a matrix-free `apply` callback as a first-class
-  operator; eigencore’s planner will warn when an R-level callback is
-  being driven from a block-native solver hot loop, so you can decide
-  whether to invest in a native operator implementation.

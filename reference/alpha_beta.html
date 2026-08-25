@@ -15,7 +15,7 @@ classification computed by eigencore."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.0.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.1.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -26,9 +26,12 @@ classification computed by eigencore."></head><body>
       <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/eigencore.html">Get started</a></li>
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
-  <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
+  <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
+    <li><a class="dropdown-item" href="../articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
+    <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="../articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
-    <li><a class="dropdown-item" href="../articles/benchmarks.html">Benchmark smoke tests</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item" href="../articles/index.html">More articles...</a></li>
   </ul></li>
 <li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
@@ -85,8 +88,9 @@ classification computed by eigencore.</p>
 <code>classification</code>, <code>finite</code>, <code>infinite</code>, and <code>undefined</code> fields. Results
 that record how the finite/infinite/undefined labels were decided also
 include a <code>classification_policy</code> list with the policy name, the
-tolerance, the per-coordinate zero thresholds, and the pencil norms used
-for norm-scaled classification.</p>
+tolerance, the per-coordinate zero thresholds, and any pencil norms used
+for norm-scaled classification. A <code>reason</code> explains exact structural
+policies used by GSVD and transformed sparse-pencil results.</p>
     </div>
 
     <div class="section level2">

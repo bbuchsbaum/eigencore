@@ -1,6 +1,157 @@
 # Changelog
 
+## eigencore 1.1.0 (2026-08-24)
+
+### New features
+
+- [`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md)
+  and [`solve()`](https://rdrr.io/pkg/Matrix/man/solve-methods.html)
+  gain an `initial_subspace` argument: a public, certified warm-start
+  seam for standard real Hermitian Lanczos — the native paths on
+  explicit dense double and `dgCMatrix` operators, the native
+  matrix-free callback path selected by `lanczos(block > 1)`, and the
+  scalar matrix-free reference path selected by `lanczos(block = 1)`.
+  The supplied subspace is orthonormalized at the solver boundary and
+  fitted to the method’s start block: accepted directions are augmented
+  deterministically when short, and when the accepted rank exceeds the
+  block width the block is a seeded random rotation of the full accepted
+  basis, so every supplied direction contributes generic weight (a
+  k-column continuation subspace handed to a scalar method warm-starts
+  all k targets, not just the first). Rank detection is invariant to
+  column scaling, and the fitted start block is orthonormal. The start
+  is treated only as a hint — every solve recomputes projected
+  quantities, residuals, orthogonality, convergence, and a fresh
+  current-operator certificate. A fully supplied subspace already
+  invariant at the requested tolerance is discarded to a cold start:
+  residual certification proves eigenpair accuracy, not that an
+  invariant block contains the requested extremal pairs.
+  `initial_subspace = NULL` preserves cold behavior exactly. Unsupported
+  generalized, shift-invert, and dense-fallback plans error. Results,
+  plans, and
+  [`diagnostics()`](https://bbuchsbaum.github.io/eigencore/reference/diagnostics.md)
+  report start provenance plus exact operator block calls, operator
+  columns, and certification columns. Reusable restart-state objects and
+  generalized/transformed promotion remain future work.
+- [`lanczos()`](https://bbuchsbaum.github.io/eigencore/reference/lanczos.md)
+  gains `check_stride`. The default `0L` preserves full-sweep
+  convergence checks exactly; a positive stride lets native block
+  thick-restart paths, including real Hermitian matrix-free callbacks,
+  check and stop within a sweep without additional operator
+  applications.
+
+### Performance
+
+- Sparse tridiagonal shift-invert now parses and validates the three
+  matrix bands once per solve and reuses that immutable representation
+  for planning, shift perturbation, factorization, and certification.
+  The native kernel forms and returns only the requested Ritz vectors
+  instead of exposing its full Krylov basis to R. On the installed
+  `path_laplacian:1000`, `k = 20` release row this reduced cumulative R
+  allocation from 3.82 MB to 1.51 MB while retaining a 20/20
+  original-coordinate certificate. The G1 gate now uses retained result
+  size for its bounded memory envelope and reports `bench::mem_alloc`
+  separately as diagnostic evidence, because R allocation counters do
+  not observe native C/C++ working heaps in any compared engine.
+- New production `auto` route for largest-target partial SVD: a native
+  implicit normal-equations (Gram) thick-restart Lanczos that runs on or
+  as an operator, without materializing the Gram matrix. It covers dense
+  matrices and sparse operators whose smaller side exceeds the
+  explicit-Gram caps — regimes that previously fell back to a full
+  LAPACK SVD (dense) or a single unrestarted Golub-Kahan sweep (sparse).
+  Representative same-machine speedups at `tol = 1e-8` with certificates
+  still passing: dense 4000x1000 `k = 10` ~12x, dense 2000x2000 `k = 10`
+  ~80x, sparse 20000x5000 `k = 10` and `k = 50` ~2x. Results keep the
+  exact two-sided residual certificate in original coordinates, and
+  uncertified results still fall back to the native Golub-Kahan path.
+- The scalar Golub-Kahan kernel now uses BLAS (dgemv) classical
+  Gram-Schmidt reorthogonalization on the sparse CSC, matrix-free, and
+  retained-restart paths, matching the dense path; previously these used
+  scalar loops.
+- The projected Golub-Kahan convergence check now runs `dbdsqr` directly
+  on the projected bidiagonal, tracking only the last row of the left
+  singular vectors, instead of a dense `dgesvd` with full vectors;
+  scratch buffers are reused across checks. The check drops from
+  O(iter^3) plus per-check allocations to O(iter^2).
+- The scalar Lanczos convergence estimate (used by the shift-invert
+  paths) computes eigenvalues with `dsterf` and recovers only the
+  selected eigenvectors with `dstevr` instead of a full `dstev`
+  decomposition each iteration, with scratch reuse across iterations.
+- The CSC sparse matrix-multiply kernel now processes wide blocks in
+  cache-friendly chunks of 10 columns instead of a strided generic loop.
+- [`as_operator()`](https://bbuchsbaum.github.io/eigencore/reference/as_operator.md)
+  no longer forces a full copy of an already-double dense matrix
+  (`storage.mode<-` is now conditional), removing an O(m\*n) copy plus
+  GC churn from every problem construction — operator construction on a
+  2000x2000 input drops from ~52ms to ~6ms.
+- The scalar thick-restart Hermitian Lanczos default subspace grows from
+  `3k+20` to `max(3k+20, 5k)`: unchanged for small `k`, and at `k = 30`
+  on a general sparse operator it cuts operator applications by ~25%.
+
+### Portability
+
+- The package again compiles on R \< 4.4: guarded compatibility typedefs
+  for `La_INT`/`La_LGL` and declarations for the complex QZ drivers
+  (`zggev`, `zgges`) were added for headers that predate them, and
+  `crossprod`/`tcrossprod` are now imported from Matrix so sparse-matrix
+  dispatch does not rely on the base generics added in R 4.4.
+
+### Bug fixes
+
+- Generalized result contracts are now consistent across dense pencils,
+  QZ, transformed sparse pencils, and GSVD. Every classified result
+  exposes a `classification_policy`; GSVD records exact structural-zero
+  semantics and documents its length-`n` `Inf`/`NA` value layout. Dense
+  general-pencil left vectors now carry an original-coordinate
+  adjoint-residual certificate and `W^H B V` diagnostics, and
+  [`diagnostics()`](https://bbuchsbaum.github.io/eigencore/reference/diagnostics.md)
+  consistently exposes the same `left_vectors` matrix returned by
+  [`left_vectors()`](https://bbuchsbaum.github.io/eigencore/reference/left_vectors.md).
+- Benchmark/validation timing helpers no longer error on R builds
+  without memory profiling (e.g. r-devel Linux fedora, configured
+  without `--enable-memory-profiling`).
+  [`bench::mark()`](https://bench.r-lib.org/reference/mark.html) memory
+  measurement is now requested only when `capabilities("profmem")` is
+  `TRUE`; timing still runs otherwise and `mem_alloc` is reported as
+  `NA`. Benchmark smoke tests also use
+  [`testthat::skip_on_cran()`](https://testthat.r-lib.org/reference/skip.html).
+  Backported in 1.0.1 and completed in 1.0.2.
+
+## eigencore 1.0.2
+
+CRAN release: 2026-07-25
+
+- Complete the no-memory-profiling fix from 1.0.1. The CRAN benchmark
+  vignette and the installed README benchmark now also request
+  [`bench::mark()`](https://bench.r-lib.org/reference/mark.html) memory
+  measurements only when `capabilities("profmem")` is true. The
+  vignette’s summary tables also report unavailable results instead of
+  failing when a benchmark regime has no successful methods.
+- Add a regression test that audits every shipped benchmark entry point
+  for unconditional `memory = TRUE` and exercises the package timing
+  helper on the current R build.
+
+## eigencore 1.0.1
+
+CRAN release: 2026-07-24
+
+- Fix an R CMD check ERROR on R builds without memory profiling (for
+  example the r-devel Linux fedora flavors, which are configured without
+  `--enable-memory-profiling`). The internal benchmark/validation timing
+  helpers passed `memory = TRUE` to
+  [`bench::mark()`](https://bench.r-lib.org/reference/mark.html), which
+  calls [`utils::Rprofmem()`](https://rdrr.io/r/utils/Rprofmem.html) and
+  aborts with “memory profiling is not available on this system” on
+  those platforms. Memory measurement is now requested only when
+  `capabilities("profmem")` is `TRUE`; elsewhere timing still runs and
+  `mem_alloc` is reported as `NA`.
+- Benchmark smoke tests now use
+  [`testthat::skip_on_cran()`](https://testthat.r-lib.org/reference/skip.html)
+  so they are skipped on CRAN as intended (the previous
+  `Sys.getenv("CRAN")` guard never fired on the CRAN check farm).
+
 ## eigencore 1.0.0
+
+CRAN release: 2026-07-23
 
 First CRAN release.
 

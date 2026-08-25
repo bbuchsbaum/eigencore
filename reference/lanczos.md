@@ -9,6 +9,7 @@ lanczos(
   max_subspace = NULL,
   max_restarts = NULL,
   block = 1L,
+  check_stride = 0L,
   reorthogonalize = TRUE
 )
 ```
@@ -29,9 +30,20 @@ lanczos(
 
 - block:
 
-  Native block size. `1L` selects the scalar thick-restart path; values
-  greater than one select the native block Krylov prototype where
-  supported.
+  Native block size. `1L` selects the scalar path; for a matrix-free
+  operator this remains the reference Hermitian Lanczos boundary. Values
+  greater than one select the native block Krylov path where supported,
+  including real Hermitian matrix-free callbacks.
+
+- check_stride:
+
+  Native block thick-restart mid-sweep convergence stride. `0L`
+  (default) evaluates convergence once per full sweep (legacy). A
+  positive `N` evaluates convergence every `N` block iterations within a
+  sweep, letting a warm start that converges after a few blocks stop
+  early instead of paying a full cold-sized sweep. Mid-sweep checks
+  never consume extra operator applications and never change results at
+  `check_stride = 0L`. This control applies only to native block paths.
 
 - reorthogonalize:
 

@@ -8,6 +8,16 @@ result. See
 and
 [`vignette("eigencore")`](https://bbuchsbaum.github.io/eigencore/articles/eigencore.md).
 
+## See also
+
+Useful links:
+
+- <https://bbuchsbaum.github.io/eigencore/>
+
+- <https://github.com/bbuchsbaum/eigencore>
+
+- Report bugs at <https://github.com/bbuchsbaum/eigencore/issues>
+
 ## Author
 
 **Maintainer**: Bradley Buchsbaum <brad.buchsbaum@gmail.com> \[copyright

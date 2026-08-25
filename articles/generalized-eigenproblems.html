@@ -21,7 +21,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.0.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.1.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -34,9 +34,12 @@
 <li class="active nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
-<li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
+<li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
+    <li><a class="dropdown-item" href="../articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
+    <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="../articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
-    <li><a class="dropdown-item" href="../articles/benchmarks.html">Benchmark smoke tests</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item" href="../articles/index.html">More articles...</a></li>
   </ul>
 </li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
@@ -85,6 +88,13 @@ satisfying</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi><mi>x</mi><mo>=</mo><mi>λ</mi><mi>B</mi><mi>x</mi><mi>.</mi></mrow><annotation encoding="application/x-tex">
 A x = \lambda B x.
 </annotation></semantics></math></p>
+<p>This form shows up whenever a problem needs a metric other than the
+standard inner product: whitened PCA and canonical correlation analysis
+weight by a covariance matrix, linear discriminant analysis weights by a
+within-class scatter matrix, and normalized graph Laplacians weight by a
+degree matrix. In each case <code>B</code> is not incidental — solving
+the plain eigenproblem <code>A x = lambda x</code> and ignoring
+<code>B</code> gives you the wrong answer.</p>
 <p>The second matrix
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>B</mi><annotation encoding="application/x-tex">B</annotation></semantics></math>
 may define a positive-definite metric, or it may be part of a more
@@ -117,15 +127,31 @@ of <code>A</code> is divided by the corresponding entry of
 </h2>
 <p>Use <code><a href="../reference/eig_partial.html">eig_partial()</a></code> when you need only a few eigenpairs. A
 target such as <code><a href="../reference/smallest.html">smallest()</a></code> states which part of the spectrum
-to compute.</p>
+to compute. Scale the same idea up to a diagonal metric problem with 150
+pairs, and ask for the 5 smallest:</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">part</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">A</span>, B <span class="op">=</span> <span class="va">B</span>, k <span class="op">=</span> <span class="fl">2</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/smallest.html">smallest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="fu"><a href="../reference/values.html">values</a></span><span class="op">(</span><span class="va">part</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1] 2 4</span></span>
+<code class="sourceCode R"><span><span class="va">n</span> <span class="op">&lt;-</span> <span class="fl">150</span></span>
+<span><span class="va">A_wide</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">150</span>, length.out <span class="op">=</span> <span class="va">n</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="va">B_wide</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">2</span>, length.out <span class="op">=</span> <span class="va">n</span><span class="op">)</span><span class="op">)</span></span>
+<span></span>
+<span><span class="va">part</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">A_wide</span>, B <span class="op">=</span> <span class="va">B_wide</span>, k <span class="op">=</span> <span class="fl">5</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/smallest.html">smallest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/complex.html" class="external-link">Re</a></span><span class="op">(</span><span class="fu"><a href="../reference/values.html">values</a></span><span class="op">(</span><span class="va">part</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="co">#&gt; [1] 1.000000 1.986667 2.960265 3.921053 4.869281</span></span>
 <span><span class="va">part</span><span class="op">$</span><span class="va">method</span></span>
 <span><span class="co">#&gt; [1] "native dense generalized SPD LAPACK fallback"</span></span>
 <span><span class="fu"><a href="../reference/certificate.html">certificate</a></span><span class="op">(</span><span class="va">part</span><span class="op">)</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
+<div class="figure" style="text-align: center">
+<img src="generalized-eigenproblems_files/figure-html/partial-spd-spectrum-1.png" class="r-plt" alt="Scatter plot of 150 generalized eigenvalues sorted descending in grey, with the five smallest highlighted in blue at the bottom-right." width="92%"><p class="caption">
+The five smallest generalized eigenvalues (blue) against the full
+150-pair spectrum of the pencil (A, B) (grey).
+</p>
+</div>
+<p>With <code>n = 150</code> this computed 5 of 150 pairs. A
+whitened-PCA or normalized-Laplacian problem built from real data
+routinely has <code>n</code> in the tens or hundreds of thousands, where
+a full generalized eigendecomposition is not practical — the partial
+slice, certified, is the only result you can afford.</p>
 <p>The main choice is the structure of the problem and how much of its
 spectrum you need:</p>
 <table class="table">
@@ -262,8 +288,18 @@ maintaining older code, translate the mathematical operation: use
 <code><a href="../reference/eig_full.html">eig_full()</a></code> for a full generalized eigensolve,
 <code><a href="../reference/generalized_schur.html">generalized_schur()</a></code> for QZ, and <code><a href="../reference/alpha_beta.html">alpha_beta()</a></code>
 to inspect homogeneous eigenvalue coordinates.</p>
-<p>For more on result validation, see
-<code><a href="../articles/certificates.html">vignette("certificates")</a></code>.</p>
+</div>
+<div class="section level2">
+<h2 id="where-to-go-next">Where to go next<a class="anchor" aria-label="anchor" href="#where-to-go-next"></a>
+</h2>
+<ul>
+<li>
+<code><a href="../articles/sparse-pca.html">vignette("sparse-pca")</a></code> covers operators and
+non-densifying centering for the standard (non-generalized) eigenproblem
+and SVD.</li>
+<li>For more on result validation, see
+<code><a href="../articles/certificates.html">vignette("certificates")</a></code>.</li>
+</ul>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>

@@ -11,7 +11,7 @@ densified."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.0.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.1.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -22,9 +22,12 @@ densified."></head><body>
       <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/eigencore.html">Get started</a></li>
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
-  <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
+  <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
+    <li><a class="dropdown-item" href="../articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
+    <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="../articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
-    <li><a class="dropdown-item" href="../articles/benchmarks.html">Benchmark smoke tests</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item" href="../articles/index.html">More articles...</a></li>
   </ul></li>
 <li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
@@ -109,7 +112,10 @@ fallback contract for <code>eig_full()</code>.</p></dd>
     <p>An <code>eigencore_eigen_result</code>. Dense general-pencil results
 additionally carry <code>alpha</code>, <code>beta</code>, <code>classification</code>,
 <code>classification_policy</code>, <code>left_vectors</code> (left generalized eigenvectors
-satisfying <code>w^H A = lambda w^H B</code>), and <code>conditioning</code>. For real pencils
+satisfying <code>w^H A = lambda w^H B</code>), <code>left_certificate</code>,
+<code>biorthogonality</code> (<code>W^H B V</code>), and <code>conditioning</code>. The left certificate
+checks <code>A^H w - Conj(lambda) B^H w</code> in the original coordinates and uses
+the same backward-error scale as the right certificate. For real pencils
 the decomposition runs through the expert LAPACK driver <code>DGGEVX</code> with
 balancing, so <code>conditioning</code> contains reciprocal condition numbers
 <code>rconde</code>/<code>rcondv</code> and the balanced pencil norms <code>abnrm</code>/<code>bbnrm</code>. Complex

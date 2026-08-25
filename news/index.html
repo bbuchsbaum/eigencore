@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.0.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.1.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -18,9 +18,12 @@
       <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/eigencore.html">Get started</a></li>
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
-  <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
+  <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
+    <li><a class="dropdown-item" href="../articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
+    <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="../articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
-    <li><a class="dropdown-item" href="../articles/benchmarks.html">Benchmark smoke tests</a></li>
+    <li><hr class="dropdown-divider"></li>
+    <li><a class="dropdown-item" href="../articles/index.html">More articles...</a></li>
   </ul></li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="active nav-item"><a class="nav-link" href="../news/index.html">Changelog</a></li>
@@ -46,7 +49,48 @@
     </div>
 
     <div class="section level2">
-<h2 class="pkg-version" data-toc-text="1.0.0" id="eigencore-100">eigencore 1.0.0<a class="anchor" aria-label="anchor" href="#eigencore-100"></a></h2>
+<h2 class="pkg-version" data-toc-text="1.1.0" id="eigencore-110-2026-08-24">eigencore 1.1.0 (2026-08-24)<a class="anchor" aria-label="anchor" href="#eigencore-110-2026-08-24"></a></h2>
+<div class="section level3">
+<h3 id="new-features-1-1-0">New features<a class="anchor" aria-label="anchor" href="#new-features-1-1-0"></a></h3>
+<ul><li>
+<code><a href="../reference/eig_partial.html">eig_partial()</a></code> and <code><a href="https://rdrr.io/pkg/Matrix/man/solve-methods.html" class="external-link">solve()</a></code> gain an <code>initial_subspace</code> argument: a public, certified warm-start seam for standard real Hermitian Lanczos — the native paths on explicit dense double and <code>dgCMatrix</code> operators, the native matrix-free callback path selected by <code>lanczos(block &gt; 1)</code>, and the scalar matrix-free reference path selected by <code>lanczos(block = 1)</code>. The supplied subspace is orthonormalized at the solver boundary and fitted to the method’s start block: accepted directions are augmented deterministically when short, and when the accepted rank exceeds the block width the block is a seeded random rotation of the full accepted basis, so every supplied direction contributes generic weight (a k-column continuation subspace handed to a scalar method warm-starts all k targets, not just the first). Rank detection is invariant to column scaling, and the fitted start block is orthonormal. The start is treated only as a hint — every solve recomputes projected quantities, residuals, orthogonality, convergence, and a fresh current-operator certificate. A fully supplied subspace already invariant at the requested tolerance is discarded to a cold start: residual certification proves eigenpair accuracy, not that an invariant block contains the requested extremal pairs. <code>initial_subspace = NULL</code> preserves cold behavior exactly. Unsupported generalized, shift-invert, and dense-fallback plans error. Results, plans, and <code><a href="../reference/diagnostics.html">diagnostics()</a></code> report start provenance plus exact operator block calls, operator columns, and certification columns. Reusable restart-state objects and generalized/transformed promotion remain future work.</li>
+<li>
+<code><a href="../reference/lanczos.html">lanczos()</a></code> gains <code>check_stride</code>. The default <code>0L</code> preserves full-sweep convergence checks exactly; a positive stride lets native block thick-restart paths, including real Hermitian matrix-free callbacks, check and stop within a sweep without additional operator applications.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="performance-1-1-0">Performance<a class="anchor" aria-label="anchor" href="#performance-1-1-0"></a></h3>
+<ul><li>Sparse tridiagonal shift-invert now parses and validates the three matrix bands once per solve and reuses that immutable representation for planning, shift perturbation, factorization, and certification. The native kernel forms and returns only the requested Ritz vectors instead of exposing its full Krylov basis to R. On the installed <code>path_laplacian:1000</code>, <code>k = 20</code> release row this reduced cumulative R allocation from 3.82 MB to 1.51 MB while retaining a 20/20 original-coordinate certificate. The G1 gate now uses retained result size for its bounded memory envelope and reports <code>bench::mem_alloc</code> separately as diagnostic evidence, because R allocation counters do not observe native C/C++ working heaps in any compared engine.</li>
+<li>New production <code>auto</code> route for largest-target partial SVD: a native implicit normal-equations (Gram) thick-restart Lanczos that runs on  or  as an operator, without materializing the Gram matrix. It covers dense matrices and sparse operators whose smaller side exceeds the explicit-Gram caps — regimes that previously fell back to a full LAPACK SVD (dense) or a single unrestarted Golub-Kahan sweep (sparse). Representative same-machine speedups at <code>tol = 1e-8</code> with certificates still passing: dense 4000x1000 <code>k = 10</code> ~12x, dense 2000x2000 <code>k = 10</code> ~80x, sparse 20000x5000 <code>k = 10</code> and <code>k = 50</code> ~2x. Results keep the exact two-sided residual certificate in original coordinates, and uncertified results still fall back to the native Golub-Kahan path.</li>
+<li>The scalar Golub-Kahan kernel now uses BLAS (dgemv) classical Gram-Schmidt reorthogonalization on the sparse CSC, matrix-free, and retained-restart paths, matching the dense path; previously these used scalar loops.</li>
+<li>The projected Golub-Kahan convergence check now runs <code>dbdsqr</code> directly on the projected bidiagonal, tracking only the last row of the left singular vectors, instead of a dense <code>dgesvd</code> with full vectors; scratch buffers are reused across checks. The check drops from O(iter^3) plus per-check allocations to O(iter^2).</li>
+<li>The scalar Lanczos convergence estimate (used by the shift-invert paths) computes eigenvalues with <code>dsterf</code> and recovers only the selected eigenvectors with <code>dstevr</code> instead of a full <code>dstev</code> decomposition each iteration, with scratch reuse across iterations.</li>
+<li>The CSC sparse matrix-multiply kernel now processes wide blocks in cache-friendly chunks of 10 columns instead of a strided generic loop.</li>
+<li>
+<code><a href="../reference/as_operator.html">as_operator()</a></code> no longer forces a full copy of an already-double dense matrix (<code>storage.mode&lt;-</code> is now conditional), removing an O(m*n) copy plus GC churn from every problem construction — operator construction on a 2000x2000 input drops from ~52ms to ~6ms.</li>
+<li>The scalar thick-restart Hermitian Lanczos default subspace grows from <code>3k+20</code> to <code>max(3k+20, 5k)</code>: unchanged for small <code>k</code>, and at <code>k = 30</code> on a general sparse operator it cuts operator applications by ~25%.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="portability-1-1-0">Portability<a class="anchor" aria-label="anchor" href="#portability-1-1-0"></a></h3>
+<ul><li>The package again compiles on R &lt; 4.4: guarded compatibility typedefs for <code>La_INT</code>/<code>La_LGL</code> and declarations for the complex QZ drivers (<code>zggev</code>, <code>zgges</code>) were added for headers that predate them, and <code>crossprod</code>/<code>tcrossprod</code> are now imported from Matrix so sparse-matrix dispatch does not rely on the base generics added in R 4.4.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="bug-fixes-1-1-0">Bug fixes<a class="anchor" aria-label="anchor" href="#bug-fixes-1-1-0"></a></h3>
+<ul><li>Generalized result contracts are now consistent across dense pencils, QZ, transformed sparse pencils, and GSVD. Every classified result exposes a <code>classification_policy</code>; GSVD records exact structural-zero semantics and documents its length-<code>n</code> <code>Inf</code>/<code>NA</code> value layout. Dense general-pencil left vectors now carry an original-coordinate adjoint-residual certificate and <code>W^H B V</code> diagnostics, and <code><a href="../reference/diagnostics.html">diagnostics()</a></code> consistently exposes the same <code>left_vectors</code> matrix returned by <code><a href="../reference/left_vectors.html">left_vectors()</a></code>.</li>
+<li>Benchmark/validation timing helpers no longer error on R builds without memory profiling (e.g. r-devel Linux fedora, configured without <code>--enable-memory-profiling</code>). <code><a href="https://bench.r-lib.org/reference/mark.html" class="external-link">bench::mark()</a></code> memory measurement is now requested only when <code>capabilities("profmem")</code> is <code>TRUE</code>; timing still runs otherwise and <code>mem_alloc</code> is reported as <code>NA</code>. Benchmark smoke tests also use <code><a href="https://testthat.r-lib.org/reference/skip.html" class="external-link">testthat::skip_on_cran()</a></code>. Backported in 1.0.1 and completed in 1.0.2.</li>
+</ul></div>
+</div>
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="1.0.2" id="eigencore-102">eigencore 1.0.2<a class="anchor" aria-label="anchor" href="#eigencore-102"></a></h2><p class="text-muted">CRAN release: 2026-07-25</p>
+<ul><li>Complete the no-memory-profiling fix from 1.0.1. The CRAN benchmark vignette and the installed README benchmark now also request <code><a href="https://bench.r-lib.org/reference/mark.html" class="external-link">bench::mark()</a></code> memory measurements only when <code>capabilities("profmem")</code> is true. The vignette’s summary tables also report unavailable results instead of failing when a benchmark regime has no successful methods.</li>
+<li>Add a regression test that audits every shipped benchmark entry point for unconditional <code>memory = TRUE</code> and exercises the package timing helper on the current R build.</li>
+</ul></div>
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="1.0.1" id="eigencore-101">eigencore 1.0.1<a class="anchor" aria-label="anchor" href="#eigencore-101"></a></h2><p class="text-muted">CRAN release: 2026-07-24</p>
+<ul><li>Fix an R CMD check ERROR on R builds without memory profiling (for example the r-devel Linux fedora flavors, which are configured without <code>--enable-memory-profiling</code>). The internal benchmark/validation timing helpers passed <code>memory = TRUE</code> to <code><a href="https://bench.r-lib.org/reference/mark.html" class="external-link">bench::mark()</a></code>, which calls <code><a href="https://rdrr.io/r/utils/Rprofmem.html" class="external-link">utils::Rprofmem()</a></code> and aborts with “memory profiling is not available on this system” on those platforms. Memory measurement is now requested only when <code>capabilities("profmem")</code> is <code>TRUE</code>; elsewhere timing still runs and <code>mem_alloc</code> is reported as <code>NA</code>.</li>
+<li>Benchmark smoke tests now use <code><a href="https://testthat.r-lib.org/reference/skip.html" class="external-link">testthat::skip_on_cran()</a></code> so they are skipped on CRAN as intended (the previous <code>Sys.getenv("CRAN")</code> guard never fired on the CRAN check farm).</li>
+</ul></div>
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="1.0.0" id="eigencore-100">eigencore 1.0.0<a class="anchor" aria-label="anchor" href="#eigencore-100"></a></h2><p class="text-muted">CRAN release: 2026-07-23</p>
 <p>First CRAN release.</p>
 <ul><li>
 <code><a href="../reference/svd_partial.html">svd_partial()</a></code> and <code><a href="../reference/eig_partial.html">eig_partial()</a></code> compute the top-<em>k</em> singular triplets or eigenpairs of large dense, sparse (CSC), diagonal, banded/tridiagonal, and matrix-free operators through native C++ kernels.</li>
@@ -58,7 +102,8 @@
 <li>Generalized eigen support: <code><a href="../reference/eig_full.html">eig_full()</a></code> for dense SPD and general pencils, <code><a href="../reference/generalized_schur.html">generalized_schur()</a></code> and <code><a href="../reference/generalized_svd.html">generalized_svd()</a></code> for dense QZ/GSVD, partial sparse general pencils with nonsingular diagonal <code>B</code> via transformed native Arnoldi, left eigenvectors and conditioning diagnostics on supported dense paths, and <code>pencil_norm_scaled</code> alpha/beta classification. Sparse SPD partial paths remain under <code><a href="../reference/eig_partial.html">eig_partial()</a></code> / LOBPCG / B-orthogonal Lanczos; general sparse QZ and non-diagonal sparse <code>B</code> are explicit unsupported boundaries. The real dense GSVD path currently requires a linked LAPACK that provides the deprecated <code>dggsvd</code> routine.</li>
 <li>The exported API is stable as of 1.0.0; breaking changes from here follow semantic versioning.</li>
 </ul></div>
-  </main></div>
+  </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
+    </nav></aside></div>
 
 
     <footer><div class="pkgdown-footer-left">

@@ -57,7 +57,10 @@ eig_full(
 An `eigencore_eigen_result`. Dense general-pencil results additionally
 carry `alpha`, `beta`, `classification`, `classification_policy`,
 `left_vectors` (left generalized eigenvectors satisfying
-`w^H A = lambda w^H B`), and `conditioning`. For real pencils the
+`w^H A = lambda w^H B`), `left_certificate`, `biorthogonality`
+(`W^H B V`), and `conditioning`. The left certificate checks
+`A^H w - Conj(lambda) B^H w` in the original coordinates and uses the
+same backward-error scale as the right certificate. For real pencils the
 decomposition runs through the expert LAPACK driver `DGGEVX` with
 balancing, so `conditioning` contains reciprocal condition numbers
 `rconde`/`rcondv` and the balanced pencil norms `abnrm`/`bbnrm`. Complex

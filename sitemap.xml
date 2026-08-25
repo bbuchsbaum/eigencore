@@ -6,6 +6,8 @@
 <url><loc>https://bbuchsbaum.github.io/eigencore/articles/eigencore.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/articles/generalized-eigenproblems.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/articles/index.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/articles/sparse-pca.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/articles/warm-start-continuation.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/authors.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/index.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/news/index.html</loc></url>
@@ -47,11 +49,13 @@
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/linear_operator.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/lobpcg.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/mgs2.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/reference/native_implicit_gram_svd.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/nearest.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/operator_scale.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/operator_sum.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/orthogonality_loss.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/plan_solver.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/reference/prepare_initial_subspace.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/randomized.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/rayleigh_ritz.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/residuals.html</loc></url>
@@ -73,8 +77,12 @@
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/svds.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/symmetric_operator.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/validate_eigen_accuracy.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/reference/validate_initial_subspace_plan_support.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/validate_svd_accuracy.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/values.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/vectors.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/reference/warm_start_cold_provenance.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/reference/warm_start_invariant_guard.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/reference/warm_start_plan_consumes_start.html</loc></url>
 </urlset>
 

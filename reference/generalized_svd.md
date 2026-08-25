@@ -36,8 +36,12 @@ generalized_svd(A, B, tol = 1e-08, ...)
 ## Value
 
 An `eigencore_gsvd_result` with fields `alpha`, `beta`, `values`,
-`classification`, `U`, `V`, `Q`, `D1`, `D2`, `R`, `zero_R`, `A_factor`,
-`B_factor`, `k`, `l`, `rank`, `method`, `plan`, and `certificate`.
+`classification`, `classification_policy`, `U`, `V`, `Q`, `D1`, `D2`,
+`R`, `zero_R`, `A_factor`, `B_factor`, `k`, `l`, `rank`, `method`,
+`plan`, and `certificate`. `alpha`, `beta`, and `values` always have
+length `ncol(A)`: LAPACK's trailing structural `(0, 0)` pairs are
+retained as `undefined`, so `values` contains `NA` padding when
+`k + l < ncol(A)`.
 
 ## Examples
 
