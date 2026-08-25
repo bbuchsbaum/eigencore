@@ -1,4 +1,4 @@
-# eigencore 1.2.0.9000
+# eigencore 1.2.0 (2026-08-25)
 
 ## Reusable solver workflows
 
