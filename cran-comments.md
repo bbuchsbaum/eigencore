@@ -19,27 +19,34 @@ standard algorithm and requires it to include `<algorithm>` directly.
 
 * local: macOS 14 (aarch64-apple-darwin20), R 4.5.1, Homebrew clang 20.1.8,
   exact-tarball `R CMD check --as-cran --no-manual`
-* isolated container: Ubuntu 24.04 (aarch64), LLVM 23.1.0,
-  libc++ 23.1.0, and libc++abi 23.1.0
+* GitHub Actions: macOS release, Windows release, Ubuntu release,
+  Ubuntu devel, and Ubuntu oldrel-1
+* dedicated GitHub Actions check: Ubuntu 24.04 (x86_64), R-devel,
+  LLVM 23.1.0, libc++ 23.1.0, and libc++abi 23.1.0
 
 ## R CMD check results
 
 0 errors | 0 warnings | 0 notes locally.
 
-The LLVM 23.1.0/libc++ 23.1.0 compiler probe compiled the repaired
-`native_operators.cpp`. As a negative control, the same source with only the
-new `<algorithm>` line removed reproduced the reported error:
-`no member named 'fill' in namespace 'std'`.
+The five-platform GitHub Actions matrix passed. The dedicated LLVM 23.1.0/
+libc++ 23.1.0 job also passed a full package check with no errors or warnings.
+Its compiler probe compiled the repaired `native_operators.cpp`. As a negative
+control, the same source with only the new `<algorithm>` line removed
+reproduced the reported error: `no member named 'fill' in namespace 'std'`.
 
 ## Reproducible verification evidence
 
 * Exact source tarball SHA-256:
   `5e21bf5dd6a76b9cb5599cbbe784f229c91bbe5295280fa34a5267a0ec758fd8`.
-* The tarball was built from the release source plus only the 1.0.3 hotfix
-  files. A pre-existing local Rd edit and `.DS_Store` were excluded.
+* Tested package-source commit:
+  `f940c55eb4e160ad780e830b6a28edcb757e61fb`.
 * The full local exact-tarball check passed installation, incoming
   feasibility, examples, tests, and vignette rebuilding with `Status: OK`.
+* LLVM 23/libc++ 23 check:
+  <https://github.com/bbuchsbaum/eigencore/actions/runs/32973329914>.
+* Standard five-platform check matrix:
+  <https://github.com/bbuchsbaum/eigencore/actions/runs/32973329915>.
 
 ## Downstream dependencies
 
-None: no reverse dependencies are affected by this patch.
+CRAN reports no reverse dependencies for eigencore as of 2026-08-26.
