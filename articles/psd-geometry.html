@@ -75,7 +75,7 @@
       <h1>Work with singular PSD geometry</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/vignettes/psd-geometry.Rmd" class="external-link"><code>vignettes/psd-geometry.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/v1.3.0/vignettes/psd-geometry.Rmd" class="external-link"><code>vignettes/psd-geometry.Rmd</code></a></small>
       <div class="d-none name"><code>psd-geometry.Rmd</code></div>
     </div>
 
@@ -147,8 +147,8 @@ action:</p>
 <span><span class="co">#&gt;   representation: dense_spectral </span></span>
 <span><span class="co">#&gt;   fidelity: repaired_with_defect </span></span>
 <span><span class="co">#&gt;   symmetry defect: 0 </span></span>
-<span><span class="co">#&gt;   repair defect: 2.664535e-15 </span></span>
-<span><span class="co">#&gt;   source/action defect: 2.664535e-15</span></span></code></pre></div>
+<span><span class="co">#&gt;   repair defect: 2.945755e-15 </span></span>
+<span><span class="co">#&gt;   source/action defect: 2.945755e-15</span></span></code></pre></div>
 <p>The certificate distinguishes the source from the action that will
 run. Tiny accepted negative eigenvalues, numerical-null positive
 eigenvalues, and symmetry averaging are repairs, not erased history:
@@ -232,10 +232,10 @@ dropped directions, work, and a fresh postcondition certificate.</p>
 <span><span class="co">#&gt; eigencore PSD-orthonormal block</span></span>
 <span><span class="co">#&gt;   rank: 2 </span></span>
 <span><span class="co">#&gt;   condition: 225 </span></span>
-<span><span class="co">#&gt;   postcondition error: 1.699258e-14</span></span>
+<span><span class="co">#&gt;   postcondition error: 1.566058e-14</span></span>
 <span><span class="fu"><a href="../reference/psd_gram.html">psd_gram</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">K_basis</span><span class="op">$</span><span class="va">basis</span><span class="op">)</span></span>
 <span><span class="co">#&gt;               [,1]          [,2]</span></span>
-<span><span class="co">#&gt; [1,]  1.000000e+00 -4.440892e-16</span></span>
+<span><span class="co">#&gt; [1,]  1.000000e+00 -4.348374e-16</span></span>
 <span><span class="co">#&gt; [2,] -1.110223e-16  1.000000e+00</span></span>
 <span><span class="fu"><a href="../reference/certificate.html">certificate</a></span><span class="op">(</span><span class="va">K_basis</span><span class="op">)</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
@@ -301,7 +301,7 @@ the ordinary Euclidean problem there, then lift the vectors.</p>
 <span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>value <span class="op">=</span> <span class="va">value</span>, residual_norm <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sum.html" class="external-link">sum</a></span><span class="op">(</span><span class="va">residual</span><span class="op">^</span><span class="fl">2</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="co">#&gt;         value residual_norm </span></span>
-<span><span class="co">#&gt;  3.000000e+00  1.522261e-15</span></span>
+<span><span class="co">#&gt;  3.000000e+00  3.607798e-15</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/stopifnot.html" class="external-link">stopifnot</a></span><span class="op">(</span><span class="fu"><a href="../reference/certificate.html">certificate</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span><span class="op">$</span><span class="va">passed</span>, <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sum.html" class="external-link">sum</a></span><span class="op">(</span><span class="va">residual</span><span class="op">^</span><span class="fl">2</span><span class="op">)</span><span class="op">)</span> <span class="op">&lt;</span> <span class="fl">1e-9</span><span class="op">)</span></span></code></pre></div>
 <p>Here the certified image has dimension two, so materializing its
 two-by-two operator gives <code><a href="../reference/eig_full.html">eig_full()</a></code> an exact norm for its

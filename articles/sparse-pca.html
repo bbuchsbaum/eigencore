@@ -75,7 +75,7 @@
       <h1>PCA on sparse data without densifying</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/vignettes/sparse-pca.Rmd" class="external-link"><code>vignettes/sparse-pca.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/v1.3.0/vignettes/sparse-pca.Rmd" class="external-link"><code>vignettes/sparse-pca.Rmd</code></a></small>
       <div class="d-none name"><code>sparse-pca.Rmd</code></div>
     </div>
 
@@ -144,9 +144,9 @@ exactly as you would the original matrix.</p>
 <span><span class="co">#&gt;   converged rank: 5 </span></span>
 <span><span class="co">#&gt;   method: native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary) </span></span>
 <span><span class="co">#&gt;   target: largest </span></span>
-<span><span class="co">#&gt;   max residual: 5.96839e-11 </span></span>
-<span><span class="co">#&gt;   max backward error: 1.040314e-11 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 2.664535e-15 </span></span>
+<span><span class="co">#&gt;   max residual: 5.968399e-11 </span></span>
+<span><span class="co">#&gt;   max backward error: 1.040316e-11 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 3.552714e-15 </span></span>
 <span><span class="co">#&gt;   norm bound: frobenius_hutchinson_estimate </span></span>
 <span><span class="co">#&gt;   scale estimated: TRUE </span></span>
 <span><span class="co">#&gt;   certificate: failed</span></span></code></pre></div>
@@ -167,7 +167,7 @@ latent factors.</p>
 look at why before treating that as a problem:</p>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">fit</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">max_backward_error</span></span>
-<span><span class="co">#&gt; [1] 1.040314e-11</span></span>
+<span><span class="co">#&gt; [1] 1.040316e-11</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
 <span><span class="co">#&gt; [1] "frobenius_hutchinson_estimate"</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">scale_is_estimate</span></span>
@@ -190,7 +190,7 @@ numerically indistinguishable from centering the dense matrix directly.
 Check it:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Extremes.html" class="external-link">max</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">abs</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="va">fit</span><span class="op">$</span><span class="va">d</span>, decreasing <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span> <span class="op">-</span> <span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="va">all_sv</span><span class="op">[</span><span class="fl">1</span><span class="op">:</span><span class="fl">5</span><span class="op">]</span>, decreasing <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1] 1.110223e-15</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] 3.330669e-16</span></span></code></pre></div>
 <p>The two agree to machine precision. <code>dense_centered</code> above
 was built only to draw the comparison plot and run this check — the
 eigencore computation itself never materialized it.</p>

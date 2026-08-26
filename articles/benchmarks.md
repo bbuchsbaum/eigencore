@@ -85,11 +85,11 @@ unrounded measurements and reports the smallest value in each row.
 
 | case                  | lowest median | eigencore | RSpectra |   irlba | base R |
 |:----------------------|:--------------|----------:|---------:|--------:|-------:|
-| dense Hermitian       | RSpectra      |     2.799 |   0.2555 | not run |  1.606 |
-| sparse path Laplacian | eigencore     |     3.479 |   4.0960 | not run | 10.690 |
-| dense low-rank SVD    | RSpectra      |     3.864 |   0.1920 |  0.3050 |  1.334 |
-| tall sparse SVD       | RSpectra      |     1.997 |   0.2753 |  0.6228 |  1.702 |
-| wide sparse SVD       | RSpectra      |     2.430 |   0.3652 |  0.7612 |  2.650 |
+| dense Hermitian       | RSpectra      |     4.771 |   0.4820 | not run |  1.962 |
+| sparse path Laplacian | eigencore     |     4.282 |   7.9400 | not run | 12.960 |
+| dense low-rank SVD    | RSpectra      |     5.091 |   0.2252 |  0.3935 |  1.619 |
+| tall sparse SVD       | RSpectra      |     2.667 |   0.3524 |  0.7595 |  1.831 |
+| wide sparse SVD       | RSpectra      |     2.778 |   0.4542 |  1.0590 |  2.882 |
 
 Median solver-call time in milliseconds from 3 iterations per method.
 {.table style="width:100%;"}
@@ -167,9 +167,9 @@ method or residual check.
 |:---|:--:|---:|---:|:---|
 | dense Hermitian | 3/3 | 2.77e-15 | 1.57e-11 | all pass |
 | sparse path Laplacian | 3/3 | 8.33e-15 | 8.45e-10 | all pass |
-| dense low-rank SVD | 4/4 | 1.33e-15 | 1.43e-15 | all pass |
-| tall sparse SVD | 4/4 | 1.70e-15 | 1.49e-10 | all pass |
-| wide sparse SVD | 4/4 | 3.98e-15 | 6.71e-10 | all pass |
+| dense low-rank SVD | 4/4 | 1.33e-15 | 2.52e-15 | all pass |
+| tall sparse SVD | 4/4 | 3.36e-15 | 1.49e-10 | all pass |
+| wide sparse SVD | 4/4 | 3.94e-15 | 6.71e-10 | all pass |
 
 Numerical checks across all methods in each case. {.table
 style="width:100%;"}

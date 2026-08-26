@@ -80,9 +80,9 @@ fit
 #>   converged rank: 5 
 #>   method: native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary) 
 #>   target: largest 
-#>   max residual: 5.96839e-11 
-#>   max backward error: 1.040314e-11 
-#>   max orthogonality loss: 2.664535e-15 
+#>   max residual: 5.968399e-11 
+#>   max backward error: 1.040316e-11 
+#>   max orthogonality loss: 3.552714e-15 
 #>   norm bound: frobenius_hutchinson_estimate 
 #>   scale estimated: TRUE 
 #>   certificate: failed
@@ -107,7 +107,7 @@ treating that as a problem:
 ``` r
 
 fit$certificate$max_backward_error
-#> [1] 1.040314e-11
+#> [1] 1.040316e-11
 fit$certificate$norm_bound_type
 #> [1] "frobenius_hutchinson_estimate"
 fit$certificate$scale_is_estimate
@@ -135,7 +135,7 @@ dense matrix directly. Check it:
 ``` r
 
 max(abs(sort(fit$d, decreasing = TRUE) - sort(all_sv[1:5], decreasing = TRUE)))
-#> [1] 1.110223e-15
+#> [1] 3.330669e-16
 ```
 
 The two agree to machine precision. `dense_centered` above was built

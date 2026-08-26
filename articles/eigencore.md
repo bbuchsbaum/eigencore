@@ -33,7 +33,7 @@ fit
 #>   locked: 5 
 #>   max residual: 1.67046e-07 
 #>   max backward error: 4.546939e-09 
-#>   max orthogonality loss: 2.109424e-15 
+#>   max orthogonality loss: 1.776357e-15 
 #>   norm bound: frobenius_exact+identity_exact 
 #>   scale estimated: FALSE 
 #>   certificate: passed
@@ -83,9 +83,9 @@ fit_gen
 #>   target: largest 
 #>   restart: lobpcg 
 #>   locked: 5 
-#>   max residual: 2.71427e-08 
-#>   max backward error: 1.961324e-10 
-#>   max orthogonality loss: 1.554312e-15 
+#>   max residual: 9.243565e-09 
+#>   max backward error: 7.47322e-11 
+#>   max orthogonality loss: 1.44329e-15 
 #>   norm bound: frobenius_exact+frobenius_exact 
 #>   scale estimated: FALSE 
 #>   certificate: passed
@@ -112,9 +112,9 @@ svd_fit
 #>   converged rank: 5 
 #>   method: native certified Gram SVD special case 
 #>   target: largest 
-#>   max residual: 1.150887e-15 
-#>   max backward error: 8.059933e-18 
-#>   max orthogonality loss: 4.440892e-16 
+#>   max residual: 1.359395e-15 
+#>   max backward error: 9.520164e-18 
+#>   max orthogonality loss: 5.689893e-16 
 #>   norm bound: frobenius_exact 
 #>   scale estimated: FALSE 
 #>   certificate: passed
@@ -166,9 +166,9 @@ res$certificate
 #>   type: residual_backward_error 
 #>   norm bound: frobenius_exact+identity_exact 
 #>   scale estimated: FALSE 
-#>   max residual: 2.074432e-09 
-#>   max backward error: 5.646538e-11 
-#>   max orthogonality loss: 2.220446e-15 
+#>   max residual: 2.074433e-09 
+#>   max backward error: 5.646539e-11 
+#>   max orthogonality loss: 8.881784e-16 
 #>   orthogonality tolerance: 1.490116e-08 
 #>   orthogonality required: TRUE
 ```

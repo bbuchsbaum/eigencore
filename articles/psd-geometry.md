@@ -77,8 +77,8 @@ certificate(K_factor)
 #>   representation: dense_spectral 
 #>   fidelity: repaired_with_defect 
 #>   symmetry defect: 0 
-#>   repair defect: 2.664535e-15 
-#>   source/action defect: 2.664535e-15
+#>   repair defect: 2.945755e-15 
+#>   source/action defect: 2.945755e-15
 ```
 
 The certificate distinguishes the source from the action that will run.
@@ -177,10 +177,10 @@ K_basis
 #> eigencore PSD-orthonormal block
 #>   rank: 2 
 #>   condition: 225 
-#>   postcondition error: 1.699258e-14
+#>   postcondition error: 1.566058e-14
 psd_gram(K_factor, K_basis$basis)
 #>               [,1]          [,2]
-#> [1,]  1.000000e+00 -4.440892e-16
+#> [1,]  1.000000e+00 -4.348374e-16
 #> [2,] -1.110223e-16  1.000000e+00
 certificate(K_basis)$passed
 #> [1] TRUE
@@ -251,7 +251,7 @@ residual <- A %*% vector_original -
 
 c(value = value, residual_norm = sqrt(sum(residual^2)))
 #>         value residual_norm 
-#>  3.000000e+00  1.522261e-15
+#>  3.000000e+00  3.607798e-15
 stopifnot(certificate(fit)$passed, sqrt(sum(residual^2)) < 1e-9)
 ```
 
