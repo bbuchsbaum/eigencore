@@ -37,6 +37,24 @@
       nearest(sigma)
       operator_identity(x)
       plan_solver(problem, ...)
+      psd_apply(x, X, action = c("form", "sqrt", "inverse_sqrt", "pseudoinverse", "image_projector", "null_projector"))
+      psd_capabilities(x)
+      psd_factor(x, policy = psd_policy(), source = c("snapshot", "live"))
+      psd_gram(x, X, Y = NULL)
+      psd_gram_factor(x, orientation = c("columns", "rows"), policy = psd_policy(), source = c("snapshot", "live"))
+      psd_identity(dim, policy = psd_policy())
+      psd_laplacian(x, policy = psd_policy(), source = c("snapshot", "live"))
+      psd_lift(x, Z)
+      psd_nullity(x, type = c("numerical", "algebraic"))
+      psd_operator(x, action = c("form", "sqrt", "inverse_sqrt", "pseudoinverse", "image_projector", "null_projector"))
+      psd_orthonormalize(x, X, required_rank = NULL, tolerance = NULL)
+      psd_policy(symmetry = psd_tolerance(), positivity = psd_tolerance(rel = 64 * .Machine$double.eps), rank = psd_tolerance(), rhs = psd_tolerance(), scale = "frobenius", symmetry_repair = c("average", "reject"), negative_repair = c("clip", "reject"), structure_repair = c("canonicalize", "reject"))
+      psd_rank(x)
+      psd_reduce(x, X)
+      psd_reduced_operator(x, A)
+      psd_solve(x, B, tolerance = NULL)
+      psd_spectrum(x, repaired = FALSE)
+      psd_tolerance(abs = 0, rel = sqrt(.Machine$double.eps))
       randomized(oversample = 10, n_iter = 2, block = NULL, normalizer = c("qr", "lu", "none"), refine = TRUE)
       restart_state(x, retention = c("basis", "same_operator"))
       retained_bytes(x)
@@ -67,6 +85,7 @@
       adjoint.eigencore_operator
       as_operator.default
       as_operator.eigencore_operator
+      as_operator.eigencore_psd_factor
       as_operator.matrix
       plan_solver.eigencore_eigen_problem
       plan_solver.eigencore_svd_problem
@@ -76,6 +95,12 @@
       print.eigencore_gsvd_result
       print.eigencore_operator
       print.eigencore_plan
+      print.eigencore_psd_block_result
+      print.eigencore_psd_capabilities
+      print.eigencore_psd_certificate
+      print.eigencore_psd_factor
+      print.eigencore_psd_policy
+      print.eigencore_psd_solve_result
       print.eigencore_svd_result
       print.eigencore_validation
       residuals.eigencore_certificate

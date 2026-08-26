@@ -204,6 +204,12 @@ refresh_operator_identity <- function(op) {
 #'   with entries `A` and, when present, `B` for larger workflow objects.
 #' @export
 operator_identity <- function(x) {
+  if (inherits(x, "eigencore_psd_factor")) {
+    return(validate_psd_factor(x)$operator_identity)
+  }
+  if (inherits(x, c("eigencore_psd_solve_result", "eigencore_psd_block_result"))) {
+    return(x$factor_identity %||% NULL)
+  }
   if (inherits(x, "eigencore_operator")) {
     return(refresh_operator_identity(x))
   }
