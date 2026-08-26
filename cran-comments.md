@@ -44,9 +44,9 @@ reproduced the reported error: `no member named 'fill' in namespace 'std'`.
 * The full local exact-tarball check passed installation, incoming
   feasibility, examples, tests, and vignette rebuilding with `Status: OK`.
 * LLVM 23/libc++ 23 check:
-  <https://github.com/bbuchsbaum/eigencore/actions/runs/32973329914>.
+  <https://github.com/bbuchsbaum/eigencore/actions/runs/32975147750>.
 * Standard five-platform check matrix:
-  <https://github.com/bbuchsbaum/eigencore/actions/runs/32973329915>.
+  <https://github.com/bbuchsbaum/eigencore/actions/runs/32975147741>.
 
 ## Downstream dependencies
 
