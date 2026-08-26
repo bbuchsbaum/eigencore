@@ -158,6 +158,7 @@ you need:
 | Symmetric/Hermitian `A` with positive-definite `B`, partial spectrum | `eig_partial(A, B = B, k = ...)` |
 | Dense general pencil | `eig_full(A, B = B, structure = general())` |
 | Dense generalized Schur decomposition | `generalized_schur(A, B)` |
+| Two dense maps with the same column domain | `generalized_svd(A, B)` |
 
 ## Handle a dense general pencil
 
@@ -171,17 +172,44 @@ A_general <- matrix(c(1, 4, 2, 3), 2, 2)
 B_general <- matrix(c(2, 1, 0, -1), 2, 2)
 
 pencil <- eig_full(A_general, B = B_general, structure = general())
+coordinates <- alpha_beta(pencil)
 values(pencil)
-alpha_beta(pencil)$classification
+coordinates$classification
+coordinates$classification_policy[c("policy", "tolerance")]
 certificate(pencil)$passed
 ```
 
 ```{r validate-dense-general, include=FALSE}
 stopifnot(
   isTRUE(certificate(pencil)$passed),
-  all(alpha_beta(pencil)$classification == "finite")
+  all(coordinates$classification == "finite")
 )
 ```
+
+For a general pencil, right vectors satisfy `A v = lambda B v`, while left
+vectors satisfy the adjoint equation. Inspect both certificates when the left
+basis matters to sensitivity or biorthogonal projections:
+
+```{r left-vectors}
+W <- left_vectors(pencil)
+c(
+  right_certificate = certificate(pencil)$passed,
+  left_certificate = pencil$left_certificate$passed
+)
+```
+
+```{r validate-left-vectors, include=FALSE}
+left_residual <- Conj(t(W)) %*% A_general -
+  diag(values(pencil)) %*% (Conj(t(W)) %*% B_general)
+stopifnot(
+  pencil$left_certificate$passed,
+  max(Mod(left_residual)) < 1e-10
+)
+```
+
+The classification policy is part of the result because “finite” depends on
+the numerical contract used to interpret `(alpha, beta)`. Do not replace it
+with an unrecorded comparison such as `abs(beta) < 1e-8`.
 
 Homogeneous coordinates are especially useful when `B` is singular. eigencore
 classifies finite, infinite, and undefined eigenvalues instead of forcing every
@@ -237,6 +265,88 @@ qz_singular <- generalized_schur(
 alpha_beta(qz_singular)$classification
 ```
 
+## When do you need a generalized SVD instead?
+
+A generalized eigenproblem compares two square operators through
+`A x = lambda B x`. A generalized SVD answers a different question: two
+possibly rectangular matrices act on the same column direction, and you want
+to compare the strength of those two actions. The matrices must have the same
+number of columns, but they may have different numbers of rows.
+
+For diagonal maps, the generalized singular values are easy to anticipate:
+each value is the corresponding strength in `A` divided by the strength in
+`B`.
+
+```{r gsvd-diagonal}
+A_gsvd <- diag(c(3, 4, 5))
+B_gsvd <- diag(c(4, 3, 2))
+gsvd_fit <- generalized_svd(A_gsvd, B_gsvd, tol = 1e-10)
+gsvd_coordinates <- alpha_beta(gsvd_fit)
+
+data.frame(
+  alpha = gsvd_coordinates$alpha,
+  beta = gsvd_coordinates$beta,
+  value = gsvd_coordinates$values,
+  classification = gsvd_coordinates$classification
+)
+```
+
+```{r validate-gsvd-diagonal, include=FALSE}
+stopifnot(
+  certificate(gsvd_fit)$passed,
+  isTRUE(all.equal(
+    sort(values(gsvd_fit)), sort(c(3 / 4, 4 / 3, 5 / 2)),
+    tolerance = 1e-10
+  )),
+  isTRUE(all.equal(
+    gsvd_coordinates$alpha^2 + gsvd_coordinates$beta^2,
+    rep(1, 3),
+    tolerance = 1e-12
+  ))
+)
+```
+
+Here `alpha^2 + beta^2 = 1` for every pair. `alpha / beta` is finite whenever
+`beta` is positive, even when it is very small. The returned
+`classification_policy` records that structural rule separately from `tol`,
+which controls reconstruction and orthogonality certification.
+
+Rank-deficient rectangular pairs can contain finite, infinite, and undefined
+structural positions at once:
+
+```{r gsvd-rank-layout}
+A_rect <- matrix(
+  c(1, 2, 3, 3, 2, 1, 4, 5, 6, 7, 8, 8),
+  nrow = 2,
+  byrow = TRUE
+)
+B_rect <- matrix(1:18, ncol = 6, byrow = TRUE)
+gsvd_rect <- generalized_svd(A_rect, B_rect, tol = 1e-7)
+rect_coordinates <- alpha_beta(gsvd_rect)
+
+data.frame(
+  value = rect_coordinates$values,
+  classification = rect_coordinates$classification
+)
+```
+
+```{r validate-gsvd-rank-layout, include=FALSE}
+stopifnot(
+  certificate(gsvd_rect)$passed,
+  length(values(gsvd_rect)) == ncol(A_rect),
+  any(rect_coordinates$infinite),
+  any(rect_coordinates$undefined),
+  sum(is.na(values(gsvd_rect))) == ncol(A_rect) - gsvd_rect$rank
+)
+```
+
+`Inf` means `beta = 0` while `alpha` is nonzero. `NA` represents a trailing
+structural `(0, 0)` pair, not an accidentally missing computation. Keeping the
+full length-`ncol(A)` layout lets classifications, factor columns, and
+reconstruction metadata stay aligned. Use `left_vectors(gsvd_fit)` and
+`right_vectors(gsvd_fit)` for the two row-space factors; the shared column
+factor remains `gsvd_fit$Q`.
+
 ## Keep sparse partial problems sparse
 
 Sparse symmetric/Hermitian problems with a positive-definite metric use
@@ -278,11 +388,12 @@ operator inputs rather than silently converting them to dense storage.
 The retired `geigen` package exposed related operations, but eigencore is not a
 namespace-compatible replacement. When maintaining older code, translate the
 mathematical operation: use `eig_full()` for a full generalized eigensolve,
-`generalized_schur()` for QZ, and `alpha_beta()` to inspect homogeneous
-eigenvalue coordinates.
+`generalized_schur()` for QZ, `generalized_svd()` for a GSVD, and
+`alpha_beta()` to inspect homogeneous coordinates.
 
 ## Where to go next
 
 - `vignette("sparse-pca")` covers operators and non-densifying centering for
   the standard (non-generalized) eigenproblem and SVD.
 - For more on result validation, see `vignette("certificates")`.
+- `?generalized_svd` documents the returned factors and reconstruction layout.

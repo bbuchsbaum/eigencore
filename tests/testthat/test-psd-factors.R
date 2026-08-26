@@ -127,6 +127,41 @@ test_that("default classification is invariant from 1e-12 through 1e12", {
   )
 })
 
+test_that("overflowing derived diagnostics fail before PSD classification", {
+  scale_error <- expect_psd_condition(
+    psd_factor(rep(1e308, 4)),
+    "eigencore_psd_invalid_input", "nonfinite_input", "scale"
+  )
+  expect_identical(scale_error$representation, "diagonal")
+  expect_identical(scale_error$capability, "construction")
+  expect_true(is.infinite(scale_error$actual))
+  expect_true(is.infinite(scale_error$scale))
+  expect_identical(scale_error$details$stage, "factor_classification")
+
+  spectrum_error <- expect_psd_condition(
+    psd_gram_factor(diag(c(1e200, 1))),
+    "eigencore_psd_invalid_input", "nonfinite_input", "spectrum"
+  )
+  expect_identical(spectrum_error$representation, "gram_dense")
+  expect_identical(spectrum_error$capability, "construction")
+  expect_identical(spectrum_error$indices, 1L)
+  expect_true(is.infinite(spectrum_error$actual))
+  expect_identical(spectrum_error$details$stage, "factor_classification")
+
+  policy <- psd_policy(
+    rank = psd_tolerance(abs = 1e308, rel = 1)
+  )
+  threshold_error <- expect_psd_condition(
+    psd_factor(1e308, policy = policy),
+    "eigencore_psd_invalid_input", "nonfinite_input", "thresholds"
+  )
+  expect_identical(threshold_error$representation, "diagonal")
+  expect_identical(threshold_error$capability, "construction")
+  expect_identical(threshold_error$details$threshold_names, "rank")
+  expect_true(is.infinite(threshold_error$actual$rank))
+  expect_identical(threshold_error$scale, 1e308)
+})
+
 test_that("symmetry validation runs before the upper-triangle spectral kernel", {
   upper_spd_lower_corrupt <- matrix(c(
     2, 0, 0,
