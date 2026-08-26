@@ -1539,12 +1539,70 @@ psd_construct_complete_factor <- function(
     symmetric_source = NULL, scale_override = NULL) {
   n <- length(original_values)
   scale <- scale_override %||% psd_frobenius_norm(original_values)
+  nonfinite_spectrum <- which(!is.finite(original_values))
+  if (length(nonfinite_spectrum)) {
+    psd_abort(
+      "eigencore_psd_invalid_input", "nonfinite_input", "spectrum",
+      "a finite computed PSD spectrum", original_values[nonfinite_spectrum],
+      source_identity = source_identity,
+      representation = representation,
+      capability = "construction",
+      scale = scale,
+      indices = nonfinite_spectrum,
+      details = list(stage = "factor_classification"),
+      message = paste(
+        "The finite PSD source overflows its computed spectrum;",
+        "classification cannot proceed."
+      )
+    )
+  }
+  if (length(scale) != 1L || !is.finite(scale)) {
+    psd_abort(
+      "eigencore_psd_invalid_input", "nonfinite_input", "scale",
+      "one finite Frobenius scale", scale,
+      source_identity = source_identity,
+      representation = representation,
+      capability = "construction",
+      scale = scale,
+      details = list(stage = "factor_classification"),
+      message = paste(
+        "The finite PSD source overflows its Frobenius scale;",
+        "classification cannot proceed."
+      )
+    )
+  }
   thresholds <- list(
     scale_definition = "frobenius",
     symmetry = policy$symmetry$abs + policy$symmetry$rel * scale,
     positivity = policy$positivity$abs + policy$positivity$rel * scale,
     rank = policy$rank$abs + policy$rank$rel * scale
   )
+  resolved_thresholds <- unlist(
+    thresholds[c("symmetry", "positivity", "rank")],
+    use.names = TRUE
+  )
+  nonfinite_thresholds <- which(!is.finite(resolved_thresholds))
+  if (length(nonfinite_thresholds)) {
+    threshold_names <- names(resolved_thresholds)[nonfinite_thresholds]
+    psd_abort(
+      "eigencore_psd_invalid_input", "nonfinite_input", "thresholds",
+      "finite resolved symmetry, positivity, and rank thresholds",
+      as.list(resolved_thresholds[nonfinite_thresholds]),
+      source_identity = source_identity,
+      representation = representation,
+      capability = "construction",
+      scale = scale,
+      indices = nonfinite_thresholds,
+      details = list(
+        stage = "factor_classification",
+        threshold_names = threshold_names
+      ),
+      message = paste(
+        "The PSD policy overflows its resolved classification thresholds;",
+        "classification cannot proceed."
+      )
+    )
+  }
   category <- rep("retained_positive", n)
   category[original_values < -thresholds$positivity] <- "materially_negative"
   category[original_values >= -thresholds$positivity & original_values < 0] <-
