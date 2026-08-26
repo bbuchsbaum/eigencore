@@ -21,7 +21,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -34,7 +34,8 @@
 <li class="active nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
-<li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
+<li><a class="dropdown-item" href="../articles/psd-geometry.html">Work with singular PSD geometry</a></li>
+    <li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
     <li><a class="dropdown-item" href="../articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
     <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="../articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
@@ -74,7 +75,7 @@
       <h1>Benchmarks: what we measure and what it means</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/v1.2.0/vignettes/articles/benchmarks.Rmd" class="external-link"><code>vignettes/articles/benchmarks.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/vignettes/articles/benchmarks.Rmd" class="external-link"><code>vignettes/articles/benchmarks.Rmd</code></a></small>
       <div class="d-none name"><code>benchmarks.Rmd</code></div>
     </div>
 
@@ -213,42 +214,42 @@ method.</caption>
 <tr class="odd">
 <td align="left">dense Hermitian</td>
 <td align="left">RSpectra</td>
-<td align="right">4.958</td>
-<td align="right">0.4908</td>
+<td align="right">2.799</td>
+<td align="right">0.2555</td>
 <td align="right">not run</td>
-<td align="right">1.964</td>
+<td align="right">1.606</td>
 </tr>
 <tr class="even">
 <td align="left">sparse path Laplacian</td>
 <td align="left">eigencore</td>
-<td align="right">4.505</td>
-<td align="right">8.0530</td>
+<td align="right">3.479</td>
+<td align="right">4.0960</td>
 <td align="right">not run</td>
-<td align="right">12.600</td>
+<td align="right">10.690</td>
 </tr>
 <tr class="odd">
 <td align="left">dense low-rank SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">4.947</td>
-<td align="right">0.2512</td>
-<td align="right">0.3912</td>
-<td align="right">1.637</td>
+<td align="right">3.864</td>
+<td align="right">0.1920</td>
+<td align="right">0.3050</td>
+<td align="right">1.334</td>
 </tr>
 <tr class="even">
 <td align="left">tall sparse SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">2.743</td>
-<td align="right">0.3582</td>
-<td align="right">0.7719</td>
-<td align="right">1.785</td>
+<td align="right">1.997</td>
+<td align="right">0.2753</td>
+<td align="right">0.6228</td>
+<td align="right">1.702</td>
 </tr>
 <tr class="odd">
 <td align="left">wide sparse SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">2.655</td>
-<td align="right">0.4282</td>
-<td align="right">0.9643</td>
-<td align="right">2.403</td>
+<td align="right">2.430</td>
+<td align="right">0.3652</td>
+<td align="right">0.7612</td>
+<td align="right">2.650</td>
 </tr>
 </tbody>
 </table>
@@ -313,7 +314,7 @@ They do not measure peak resident memory.</p>
 <tbody>
 <tr class="odd">
 <td align="left">dense Hermitian</td>
-<td align="right">2.4950</td>
+<td align="right">2.5000</td>
 <td align="right">0.06661</td>
 <td align="right">not run</td>
 <td align="right">0.4240</td>
@@ -390,20 +391,20 @@ failed method or residual check.</p>
 <td align="left">dense low-rank SVD</td>
 <td align="center">4/4</td>
 <td align="right">1.33e-15</td>
-<td align="right">2.52e-15</td>
+<td align="right">1.43e-15</td>
 <td align="left">all pass</td>
 </tr>
 <tr class="even">
 <td align="left">tall sparse SVD</td>
 <td align="center">4/4</td>
-<td align="right">3.36e-15</td>
+<td align="right">1.70e-15</td>
 <td align="right">1.49e-10</td>
 <td align="left">all pass</td>
 </tr>
 <tr class="odd">
 <td align="left">wide sparse SVD</td>
 <td align="center">4/4</td>
-<td align="right">3.94e-15</td>
+<td align="right">3.98e-15</td>
 <td align="right">6.71e-10</td>
 <td align="left">all pass</td>
 </tr>

@@ -4,6 +4,8 @@
 
 - [Get started with
   eigencore](https://bbuchsbaum.github.io/eigencore/articles/eigencore.md):
+- [Work with singular PSD
+  geometry](https://bbuchsbaum.github.io/eigencore/articles/psd-geometry.md):
 - [Reuse an eigenspace across a parameter
   sweep](https://bbuchsbaum.github.io/eigencore/articles/warm-start-continuation.md):
 - [PCA on sparse data without

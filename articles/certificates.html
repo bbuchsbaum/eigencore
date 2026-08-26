@@ -21,7 +21,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -34,7 +34,8 @@
 <li class="active nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
-<li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
+<li><a class="dropdown-item" href="../articles/psd-geometry.html">Work with singular PSD geometry</a></li>
+    <li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
     <li><a class="dropdown-item" href="../articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
     <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="../articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
@@ -74,7 +75,7 @@
       <h1>Certificates: reading the numerical evidence</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/v1.2.0/vignettes/certificates.Rmd" class="external-link"><code>vignettes/certificates.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/vignettes/certificates.Rmd" class="external-link"><code>vignettes/certificates.Rmd</code></a></small>
       <div class="d-none name"><code>certificates.Rmd</code></div>
     </div>
 
@@ -109,7 +110,7 @@ things they measure, and what to do when one of them fails.</p>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   max residual: 1.67046e-07 </span></span>
 <span><span class="co">#&gt;   max backward error: 4.546939e-09 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 1.776357e-15 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 2.109424e-15 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE</span></span></code></pre></div>
 <p>The fields you act on, in order:</p>
@@ -373,7 +374,7 @@ B-orthogonality of the returned vectors.</p>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
 <span><span class="co">#&gt; [1] "frobenius_exact+frobenius_exact"</span></span>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">max_orthogonality_loss</span></span>
-<span><span class="co">#&gt; [1] 8.881784e-16</span></span>
+<span><span class="co">#&gt; [1] 2.220446e-15</span></span>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
 <p>If a B-orthogonality value comes back near machine precision, the
@@ -405,7 +406,7 @@ list with two added fields:</p>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   max residual: 2.683414e-08 </span></span>
 <span><span class="co">#&gt;   max backward error: 7.304167e-10 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 2.664535e-15 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.554312e-15 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE</span></span></code></pre></div>
 <p>Code already written against <code><a href="https://rdrr.io/pkg/RSpectra/man/eigs.html" class="external-link">RSpectra::eigs_sym()</a></code>

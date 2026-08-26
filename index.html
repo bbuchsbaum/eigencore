@@ -25,7 +25,7 @@
 
     <a class="navbar-brand me-2" href="index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -38,7 +38,8 @@
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
-<li><a class="dropdown-item" href="articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
+<li><a class="dropdown-item" href="articles/psd-geometry.html">Work with singular PSD geometry</a></li>
+    <li><a class="dropdown-item" href="articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
     <li><a class="dropdown-item" href="articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
     <li><a class="dropdown-item" href="articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
@@ -72,13 +73,15 @@
   <main id="main" class="col-md-9"><div class="section level1">
 <div class="page-header"><h1 id="eigencore">eigencore<a class="anchor" aria-label="anchor" href="#eigencore"></a>
 </h1></div>
-<p><strong>eigencore</strong> computes the top-<em>k</em> singular triplets or eigenpairs of a large sparse or structured matrix in R — the computation behind PCA on big sparse data, spectral embeddings, LSA, and low-rank approximation.</p>
-<p>eigencore focuses on two things:</p>
+<p><strong>eigencore</strong> computes the top-<em>k</em> singular triplets or eigenpairs of a large sparse or structured matrix in R — the computation behind PCA on big sparse data, spectral embeddings, LSA, and low-rank approximation. It also certifies real symmetric positive-semidefinite (PSD) geometry, including singular forms whose null spaces must remain explicit.</p>
+<p>eigencore focuses on three things:</p>
 <ol style="list-style-type: decimal">
 <li>
 <strong>Every result is checked.</strong> Each call returns residuals, a backward-error bound, orthogonality loss, and a single <code>passed</code>/<code>failed</code> flag. When a bound can only be estimated, the certificate says so instead of passing.</li>
 <li>
 <strong>Centering and scaling without densifying.</strong> Explicitly centering a sparse matrix for PCA can require a dense copy. eigencore solves the centered (or scaled, or composed) problem as an operator, without forming that copy.</li>
+<li>
+<strong>PSD actions match their evidence.</strong> Complete dense and diagonal factors expose roots, pseudoinverses, projectors, and image reduction. Structural sparse Gram and Laplacian factors expose only what their construction proves, and unsupported requests fail before dense fallback.</li>
 </ol>
 <p>Supported structured problems run through fast native kernels. The <a href="#benchmarks">Benchmarks</a> section provides reproducible single-machine timings without treating them as cross-package rankings.</p>
 <div class="section level2">
@@ -145,21 +148,51 @@
 <p>You decide whether an estimated bound is good enough for your analysis. The explicit flag lets downstream code distinguish an exact certificate from an estimate without inferring that distinction from solver convergence alone.</p>
 </div>
 <div class="section level2">
+<h2 id="certified-singular-psd-geometry">Certified singular PSD geometry<a class="anchor" aria-label="anchor" href="#certified-singular-psd-geometry"></a>
+</h2>
+<p>A singular PSD form is a seminorm on the original coordinates and a genuine metric only on its image, or on the quotient by its null space. Certify the form once, inspect its numerical rank, and reduce data explicitly before an algorithm that requires an inner product:</p>
+<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">L_metric</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">matrix</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span></span>
+<span>  <span class="fl">1</span>, <span class="fl">0</span>, <span class="fl">1</span>,</span>
+<span>  <span class="fl">0</span>, <span class="fl">1</span>, <span class="fl">1</span></span>
+<span><span class="op">)</span>, <span class="fl">2</span>, <span class="fl">3</span>, byrow <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
+<span><span class="va">K</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/matmult-methods.html" class="external-link">crossprod</a></span><span class="op">(</span><span class="va">L_metric</span><span class="op">)</span></span>
+<span></span>
+<span><span class="va">K_factor</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/psd_factor.html">psd_factor</a></span><span class="op">(</span><span class="va">K</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>rank <span class="op">=</span> <span class="fu"><a href="reference/psd_rank.html">psd_rank</a></span><span class="op">(</span><span class="va">K_factor</span><span class="op">)</span>, nullity <span class="op">=</span> <span class="fu"><a href="reference/psd_nullity.html">psd_nullity</a></span><span class="op">(</span><span class="va">K_factor</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="co">#&gt;    rank nullity</span></span>
+<span><span class="co">#&gt;       2       1</span></span>
+<span></span>
+<span><span class="va">X_metric</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">matrix</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span></span>
+<span>  <span class="fl">1</span>, <span class="fl">2</span>, <span class="fl">3</span>,</span>
+<span>  <span class="fl">3</span>, <span class="fl">2</span>, <span class="fl">1</span></span>
+<span><span class="op">)</span>, <span class="fl">3</span>, <span class="fl">2</span><span class="op">)</span></span>
+<span><span class="va">X_image</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/psd_reduce.html">psd_reduce</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">X_metric</span><span class="op">)</span></span>
+<span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/stopifnot.html" class="external-link">stopifnot</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/Logic.html" class="external-link">isTRUE</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/all.equal-methods.html" class="external-link">all.equal</a></span><span class="op">(</span></span>
+<span>  <span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/matmult-methods.html" class="external-link">crossprod</a></span><span class="op">(</span><span class="va">X_image</span><span class="op">)</span>,</span>
+<span>  <span class="fu"><a href="reference/psd_gram.html">psd_gram</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">X_metric</span><span class="op">)</span>,</span>
+<span>  tolerance <span class="op">=</span> <span class="fl">1e-12</span></span>
+<span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
+<p><code>psd_capabilities(K_factor)</code> is the runtime manifest. Identity, diagonal, dense spectral, and dense Gram factors have complete numerical paths. Sparse Gram and graph-Laplacian constructors preserve sparse state and intentionally withhold roots, projectors, and numerical rank unless their evidence supports those actions. Generic sparse matrices and opaque callbacks are not promoted to certified factors from storage or metadata alone.</p>
+<p><code>psd_apply(K_factor, b, "pseudoinverse")</code> is defined for every finite <code>b</code>, but <code>psd_solve(K_factor, b)</code> is stricter: it rejects a right-hand side with a null component because the original equation <code>K x = b</code> has no solution. See <code><a href="articles/psd-geometry.html">vignette("psd-geometry")</a></code> for the complete capability table, tolerance and repair semantics, sparse constructors, block primitives, persistence, and the explicit reduction path for singular generalized eigenproblems.</p>
+</div>
+<div class="section level2">
 <h2 id="center-and-scale-without-densifying">Center and scale without densifying<a class="anchor" aria-label="anchor" href="#center-and-scale-without-densifying"></a>
 </h2>
 <p>A dense centered copy of <code>A</code> would occupy <strong>400 MB</strong>; the sparse original is a few MB. <code><a href="reference/center.html">center()</a></code> gives you the centered map as an <em>operator</em>, and the solver works through it directly:</p>
-<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">A_centered</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/center.html">center</a></span><span class="op">(</span><span class="va">A</span>, columns <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span>        <span class="co"># a 100000 x 500 operator, not a matrix</span></span>
 <span><span class="fu"><a href="reference/svd_partial.html">svd_partial</a></span><span class="op">(</span><span class="va">A_centered</span>, rank <span class="op">=</span> <span class="fl">5</span>, target <span class="op">=</span> <span class="fu"><a href="reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span><span class="op">$</span><span class="va">d</span></span>
 <span><span class="co">#&gt; [1] 17.23701 16.65319 16.60961 16.48647 16.44760</span></span></code></pre></div>
 <p>Build operators with <code><a href="reference/linear_operator.html">linear_operator()</a></code>, combine them with <code><a href="reference/compose.html">compose()</a></code>, <code><a href="reference/crossprod_operator.html">crossprod_operator()</a></code>, <code><a href="reference/scale_cols.html">scale_cols()</a></code>, <code><a href="reference/center.html">center()</a></code>, and friends. The planner picks the kernel from the structure. <code><a href="reference/plan_solver.html">plan_solver()</a></code> returns an executable, frozen record: <code>solve(plan)</code> runs that inspected route, while <code>solve(problem)</code> creates a fresh plan under current policy. Results report both the planned and actual runtime methods when a certification fallback is needed:</p>
-<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plan</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/plan_solver.html">plan_solver</a></span><span class="op">(</span><span class="fu"><a href="reference/svd_problem.html">svd_problem</a></span><span class="op">(</span><span class="va">A_centered</span>, target <span class="op">=</span> <span class="fu"><a href="reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span>, rank <span class="op">=</span> <span class="fl">5</span><span class="op">)</span></span>
 <span><span class="va">plan</span><span class="op">$</span><span class="va">method</span></span>
 <span><span class="co">#&gt; [1] "native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary)"</span></span></code></pre></div>
 <p>Use <code>work(result)</code> for cross-solver accounting. It keeps forward, adjoint, metric, preconditioner, and certification calls and columns separate; <code>result$matvecs</code> remains the route-specific compatibility field.</p>
 <p>For repeated standard Hermitian Lanczos solves, opt into reusable state through an executable plan. The retained object is an acceleration hint, not a saved certificate: every solve still applies and certifies the current operator.</p>
-<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">workflow_matrix</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">60</span>, <span class="fl">1</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="va">workflow_plan</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/plan_solver.html">plan_solver</a></span><span class="op">(</span></span>
 <span>  <span class="fu"><a href="reference/eigen_problem.html">eigen_problem</a></span><span class="op">(</span><span class="va">workflow_matrix</span>, target <span class="op">=</span> <span class="fu"><a href="reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span>,</span>
@@ -183,7 +216,7 @@
 <h2 id="smallest-eigenvalues-of-a-symmetric-operator">Smallest eigenvalues of a symmetric operator<a class="anchor" aria-label="anchor" href="#smallest-eigenvalues-of-a-symmetric-operator"></a>
 </h2>
 <p>The same interface handles symmetric eigenproblems. Here is a sparse second-difference operator (a 1-D graph Laplacian) of size 20,000, asking for its <strong>smallest</strong> eigenvalues — the hard end of the spectrum for iterative solvers:</p>
-<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">n</span> <span class="op">&lt;-</span> <span class="fl">20000</span></span>
 <span><span class="va">L</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/bandSparse.html" class="external-link">bandSparse</a></span><span class="op">(</span><span class="va">n</span>, <span class="va">n</span>, k <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="op">-</span><span class="fl">1</span>, <span class="fl">0</span>, <span class="fl">1</span><span class="op">)</span>,</span>
 <span>                diagonals <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/rep.html" class="external-link">rep</a></span><span class="op">(</span><span class="op">-</span><span class="fl">1</span>, <span class="va">n</span> <span class="op">-</span> <span class="fl">1</span><span class="op">)</span>, <span class="fu"><a href="https://rdrr.io/r/base/rep.html" class="external-link">rep</a></span><span class="op">(</span><span class="fl">2</span>, <span class="va">n</span><span class="op">)</span>, <span class="fu"><a href="https://rdrr.io/r/base/rep.html" class="external-link">rep</a></span><span class="op">(</span><span class="op">-</span><span class="fl">1</span>, <span class="va">n</span> <span class="op">-</span> <span class="fl">1</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
@@ -198,9 +231,9 @@
 <span><span class="co">#&gt;   target: smallest</span></span>
 <span><span class="co">#&gt;   restart: native_tridiagonal_shift_invert_lanczos</span></span>
 <span><span class="co">#&gt;   locked: 0</span></span>
-<span><span class="co">#&gt;   max residual: 9.026589e-10</span></span>
-<span><span class="co">#&gt;   max backward error: 2.605774e-12</span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 4.884981e-15</span></span>
+<span><span class="co">#&gt;   max residual: 7.236489e-10</span></span>
+<span><span class="co">#&gt;   max backward error: 2.089012e-12</span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 3.552714e-15</span></span>
 <span><span class="co">#&gt;   norm bound: frobenius_metadata+identity_exact</span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE</span></span>
 <span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
@@ -249,7 +282,7 @@
 </h2>
 <p>Use <strong>eigencore</strong> for tall or wide sparse SVD (PCA-shaped problems), the smallest eigenvalues of banded or structured symmetric operators (certified, with automatic planner selection), centered or scaled or composed operators, dense generalized eigen/QZ/GSVD compatibility work through <code><a href="reference/eig_full.html">eig_full()</a></code>, <code><a href="reference/generalized_schur.html">generalized_schur()</a></code>, and <code><a href="reference/generalized_svd.html">generalized_svd()</a></code>, and workflows where explicit certificate metadata is useful.</p>
 <p>For workloads outside those structured paths, benchmark the candidate packages on your own matrices and hardware rather than assuming any implementation will be fastest. Side-by-side evaluation is straightforward because eigencore ships RSpectra-compatible wrappers with the same arguments:</p>
-<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">res</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/eigs_sym.html">eigs_sym</a></span><span class="op">(</span><span class="va">L</span>, k <span class="op">=</span> <span class="fl">8</span>, which <span class="op">=</span> <span class="st">"SA"</span><span class="op">)</span></span>
 <span><span class="va">res</span><span class="op">$</span><span class="va">values</span></span>
 <span><span class="co">#&gt; [1] 2.467154e-08 9.868617e-08 2.220439e-07 3.947447e-07 6.167886e-07</span></span>
@@ -266,7 +299,7 @@
 <div class="section level2">
 <h2 id="status">Status<a class="anchor" aria-label="anchor" href="#status"></a>
 </h2>
-<p>eigencore 1.1.0 is the current release. Its additive API includes certified Hermitian warm starts and mid-sweep Lanczos checks; eligible large largest-SVD problems also gain an implicit-Gram native route with exact original-coordinate certification and an explicit fallback. The exported API is frozen by snapshot tests, and breaking changes follow semantic versioning. Unsupported or prototype solver families remain visibly labeled <code>reference</code> in <code>fit$method</code>. The package vignettes describe the workflow map, benchmark evidence, and current boundaries.</p>
+<p>eigencore 1.3.0 is the current release. Its additive API includes certified real-double PSD factors, image-space reduction, strict singular solves, metric block primitives, dense Gram factors, and non-densifying structural sparse Gram and graph-Laplacian paths. The generalized-eigen <code>B</code>/<code>metric=</code> surface remains SPD-only; singular forms use explicit image reduction. The exported API is frozen by snapshot tests, and breaking changes follow semantic versioning. Unsupported solver or PSD capability families remain visibly unavailable rather than silently falling back.</p>
 </div>
 <div class="section level2">
 <h2 id="license">License<a class="anchor" aria-label="anchor" href="#license"></a>

@@ -15,6 +15,49 @@ High-level functions for partial eigenvalue and SVD computation.
 - [`generalized_svd()`](https://bbuchsbaum.github.io/eigencore/reference/generalized_svd.md)
   : Compute a dense generalized singular value decomposition
 
+## Certified PSD geometry
+
+Validate real PSD forms, inspect evidence, and work on their certified
+image spaces.
+
+- [`psd_tolerance()`](https://bbuchsbaum.github.io/eigencore/reference/psd_tolerance.md)
+  : Create a scale-aware PSD tolerance
+- [`psd_policy()`](https://bbuchsbaum.github.io/eigencore/reference/psd_policy.md)
+  : Create a certified PSD classification policy
+- [`psd_identity()`](https://bbuchsbaum.github.io/eigencore/reference/psd_identity.md)
+  : Construct a certified identity PSD factor
+- [`psd_factor()`](https://bbuchsbaum.github.io/eigencore/reference/psd_factor.md)
+  : Construct a certified real-double PSD factor
+- [`psd_gram_factor()`](https://bbuchsbaum.github.io/eigencore/reference/psd_gram_factor.md)
+  : Construct a supplied Gram PSD factor
+- [`psd_laplacian()`](https://bbuchsbaum.github.io/eigencore/reference/psd_laplacian.md)
+  : Construct a structural sparse graph-Laplacian PSD factor
+- [`psd_capabilities()`](https://bbuchsbaum.github.io/eigencore/reference/psd_capabilities.md)
+  : Inspect certified PSD capabilities
+- [`psd_spectrum()`](https://bbuchsbaum.github.io/eigencore/reference/psd_spectrum.md)
+  : Return a complete certified PSD spectrum
+- [`psd_rank()`](https://bbuchsbaum.github.io/eigencore/reference/psd_rank.md)
+  : Return certified tolerance-relative PSD rank
+- [`psd_nullity()`](https://bbuchsbaum.github.io/eigencore/reference/psd_nullity.md)
+  : Return certified numerical or algebraic nullity
+- [`psd_apply()`](https://bbuchsbaum.github.io/eigencore/reference/psd_apply.md)
+  : Apply a certified PSD action to a vector or block
+- [`psd_operator()`](https://bbuchsbaum.github.io/eigencore/reference/psd_operator.md)
+  : Expose a certified PSD action as an eigencore operator
+- [`psd_reduce()`](https://bbuchsbaum.github.io/eigencore/reference/psd_reduce.md)
+  : Reduce an original-coordinate block to canonical PSD image
+  coordinates
+- [`psd_lift()`](https://bbuchsbaum.github.io/eigencore/reference/psd_lift.md)
+  : Lift canonical PSD image coordinates
+- [`psd_solve()`](https://bbuchsbaum.github.io/eigencore/reference/psd_solve.md)
+  : Strictly solve a compatible singular PSD system
+- [`psd_gram()`](https://bbuchsbaum.github.io/eigencore/reference/psd_gram.md)
+  : Compute a PSD Gram or cross-Gram block
+- [`psd_orthonormalize()`](https://bbuchsbaum.github.io/eigencore/reference/psd_orthonormalize.md)
+  : PSD-orthonormalize a block modulo the certified null space
+- [`psd_reduced_operator()`](https://bbuchsbaum.github.io/eigencore/reference/psd_reduced_operator.md)
+  : Construct the Euclidean operator induced on a certified PSD image
+
 ## RSpectra-compatible shims
 
 Drop-in replacements for

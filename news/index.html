@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -18,7 +18,8 @@
       <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/eigencore.html">Get started</a></li>
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
-  <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
+  <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/psd-geometry.html">Work with singular PSD geometry</a></li>
+    <li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
     <li><a class="dropdown-item" href="../articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
     <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="../articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
@@ -45,9 +46,30 @@
   <main id="main" class="col-md-9"><div class="page-header">
 
       <h1>Changelog</h1>
-      <small>Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/v1.2.0/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
+      <small>Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="1.3.0" id="eigencore-130-2026-08-25">eigencore 1.3.0 (2026-08-25)<a class="anchor" aria-label="anchor" href="#eigencore-130-2026-08-25"></a></h2>
+<div class="section level3">
+<h3 id="certified-positive-semidefinite-geometry-1-3-0">Certified positive-semidefinite geometry<a class="anchor" aria-label="anchor" href="#certified-positive-semidefinite-geometry-1-3-0"></a></h3>
+<ul><li>Add a frozen, additive real-double PSD surface: <code><a href="../reference/psd_tolerance.html">psd_tolerance()</a></code>, <code><a href="../reference/psd_policy.html">psd_policy()</a></code>, <code><a href="../reference/psd_identity.html">psd_identity()</a></code>, <code><a href="../reference/psd_factor.html">psd_factor()</a></code>, <code><a href="../reference/psd_gram_factor.html">psd_gram_factor()</a></code>, <code><a href="../reference/psd_laplacian.html">psd_laplacian()</a></code>, <code><a href="../reference/psd_capabilities.html">psd_capabilities()</a></code>, <code><a href="../reference/psd_spectrum.html">psd_spectrum()</a></code>, <code><a href="../reference/psd_rank.html">psd_rank()</a></code>, <code><a href="../reference/psd_nullity.html">psd_nullity()</a></code>, <code><a href="../reference/psd_apply.html">psd_apply()</a></code>, <code><a href="../reference/psd_operator.html">psd_operator()</a></code>, <code><a href="../reference/psd_reduce.html">psd_reduce()</a></code>, <code><a href="../reference/psd_lift.html">psd_lift()</a></code>, <code><a href="../reference/psd_solve.html">psd_solve()</a></code>, <code><a href="../reference/psd_gram.html">psd_gram()</a></code>, <code><a href="../reference/psd_orthonormalize.html">psd_orthonormalize()</a></code>, and <code><a href="../reference/psd_reduced_operator.html">psd_reduced_operator()</a></code>. Identity, diagonal, dense spectral, and dense Gram factors expose complete numerical actions with typed validation, provenance, certificates, work, retained-memory, and RDS integrity records.</li>
+<li>Define the singular geometry explicitly: the source is a seminorm in its original coordinates, while canonical reduction represents the metric on <code>image(K)</code> or the quotient by <code>null(K)</code>. Roots, inverse roots, pseudoinverses, complementary projectors, reduction/lift, block orthonormalization, and reduced operators satisfy independently certified postconditions. <code><a href="../reference/psd_solve.html">psd_solve()</a></code> is a strict equation solver and rejects RHS null components; pseudoinverse application remains total.</li>
+<li>Freeze separate Frobenius-relative tolerances for symmetry, positivity, numerical rank, and RHS compatibility. Classification retains original and repaired spectra, exact threshold categories, and repair defects. No <code>max(1, scale)</code> floor is inserted, so zero-absolute-tolerance classification remains invariant under finite positive rescaling.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="structural-sparse-paths-1-3-0">Structural sparse paths<a class="anchor" aria-label="anchor" href="#structural-sparse-paths-1-3-0"></a></h3>
+<ul><li>Add non-densifying <code>dgCMatrix</code> Gram factors that certify form and Gram actions from a supplied factor while withholding unsupported roots, rank, projectors, reduction, and solves.</li>
+<li>Add <code>dgCMatrix</code>/<code>dsCMatrix</code> graph-Laplacian validation for symmetry, non-positive off-diagonals, zero row sums, optional canonical diagonal repair, and connected-component algebraic nullity. The structural route exposes form and Gram actions without claiming a complete spectrum.</li>
+<li>Generic sparse symmetric matrices and opaque callbacks remain unsupported PSD-factor sources. Capability failures are typed and occur before callback probing, dense conversion, or undocumented approximation. The existing generalized-eigen <code>B</code>/<code>metric=</code> API remains SPD-only; singular PSD problems use explicit image-space reduction.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="certification-and-downstream-conformance-1-3-0">Certification and downstream conformance<a class="anchor" aria-label="anchor" href="#certification-and-downstream-conformance-1-3-0"></a></h3>
+<ul><li>Add adversarial numerical coverage for exact threshold neighbors, scales from <code>1e-12</code> through <code>1e12</code>, repeated eigenspaces, null contamination, permutation and block metamorphisms, mutation adequacy, strict-solve compatibility, serialization integrity, and fail-closed capability paths.</li>
+<li>Certify 50,000-row sparse Gram and path-Laplacian fixtures without dense <code>n</code> by <code>n</code> state, recording retained bytes, cumulative R allocation, isolated-process peak RSS, and reusable-action timing separately.</li>
+<li>Add a provenance-required installed-consumer gate using exported APIs only. gprocrustes O/SO and quotient-space checks and DKGE root, projector, orthonormalization, and K-Procrustes differential checks pass. A pre-existing DKGE tiny-scale threshold divergence remains explicit rather than weakening eigencore’s relative policy. rfugw adoption is deferred because its candidate spectral auxiliaries do not require the PSD factor algebra.</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="1.2.0" id="eigencore-120-2026-08-25">eigencore 1.2.0 (2026-08-25)<a class="anchor" aria-label="anchor" href="#eigencore-120-2026-08-25"></a></h2>
 <div class="section level3">

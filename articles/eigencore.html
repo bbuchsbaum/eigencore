@@ -21,7 +21,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -34,7 +34,8 @@
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
-<li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
+<li><a class="dropdown-item" href="../articles/psd-geometry.html">Work with singular PSD geometry</a></li>
+    <li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
     <li><a class="dropdown-item" href="../articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
     <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
     <li><a class="dropdown-item" href="../articles/generalized-eigenproblems.html">Generalized eigenvalue problems with eigencore</a></li>
@@ -74,7 +75,7 @@
       <h1>Get started with eigencore</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/v1.2.0/vignettes/eigencore.Rmd" class="external-link"><code>vignettes/eigencore.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/vignettes/eigencore.Rmd" class="external-link"><code>vignettes/eigencore.Rmd</code></a></small>
       <div class="d-none name"><code>eigencore.Rmd</code></div>
     </div>
 
@@ -109,7 +110,7 @@ eigenvalues:</p>
 <span><span class="co">#&gt;   locked: 5 </span></span>
 <span><span class="co">#&gt;   max residual: 1.67046e-07 </span></span>
 <span><span class="co">#&gt;   max backward error: 4.546939e-09 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 1.776357e-15 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 2.109424e-15 </span></span>
 <span><span class="co">#&gt;   norm bound: frobenius_exact+identity_exact </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
@@ -151,9 +152,9 @@ problem is <code>A v = lambda B v</code> rather than the standard
 <span><span class="co">#&gt;   target: largest </span></span>
 <span><span class="co">#&gt;   restart: lobpcg </span></span>
 <span><span class="co">#&gt;   locked: 5 </span></span>
-<span><span class="co">#&gt;   max residual: 9.243565e-09 </span></span>
-<span><span class="co">#&gt;   max backward error: 7.47322e-11 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 1.44329e-15 </span></span>
+<span><span class="co">#&gt;   max residual: 2.71427e-08 </span></span>
+<span><span class="co">#&gt;   max backward error: 1.961324e-10 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.554312e-15 </span></span>
 <span><span class="co">#&gt;   norm bound: frobenius_exact+frobenius_exact </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
@@ -176,9 +177,9 @@ dense pencils, singular <code>B</code>, and the QZ decomposition.</p>
 <span><span class="co">#&gt;   converged rank: 5 </span></span>
 <span><span class="co">#&gt;   method: native certified Gram SVD special case </span></span>
 <span><span class="co">#&gt;   target: largest </span></span>
-<span><span class="co">#&gt;   max residual: 1.359395e-15 </span></span>
-<span><span class="co">#&gt;   max backward error: 9.520164e-18 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 5.689893e-16 </span></span>
+<span><span class="co">#&gt;   max residual: 1.150887e-15 </span></span>
+<span><span class="co">#&gt;   max backward error: 8.059933e-18 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 4.440892e-16 </span></span>
 <span><span class="co">#&gt;   norm bound: frobenius_exact </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
@@ -222,9 +223,9 @@ adding <code>certificate</code> and <code>diagnostics</code>:</p>
 <span><span class="co">#&gt;   type: residual_backward_error </span></span>
 <span><span class="co">#&gt;   norm bound: frobenius_exact+identity_exact </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
-<span><span class="co">#&gt;   max residual: 2.074433e-09 </span></span>
-<span><span class="co">#&gt;   max backward error: 5.646539e-11 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 8.881784e-16 </span></span>
+<span><span class="co">#&gt;   max residual: 2.074432e-09 </span></span>
+<span><span class="co">#&gt;   max backward error: 5.646538e-11 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 2.220446e-15 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE</span></span></code></pre></div>
 <p><code><a href="../reference/eigs.html">eigs()</a></code>, <code><a href="../reference/eigs_sym.html">eigs_sym()</a></code>, and <code><a href="../reference/svds.html">svds()</a></code>
@@ -319,6 +320,10 @@ modified.</p>
 <h2 id="where-to-go-next">Where to go next<a class="anchor" aria-label="anchor" href="#where-to-go-next"></a>
 </h2>
 <ul>
+<li>
+<code><a href="../articles/psd-geometry.html">vignette("psd-geometry")</a></code> — certify a singular PSD form,
+work explicitly on its image space, and choose dense or structural
+sparse capabilities.</li>
 <li>
 <code><a href="../articles/sparse-pca.html">vignette("sparse-pca")</a></code> — the flagship workflow:
 centering and scaling a sparse matrix without densifying it, and

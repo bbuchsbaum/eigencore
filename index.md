@@ -3,8 +3,10 @@
 **eigencore** computes the top-*k* singular triplets or eigenpairs of a
 large sparse or structured matrix in R — the computation behind PCA on
 big sparse data, spectral embeddings, LSA, and low-rank approximation.
+It also certifies real symmetric positive-semidefinite (PSD) geometry,
+including singular forms whose null spaces must remain explicit.
 
-eigencore focuses on two things:
+eigencore focuses on three things:
 
 1.  **Every result is checked.** Each call returns residuals, a
     backward-error bound, orthogonality loss, and a single
@@ -14,6 +16,11 @@ eigencore focuses on two things:
     sparse matrix for PCA can require a dense copy. eigencore solves the
     centered (or scaled, or composed) problem as an operator, without
     forming that copy.
+3.  **PSD actions match their evidence.** Complete dense and diagonal
+    factors expose roots, pseudoinverses, projectors, and image
+    reduction. Structural sparse Gram and Laplacian factors expose only
+    what their construction proves, and unsupported requests fail before
+    dense fallback.
 
 Supported structured problems run through fast native kernels. The
 [Benchmarks](#benchmarks) section provides reproducible single-machine
@@ -111,6 +118,56 @@ The explicit flag lets downstream code distinguish an exact certificate
 from an estimate without inferring that distinction from solver
 convergence alone.
 
+## Certified singular PSD geometry
+
+A singular PSD form is a seminorm on the original coordinates and a
+genuine metric only on its image, or on the quotient by its null space.
+Certify the form once, inspect its numerical rank, and reduce data
+explicitly before an algorithm that requires an inner product:
+
+``` r
+
+L_metric <- matrix(c(
+  1, 0, 1,
+  0, 1, 1
+), 2, 3, byrow = TRUE)
+K <- crossprod(L_metric)
+
+K_factor <- psd_factor(K)
+c(rank = psd_rank(K_factor), nullity = psd_nullity(K_factor))
+#>    rank nullity
+#>       2       1
+
+X_metric <- matrix(c(
+  1, 2, 3,
+  3, 2, 1
+), 3, 2)
+X_image <- psd_reduce(K_factor, X_metric)
+
+stopifnot(isTRUE(all.equal(
+  crossprod(X_image),
+  psd_gram(K_factor, X_metric),
+  tolerance = 1e-12
+)))
+```
+
+`psd_capabilities(K_factor)` is the runtime manifest. Identity,
+diagonal, dense spectral, and dense Gram factors have complete numerical
+paths. Sparse Gram and graph-Laplacian constructors preserve sparse
+state and intentionally withhold roots, projectors, and numerical rank
+unless their evidence supports those actions. Generic sparse matrices
+and opaque callbacks are not promoted to certified factors from storage
+or metadata alone.
+
+`psd_apply(K_factor, b, "pseudoinverse")` is defined for every finite
+`b`, but `psd_solve(K_factor, b)` is stricter: it rejects a right-hand
+side with a null component because the original equation `K x = b` has
+no solution. See
+[`vignette("psd-geometry")`](https://bbuchsbaum.github.io/eigencore/articles/psd-geometry.md)
+for the complete capability table, tolerance and repair semantics,
+sparse constructors, block primitives, persistence, and the explicit
+reduction path for singular generalized eigenproblems.
+
 ## Center and scale without densifying
 
 A dense centered copy of `A` would occupy **400 MB**; the sparse
@@ -207,9 +264,9 @@ eig
 #>   target: smallest
 #>   restart: native_tridiagonal_shift_invert_lanczos
 #>   locked: 0
-#>   max residual: 9.026589e-10
-#>   max backward error: 2.605774e-12
-#>   max orthogonality loss: 4.884981e-15
+#>   max residual: 7.236489e-10
+#>   max backward error: 2.089012e-12
+#>   max orthogonality loss: 3.552714e-15
 #>   norm bound: frobenius_metadata+identity_exact
 #>   scale estimated: FALSE
 #>   certificate: passed
@@ -302,14 +359,15 @@ fails.
 
 ## Status
 
-eigencore 1.1.0 is the current release. Its additive API includes
-certified Hermitian warm starts and mid-sweep Lanczos checks; eligible
-large largest-SVD problems also gain an implicit-Gram native route with
-exact original-coordinate certification and an explicit fallback. The
-exported API is frozen by snapshot tests, and breaking changes follow
-semantic versioning. Unsupported or prototype solver families remain
-visibly labeled `reference` in `fit$method`. The package vignettes
-describe the workflow map, benchmark evidence, and current boundaries.
+eigencore 1.3.0 is the current release. Its additive API includes
+certified real-double PSD factors, image-space reduction, strict
+singular solves, metric block primitives, dense Gram factors, and
+non-densifying structural sparse Gram and graph-Laplacian paths. The
+generalized-eigen `B`/`metric=` surface remains SPD-only; singular forms
+use explicit image reduction. The exported API is frozen by snapshot
+tests, and breaking changes follow semantic versioning. Unsupported
+solver or PSD capability families remain visibly unavailable rather than
+silently falling back.
 
 ## License
 
