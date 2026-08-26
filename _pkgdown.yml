@@ -32,6 +32,27 @@ reference:
   - svd_partial
   - generalized_schur
   - generalized_svd
+- title: Certified PSD geometry
+  desc: Validate real PSD forms, inspect evidence, and work on their certified image spaces.
+  contents:
+  - psd_tolerance
+  - psd_policy
+  - psd_identity
+  - psd_factor
+  - psd_gram_factor
+  - psd_laplacian
+  - psd_capabilities
+  - psd_spectrum
+  - psd_rank
+  - psd_nullity
+  - psd_apply
+  - psd_operator
+  - psd_reduce
+  - psd_lift
+  - psd_solve
+  - psd_gram
+  - psd_orthonormalize
+  - psd_reduced_operator
 - title: RSpectra-compatible shims
   desc: Drop-in replacements for `RSpectra::eigs()`, `eigs_sym()`, and `svds()`.
   contents:
@@ -117,6 +138,7 @@ articles:
   navbar: ~
   contents:
   - eigencore
+  - psd-geometry
   - warm-start-continuation
   - sparse-pca
   - certificates

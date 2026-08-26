@@ -8,7 +8,11 @@
 \description{
 Computes the top-k singular triplets or eigenpairs of large sparse and
 structured matrices, with a numerical certificate attached to every result.
-See \code{\link[=svd_partial]{svd_partial()}}, \code{\link[=eig_partial]{eig_partial()}}, and \code{vignette("eigencore")}.
+It also validates and factors finite real symmetric positive-semidefinite
+forms, including singular image-space geometry and structural sparse Gram
+and graph-Laplacian paths. See \code{\link[=svd_partial]{svd_partial()}}, \code{\link[=eig_partial]{eig_partial()}},
+\code{\link[=psd_factor]{psd_factor()}}, \code{vignette("eigencore")}, and
+\code{vignette("psd-geometry")}.
 }
 \seealso{
 Useful links:

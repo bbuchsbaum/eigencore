@@ -1,6 +1,6 @@
 Package: eigencore
 Title: Certified Partial Eigenvalue and Singular Value Computation
-Version: 1.2.0
+Version: 1.3.0
 Authors@R: c(
     person("Bradley", "Buchsbaum", role = c("aut", "cre", "cph"), email = "brad.buchsbaum@gmail.com")
   )
@@ -9,7 +9,10 @@ Maintainer: Bradley Buchsbaum <brad.buchsbaum@gmail.com>
 Description: Computes the top-k singular triplets or eigenpairs of large
     sparse and structured matrices: the computation behind principal component
     analysis on big sparse data, spectral embeddings, and low-rank
-    approximation. Every result carries a numerical certificate with
+    approximation. It also validates and factors finite real symmetric
+    positive-semidefinite forms, including singular image-space geometry and
+    structural sparse Gram and graph-Laplacian paths. Every result carries a
+    numerical certificate with
     residuals, a backward-error bound, orthogonality loss, and a pass/fail
     flag, and bounds that can only be estimated are reported as such rather
     than passed. Centered, scaled, and composed operators are solved through

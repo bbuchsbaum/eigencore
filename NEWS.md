@@ -1,3 +1,60 @@
+# eigencore 1.3.0 (2026-08-25)
+
+## Certified positive-semidefinite geometry
+
+* Add a frozen, additive real-double PSD surface: `psd_tolerance()`,
+  `psd_policy()`, `psd_identity()`, `psd_factor()`, `psd_gram_factor()`,
+  `psd_laplacian()`, `psd_capabilities()`, `psd_spectrum()`, `psd_rank()`,
+  `psd_nullity()`, `psd_apply()`, `psd_operator()`, `psd_reduce()`,
+  `psd_lift()`, `psd_solve()`, `psd_gram()`, `psd_orthonormalize()`, and
+  `psd_reduced_operator()`. Identity, diagonal, dense spectral, and dense Gram
+  factors expose complete numerical actions with typed validation,
+  provenance, certificates, work, retained-memory, and RDS integrity records.
+* Define the singular geometry explicitly: the source is a seminorm in its
+  original coordinates, while canonical reduction represents the metric on
+  `image(K)` or the quotient by `null(K)`. Roots, inverse roots,
+  pseudoinverses, complementary projectors, reduction/lift, block
+  orthonormalization, and reduced operators satisfy independently certified
+  postconditions. `psd_solve()` is a strict equation solver and rejects RHS
+  null components; pseudoinverse application remains total.
+* Freeze separate Frobenius-relative tolerances for symmetry, positivity,
+  numerical rank, and RHS compatibility. Classification retains original and
+  repaired spectra, exact threshold categories, and repair defects. No
+  `max(1, scale)` floor is inserted, so zero-absolute-tolerance classification
+  remains invariant under finite positive rescaling.
+
+## Structural sparse paths
+
+* Add non-densifying `dgCMatrix` Gram factors that certify form and Gram
+  actions from a supplied factor while withholding unsupported roots, rank,
+  projectors, reduction, and solves.
+* Add `dgCMatrix`/`dsCMatrix` graph-Laplacian validation for symmetry,
+  non-positive off-diagonals, zero row sums, optional canonical diagonal
+  repair, and connected-component algebraic nullity. The structural route
+  exposes form and Gram actions without claiming a complete spectrum.
+* Generic sparse symmetric matrices and opaque callbacks remain unsupported
+  PSD-factor sources. Capability failures are typed and occur before callback
+  probing, dense conversion, or undocumented approximation. The existing
+  generalized-eigen `B`/`metric=` API remains SPD-only; singular PSD problems
+  use explicit image-space reduction.
+
+## Certification and downstream conformance
+
+* Add adversarial numerical coverage for exact threshold neighbors, scales
+  from `1e-12` through `1e12`, repeated eigenspaces, null contamination,
+  permutation and block metamorphisms, mutation adequacy, strict-solve
+  compatibility, serialization integrity, and fail-closed capability paths.
+* Certify 50,000-row sparse Gram and path-Laplacian fixtures without dense
+  `n` by `n` state, recording retained bytes, cumulative R allocation,
+  isolated-process peak RSS, and reusable-action timing separately.
+* Add a provenance-required installed-consumer gate using exported APIs only.
+  gprocrustes O/SO and quotient-space checks and DKGE root, projector,
+  orthonormalization, and K-Procrustes differential checks pass. A
+  pre-existing DKGE tiny-scale threshold divergence remains explicit rather
+  than weakening eigencore's relative policy. rfugw adoption is deferred
+  because its candidate spectral auxiliaries do not require the PSD factor
+  algebra.
+
 # eigencore 1.2.0 (2026-08-25)
 
 ## Reusable solver workflows

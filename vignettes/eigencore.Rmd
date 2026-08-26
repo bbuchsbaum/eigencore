@@ -232,6 +232,8 @@ plan is not modified.
 
 ## Where to go next
 
+- `vignette("psd-geometry")` — certify a singular PSD form, work explicitly
+  on its image space, and choose dense or structural sparse capabilities.
 - `vignette("sparse-pca")` — the flagship workflow: centering and scaling a
   sparse matrix without densifying it, and building matrix-free operators
   by hand.
