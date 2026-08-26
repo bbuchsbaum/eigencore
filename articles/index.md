@@ -4,6 +4,8 @@
 
 - [Get started with
   eigencore](https://bbuchsbaum.github.io/eigencore/articles/eigencore.md):
+- [Freeze and replay a solver
+  decision](https://bbuchsbaum.github.io/eigencore/articles/reproducible-solver-plans.md):
 - [Work with singular PSD
   geometry](https://bbuchsbaum.github.io/eigencore/articles/psd-geometry.md):
 - [Reuse an eigenspace across a parameter

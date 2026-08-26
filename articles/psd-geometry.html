@@ -34,7 +34,8 @@
 <li class="active nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
-<li><a class="dropdown-item" href="../articles/psd-geometry.html">Work with singular PSD geometry</a></li>
+<li><a class="dropdown-item" href="../articles/reproducible-solver-plans.html">Freeze and replay a solver decision</a></li>
+    <li><a class="dropdown-item" href="../articles/psd-geometry.html">Work with singular PSD geometry</a></li>
     <li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
     <li><a class="dropdown-item" href="../articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
     <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
@@ -75,7 +76,7 @@
       <h1>Work with singular PSD geometry</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/v1.3.0/vignettes/psd-geometry.Rmd" class="external-link"><code>vignettes/psd-geometry.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/vignettes/psd-geometry.Rmd" class="external-link"><code>vignettes/psd-geometry.Rmd</code></a></small>
       <div class="d-none name"><code>psd-geometry.Rmd</code></div>
     </div>
 
@@ -190,9 +191,21 @@ positive modes. They are not ordinary inverses of singular
 <span>  <span class="fu"><a href="https://rdrr.io/r/base/Logic.html" class="external-link">isTRUE</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/all.equal-methods.html" class="external-link">all.equal</a></span><span class="op">(</span><span class="va">K_half</span> <span class="op"><a href="https://rdrr.io/r/base/matmult.html" class="external-link">%*%</a></span> <span class="va">K_ihalf</span>, <span class="va">P</span>, tolerance <span class="op">=</span> <span class="fl">1e-12</span><span class="op">)</span><span class="op">)</span>,</span>
 <span>  <span class="fu"><a href="https://rdrr.io/r/base/Logic.html" class="external-link">isTRUE</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/all.equal-methods.html" class="external-link">all.equal</a></span><span class="op">(</span><span class="va">K</span> <span class="op"><a href="https://rdrr.io/r/base/matmult.html" class="external-link">%*%</a></span> <span class="va">K_plus</span>, <span class="va">P</span>, tolerance <span class="op">=</span> <span class="fl">1e-12</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
-<p>Use <code>psd_operator(K_factor, action)</code> when an eigencore
-solver or another operator consumer needs the action without a dense
-materialization.</p>
+<p>Use <code><a href="../reference/psd_operator.html">psd_operator()</a></code> when an eigencore solver or another
+operator consumer needs the action without a dense materialization. The
+operator and direct interfaces represent the same certified map:</p>
+<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">sqrt_operator</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/psd_operator.html">psd_operator</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="st">"sqrt"</span><span class="op">)</span></span>
+<span><span class="va">sqrt_operator</span></span>
+<span><span class="co">#&gt; &lt;eigencore operator&gt;</span></span>
+<span><span class="co">#&gt;   name: certified PSD sqrt </span></span>
+<span><span class="co">#&gt;   dim: 4 x 4 </span></span>
+<span><span class="co">#&gt;   dtype: double </span></span>
+<span><span class="co">#&gt;   structure: hermitian</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/Extremes.html" class="external-link">max</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">abs</a></span><span class="op">(</span></span>
+<span>  <span class="va">sqrt_operator</span><span class="op">$</span><span class="fu">apply</span><span class="op">(</span><span class="va">X</span><span class="op">)</span> <span class="op">-</span> <span class="fu"><a href="../reference/psd_apply.html">psd_apply</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">X</span>, <span class="st">"sqrt"</span><span class="op">)</span></span>
+<span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="co">#&gt; [1] 0</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="move-explicitly-to-the-metric-space">Move explicitly to the metric space<a class="anchor" aria-label="anchor" href="#move-explicitly-to-the-metric-space"></a>
@@ -201,7 +214,7 @@ materialization.</p>
 canonical image coordinates. <code><a href="../reference/psd_lift.html">psd_lift()</a></code> returns their
 minimum-Euclidean-norm representatives. Null-space contamination
 disappears under reduction, while every K-Gram is preserved.</p>
-<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">reduced_X</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/psd_reduce.html">psd_reduce</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">X</span><span class="op">)</span></span>
 <span><span class="va">contaminated_X</span> <span class="op">&lt;-</span> <span class="va">X</span> <span class="op">+</span> <span class="fl">3</span> <span class="op">*</span> <span class="va">null_X</span></span>
 <span></span>
@@ -226,7 +239,7 @@ disappears under reduction, while every K-Gram is preserved.</p>
 inner product. <code><a href="../reference/psd_orthonormalize.html">psd_orthonormalize()</a></code> performs the
 corresponding block operation and reports discovered rank, conditioning,
 dropped directions, work, and a fresh postcondition certificate.</p>
-<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">K_basis</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/psd_orthonormalize.html">psd_orthonormalize</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">X</span>, required_rank <span class="op">=</span> <span class="fl">2</span><span class="op">)</span></span>
 <span><span class="va">K_basis</span></span>
 <span><span class="co">#&gt; eigencore PSD-orthonormal block</span></span>
@@ -249,13 +262,12 @@ component. A strict solution of <code>K x = b</code> exists only when
 <code>b</code> lies in <code>image(K)</code>. <code><a href="../reference/psd_solve.html">psd_solve()</a></code>
 checks that compatibility per right-hand side and certifies the original
 equation.</p>
-<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">b</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">0</span>, <span class="fl">0</span>, <span class="fl">0</span><span class="op">)</span></span>
 <span><span class="fu"><a href="../reference/psd_apply.html">psd_apply</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">b</span>, <span class="st">"pseudoinverse"</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1]  0.2777778 -0.2222222  0.2777778 -0.2222222</span></span>
-<span></span>
-<span><span class="va">incompatible</span> <span class="op">&lt;-</span> <span class="kw"><a href="https://rdrr.io/r/base/conditions.html" class="external-link">tryCatch</a></span><span class="op">(</span><span class="fu"><a href="../reference/psd_solve.html">psd_solve</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">b</span><span class="op">)</span>, error <span class="op">=</span> <span class="va">identity</span><span class="op">)</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span></span>
+<span><span class="co">#&gt; [1]  0.2777778 -0.2222222  0.2777778 -0.2222222</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span></span>
 <span>  class <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/class.html" class="external-link">class</a></span><span class="op">(</span><span class="va">incompatible</span><span class="op">)</span><span class="op">[</span><span class="fl">1</span><span class="op">]</span>,</span>
 <span>  code <span class="op">=</span> <span class="va">incompatible</span><span class="op">$</span><span class="va">code</span>,</span>
 <span>  field <span class="op">=</span> <span class="va">incompatible</span><span class="op">$</span><span class="va">field</span></span>
@@ -263,19 +275,17 @@ equation.</p>
 <span><span class="co">#&gt;                            class                             code </span></span>
 <span><span class="co">#&gt; "eigencore_psd_incompatible_rhs"               "incompatible_rhs" </span></span>
 <span><span class="co">#&gt;                            field </span></span>
-<span><span class="co">#&gt;                              "B"</span></span>
-<span></span>
-<span><span class="va">b_image</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/psd_apply.html">psd_apply</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">b</span>, <span class="st">"image_projector"</span><span class="op">)</span></span>
+<span><span class="co">#&gt;                              "B"</span></span></code></pre></div>
+<p>Projecting the right-hand side onto <code>image(K)</code> makes the
+equation compatible:</p>
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">b_image</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/psd_apply.html">psd_apply</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">b</span>, <span class="st">"image_projector"</span><span class="op">)</span></span>
 <span><span class="va">strict</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/psd_solve.html">psd_solve</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">b_image</span><span class="op">)</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/stopifnot.html" class="external-link">stopifnot</a></span><span class="op">(</span></span>
-<span>  <span class="va">strict</span><span class="op">$</span><span class="va">compatible</span>,</span>
-<span>  <span class="fu"><a href="../reference/certificate.html">certificate</a></span><span class="op">(</span><span class="va">strict</span><span class="op">)</span><span class="op">$</span><span class="va">passed</span>,</span>
-<span>  <span class="fu"><a href="https://rdrr.io/r/base/Logic.html" class="external-link">isTRUE</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/all.equal-methods.html" class="external-link">all.equal</a></span><span class="op">(</span></span>
-<span>    <span class="fu"><a href="https://rdrr.io/r/base/numeric.html" class="external-link">as.numeric</a></span><span class="op">(</span><span class="va">K</span> <span class="op"><a href="https://rdrr.io/r/base/matmult.html" class="external-link">%*%</a></span> <span class="va">strict</span><span class="op">$</span><span class="va">solution</span><span class="op">)</span>,</span>
-<span>    <span class="fu"><a href="https://rdrr.io/r/base/numeric.html" class="external-link">as.numeric</a></span><span class="op">(</span><span class="va">b_image</span><span class="op">)</span>,</span>
-<span>    tolerance <span class="op">=</span> <span class="fl">1e-12</span></span>
-<span>  <span class="op">)</span><span class="op">)</span></span>
-<span><span class="op">)</span></span></code></pre></div>
+<span><span class="va">strict</span></span>
+<span><span class="co">#&gt; eigencore strict PSD solve</span></span>
+<span><span class="co">#&gt;   columns: 1 </span></span>
+<span><span class="co">#&gt;   compatible: TRUE </span></span>
+<span><span class="co">#&gt;   certificate passed: TRUE</span></span></code></pre></div>
 <p>Relax the RHS tolerance only when that change is part of your model;
 the factor records the default scale-relative policy, while an
 operation-specific override is recorded in the solve certificate.</p>
@@ -287,7 +297,7 @@ operation-specific override is recorded in the solve certificate.</p>
 surface remains SPD-only. Do not pass a singular PSD form to it.
 Instead, reduce the problem explicitly to the finite image space, solve
 the ordinary Euclidean problem there, then lift the vectors.</p>
-<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">A</span> <span class="op">&lt;-</span> <span class="va">Q</span> <span class="op"><a href="https://rdrr.io/r/base/matmult.html" class="external-link">%*%</a></span> <span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">8</span>, <span class="fl">3</span>, <span class="fl">5</span>, <span class="fl">2</span><span class="op">)</span><span class="op">)</span> <span class="op"><a href="https://rdrr.io/r/base/matmult.html" class="external-link">%*%</a></span> <span class="fu"><a href="https://rdrr.io/r/base/t.html" class="external-link">t</a></span><span class="op">(</span><span class="va">Q</span><span class="op">)</span></span>
 <span><span class="va">A_reduced</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/psd_reduced_operator.html">psd_reduced_operator</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">A</span><span class="op">)</span></span>
 <span><span class="va">A_image</span> <span class="op">&lt;-</span> <span class="va">A_reduced</span><span class="op">$</span><span class="fu">apply</span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="fu"><a href="../reference/psd_rank.html">psd_rank</a></span><span class="op">(</span><span class="va">K_factor</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
@@ -322,7 +332,7 @@ square sources use a complete symmetric eigendecomposition. A supplied
 dense Gram factor uses a complete compact SVD. These paths expose roots,
 projectors, rank, reduction, strict solve, block primitives, and reduced
 operators.</p>
-<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">identity_factor</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/psd_identity.html">psd_identity</a></span><span class="op">(</span><span class="fl">4</span><span class="op">)</span></span>
 <span><span class="va">diagonal_factor</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/psd_factor.html">psd_factor</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">9</span>, <span class="fl">1</span>, <span class="fl">0</span>, <span class="fl">0</span><span class="op">)</span><span class="op">)</span></span>
 <span></span>
@@ -346,7 +356,7 @@ and make only structural claims. A sparse Gram factor proves
 actions are available without an <code>n</code> by <code>n</code> dense
 matrix. It does not label <code>L</code> as the principal square
 root.</p>
-<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb14"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">L_sparse</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/Matrix.html" class="external-link">Matrix</a></span><span class="op">(</span><span class="va">L_dense</span>, sparse <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
 <span><span class="va">gram_sparse</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/psd_gram_factor.html">psd_gram_factor</a></span><span class="op">(</span><span class="va">L_sparse</span>, orientation <span class="op">=</span> <span class="st">"columns"</span><span class="op">)</span></span>
 <span><span class="fu"><a href="../reference/psd_capabilities.html">psd_capabilities</a></span><span class="op">(</span><span class="va">gram_sparse</span><span class="op">)</span></span>
@@ -363,7 +373,7 @@ graph structure and proves algebraic nullity by counting connected
 components. Numerical rank, roots, projectors, and reduction remain
 unavailable because the constructor never computes a complete
 spectrum.</p>
-<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb15"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">L_path</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/bandSparse.html" class="external-link">bandSparse</a></span><span class="op">(</span></span>
 <span>  <span class="fl">5</span>, <span class="fl">5</span>,</span>
 <span>  k <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="op">-</span><span class="fl">1</span>, <span class="fl">0</span>, <span class="fl">1</span><span class="op">)</span>,</span>
@@ -374,10 +384,9 @@ spectrum.</p>
 <span><span class="fu"><a href="../reference/psd_nullity.html">psd_nullity</a></span><span class="op">(</span><span class="va">laplacian</span>, type <span class="op">=</span> <span class="st">"algebraic"</span><span class="op">)</span></span>
 <span><span class="co">#&gt; [1] 1</span></span>
 <span><span class="fu"><a href="../reference/psd_apply.html">psd_apply</a></span><span class="op">(</span><span class="va">laplacian</span>, <span class="fu"><a href="https://rdrr.io/r/base/rep.html" class="external-link">rep</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">5</span><span class="op">)</span>, <span class="st">"form"</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1] 0 0 0 0 0</span></span>
-<span></span>
-<span><span class="va">rank_error</span> <span class="op">&lt;-</span> <span class="kw"><a href="https://rdrr.io/r/base/conditions.html" class="external-link">tryCatch</a></span><span class="op">(</span><span class="fu"><a href="../reference/psd_rank.html">psd_rank</a></span><span class="op">(</span><span class="va">laplacian</span><span class="op">)</span>, error <span class="op">=</span> <span class="va">identity</span><span class="op">)</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>class <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/class.html" class="external-link">class</a></span><span class="op">(</span><span class="va">rank_error</span><span class="op">)</span><span class="op">[</span><span class="fl">1</span><span class="op">]</span>, code <span class="op">=</span> <span class="va">rank_error</span><span class="op">$</span><span class="va">code</span><span class="op">)</span></span>
+<span><span class="co">#&gt; [1] 0 0 0 0 0</span></span></code></pre></div>
+<div class="sourceCode" id="cb16"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>class <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/class.html" class="external-link">class</a></span><span class="op">(</span><span class="va">rank_error</span><span class="op">)</span><span class="op">[</span><span class="fl">1</span><span class="op">]</span>, code <span class="op">=</span> <span class="va">rank_error</span><span class="op">$</span><span class="va">code</span><span class="op">)</span></span>
 <span><span class="co">#&gt;                               class                                code </span></span>
 <span><span class="co">#&gt; "eigencore_psd_incomplete_evidence"               "incomplete_evidence"</span></span></code></pre></div>
 <p>The admitted release manifest is:</p>
@@ -482,6 +491,52 @@ positive rescaling. Symmetry, positivity, rank, and RHS compatibility
 have distinct typed tolerances because they answer different questions.
 Customize them with <code><a href="../reference/psd_policy.html">psd_policy()</a></code> and
 <code><a href="../reference/psd_tolerance.html">psd_tolerance()</a></code>, not unnamed scalar cutoffs.</p>
+<div class="section level3">
+<h3 id="how-does-a-rank-tolerance-change-the-factor">How does a rank tolerance change the factor?<a class="anchor" aria-label="anchor" href="#how-does-a-rank-tolerance-change-the-factor"></a>
+</h3>
+<p>Consider a diagonal source with one large mode, one small positive
+mode, and a tiny accepted negative value. The default rank policy treats
+the small positive mode as numerical null. A finer, explicitly recorded
+rank tolerance retains it:</p>
+<div class="sourceCode" id="cb18"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">classification_source</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">4</span>, <span class="fl">1e-9</span>, <span class="op">-</span><span class="fl">1e-15</span><span class="op">)</span></span>
+<span><span class="va">default_factor</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/psd_factor.html">psd_factor</a></span><span class="op">(</span><span class="va">classification_source</span><span class="op">)</span></span>
+<span><span class="va">fine_policy</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/psd_policy.html">psd_policy</a></span><span class="op">(</span></span>
+<span>  rank <span class="op">=</span> <span class="fu"><a href="../reference/psd_tolerance.html">psd_tolerance</a></span><span class="op">(</span>rel <span class="op">=</span> <span class="fl">1e-12</span><span class="op">)</span></span>
+<span><span class="op">)</span></span>
+<span><span class="va">fine_factor</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/psd_factor.html">psd_factor</a></span><span class="op">(</span><span class="va">classification_source</span>, policy <span class="op">=</span> <span class="va">fine_policy</span><span class="op">)</span></span>
+<span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
+<span>  policy <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"default"</span>, <span class="st">"finer rank tolerance"</span><span class="op">)</span>,</span>
+<span>  rank_threshold <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span></span>
+<span>    <span class="fu"><a href="../reference/certificate.html">certificate</a></span><span class="op">(</span><span class="va">default_factor</span><span class="op">)</span><span class="op">$</span><span class="va">thresholds</span><span class="op">$</span><span class="va">rank</span>,</span>
+<span>    <span class="fu"><a href="../reference/certificate.html">certificate</a></span><span class="op">(</span><span class="va">fine_factor</span><span class="op">)</span><span class="op">$</span><span class="va">thresholds</span><span class="op">$</span><span class="va">rank</span></span>
+<span>  <span class="op">)</span>,</span>
+<span>  retained_rank <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fu"><a href="../reference/psd_rank.html">psd_rank</a></span><span class="op">(</span><span class="va">default_factor</span><span class="op">)</span>, <span class="fu"><a href="../reference/psd_rank.html">psd_rank</a></span><span class="op">(</span><span class="va">fine_factor</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="op">)</span></span>
+<span><span class="co">#&gt;                 policy rank_threshold retained_rank</span></span>
+<span><span class="co">#&gt; 1              default   5.960464e-08             1</span></span>
+<span><span class="co">#&gt; 2 finer rank tolerance   4.000000e-12             2</span></span></code></pre></div>
+<p><code><a href="../reference/psd_spectrum.html">psd_spectrum()</a></code> keeps the admitted source separate from
+the repaired spectrum that powers factor actions:</p>
+<div class="sourceCode" id="cb19"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
+<span>  source <span class="op">=</span> <span class="fu"><a href="../reference/psd_spectrum.html">psd_spectrum</a></span><span class="op">(</span><span class="va">default_factor</span><span class="op">)</span>,</span>
+<span>  action <span class="op">=</span> <span class="fu"><a href="../reference/psd_spectrum.html">psd_spectrum</a></span><span class="op">(</span><span class="va">default_factor</span>, repaired <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
+<span><span class="op">)</span></span>
+<span><span class="co">#&gt;   source action</span></span>
+<span><span class="co">#&gt; 1  4e+00      4</span></span>
+<span><span class="co">#&gt; 2  1e-09      0</span></span>
+<span><span class="co">#&gt; 3 -1e-15      0</span></span></code></pre></div>
+<p>The negative entry remains visible in <code>source</code> and is zero
+in <code>action</code>. The small positive entry is also zero under the
+default rank policy. Changing that policy changes the numerical rank
+claim; it does not erase the original spectrum or convert numerical rank
+into an algebraic theorem.</p>
+</div>
+<div class="section level3">
+<h3 id="what-survives-an-rds-round-trip">What survives an RDS round trip?<a class="anchor" aria-label="anchor" href="#what-survives-an-rds-round-trip"></a>
+</h3>
 <p>Every 1.3 factor is an immutable snapshot.
 <code><a href="../reference/operator_identity.html">operator_identity()</a></code>, <code><a href="../reference/work.html">work()</a></code>, and
 <code><a href="../reference/retained_bytes.html">retained_bytes()</a></code> expose lineage, logical work, and retained
@@ -489,7 +544,30 @@ memory. Base <code><a href="https://rdrr.io/r/base/readRDS.html" class="external
 persistence format; integrity and schema checks run before a restored
 factor acts. Live and opaque factors are not admitted in 1.3, even when
 a callback carries an operator ID and revision.</p>
-<div class="sourceCode" id="cb14"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb20"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">factor_path</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/tempfile.html" class="external-link">tempfile</a></span><span class="op">(</span>fileext <span class="op">=</span> <span class="st">".rds"</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/readRDS.html" class="external-link">saveRDS</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">factor_path</span><span class="op">)</span></span>
+<span><span class="va">restored_factor</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/readRDS.html" class="external-link">readRDS</a></span><span class="op">(</span><span class="va">factor_path</span><span class="op">)</span></span>
+<span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
+<span>  portable <span class="op">=</span> <span class="fu"><a href="../reference/operator_identity.html">operator_identity</a></span><span class="op">(</span><span class="va">restored_factor</span><span class="op">)</span><span class="op">$</span><span class="va">portable</span>,</span>
+<span>  same_identity <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/identical.html" class="external-link">identical</a></span><span class="op">(</span></span>
+<span>    <span class="fu"><a href="../reference/operator_identity.html">operator_identity</a></span><span class="op">(</span><span class="va">restored_factor</span><span class="op">)</span>,</span>
+<span>    <span class="fu"><a href="../reference/operator_identity.html">operator_identity</a></span><span class="op">(</span><span class="va">K_factor</span><span class="op">)</span></span>
+<span>  <span class="op">)</span>,</span>
+<span>  same_action <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Logic.html" class="external-link">isTRUE</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/all.equal-methods.html" class="external-link">all.equal</a></span><span class="op">(</span></span>
+<span>    <span class="fu"><a href="../reference/psd_apply.html">psd_apply</a></span><span class="op">(</span><span class="va">restored_factor</span>, <span class="va">X</span>, <span class="st">"form"</span><span class="op">)</span>,</span>
+<span>    <span class="fu"><a href="../reference/psd_apply.html">psd_apply</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">X</span>, <span class="st">"form"</span><span class="op">)</span></span>
+<span>  <span class="op">)</span><span class="op">)</span>,</span>
+<span>  work_complete <span class="op">=</span> <span class="fu"><a href="../reference/work.html">work</a></span><span class="op">(</span><span class="va">restored_factor</span><span class="op">)</span><span class="op">$</span><span class="va">complete</span>,</span>
+<span>  retained_bytes <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/numeric.html" class="external-link">as.numeric</a></span><span class="op">(</span><span class="fu"><a href="../reference/retained_bytes.html">retained_bytes</a></span><span class="op">(</span><span class="va">restored_factor</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="op">)</span></span>
+<span><span class="co">#&gt;   portable same_identity same_action work_complete retained_bytes</span></span>
+<span><span class="co">#&gt; 1     TRUE          TRUE        TRUE          TRUE          51504</span></span></code></pre></div>
+<p>The byte count describes the R object retained by this factor, not
+peak memory during construction. A restored factor acts only after its
+recorded identity, schema, and integrity token agree with its state.</p>
+<div class="sourceCode" id="cb21"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">callback_calls</span> <span class="op">&lt;-</span> <span class="fl">0L</span></span>
 <span><span class="va">opaque</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/linear_operator.html">linear_operator</a></span><span class="op">(</span></span>
 <span>  dim <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">4</span>, <span class="fl">4</span><span class="op">)</span>,</span>
@@ -501,9 +579,14 @@ a callback carries an operator ID and revision.</p>
 <span>  structure <span class="op">=</span> <span class="fu"><a href="../reference/hermitian.html">hermitian</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  name <span class="op">=</span> <span class="st">"declared Hermitian callback"</span></span>
 <span><span class="op">)</span></span>
-<span></span>
-<span><span class="va">opaque_error</span> <span class="op">&lt;-</span> <span class="kw"><a href="https://rdrr.io/r/base/conditions.html" class="external-link">tryCatch</a></span><span class="op">(</span><span class="fu"><a href="../reference/psd_factor.html">psd_factor</a></span><span class="op">(</span><span class="va">opaque</span><span class="op">)</span>, error <span class="op">=</span> <span class="va">identity</span><span class="op">)</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span></span>
+<span><span class="va">opaque</span></span>
+<span><span class="co">#&gt; &lt;eigencore operator&gt;</span></span>
+<span><span class="co">#&gt;   name: declared Hermitian callback </span></span>
+<span><span class="co">#&gt;   dim: 4 x 4 </span></span>
+<span><span class="co">#&gt;   dtype: double </span></span>
+<span><span class="co">#&gt;   structure: hermitian</span></span></code></pre></div>
+<div class="sourceCode" id="cb22"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span></span>
 <span>  class <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/class.html" class="external-link">class</a></span><span class="op">(</span><span class="va">opaque_error</span><span class="op">)</span><span class="op">[</span><span class="fl">1</span><span class="op">]</span>,</span>
 <span>  code <span class="op">=</span> <span class="va">opaque_error</span><span class="op">$</span><span class="va">code</span>,</span>
 <span>  callback_calls <span class="op">=</span> <span class="va">callback_calls</span></span>
@@ -516,23 +599,6 @@ a callback carries an operator ID and revision.</p>
 metadata says how an operator is intended to behave, but it is not a PSD
 proof, a complete spectrum, or a certified square root.</p>
 </div>
-<div class="section level2">
-<h2 id="downstream-ownership">Downstream ownership<a class="anchor" aria-label="anchor" href="#downstream-ownership"></a>
-</h2>
-<p>Application packages should consume exported factor actions and keep
-their own estimands and algorithms:</p>
-<ul>
-<li>gprocrustes keeps translation gauges, O/SO choices, objectives,
-polar solvers, and consensus estimators;</li>
-<li>DKGE keeps design construction, scientific rank admission,
-cross-validation, regularization, contrasts, inference, and
-interpretation; and</li>
-<li>optimal-transport packages keep mass policy, Sinkhorn state,
-objectives, and convergence semantics.</li>
-</ul>
-<p>An eigencore certificate establishes the numerical statement it
-names. It does not decide that a singular geometry is scientifically
-adequate for a caller’s question.</p>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>

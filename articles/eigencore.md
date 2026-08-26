@@ -95,7 +95,8 @@ The certificate’s residual is
 `||A v - lambda B v|| / (||A|| + |lambda| ||B||)`, and orthogonality is
 measured in the `B`-inner product where appropriate. See
 [`vignette("generalized-eigenproblems")`](https://bbuchsbaum.github.io/eigencore/articles/generalized-eigenproblems.md)
-for dense pencils, singular `B`, and the QZ decomposition.
+for dense pencils, singular `B`, the QZ decomposition, and generalized
+SVD.
 
 ## Partial SVD
 
@@ -289,6 +290,9 @@ plan is not modified.
 
 ## Where to go next
 
+- [`vignette("reproducible-solver-plans")`](https://bbuchsbaum.github.io/eigencore/articles/reproducible-solver-plans.md)
+  — freeze, persist, validate, and replay an inspected route without
+  silently replanning it.
 - [`vignette("psd-geometry")`](https://bbuchsbaum.github.io/eigencore/articles/psd-geometry.md)
   — certify a singular PSD form, work explicitly on its image space, and
   choose dense or structural sparse capabilities.
@@ -299,7 +303,7 @@ plan is not modified.
   is the deep dive on reading the numerical evidence — what each field
   means and what to do when a check fails.
 - [`vignette("generalized-eigenproblems")`](https://bbuchsbaum.github.io/eigencore/articles/generalized-eigenproblems.md)
-  covers dense pencils, singular `B`, and the QZ decomposition.
+  covers dense pencils, singular `B`, QZ, and generalized SVD.
 - Run
   [`help(package = "eigencore")`](https://bbuchsbaum.github.io/eigencore/reference)
   to browse the installed help index.

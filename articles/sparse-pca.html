@@ -34,7 +34,8 @@
 <li class="active nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
-<li><a class="dropdown-item" href="../articles/psd-geometry.html">Work with singular PSD geometry</a></li>
+<li><a class="dropdown-item" href="../articles/reproducible-solver-plans.html">Freeze and replay a solver decision</a></li>
+    <li><a class="dropdown-item" href="../articles/psd-geometry.html">Work with singular PSD geometry</a></li>
     <li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
     <li><a class="dropdown-item" href="../articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
     <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
@@ -75,7 +76,7 @@
       <h1>PCA on sparse data without densifying</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/v1.3.0/vignettes/sparse-pca.Rmd" class="external-link"><code>vignettes/sparse-pca.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/vignettes/sparse-pca.Rmd" class="external-link"><code>vignettes/sparse-pca.Rmd</code></a></small>
       <div class="d-none name"><code>sparse-pca.Rmd</code></div>
     </div>
 
@@ -252,13 +253,50 @@ problem/rank/target arguments as the solve itself, so you can check the
 route before paying for the computation.</p>
 </div>
 <div class="section level2">
+<h2 id="when-can-the-gram-matrix-stay-implicit">When can the Gram matrix stay implicit?<a class="anchor" aria-label="anchor" href="#when-can-the-gram-matrix-stay-implicit"></a>
+</h2>
+<p>An SVD route based on <code>A^T A</code> or <code>A A^T</code> does
+not have to construct that Gram matrix. When the smaller side is too
+large or poorly shaped for the bounded explicit-Gram path, eigencore can
+apply the normal operator implicitly and run a restarted eigensolver on
+that action.</p>
+<p>Use a square slice of the same sparse dataset to make the distinction
+visible. Its shape offers no small explicit Gram matrix, but the
+operator and its adjoint are still available:</p>
+<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">square_slice</span> <span class="op">&lt;-</span> <span class="va">A</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq_len</a></span><span class="op">(</span><span class="fl">96</span><span class="op">)</span>, <span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq_len</a></span><span class="op">(</span><span class="fl">96</span><span class="op">)</span><span class="op">]</span></span>
+<span><span class="va">implicit_plan</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/plan_solver.html">plan_solver</a></span><span class="op">(</span></span>
+<span>  <span class="fu"><a href="../reference/svd_problem.html">svd_problem</a></span><span class="op">(</span><span class="va">square_slice</span><span class="op">)</span>,</span>
+<span>  rank <span class="op">=</span> <span class="fl">4</span>,</span>
+<span>  target <span class="op">=</span> <span class="fu"><a href="../reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span></span>
+<span><span class="op">)</span></span>
+<span><span class="va">implicit_fit</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/solve-methods.html" class="external-link">solve</a></span><span class="op">(</span><span class="va">implicit_plan</span><span class="op">)</span></span>
+<span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
+<span>  planned <span class="op">=</span> <span class="va">implicit_fit</span><span class="op">$</span><span class="va">planned_method</span>,</span>
+<span>  actual <span class="op">=</span> <span class="va">implicit_fit</span><span class="op">$</span><span class="va">actual_method</span>,</span>
+<span>  fallback <span class="op">=</span> <span class="va">implicit_fit</span><span class="op">$</span><span class="va">fallback_used</span>,</span>
+<span>  certified <span class="op">=</span> <span class="fu"><a href="../reference/certificate.html">certificate</a></span><span class="op">(</span><span class="va">implicit_fit</span><span class="op">)</span><span class="op">$</span><span class="va">passed</span></span>
+<span><span class="op">)</span></span>
+<span><span class="co">#&gt;                                                      planned</span></span>
+<span><span class="co">#&gt; 1 native certified implicit Gram SVD (thick-restart Lanczos)</span></span>
+<span><span class="co">#&gt;                                                       actual fallback certified</span></span>
+<span><span class="co">#&gt; 1 native certified implicit Gram SVD (thick-restart Lanczos)    FALSE      TRUE</span></span></code></pre></div>
+<p>The plan says both what is avoided and what remains certified: the
+Gram matrix is not materialized, while the returned singular triplets
+are checked in the original coordinates. This is a routing decision, not
+a recommendation to form normal equations yourself; call
+<code><a href="../reference/svd_partial.html">svd_partial()</a></code> or execute the inspected plan and let the
+certificate judge the returned triplets.</p>
+</div>
+<div class="section level2">
 <h2 id="going-fully-matrix-free">Going fully matrix-free<a class="anchor" aria-label="anchor" href="#going-fully-matrix-free"></a>
 </h2>
 <p>Sometimes there’s no matrix at all — just a function that knows how
 to apply <code>A</code> and its adjoint. <code><a href="../reference/linear_operator.html">linear_operator()</a></code>
 wraps arbitrary callbacks the same way <code><a href="../reference/center.html">center()</a></code> wraps a
 sparse matrix.</p>
-<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">op</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/linear_operator.html">linear_operator</a></span><span class="op">(</span></span>
 <span>  dim <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/dim.html" class="external-link">dim</a></span><span class="op">(</span><span class="va">A</span><span class="op">)</span>,</span>
 <span>  apply <span class="op">=</span> <span class="kw">function</span><span class="op">(</span><span class="va">X</span>, <span class="va">alpha</span> <span class="op">=</span> <span class="fl">1</span>, <span class="va">beta</span> <span class="op">=</span> <span class="fl">0</span>, <span class="va">Y</span> <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span> <span class="op">{</span></span>
@@ -281,7 +319,7 @@ certificate. Supply the exact Frobenius norm — cheap to compute once for
 a sparse matrix — and the certificate can report
 <code>passed = TRUE</code> when its residual and orthogonality checks
 also meet tolerance:</p>
-<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">op_hinted</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/linear_operator.html">linear_operator</a></span><span class="op">(</span></span>
 <span>  dim <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/dim.html" class="external-link">dim</a></span><span class="op">(</span><span class="va">A</span><span class="op">)</span>,</span>
 <span>  apply <span class="op">=</span> <span class="va">op</span><span class="op">$</span><span class="va">apply</span>,</span>

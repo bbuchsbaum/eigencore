@@ -206,6 +206,47 @@ human-readable `reasons` state the same boundary.
 takes the same problem/rank/target arguments as the solve itself, so you
 can check the route before paying for the computation.
 
+## When can the Gram matrix stay implicit?
+
+An SVD route based on `A^T A` or `A A^T` does not have to construct that
+Gram matrix. When the smaller side is too large or poorly shaped for the
+bounded explicit-Gram path, eigencore can apply the normal operator
+implicitly and run a restarted eigensolver on that action.
+
+Use a square slice of the same sparse dataset to make the distinction
+visible. Its shape offers no small explicit Gram matrix, but the
+operator and its adjoint are still available:
+
+``` r
+
+square_slice <- A[seq_len(96), seq_len(96)]
+implicit_plan <- plan_solver(
+  svd_problem(square_slice),
+  rank = 4,
+  target = largest()
+)
+implicit_fit <- solve(implicit_plan)
+
+data.frame(
+  planned = implicit_fit$planned_method,
+  actual = implicit_fit$actual_method,
+  fallback = implicit_fit$fallback_used,
+  certified = certificate(implicit_fit)$passed
+)
+#>                                                      planned
+#> 1 native certified implicit Gram SVD (thick-restart Lanczos)
+#>                                                       actual fallback certified
+#> 1 native certified implicit Gram SVD (thick-restart Lanczos)    FALSE      TRUE
+```
+
+The plan says both what is avoided and what remains certified: the Gram
+matrix is not materialized, while the returned singular triplets are
+checked in the original coordinates. This is a routing decision, not a
+recommendation to form normal equations yourself; call
+[`svd_partial()`](https://bbuchsbaum.github.io/eigencore/reference/svd_partial.md)
+or execute the inspected plan and let the certificate judge the returned
+triplets.
+
 ## Going fully matrix-free
 
 Sometimes there’s no matrix at all — just a function that knows how to

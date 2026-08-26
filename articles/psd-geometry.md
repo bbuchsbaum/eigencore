@@ -127,8 +127,26 @@ stopifnot(
 )
 ```
 
-Use `psd_operator(K_factor, action)` when an eigencore solver or another
-operator consumer needs the action without a dense materialization.
+Use
+[`psd_operator()`](https://bbuchsbaum.github.io/eigencore/reference/psd_operator.md)
+when an eigencore solver or another operator consumer needs the action
+without a dense materialization. The operator and direct interfaces
+represent the same certified map:
+
+``` r
+
+sqrt_operator <- psd_operator(K_factor, "sqrt")
+sqrt_operator
+#> <eigencore operator>
+#>   name: certified PSD sqrt 
+#>   dim: 4 x 4 
+#>   dtype: double 
+#>   structure: hermitian
+max(abs(
+  sqrt_operator$apply(X) - psd_apply(K_factor, X, "sqrt")
+))
+#> [1] 0
+```
 
 ## Move explicitly to the metric space
 
@@ -200,8 +218,10 @@ equation.
 b <- c(1, 0, 0, 0)
 psd_apply(K_factor, b, "pseudoinverse")
 #> [1]  0.2777778 -0.2222222  0.2777778 -0.2222222
+```
 
-incompatible <- tryCatch(psd_solve(K_factor, b), error = identity)
+``` r
+
 c(
   class = class(incompatible)[1],
   code = incompatible$code,
@@ -211,18 +231,20 @@ c(
 #> "eigencore_psd_incompatible_rhs"               "incompatible_rhs" 
 #>                            field 
 #>                              "B"
+```
+
+Projecting the right-hand side onto `image(K)` makes the equation
+compatible:
+
+``` r
 
 b_image <- psd_apply(K_factor, b, "image_projector")
 strict <- psd_solve(K_factor, b_image)
-stopifnot(
-  strict$compatible,
-  certificate(strict)$passed,
-  isTRUE(all.equal(
-    as.numeric(K %*% strict$solution),
-    as.numeric(b_image),
-    tolerance = 1e-12
-  ))
-)
+strict
+#> eigencore strict PSD solve
+#>   columns: 1 
+#>   compatible: TRUE 
+#>   certificate passed: TRUE
 ```
 
 Relax the RHS tolerance only when that change is part of your model; the
@@ -337,8 +359,10 @@ psd_nullity(laplacian, type = "algebraic")
 #> [1] 1
 psd_apply(laplacian, rep(1, 5), "form")
 #> [1] 0 0 0 0 0
+```
 
-rank_error <- tryCatch(psd_rank(laplacian), error = identity)
+``` r
+
 c(class = class(rank_error)[1], code = rank_error$code)
 #>                               class                                code 
 #> "eigencore_psd_incomplete_evidence"               "incomplete_evidence"
@@ -379,6 +403,59 @@ and
 [`psd_tolerance()`](https://bbuchsbaum.github.io/eigencore/reference/psd_tolerance.md),
 not unnamed scalar cutoffs.
 
+### How does a rank tolerance change the factor?
+
+Consider a diagonal source with one large mode, one small positive mode,
+and a tiny accepted negative value. The default rank policy treats the
+small positive mode as numerical null. A finer, explicitly recorded rank
+tolerance retains it:
+
+``` r
+
+classification_source <- c(4, 1e-9, -1e-15)
+default_factor <- psd_factor(classification_source)
+fine_policy <- psd_policy(
+  rank = psd_tolerance(rel = 1e-12)
+)
+fine_factor <- psd_factor(classification_source, policy = fine_policy)
+
+data.frame(
+  policy = c("default", "finer rank tolerance"),
+  rank_threshold = c(
+    certificate(default_factor)$thresholds$rank,
+    certificate(fine_factor)$thresholds$rank
+  ),
+  retained_rank = c(psd_rank(default_factor), psd_rank(fine_factor))
+)
+#>                 policy rank_threshold retained_rank
+#> 1              default   5.960464e-08             1
+#> 2 finer rank tolerance   4.000000e-12             2
+```
+
+[`psd_spectrum()`](https://bbuchsbaum.github.io/eigencore/reference/psd_spectrum.md)
+keeps the admitted source separate from the repaired spectrum that
+powers factor actions:
+
+``` r
+
+data.frame(
+  source = psd_spectrum(default_factor),
+  action = psd_spectrum(default_factor, repaired = TRUE)
+)
+#>   source action
+#> 1  4e+00      4
+#> 2  1e-09      0
+#> 3 -1e-15      0
+```
+
+The negative entry remains visible in `source` and is zero in `action`.
+The small positive entry is also zero under the default rank policy.
+Changing that policy changes the numerical rank claim; it does not erase
+the original spectrum or convert numerical rank into an algebraic
+theorem.
+
+### What survives an RDS round trip?
+
 Every 1.3 factor is an immutable snapshot.
 [`operator_identity()`](https://bbuchsbaum.github.io/eigencore/reference/operator_identity.md),
 [`work()`](https://bbuchsbaum.github.io/eigencore/reference/work.md),
@@ -389,6 +466,33 @@ expose lineage, logical work, and retained memory. Base
 is the persistence format; integrity and schema checks run before a
 restored factor acts. Live and opaque factors are not admitted in 1.3,
 even when a callback carries an operator ID and revision.
+
+``` r
+
+factor_path <- tempfile(fileext = ".rds")
+saveRDS(K_factor, factor_path)
+restored_factor <- readRDS(factor_path)
+
+data.frame(
+  portable = operator_identity(restored_factor)$portable,
+  same_identity = identical(
+    operator_identity(restored_factor),
+    operator_identity(K_factor)
+  ),
+  same_action = isTRUE(all.equal(
+    psd_apply(restored_factor, X, "form"),
+    psd_apply(K_factor, X, "form")
+  )),
+  work_complete = work(restored_factor)$complete,
+  retained_bytes = as.numeric(retained_bytes(restored_factor))
+)
+#>   portable same_identity same_action work_complete retained_bytes
+#> 1     TRUE          TRUE        TRUE          TRUE          51504
+```
+
+The byte count describes the R object retained by this factor, not peak
+memory during construction. A restored factor acts only after its
+recorded identity, schema, and integrity token agree with its state.
 
 ``` r
 
@@ -403,8 +507,16 @@ opaque <- linear_operator(
   structure = hermitian(),
   name = "declared Hermitian callback"
 )
+opaque
+#> <eigencore operator>
+#>   name: declared Hermitian callback 
+#>   dim: 4 x 4 
+#>   dtype: double 
+#>   structure: hermitian
+```
 
-opaque_error <- tryCatch(psd_factor(opaque), error = identity)
+``` r
+
 c(
   class = class(opaque_error)[1],
   code = opaque_error$code,
@@ -419,20 +531,3 @@ c(
 This boundary keeps evidence separate from assertion: Hermitian metadata
 says how an operator is intended to behave, but it is not a PSD proof, a
 complete spectrum, or a certified square root.
-
-## Downstream ownership
-
-Application packages should consume exported factor actions and keep
-their own estimands and algorithms:
-
-- gprocrustes keeps translation gauges, O/SO choices, objectives, polar
-  solvers, and consensus estimators;
-- DKGE keeps design construction, scientific rank admission,
-  cross-validation, regularization, contrasts, inference, and
-  interpretation; and
-- optimal-transport packages keep mass policy, Sinkhorn state,
-  objectives, and convergence semantics.
-
-An eigencore certificate establishes the numerical statement it names.
-It does not decide that a singular geometry is scientifically adequate
-for a caller’s question.

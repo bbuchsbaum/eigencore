@@ -7,7 +7,7 @@
 ## Citation
 
 Source:
-[`DESCRIPTION`](https://github.com/bbuchsbaum/eigencore/blob/v1.3.0/DESCRIPTION)
+[`DESCRIPTION`](https://github.com/bbuchsbaum/eigencore/blob/main/DESCRIPTION)
 
 Buchsbaum B (2026). *eigencore: Certified Partial Eigenvalue and
 Singular Value Computation*. R package version 1.3.0,

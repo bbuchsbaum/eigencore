@@ -88,6 +88,7 @@ spectrum you need:
 | Symmetric/Hermitian `A` with positive-definite `B`, partial spectrum | `eig_partial(A, B = B, k = ...)` |
 | Dense general pencil | `eig_full(A, B = B, structure = general())` |
 | Dense generalized Schur decomposition | `generalized_schur(A, B)` |
+| Two dense maps with the same column domain | `generalized_svd(A, B)` |
 
 ## Handle a dense general pencil
 
@@ -103,13 +104,39 @@ A_general <- matrix(c(1, 4, 2, 3), 2, 2)
 B_general <- matrix(c(2, 1, 0, -1), 2, 2)
 
 pencil <- eig_full(A_general, B = B_general, structure = general())
+coordinates <- alpha_beta(pencil)
 values(pencil)
 #> [1] -0.75+1.391941i -0.75-1.391941i
-alpha_beta(pencil)$classification
+coordinates$classification
 #> [1] "finite" "finite"
+coordinates$classification_policy[c("policy", "tolerance")]
+#> $policy
+#> [1] "pencil_norm_scaled"
+#> 
+#> $tolerance
+#> [1] 1.490116e-08
 certificate(pencil)$passed
 #> [1] TRUE
 ```
+
+For a general pencil, right vectors satisfy `A v = lambda B v`, while
+left vectors satisfy the adjoint equation. Inspect both certificates
+when the left basis matters to sensitivity or biorthogonal projections:
+
+``` r
+
+W <- left_vectors(pencil)
+c(
+  right_certificate = certificate(pencil)$passed,
+  left_certificate = pencil$left_certificate$passed
+)
+#> right_certificate  left_certificate 
+#>              TRUE              TRUE
+```
+
+The classification policy is part of the result because “finite” depends
+on the numerical contract used to interpret `(alpha, beta)`. Do not
+replace it with an unrecorded comparison such as `abs(beta) < 1e-8`.
 
 Homogeneous coordinates are especially useful when `B` is singular.
 eigencore classifies finite, infinite, and undefined eigenvalues instead
@@ -164,6 +191,78 @@ alpha_beta(qz_singular)$classification
 #> [1] "infinite"  "finite"    "undefined"
 ```
 
+## When do you need a generalized SVD instead?
+
+A generalized eigenproblem compares two square operators through
+`A x = lambda B x`. A generalized SVD answers a different question: two
+possibly rectangular matrices act on the same column direction, and you
+want to compare the strength of those two actions. The matrices must
+have the same number of columns, but they may have different numbers of
+rows.
+
+For diagonal maps, the generalized singular values are easy to
+anticipate: each value is the corresponding strength in `A` divided by
+the strength in `B`.
+
+``` r
+
+A_gsvd <- diag(c(3, 4, 5))
+B_gsvd <- diag(c(4, 3, 2))
+gsvd_fit <- generalized_svd(A_gsvd, B_gsvd, tol = 1e-10)
+gsvd_coordinates <- alpha_beta(gsvd_fit)
+
+data.frame(
+  alpha = gsvd_coordinates$alpha,
+  beta = gsvd_coordinates$beta,
+  value = gsvd_coordinates$values,
+  classification = gsvd_coordinates$classification
+)
+#>       alpha      beta    value classification
+#> 1 0.6000000 0.8000000 0.750000         finite
+#> 2 0.8000000 0.6000000 1.333333         finite
+#> 3 0.9284767 0.3713907 2.500000         finite
+```
+
+Here `alpha^2 + beta^2 = 1` for every pair. `alpha / beta` is finite
+whenever `beta` is positive, even when it is very small. The returned
+`classification_policy` records that structural rule separately from
+`tol`, which controls reconstruction and orthogonality certification.
+
+Rank-deficient rectangular pairs can contain finite, infinite, and
+undefined structural positions at once:
+
+``` r
+
+A_rect <- matrix(
+  c(1, 2, 3, 3, 2, 1, 4, 5, 6, 7, 8, 8),
+  nrow = 2,
+  byrow = TRUE
+)
+B_rect <- matrix(1:18, ncol = 6, byrow = TRUE)
+gsvd_rect <- generalized_svd(A_rect, B_rect, tol = 1e-7)
+rect_coordinates <- alpha_beta(gsvd_rect)
+
+data.frame(
+  value = rect_coordinates$values,
+  classification = rect_coordinates$classification
+)
+#>   value classification
+#> 1   Inf       infinite
+#> 2   Inf       infinite
+#> 3     0         finite
+#> 4     0         finite
+#> 5    NA      undefined
+#> 6    NA      undefined
+```
+
+`Inf` means `beta = 0` while `alpha` is nonzero. `NA` represents a
+trailing structural `(0, 0)` pair, not an accidentally missing
+computation. Keeping the full length-`ncol(A)` layout lets
+classifications, factor columns, and reconstruction metadata stay
+aligned. Use `left_vectors(gsvd_fit)` and `right_vectors(gsvd_fit)` for
+the two row-space factors; the shared column factor remains
+`gsvd_fit$Q`.
+
 ## Keep sparse partial problems sparse
 
 Sparse symmetric/Hermitian problems with a positive-definite metric use
@@ -204,9 +303,11 @@ translate the mathematical operation: use
 [`eig_full()`](https://bbuchsbaum.github.io/eigencore/reference/eig_full.md)
 for a full generalized eigensolve,
 [`generalized_schur()`](https://bbuchsbaum.github.io/eigencore/reference/generalized_schur.md)
-for QZ, and
+for QZ,
+[`generalized_svd()`](https://bbuchsbaum.github.io/eigencore/reference/generalized_svd.md)
+for a GSVD, and
 [`alpha_beta()`](https://bbuchsbaum.github.io/eigencore/reference/alpha_beta.md)
-to inspect homogeneous eigenvalue coordinates.
+to inspect homogeneous coordinates.
 
 ## Where to go next
 
@@ -215,3 +316,5 @@ to inspect homogeneous eigenvalue coordinates.
   (non-generalized) eigenproblem and SVD.
 - For more on result validation, see
   [`vignette("certificates")`](https://bbuchsbaum.github.io/eigencore/articles/certificates.md).
+- [`?generalized_svd`](https://bbuchsbaum.github.io/eigencore/reference/generalized_svd.md)
+  documents the returned factors and reconstruction layout.

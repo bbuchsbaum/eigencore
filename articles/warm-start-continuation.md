@@ -270,6 +270,9 @@ target eigenspace and always check `certificate(fit)$passed`.
 
 ## Where should you go next?
 
+- [`vignette("reproducible-solver-plans")`](https://bbuchsbaum.github.io/eigencore/articles/reproducible-solver-plans.md)
+  explains frozen plans, operator identity, RDS replay, and typed
+  execution failures.
 - [`?eig_partial`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md)
   documents the complete `initial_subspace` contract.
 - [`vignette("certificates")`](https://bbuchsbaum.github.io/eigencore/articles/certificates.md)

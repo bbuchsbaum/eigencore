@@ -34,7 +34,8 @@
 <li class="active nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
-<li><a class="dropdown-item" href="../articles/psd-geometry.html">Work with singular PSD geometry</a></li>
+<li><a class="dropdown-item" href="../articles/reproducible-solver-plans.html">Freeze and replay a solver decision</a></li>
+    <li><a class="dropdown-item" href="../articles/psd-geometry.html">Work with singular PSD geometry</a></li>
     <li><a class="dropdown-item" href="../articles/warm-start-continuation.html">Reuse an eigenspace across a parameter sweep</a></li>
     <li><a class="dropdown-item" href="../articles/sparse-pca.html">PCA on sparse data without densifying</a></li>
     <li><a class="dropdown-item" href="../articles/certificates.html">Certificates: reading the numerical evidence</a></li>
@@ -75,7 +76,7 @@
       <h1>Benchmarks: what we measure and what it means</h1>
             
       
-      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/v1.3.0/vignettes/articles/benchmarks.Rmd" class="external-link"><code>vignettes/articles/benchmarks.Rmd</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/bbuchsbaum/eigencore/blob/main/vignettes/articles/benchmarks.Rmd" class="external-link"><code>vignettes/articles/benchmarks.Rmd</code></a></small>
       <div class="d-none name"><code>benchmarks.Rmd</code></div>
     </div>
 
@@ -214,42 +215,42 @@ method.</caption>
 <tr class="odd">
 <td align="left">dense Hermitian</td>
 <td align="left">RSpectra</td>
-<td align="right">4.771</td>
-<td align="right">0.4820</td>
+<td align="right">5.163</td>
+<td align="right">0.4796</td>
 <td align="right">not run</td>
-<td align="right">1.962</td>
+<td align="right">1.978</td>
 </tr>
 <tr class="even">
 <td align="left">sparse path Laplacian</td>
 <td align="left">eigencore</td>
-<td align="right">4.282</td>
-<td align="right">7.9400</td>
+<td align="right">4.724</td>
+<td align="right">7.9280</td>
 <td align="right">not run</td>
-<td align="right">12.960</td>
+<td align="right">13.070</td>
 </tr>
 <tr class="odd">
 <td align="left">dense low-rank SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">5.091</td>
-<td align="right">0.2252</td>
-<td align="right">0.3935</td>
-<td align="right">1.619</td>
+<td align="right">5.061</td>
+<td align="right">0.2262</td>
+<td align="right">0.3762</td>
+<td align="right">1.620</td>
 </tr>
 <tr class="even">
 <td align="left">tall sparse SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">2.667</td>
-<td align="right">0.3524</td>
-<td align="right">0.7595</td>
-<td align="right">1.831</td>
+<td align="right">2.824</td>
+<td align="right">0.3612</td>
+<td align="right">0.8060</td>
+<td align="right">1.851</td>
 </tr>
 <tr class="odd">
 <td align="left">wide sparse SVD</td>
 <td align="left">RSpectra</td>
-<td align="right">2.778</td>
-<td align="right">0.4542</td>
-<td align="right">1.0590</td>
-<td align="right">2.882</td>
+<td align="right">2.963</td>
+<td align="right">0.4460</td>
+<td align="right">1.0780</td>
+<td align="right">2.897</td>
 </tr>
 </tbody>
 </table>
