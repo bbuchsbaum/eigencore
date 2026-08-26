@@ -155,19 +155,26 @@ psd_factor <- function(x, policy = psd_policy(), source = c("snapshot", "live"))
       message = "psd_factor() does not silently reclassify an existing certified factor."
     )
   }
-  if (identical(source, "live")) {
-    if (inherits(x, "eigencore_operator")) {
-      psd_abort(
-        "eigencore_psd_incomplete_evidence", "incomplete_evidence", "x",
-        "an admitted complete or structural PSD provider", class(x),
-        representation = "opaque_operator",
-        evidence = psd_unavailable_evidence("live_versioned_source"),
-        message = paste(
-          "A versioned operator identity is not PSD or complete-spectrum evidence;",
-          "no live complete PSD provider is admitted by this implementation slice."
-        )
-      )
+  if (inherits(x, "eigencore_operator")) {
+    source_semantics <- if (identical(source, "live")) {
+      "live_versioned_source"
+    } else {
+      "uncacheable_opaque_source"
     }
+    psd_abort(
+      "eigencore_psd_incomplete_evidence", "incomplete_evidence", "x",
+      "an admitted complete or structural PSD provider", class(x),
+      source_identity = operator_identity(x),
+      representation = "opaque_operator",
+      capability = "construction",
+      evidence = psd_unavailable_evidence(source_semantics),
+      message = paste(
+        "A versioned operator identity is not PSD or complete-spectrum evidence;",
+        "opaque callbacks are never probed into a certified PSD factor."
+      )
+    )
+  }
+  if (identical(source, "live")) {
     psd_abort(
       "eigencore_psd_invalid_input", "invalid_policy", "source",
       "snapshot for matrix-backed sources", source,
@@ -259,7 +266,13 @@ psd_factor <- function(x, policy = psd_policy(), source = c("snapshot", "live"))
 
 #' Construct a supplied Gram PSD factor
 #'
-#' @param x A supplied factor array.
+#' Dense base and `dgeMatrix` inputs receive a complete compact-SVD
+#' certificate and canonical spectral actions. A `dgCMatrix` remains sparse
+#' and exposes only the form and Gram actions justified by `K = L L^T` or
+#' `K = L^T L`; sparse storage alone does not certify rank or a principal
+#' square root.
+#'
+#' @param x A finite real-double base matrix, `dgeMatrix`, or `dgCMatrix`.
 #' @param orientation Whether columns define `K = x x^T` or rows define
 #'   `K = x^T x`.
 #' @param policy A PSD policy.
@@ -269,38 +282,83 @@ psd_factor <- function(x, policy = psd_policy(), source = c("snapshot", "live"))
 psd_gram_factor <- function(x, orientation = c("columns", "rows"),
                             policy = psd_policy(),
                             source = c("snapshot", "live")) {
+  started <- proc.time()[["elapsed"]]
   orientation <- psd_match_enum(orientation, c("columns", "rows"), "orientation")
   source <- psd_match_enum(source, c("snapshot", "live"), "source")
-  validate_psd_policy(policy)
+  policy <- validate_psd_policy(policy)
+  if (identical(source, "live")) {
+    psd_abort(
+      "eigencore_psd_invalid_input", "invalid_policy", "source",
+      "snapshot for the admitted matrix Gram providers", source,
+      representation = if (inherits(x, "Matrix")) "gram_sparse" else "gram_dense",
+      capability = "construction",
+      message = "source = \"live\" requires a separately admitted versioned Gram provider."
+    )
+  }
+  if (is.matrix(x)) {
+    return(psd_construct_dense_gram(
+      x, orientation = orientation, policy = policy, started = started,
+      source_class = class(x)
+    ))
+  }
+  if (methods::is(x, "dgeMatrix")) {
+    return(psd_construct_dense_gram(
+      as.matrix(x), orientation = orientation, policy = policy,
+      started = started, source_class = class(x)
+    ))
+  }
+  if (methods::is(x, "dgCMatrix")) {
+    return(psd_construct_sparse_gram(
+      x, orientation = orientation, policy = policy, started = started
+    ))
+  }
   psd_abort(
-    "eigencore_psd_unsupported_action", "unsupported_action", "x",
-    "an admitted Gram-factor implementation", class(x),
+    "eigencore_psd_invalid_input", "invalid_structure", "x",
+    "a real-double base matrix, dgeMatrix, or dgCMatrix", class(x),
     representation = if (inherits(x, "Matrix")) "gram_sparse" else "gram_dense",
     capability = "construction",
     details = list(orientation = orientation, source = source),
-    message = "Supplied Gram factors are frozen in the 1.3 contract but not admitted by the dense-factor slice."
+    message = "psd_gram_factor() accepts only the explicitly admitted 1.3 Gram classes."
   )
 }
 
 #' Construct a structural sparse graph-Laplacian PSD factor
 #'
-#' @param x An admitted sparse graph Laplacian.
+#' The constructor admits only CSC `dgCMatrix` and `dsCMatrix` inputs. It
+#' validates symmetry, non-positive off-diagonals, and zero row sums without
+#' dense conversion. Connected components certify algebraic nullity; numerical
+#' rank and spectral actions remain unavailable without separate spectral
+#' evidence.
+#'
+#' @param x A finite real-double `dgCMatrix` or `dsCMatrix` graph Laplacian.
 #' @param policy A PSD policy.
 #' @param source Source ownership.
 #' @return A certified PSD factor when the representation is admitted.
 #' @export
 psd_laplacian <- function(x, policy = psd_policy(),
                           source = c("snapshot", "live")) {
+  started <- proc.time()[["elapsed"]]
   source <- psd_match_enum(source, c("snapshot", "live"), "source")
-  validate_psd_policy(policy)
-  psd_abort(
-    "eigencore_psd_unsupported_action", "unsupported_action", "x",
-    "an admitted sparse-Laplacian implementation", class(x),
-    representation = "laplacian_sparse",
-    capability = "construction",
-    details = list(source = source),
-    message = "Structural sparse Laplacians are frozen in the 1.3 contract but not admitted by the dense-factor slice."
-  )
+  policy <- validate_psd_policy(policy)
+  if (identical(source, "live")) {
+    psd_abort(
+      "eigencore_psd_invalid_input", "invalid_policy", "source",
+      "snapshot for the admitted sparse Laplacian providers", source,
+      representation = "laplacian_sparse",
+      capability = "construction",
+      message = "source = \"live\" requires a separately admitted versioned Laplacian provider."
+    )
+  }
+  if (!methods::is(x, "dgCMatrix") && !methods::is(x, "dsCMatrix")) {
+    psd_abort(
+      "eigencore_psd_invalid_input", "invalid_structure", "x",
+      "a real-double dgCMatrix or dsCMatrix", class(x),
+      representation = "laplacian_sparse",
+      capability = "construction",
+      message = "psd_laplacian() accepts only the explicitly admitted CSC classes."
+    )
+  }
+  psd_construct_sparse_laplacian(x, policy = policy, started = started)
 }
 
 #' Inspect certified PSD capabilities
@@ -1004,6 +1062,54 @@ psd_symmetry_defect <- function(A) {
   magnitude * psd_frobenius_norm(scaled - t(scaled))
 }
 
+psd_sparse_frobenius <- function(x) {
+  if (!length(x) || any(dim(x) == 0L)) return(0)
+  magnitude <- as.numeric(max(abs(x)))
+  if (!is.finite(magnitude)) return(Inf)
+  if (magnitude == 0) return(0)
+  scaled <- x / magnitude
+  value <- magnitude * sqrt(as.numeric(sum(scaled * scaled)))
+  if (is.finite(value)) value else Inf
+}
+
+psd_sparse_gram_frobenius <- function(x, orientation) {
+  small_gram <- if (identical(orientation, "columns")) {
+    Matrix::crossprod(x)
+  } else {
+    Matrix::tcrossprod(x)
+  }
+  psd_sparse_frobenius(small_gram)
+}
+
+psd_sparse_components <- function(laplacian) {
+  n <- nrow(laplacian)
+  entries <- Matrix::summary(laplacian)
+  edges <- which(entries$i != entries$j & entries$x < 0)
+  if (n == 0L) {
+    return(list(count = 0L, membership = integer(), edge_count = 0L))
+  }
+  parent <- seq_len(n)
+  find_root <- function(index) {
+    while (parent[[index]] != index) index <- parent[[index]]
+    index
+  }
+  if (length(edges)) {
+    for (edge in edges) {
+      left <- find_root(entries$i[[edge]])
+      right <- find_root(entries$j[[edge]])
+      if (left != right) parent[[right]] <- left
+    }
+  }
+  roots <- vapply(seq_len(n), find_root, integer(1L))
+  unique_roots <- unique(roots)
+  membership <- match(roots, unique_roots)
+  list(
+    count = as.integer(length(unique_roots)),
+    membership = as.integer(membership),
+    edge_count = as.integer(length(edges))
+  )
+}
+
 psd_builtin_identity <- function(payload, dim, structure) {
   digest <- stable_raw_hash(list(schema_version = 1L, payload = payload))
   new_operator_identity(
@@ -1142,6 +1248,287 @@ psd_construct_dense <- function(A, policy, started) {
     ),
     started = started,
     scale_override = scale
+  )
+}
+
+psd_construct_dense_gram <- function(x, orientation, policy, started,
+                                     source_class) {
+  if (!is.double(x) || is.complex(x) || length(dim(x)) != 2L) {
+    psd_abort(
+      "eigencore_psd_invalid_input", "invalid_dtype", "x",
+      "a finite real-double matrix", typeof(x),
+      representation = "gram_dense",
+      capability = "construction"
+    )
+  }
+  if (any(!is.finite(x))) psd_nonfinite_input(x, "x")
+  defining <- if (identical(orientation, "columns")) x else t(x)
+  n <- nrow(defining)
+  q <- min(dim(defining))
+  decomp <- if (q == 0L) {
+    list(
+      d = numeric(),
+      u = matrix(numeric(), n, 0L),
+      v = matrix(numeric(), ncol(defining), 0L)
+    )
+  } else {
+    native_dense_svd(defining)
+  }
+  values <- c(as.numeric(decomp$d)^2, rep(0, n - length(decomp$d)))
+  vectors <- decomp$u
+  axis_names <- rownames(defining)
+  rownames(vectors) <- axis_names
+  gram <- tcrossprod(defining)
+  source_identity <- psd_builtin_identity(
+    list(
+      kind = "dense_gram_factor", factor = x, orientation = orientation,
+      source_class = source_class
+    ),
+    c(n, n), "hermitian"
+  )
+  psd_construct_complete_factor(
+    original_values = values,
+    vectors = vectors,
+    source_index = seq_len(n),
+    representation = "gram_dense",
+    method = "complete dense Gram compact-SVD PSD factor",
+    source_identity = source_identity,
+    policy = policy,
+    state_kind = "dense",
+    source_dimnames = list(axis_names, axis_names),
+    symmetry_defect = 0,
+    original_source = gram,
+    symmetric_source = gram,
+    algebraic_nullity = NA_integer_,
+    materialization = list(
+      source = "dense_matrix", factor = "compact_svd",
+      dense_n_by_n = TRUE,
+      notes = "supplied Gram array validated by complete compact SVD"
+    ),
+    started = started,
+    scale_override = psd_frobenius_norm(values)
+  )
+}
+
+psd_construct_sparse_gram <- function(x, orientation, policy, started) {
+  if (any(!is.finite(methods::slot(x, "x")))) psd_nonfinite_input(methods::slot(x, "x"), "x")
+  defining_dim <- dim(x)
+  n <- if (identical(orientation, "columns")) defining_dim[[1L]] else defining_dim[[2L]]
+  axis_names <- if (identical(orientation, "columns")) rownames(x) else colnames(x)
+  scale <- psd_sparse_gram_frobenius(x, orientation)
+  if (!is.finite(scale)) {
+    psd_abort(
+      "eigencore_psd_invalid_input", "nonfinite_input", "scale",
+      "a finite Gram Frobenius scale", scale,
+      representation = "gram_sparse",
+      capability = "construction"
+    )
+  }
+  snapshot <- deep_copy_record(x)
+  state <- list(
+    schema_version = 1L,
+    kind = "gram_sparse",
+    rank = NA_integer_,
+    dim = as.integer(c(n, n)),
+    dimnames = list(axis_names, axis_names),
+    factor = snapshot,
+    orientation = orientation,
+    action_frobenius_norm = scale
+  )
+  source_identity <- psd_builtin_identity(
+    list(kind = "sparse_gram_factor", factor = snapshot, orientation = orientation),
+    c(n, n), "hermitian"
+  )
+  evidence <- psd_structural_evidence(
+    repaired = FALSE,
+    theorem = if (identical(orientation, "columns")) {
+      "K = L L^T is positive semidefinite"
+    } else {
+      "K = L^T L is positive semidefinite"
+    },
+    details = list(
+      orientation = orientation,
+      factor_dim = as.integer(defining_dim),
+      algebraic_rank = "not inferred from sparse storage"
+    )
+  )
+  psd_construct_structural_factor(
+    dim = c(n, n),
+    representation = "gram_sparse",
+    method = "structural sparse Gram PSD factor",
+    source_identity = source_identity,
+    policy = policy,
+    state = state,
+    source_dimnames = list(axis_names, axis_names),
+    scale = scale,
+    symmetry_defect = 0,
+    repair_defect = 0,
+    source_action_defect = 0,
+    algebraic_nullity = NA_integer_,
+    rank_bounds = list(lower = 0L, upper = as.integer(min(defining_dim))),
+    evidence = evidence,
+    materialization = list(
+      source = "sparse_csc", factor = "sparse_gram",
+      dense_n_by_n = FALSE,
+      notes = "retains the supplied CSC factor and no square dense action"
+    ),
+    started = started,
+    spectrum_upper_bound = scale
+  )
+}
+
+psd_construct_sparse_laplacian <- function(x, policy, started) {
+  n <- nrow(x)
+  if (n != ncol(x)) {
+    psd_abort(
+      "eigencore_psd_invalid_input", "invalid_dimension", "x",
+      "a square sparse Laplacian", dim(x),
+      representation = "laplacian_sparse",
+      capability = "construction"
+    )
+  }
+  if (any(!is.finite(methods::slot(x, "x")))) psd_nonfinite_input(methods::slot(x, "x"), "x")
+  psd_validate_square_dimnames(x)
+  snapshot <- deep_copy_record(x)
+  transposed <- Matrix::t(snapshot)
+  symmetry_defect <- psd_sparse_frobenius(snapshot - transposed)
+  symmetric <- Matrix::drop0(0.5 * snapshot + 0.5 * transposed)
+  scale <- psd_sparse_frobenius(symmetric)
+  if (!is.finite(scale) || !is.finite(symmetry_defect)) {
+    psd_abort(
+      "eigencore_psd_invalid_input", "nonfinite_input", "scale",
+      "finite sparse Frobenius diagnostics",
+      list(scale = scale, symmetry_defect = symmetry_defect),
+      representation = "laplacian_sparse",
+      capability = "construction"
+    )
+  }
+  tau_sym <- policy$symmetry$abs + policy$symmetry$rel * scale
+  tau_psd <- policy$positivity$abs + policy$positivity$rel * scale
+  source_identity <- psd_builtin_identity(
+    list(kind = "sparse_laplacian", source = snapshot, source_class = class(x)),
+    c(n, n), if (symmetry_defect == 0) "hermitian" else "general"
+  )
+  if (symmetry_defect > tau_sym ||
+      (symmetry_defect > 0 && identical(policy$symmetry_repair, "reject"))) {
+    psd_abort(
+      "eigencore_psd_asymmetry_error", "asymmetric_input", "x",
+      if (identical(policy$symmetry_repair, "reject")) {
+        "exact symmetry"
+      } else {
+        paste0("symmetry defect <= ", format(tau_sym))
+      },
+      symmetry_defect,
+      source_identity = source_identity,
+      representation = "laplacian_sparse",
+      capability = "construction",
+      scale = scale,
+      threshold = tau_sym,
+      defect = symmetry_defect
+    )
+  }
+  entries <- Matrix::summary(symmetric)
+  positive_off_diagonal <- which(entries$i != entries$j & entries$x > 0)
+  if (length(positive_off_diagonal)) {
+    psd_abort(
+      "eigencore_psd_invalid_input", "invalid_structure", "off_diagonal",
+      "exactly non-positive off-diagonal entries",
+      entries$x[positive_off_diagonal],
+      source_identity = source_identity,
+      representation = "laplacian_sparse",
+      capability = "construction",
+      scale = scale,
+      threshold = 0,
+      defect = max(entries$x[positive_off_diagonal]),
+      indices = positive_off_diagonal,
+      message = "A structural graph Laplacian cannot have a positive off-diagonal weight."
+    )
+  }
+  row_sums <- as.numeric(Matrix::rowSums(symmetric))
+  row_sum_defect <- if (length(row_sums)) max(abs(row_sums)) else 0
+  if (row_sum_defect > tau_psd ||
+      (row_sum_defect > 0 && identical(policy$structure_repair, "reject"))) {
+    psd_abort(
+      "eigencore_psd_invalid_input", "invalid_structure", "row_sums",
+      if (identical(policy$structure_repair, "reject")) {
+        "exact zero row sums"
+      } else {
+        paste0("maximum absolute row sum <= ", format(tau_psd))
+      },
+      row_sums,
+      source_identity = source_identity,
+      representation = "laplacian_sparse",
+      capability = "construction",
+      scale = scale,
+      threshold = tau_psd,
+      defect = row_sum_defect,
+      indices = which(abs(row_sums) == row_sum_defect),
+      message = "Sparse source does not satisfy the admitted graph-Laplacian row-sum structure."
+    )
+  }
+  repaired <- symmetric
+  if (row_sum_defect > 0) {
+    off_diagonal <- symmetric
+    diag(off_diagonal) <- 0
+    repaired <- off_diagonal
+    diag(repaired) <- -as.numeric(Matrix::rowSums(off_diagonal))
+    repaired <- Matrix::drop0(repaired)
+  }
+  repaired <- Matrix::forceSymmetric(repaired, uplo = "U")
+  repair_defect <- psd_sparse_frobenius(symmetric - repaired)
+  source_action_defect <- psd_sparse_frobenius(snapshot - repaired)
+  components <- psd_sparse_components(repaired)
+  axis_names <- rownames(repaired) %||% colnames(repaired)
+  action_norm <- psd_sparse_frobenius(repaired)
+  state <- list(
+    schema_version = 1L,
+    kind = "laplacian_sparse",
+    rank = NA_integer_,
+    dim = as.integer(c(n, n)),
+    dimnames = list(axis_names, axis_names),
+    matrix = repaired,
+    components = components$membership,
+    action_frobenius_norm = action_norm
+  )
+  evidence <- psd_structural_evidence(
+    repaired = symmetry_defect > 0 || row_sum_defect > 0,
+    theorem = "symmetric non-positive-edge graph Laplacian component theorem",
+    details = list(
+      component_count = as.integer(components$count),
+      edge_count = as.integer(components$edge_count),
+      admitted_row_sum_defect = row_sum_defect,
+      repaired_row_sum_defect = if (n) {
+        max(abs(as.numeric(Matrix::rowSums(repaired))))
+      } else {
+        0
+      }
+    )
+  )
+  psd_construct_structural_factor(
+    dim = c(n, n),
+    representation = "laplacian_sparse",
+    method = "structural sparse graph-Laplacian PSD factor",
+    source_identity = source_identity,
+    policy = policy,
+    state = state,
+    source_dimnames = list(axis_names, axis_names),
+    scale = scale,
+    symmetry_defect = symmetry_defect,
+    repair_defect = repair_defect,
+    source_action_defect = source_action_defect,
+    algebraic_nullity = as.integer(components$count),
+    rank_bounds = list(
+      lower = 0L,
+      upper = as.integer(n - components$count)
+    ),
+    evidence = evidence,
+    materialization = list(
+      source = "sparse_csc", factor = "sparse_laplacian",
+      dense_n_by_n = FALSE,
+      notes = "retains a canonical sparse graph Laplacian"
+    ),
+    started = started,
+    spectrum_upper_bound = action_norm
   )
 }
 
@@ -1445,6 +1832,144 @@ psd_construct_complete_factor <- function(
   factor
 }
 
+psd_construct_structural_factor <- function(
+    dim, representation, method, source_identity, policy, state,
+    source_dimnames, scale, symmetry_defect, repair_defect,
+    source_action_defect, algebraic_nullity, rank_bounds, evidence,
+    materialization, started, spectrum_upper_bound) {
+  dim <- as.integer(dim)
+  state$dimnames <- source_dimnames
+  thresholds <- list(
+    scale_definition = "frobenius",
+    symmetry = policy$symmetry$abs + policy$symmetry$rel * scale,
+    positivity = policy$positivity$abs + policy$positivity$rel * scale,
+    rank = policy$rank$abs + policy$rank$rel * scale
+  )
+  classification <- psd_classification_counts(character())
+  spectrum <- list(
+    coverage = "structural",
+    original = NULL,
+    repaired = NULL,
+    category = NULL,
+    source_index = NULL,
+    retained_indices = NULL,
+    exact_zero_indices = NULL,
+    accepted_negative_indices = NULL,
+    numerical_null_indices = NULL,
+    signed_zero_count = 0L,
+    lower_bound = 0,
+    upper_bound = as.numeric(spectrum_upper_bound)
+  )
+  state_token <- stable_raw_hash(state)
+  factor_identity <- psd_factor_identity(
+    source_identity, policy, representation, state_token, dim
+  )
+  capabilities <- psd_structural_capabilities(
+    representation = representation,
+    evidence = evidence,
+    materialization = materialization$factor,
+    algebraic_available = !is.na(algebraic_nullity)
+  )
+  repair_applied <- symmetry_defect > 0 || repair_defect > 0 ||
+    source_action_defect > 0
+  certificate <- psd_new_certificate(
+    passed = TRUE,
+    certificate_type = "psd_factor_validation",
+    scope = "structural_source_validation_and_form_action",
+    thresholds = thresholds,
+    source_identity = source_identity,
+    factor_identity = factor_identity,
+    representation = representation,
+    evidence = evidence,
+    repair_applied = repair_applied,
+    symmetry_defect = symmetry_defect,
+    repair_defect = repair_defect,
+    source_action_defect = source_action_defect,
+    original_spectrum = NULL,
+    repaired_spectrum = NULL,
+    classification = classification,
+    rank = NA_integer_,
+    nullity = NA_integer_,
+    algebraic_nullity = algebraic_nullity,
+    rank_bounds = rank_bounds,
+    capabilities = capabilities,
+    action_bounds = list(form_frobenius = spectrum_upper_bound),
+    residuals = list(
+      symmetry = symmetry_defect,
+      repair = repair_defect,
+      source_action = source_action_defect
+    ),
+    orthogonality = numeric(),
+    notes = evidence$theorem,
+    certificate_scale = scale
+  )
+  elapsed <- proc.time()[["elapsed"]] - started
+  work <- psd_work_record(setup_seconds = elapsed, total_seconds = elapsed)
+  memory <- new_memory_record(
+    list(
+      source_snapshot = list(),
+      factor_state = state,
+      cached_actions = list(),
+      metadata = list(
+        spectrum = spectrum,
+        classification = classification,
+        policy = policy,
+        evidence = evidence,
+        certificate = certificate
+      )
+    ),
+    native_bytes = 0
+  )
+  serialization <- structure(
+    list(
+      schema_version = 1L,
+      portable = TRUE,
+      originating_session = eigencore_session_id(),
+      incompatibility_reason = NULL,
+      integrity_token = NULL,
+      source_identity_token = stable_raw_hash(source_identity),
+      operator_identity_token = stable_raw_hash(factor_identity),
+      policy_token = stable_raw_hash(policy),
+      state_token = state_token,
+      reconstruction = representation
+    ),
+    class = "eigencore_psd_serialization"
+  )
+  factor <- structure(
+    list(
+      schema_version = 1L,
+      dim = dim,
+      dtype = "double",
+      representation = representation,
+      method = method,
+      policy = policy,
+      scale = scale,
+      thresholds = thresholds,
+      spectrum = spectrum,
+      classification = classification,
+      rank = NA_integer_,
+      nullity = NA_integer_,
+      algebraic_nullity = algebraic_nullity,
+      rank_bounds = rank_bounds,
+      evidence = evidence,
+      capabilities = capabilities,
+      operator_identity = factor_identity,
+      source_identity = source_identity,
+      source_semantics = "immutable_snapshot",
+      materialization = materialization,
+      certificate = certificate,
+      work = work,
+      memory = memory,
+      serialization = serialization,
+      warnings = character()
+    ),
+    class = "eigencore_psd_factor"
+  )
+  attr(factor, "eigencore_psd_state") <- state
+  factor$serialization$integrity_token <- stable_raw_hash(psd_integrity_payload(factor))
+  factor
+}
+
 psd_classification_counts <- function(category) {
   keys <- c(
     "retained_positive", "exact_zero", "accepted_negative", "numerical_null",
@@ -1466,6 +1991,19 @@ psd_complete_evidence <- function(repaired, source_semantics) {
     theorem = "complete real symmetric spectrum",
     bound_type = "exact_frobenius_diagnostics",
     details = list()
+  ), class = "eigencore_psd_evidence")
+}
+
+psd_structural_evidence <- function(repaired, theorem, details) {
+  structure(list(
+    schema_version = 1L,
+    spectrum_coverage = "structural",
+    validation = "computed",
+    action_fidelity = if (repaired) "repaired_with_defect" else "exact_for_certified_factor",
+    source_semantics = "immutable_snapshot",
+    theorem = theorem,
+    bound_type = "exact_structural_identity",
+    details = details
   ), class = "eigencore_psd_evidence")
 }
 
@@ -1510,6 +2048,39 @@ psd_complete_capabilities <- function(representation, evidence,
       } else {
         "complete classified spectrum"
       },
+      materialization = materialization,
+      reason = if (available) NULL else "incomplete_evidence"
+    )
+  }
+  structure(out, class = "eigencore_psd_capabilities")
+}
+
+psd_structural_capabilities <- function(representation, evidence,
+                                        materialization, algebraic_available) {
+  out <- list(
+    schema_version = 1L,
+    representation = representation,
+    evidence = evidence
+  )
+  available_names <- c("form", "gram", "serialization", "cache_reuse")
+  if (algebraic_available) {
+    available_names <- c(available_names, "algebraic_nullity")
+  }
+  for (name in .psd_capability_names) {
+    available <- name %in% available_names
+    evidence_required <- if (identical(name, "algebraic_nullity")) {
+      "a structural null-space theorem"
+    } else if (name %in% c("form", "gram")) {
+      "a supplied Gram identity or admitted graph-Laplacian theorem"
+    } else if (name %in% c("serialization", "cache_reuse")) {
+      "an immutable portable sparse snapshot"
+    } else {
+      "complete or threshold-separating spectral-factor evidence"
+    }
+    out[[name]] <- psd_capability_entry(
+      available = available,
+      fidelity = evidence$action_fidelity,
+      evidence_required = evidence_required,
       materialization = materialization,
       reason = if (available) NULL else "incomplete_evidence"
     )
@@ -1875,6 +2446,21 @@ psd_apply_matrix <- function(x, X, action) {
       null_projector = as.numeric(values == 0)
     )
     weights * X
+  } else if (identical(state$kind, "gram_sparse")) {
+    if (!identical(action, "form")) {
+      stop("Internal error: unavailable sparse Gram action reached execution.", call. = FALSE)
+    }
+    out <- if (identical(state$orientation, "columns")) {
+      state$factor %*% Matrix::crossprod(state$factor, X)
+    } else {
+      Matrix::crossprod(state$factor, state$factor %*% X)
+    }
+    as.matrix(out)
+  } else if (identical(state$kind, "laplacian_sparse")) {
+    if (!identical(action, "form")) {
+      stop("Internal error: unavailable sparse Laplacian action reached execution.", call. = FALSE)
+    }
+    as.matrix(state$matrix %*% X)
   } else {
     Q <- state$basis
     if (identical(action, "null_projector")) {
@@ -1966,6 +2552,10 @@ psd_action_identity <- function(x, action) {
 }
 
 psd_action_frobenius_norm <- function(x, action) {
+  state <- attr(x, "eigencore_psd_state", exact = TRUE)
+  if (state$kind %in% c("gram_sparse", "laplacian_sparse")) {
+    return(state$action_frobenius_norm)
+  }
   values <- x$spectrum$repaired
   transformed <- switch(
     action,

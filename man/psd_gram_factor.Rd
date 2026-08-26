@@ -12,7 +12,7 @@ psd_gram_factor(
 )
 }
 \arguments{
-\item{x}{A supplied factor array.}
+\item{x}{A finite real-double base matrix, \code{dgeMatrix}, or \code{dgCMatrix}.}
 
 \item{orientation}{Whether columns define \verb{K = x x^T} or rows define
 \verb{K = x^T x}.}
@@ -25,5 +25,9 @@ psd_gram_factor(
 A certified PSD factor when the representation is admitted.
 }
 \description{
-Construct a supplied Gram PSD factor
+Dense base and \code{dgeMatrix} inputs receive a complete compact-SVD
+certificate and canonical spectral actions. A \code{dgCMatrix} remains sparse
+and exposes only the form and Gram actions justified by \verb{K = L L^T} or
+\verb{K = L^T L}; sparse storage alone does not certify rank or a principal
+square root.
 }

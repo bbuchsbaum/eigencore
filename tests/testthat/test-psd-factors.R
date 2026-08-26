@@ -425,13 +425,12 @@ test_that("type, dimension, dimname, Matrix, signed-zero, and unsupported bounda
   expect_identical(action_error$representation, factor$representation)
 
   expect_psd_condition(
-    psd_gram_factor(matrix(1, 2, 1)),
-    "eigencore_psd_unsupported_action", "unsupported_action", "x"
+    psd_gram_factor(matrix(1L, 2, 1)),
+    "eigencore_psd_invalid_input", "invalid_dtype", "x"
   )
-  lap <- Matrix::sparseMatrix(i = c(1, 1, 2, 2), j = c(1, 2, 1, 2), x = c(1, -1, -1, 1))
   expect_psd_condition(
-    psd_laplacian(lap),
-    "eigencore_psd_unsupported_action", "unsupported_action", "x"
+    psd_laplacian(matrix(c(1, -1, -1, 1), 2, 2)),
+    "eigencore_psd_invalid_input", "invalid_structure", "x"
   )
 })
 

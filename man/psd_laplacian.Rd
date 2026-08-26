@@ -7,7 +7,7 @@
 psd_laplacian(x, policy = psd_policy(), source = c("snapshot", "live"))
 }
 \arguments{
-\item{x}{An admitted sparse graph Laplacian.}
+\item{x}{A finite real-double \code{dgCMatrix} or \code{dsCMatrix} graph Laplacian.}
 
 \item{policy}{A PSD policy.}
 
@@ -17,5 +17,9 @@ psd_laplacian(x, policy = psd_policy(), source = c("snapshot", "live"))
 A certified PSD factor when the representation is admitted.
 }
 \description{
-Construct a structural sparse graph-Laplacian PSD factor
+The constructor admits only CSC \code{dgCMatrix} and \code{dsCMatrix} inputs. It
+validates symmetry, non-positive off-diagonals, and zero row sums without
+dense conversion. Connected components certify algebraic nullity; numerical
+rank and spectral actions remain unavailable without separate spectral
+evidence.
 }
