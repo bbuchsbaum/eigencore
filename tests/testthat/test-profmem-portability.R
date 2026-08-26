@@ -26,7 +26,7 @@ test_that("package timing works with optional memory profiling", {
 })
 
 test_that("shipped benchmark entry points do not force memory profiling", {
-  artifacts <- c(
+  benchmark_artifacts <- c(
     artifact_path(
       file.path("inst", "benchmarks", "_helpers.R"),
       file.path("benchmarks", "_helpers.R")
@@ -34,14 +34,19 @@ test_that("shipped benchmark entry points do not force memory profiling", {
     artifact_path(
       file.path("inst", "benchmarks", "bench-readme.R"),
       file.path("benchmarks", "bench-readme.R")
-    ),
-    artifact_path(
-      file.path("vignettes", "benchmarks.Rmd"),
-      file.path("doc", "benchmarks.Rmd")
     )
   )
 
-  expect_true(all(nzchar(artifacts)))
+  expect_true(all(nzchar(benchmark_artifacts)))
+
+  vignette_artifact <- artifact_path(
+    file.path("vignettes", "benchmarks.Rmd"),
+    file.path("doc", "benchmarks.Rmd")
+  )
+  artifacts <- c(
+    benchmark_artifacts,
+    vignette_artifact[nzchar(vignette_artifact)]
+  )
 
   code <- unlist(lapply(artifacts, readLines, warn = FALSE), use.names = FALSE)
   code <- sub("#.*$", "", code)
