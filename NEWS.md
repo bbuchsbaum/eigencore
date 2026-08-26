@@ -1,3 +1,11 @@
+# eigencore 1.0.3
+
+* Fix compilation with LLVM 23 and libc++ 23. `native_operators.cpp` now
+  includes `<algorithm>` directly for `std::fill()` instead of relying on a
+  transitive standard-library include.
+* Add a regression test that audits shipped C++ sources and headers for direct
+  ownership of `<algorithm>` when they use standard algorithms.
+
 # eigencore 1.0.2
 
 * Complete the no-memory-profiling fix from 1.0.1. The CRAN benchmark
