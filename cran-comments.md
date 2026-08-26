@@ -18,7 +18,8 @@ standard algorithm and requires it to include `<algorithm>` directly.
 ## Test environments
 
 * local: macOS 14 (aarch64-apple-darwin20), R 4.5.1, Homebrew clang 20.1.8,
-  exact-tarball `R CMD check --as-cran --no-manual`
+  exact-tarball `R CMD check --as-cran --no-manual` with the unavailable
+  network clock probe disabled via `_R_CHECK_SYSTEM_CLOCK_=FALSE`
 * GitHub Actions: macOS release, Windows release, Ubuntu release,
   Ubuntu devel, and Ubuntu oldrel-1
 * dedicated GitHub Actions check: Ubuntu 24.04 (x86_64), R-devel,
@@ -37,9 +38,9 @@ reproduced the reported error: `no member named 'fill' in namespace 'std'`.
 ## Reproducible verification evidence
 
 * Exact source tarball SHA-256:
-  `5e21bf5dd6a76b9cb5599cbbe784f229c91bbe5295280fa34a5267a0ec758fd8`.
+  `2f64dc05e1818d084d69455e8b47112840d4333f1181c0399af214b608b06c0e`.
 * Tested package-source commit:
-  `f940c55eb4e160ad780e830b6a28edcb757e61fb`.
+  `2d3b10330f7d333bbcba86131bb688791804ab9c`.
 * The full local exact-tarball check passed installation, incoming
   feasibility, examples, tests, and vignette rebuilding with `Status: OK`.
 * LLVM 23/libc++ 23 check:
