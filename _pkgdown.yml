@@ -138,6 +138,7 @@ articles:
   navbar: ~
   contents:
   - eigencore
+  - reproducible-solver-plans
   - psd-geometry
   - warm-start-continuation
   - sparse-pca

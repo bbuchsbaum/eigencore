@@ -317,6 +317,8 @@ check `certificate(fit)$passed`.
 
 ## Where should you go next?
 
+- `vignette("reproducible-solver-plans")` explains frozen plans, operator
+  identity, RDS replay, and typed execution failures.
 - `?eig_partial` documents the complete `initial_subspace` contract.
 - `vignette("certificates")` explains residuals, backward error, and
   orthogonality checks.
