@@ -85,11 +85,11 @@ unrounded measurements and reports the smallest value in each row.
 
 | case                  | lowest median | eigencore | RSpectra |   irlba | base R |
 |:----------------------|:--------------|----------:|---------:|--------:|-------:|
-| dense Hermitian       | RSpectra      |     4.868 |   0.4799 | not run |  1.945 |
-| sparse path Laplacian | eigencore     |     4.803 |   8.0000 | not run | 13.660 |
-| dense low-rank SVD    | RSpectra      |     4.942 |   0.2258 |  0.3950 |  1.674 |
-| tall sparse SVD       | RSpectra      |     2.650 |   0.3625 |  0.7717 |  1.766 |
-| wide sparse SVD       | RSpectra      |     2.729 |   0.4257 |  0.9561 |  2.489 |
+| dense Hermitian       | RSpectra      |     4.958 |   0.4908 | not run |  1.964 |
+| sparse path Laplacian | eigencore     |     4.505 |   8.0530 | not run | 12.600 |
+| dense low-rank SVD    | RSpectra      |     4.947 |   0.2512 |  0.3912 |  1.637 |
+| tall sparse SVD       | RSpectra      |     2.743 |   0.3582 |  0.7719 |  1.785 |
+| wide sparse SVD       | RSpectra      |     2.655 |   0.4282 |  0.9643 |  2.403 |
 
 Median solver-call time in milliseconds from 3 iterations per method.
 {.table style="width:100%;"}
