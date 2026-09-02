@@ -176,6 +176,39 @@ those pairs are the requested largest, smallest, or nearest eigenvalues. When
 target identity is consequential, inspect the method and target in the plan
 and compare against an independent oracle on a tractable instance.
 
+## What a certificate does not measure
+
+A certificate is a statement about the pairs you got back. It is not a
+statement about the pairs you asked for.
+
+All three measures above are computed on the returned values and vectors. If
+every one of them passes, each returned pair is a genuine eigenpair of your
+operator, to the tolerance you asked for. Nothing in the certificate claims
+that the returned set is the *complete* top-`k`, because completeness is not a
+residual property and cannot be checked from the output alone.
+
+This matters when the spectrum has repeated eigenvalues. A single-vector Lanczos
+iteration, which is the default for a general sparse Hermitian input, builds one
+Krylov vector at a time and can only discover one eigenvector per invariant
+subspace it explores. Asked for six eigenvalues of a matrix whose true top six
+contain two doubled values, it can return six *distinct* values, quietly filling
+the last two slots from further down the spectrum, and still pass every check.
+
+The fix is a block method, which explores several directions at once:
+
+```r
+# default: one Krylov vector at a time, may miss a repeat
+eig_partial(A, k = 6, target = largest())
+
+# block of 2 or more: recovers repeated eigenvalues
+eig_partial(A, k = 6, target = largest(), method = lanczos(block = 2))
+```
+
+Enlarging `k` is not a substitute, because it does not change the block size.
+It sometimes happens to help and sometimes does not. If you do not know whether
+your operator has multiplicities, and it would matter if it did, use a block
+request.
+
 ## Reading common certificate states
 
 The single most useful habit is to picture the per-pair backward error against
@@ -362,6 +395,7 @@ without changing call sites.
 | `max_orthogonality_loss` near `sqrt(eps)` but residuals tiny | Iterative drift; clustered eigenvalues at risk of duplicates.             | Increase `maxit`; check whether there are repeated eigenvalues. |
 | `failed_indices` includes the first returned pairs | Some leading returned pairs exceed the tolerance. | Inspect `convergence_history`; increase `maxit` if the errors are still declining. |
 | `failed_indices` includes the last returned pairs | Some trailing returned pairs exceed the tolerance. | Inspect the spectral gap; a wider `k` may help when the target boundary cuts through a cluster. |
+| `passed = TRUE`, but the values look like distinct neighbours where you expected a repeat | The certificate covers the pairs returned, not the completeness of the set. A single-vector method found one copy of a repeated eigenvalue. | Re-run with `method = lanczos(block = 2)` or wider. |
 
 The certificate records which numerical checks were run, the scale used for
 each backward error, and whether those checks passed. Use those fields together

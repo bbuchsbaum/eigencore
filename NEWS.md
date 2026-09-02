@@ -152,6 +152,17 @@
   uses retained result size for its bounded memory envelope and reports
   `bench::mem_alloc` separately as diagnostic evidence, because R allocation
   counters do not observe native C/C++ working heaps in any compared engine.
+* Shift-invert factorization fingerprints are two to three times cheaper. The
+  digest that builds a shift-invert cache key formatted every summary value
+  with `format(digits = 17)`; it now uses `sprintf("%.17g", ...)`, which
+  round-trips an IEEE 754 double identically but is vectorised in C.
+  Formatting, not the summary arithmetic, dominated the digest. Measured on
+  tridiagonal fixtures, the fingerprint drops from 215 to 65 microseconds at
+  `n = 300` and from 287 to 132 microseconds at `n = 1500`, taking it from
+  about 12% of the solve to under 4%. Key semantics are unchanged: the digest
+  remains deterministic and sensitive to any change in the operator, sigma, or
+  structure.
+
 * New production `auto` route for largest-target partial SVD: a native
   implicit normal-equations (Gram) thick-restart Lanczos that runs on
   \eqn{A^T A} or \eqn{A A^T} as an operator, without materializing the Gram
@@ -235,6 +246,28 @@
 * Benchmark smoke tests now use `testthat::skip_on_cran()` so they are skipped
   on CRAN as intended (the previous `Sys.getenv("CRAN")` guard never fired on
   the CRAN check farm).
+
+## Documentation
+
+* `vignette("certificates")` and `docs/known-limitations.md` now state what a
+  certificate does *not* measure. A passing certificate attests the pairs that
+  were returned, not the completeness of the requested set: on a spectrum with
+  repeated eigenvalues, a single-vector Lanczos iteration can return fewer
+  copies of a repeated value than its true multiplicity and still pass every
+  residual, backward-error and orthogonality check. The documented remedy is an
+  explicit `lanczos(block = 2)` or wider request, which recovers the full
+  multiplicity set; enlarging `k` is not a substitute because it does not change
+  the block size.
+
+* The benchmarks article is rebuilt around where eigencore actually wins and
+  loses. It now measures four regimes rather than five uniformly small ones:
+  banded Hermitian and wide rectangular sparse SVD, where structure detection
+  gives eigencore a large advantage, and dense Hermitian and general sparse
+  Hermitian, where it has none and RSpectra is faster. A single-variable
+  crossover sweep holds the small side at 90 and varies only the long side, and
+  the article notes that the crossover location depends strongly on density.
+  `vignettes/articles/` is now actually listed in `.Rbuildignore`, which the
+  article already claimed.
 
 # eigencore 1.0.0
 
