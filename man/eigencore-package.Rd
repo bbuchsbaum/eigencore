@@ -10,6 +10,15 @@ Computes the top-k singular triplets or eigenpairs of large sparse and
 structured matrices, with a numerical certificate attached to every result.
 See \code{\link[=svd_partial]{svd_partial()}}, \code{\link[=eig_partial]{eig_partial()}}, and \code{vignette("eigencore")}.
 }
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://bbuchsbaum.github.io/eigencore/}
+  \item \url{https://github.com/bbuchsbaum/eigencore}
+  \item Report bugs at \url{https://github.com/bbuchsbaum/eigencore/issues}
+}
+
+}
 \author{
 \strong{Maintainer}: Bradley Buchsbaum \email{brad.buchsbaum@gmail.com} [copyright holder]
 
