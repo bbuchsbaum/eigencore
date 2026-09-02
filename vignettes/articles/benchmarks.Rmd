@@ -1,5 +1,5 @@
 ---
-title: "Benchmarks: what we measure and what it means"
+title: "Benchmarks: where eigencore wins, loses, and crosses over"
 output:
   rmarkdown::html_document:
     toc: yes
@@ -18,8 +18,8 @@ resource_files:
 ---
 
 This is a pkgdown-only article, not a CRAN vignette: it runs `bench::mark()`
-at build time and is intentionally excluded from `R CMD check` (see
-`vignettes/articles/` in `.Rbuildignore`).
+at build time and is excluded from `R CMD check` by the `^vignettes/articles$`
+entry in `.Rbuildignore`.
 
 ```{r setup-opts, include = FALSE}
 knitr::opts_chunk$set(
@@ -74,24 +74,27 @@ relative_error <- function(x, truth) {
   max(abs(x - truth) / pmax(1, abs(truth)))
 }
 
+# Residual helpers keep sparse inputs sparse: densifying a 90 x 32000 operator
+# just to measure a residual would dominate the measurement it reports on.
 eigen_backward_error <- function(A, values, vectors) {
-  A_dense <- as.matrix(A)
   values <- Re(values)
   vectors <- as.matrix(vectors)
-  residual <- A_dense %*% vectors - vectors %*% diag(values, nrow = length(values))
-  scale <- fro_norm(A_dense) + abs(values)
+  residual <- as.matrix(A %*% vectors) -
+    vectors %*% diag(values, nrow = length(values))
+  scale <- fro_norm(A) + abs(values)
   max(sqrt(colSums(abs(residual)^2)) / pmax(scale, .Machine$double.eps))
 }
 
 svd_backward_error <- function(A, d, u, v) {
-  A_dense <- as.matrix(A)
   d <- Re(d)
   u <- as.matrix(u)
   v <- as.matrix(v)
-  left_residual <- A_dense %*% v - u %*% diag(d, nrow = length(d))
-  right_residual <- t(A_dense) %*% u - v %*% diag(d, nrow = length(d))
-  residual <- sqrt(colSums(abs(left_residual)^2) + colSums(abs(right_residual)^2))
-  max(residual / pmax(fro_norm(A_dense) + d, .Machine$double.eps))
+  D <- diag(d, nrow = length(d))
+  left_residual <- as.matrix(A %*% v) - u %*% D
+  right_residual <- as.matrix(Matrix::crossprod(A, u)) - v %*% D
+  residual <- sqrt(colSums(abs(left_residual)^2) +
+                     colSums(abs(right_residual)^2))
+  max(residual / pmax(fro_norm(A) + d, .Machine$double.eps))
 }
 
 bench_eval <- function(expr, iterations = benchmark_iterations) {
@@ -130,14 +133,6 @@ make_dense_hermitian <- function(n, seed = 1L) {
   crossprod(X) / n + diag(seq(1, 1.2, length.out = n))
 }
 
-make_dense_low_rank <- function(m, n, rank = 8L, noise = 1e-3, seed = 1L) {
-  set.seed(seed)
-  U <- qr.Q(qr(matrix(rnorm(m * rank), m, rank)))
-  V <- qr.Q(qr(matrix(rnorm(n * rank), n, rank)))
-  signal <- U %*% diag(seq(rank, 1, length.out = rank), nrow = rank) %*% t(V)
-  signal + noise * matrix(rnorm(m * n), m, n)
-}
-
 path_laplacian <- function(n) {
   Matrix::bandSparse(
     n,
@@ -146,10 +141,33 @@ path_laplacian <- function(n) {
   )
 }
 
+random_sparse_hermitian <- function(n, density, seed = 1L) {
+  set.seed(seed)
+  A <- Matrix::rsparsematrix(n, n, density = density)
+  methods::as(methods::as(A + Matrix::t(A), "generalMatrix"), "CsparseMatrix")
+}
+
+rectangular_sparse <- function(nrow, ncol, density = 0.035, seed = 1001L) {
+  set.seed(seed)
+  Matrix::rsparsematrix(nrow, ncol, density = density)
+}
+
+# RSpectra converges on the banded Laplacian only with a wider Krylov basis
+# than its default. Giving it that basis keeps the comparison fair.
+rspectra_eigen_opts <- function(tol, ncv = NULL) {
+  opts <- list(tol = tol, maxitr = 10000L)
+  if (!is.null(ncv)) opts$ncv <- ncv
+  opts
+}
+
 eigen_rows <- function(name, A, k = 6L, tol = 1e-8, seed = 1L,
+                       methods = c("eigencore", "RSpectra", "base"),
+                       ncv = NULL, truth = NULL,
                        iterations = benchmark_iterations) {
-  truth <- eigen(as.matrix(A), symmetric = TRUE, only.values = TRUE)$values[seq_len(k)]
-  methods <- c("eigencore", "RSpectra", "base")
+  if (is.null(truth) && "base" %in% methods) {
+    truth <- eigen(as.matrix(A), symmetric = TRUE,
+                   only.values = TRUE)$values[seq_len(k)]
+  }
   rows <- lapply(methods, function(method) {
     timed <- switch(
       method,
@@ -158,7 +176,8 @@ eigen_rows <- function(name, A, k = 6L, tol = 1e-8, seed = 1L,
         eig_partial(A, k = k, target = largest(), tol = tol)
       }, iterations = iterations),
       RSpectra = bench_eval({
-        RSpectra::eigs_sym(A, k = k, which = "LA", opts = list(tol = tol, maxitr = 1000L))
+        RSpectra::eigs_sym(A, k = k, which = "LA",
+                           opts = rspectra_eigen_opts(tol, ncv))
       }, iterations = iterations),
       base = bench_eval({
         eigen(as.matrix(A), symmetric = TRUE)
@@ -166,41 +185,46 @@ eigen_rows <- function(name, A, k = 6L, tol = 1e-8, seed = 1L,
     )
     if (!is.na(timed$error)) {
       return(data.frame(
-        regime = name,
-        task = "eigen",
-        method = method,
-        median_ms = timed$median_ms,
-        mem_mb = timed$mem_mb,
-        rel_error = NA_real_,
-        backward_error = NA_real_,
-        residual_check = FALSE,
-        eigencore_label = NA_character_,
-        status = timed$error,
+        regime = name, task = "eigen", method = method,
+        median_ms = timed$median_ms, mem_mb = timed$mem_mb,
+        rel_error = NA_real_, backward_error = NA_real_,
+        converged = FALSE, residual_check = FALSE,
+        eigencore_label = NA_character_, status = timed$error,
         stringsAsFactors = FALSE
       ))
     }
     result <- timed$result
     extracted <- switch(
       method,
-      eigencore = list(values = values(result), vectors = vectors(result)),
-      RSpectra = list(values = result$values, vectors = result$vectors),
+      eigencore = list(values = values(result), vectors = vectors(result),
+                       nconv = result$nconv),
+      RSpectra = list(values = result$values, vectors = result$vectors,
+                      nconv = result$nconv),
       base = {
         ord <- order(result$values, decreasing = TRUE)[seq_len(k)]
-        list(values = result$values[ord], vectors = result$vectors[, ord, drop = FALSE])
+        list(values = result$values[ord],
+             vectors = result$vectors[, ord, drop = FALSE], nconv = k)
       }
     )
-    backward <- eigen_backward_error(A, extracted$values, extracted$vectors)
+    converged <- isTRUE(extracted$nconv >= k)
+    backward <- if (converged) {
+      eigen_backward_error(A, extracted$values, extracted$vectors)
+    } else {
+      NA_real_
+    }
     data.frame(
-      regime = name,
-      task = "eigen",
-      method = method,
-      median_ms = timed$median_ms,
-      mem_mb = timed$mem_mb,
-      rel_error = relative_error(extracted$values, truth),
+      regime = name, task = "eigen", method = method,
+      median_ms = timed$median_ms, mem_mb = timed$mem_mb,
+      rel_error = if (converged && !is.null(truth)) {
+        relative_error(extracted$values, truth)
+      } else {
+        NA_real_
+      },
       backward_error = backward,
+      converged = converged,
       residual_check = isTRUE(backward <= tol),
       eigencore_label = if (method == "eigencore") result$method else NA_character_,
-      status = "ok",
+      status = if (converged) "ok" else "did not converge",
       stringsAsFactors = FALSE
     )
   })
@@ -208,9 +232,11 @@ eigen_rows <- function(name, A, k = 6L, tol = 1e-8, seed = 1L,
 }
 
 svd_rows <- function(name, A, rank = 6L, tol = 1e-8, seed = 1L,
-                     iterations = benchmark_iterations) {
-  truth <- svd(as.matrix(A), nu = 0, nv = 0)$d[seq_len(rank)]
-  methods <- c("eigencore", "RSpectra", "irlba", "base")
+                     methods = c("eigencore", "RSpectra", "irlba", "base"),
+                     truth = NULL, iterations = benchmark_iterations) {
+  if (is.null(truth) && "base" %in% methods) {
+    truth <- svd(as.matrix(A), nu = 0, nv = 0)$d[seq_len(rank)]
+  }
   rows <- lapply(methods, function(method) {
     timed <- switch(
       method,
@@ -219,7 +245,8 @@ svd_rows <- function(name, A, rank = 6L, tol = 1e-8, seed = 1L,
         svd_partial(A, rank = rank, target = largest(), tol = tol)
       }, iterations = iterations),
       RSpectra = bench_eval({
-        RSpectra::svds(A, k = rank, nu = rank, nv = rank, opts = list(tol = tol, maxitr = 1000L))
+        RSpectra::svds(A, k = rank, nu = rank, nv = rank,
+                       opts = list(tol = tol, maxitr = 10000L))
       }, iterations = iterations),
       irlba = bench_eval({
         set.seed(seed)
@@ -231,76 +258,79 @@ svd_rows <- function(name, A, rank = 6L, tol = 1e-8, seed = 1L,
     )
     if (!is.na(timed$error)) {
       return(data.frame(
-        regime = name,
-        task = "SVD",
-        method = method,
-        median_ms = timed$median_ms,
-        mem_mb = timed$mem_mb,
-        rel_error = NA_real_,
-        backward_error = NA_real_,
-        residual_check = FALSE,
-        eigencore_label = NA_character_,
-        status = timed$error,
+        regime = name, task = "SVD", method = method,
+        median_ms = timed$median_ms, mem_mb = timed$mem_mb,
+        rel_error = NA_real_, backward_error = NA_real_,
+        converged = FALSE, residual_check = FALSE,
+        eigencore_label = NA_character_, status = timed$error,
         stringsAsFactors = FALSE
       ))
     }
     result <- timed$result
     extracted <- switch(
       method,
-      eigencore = list(d = values(result), u = left_vectors(result), v = right_vectors(result)),
+      eigencore = list(d = values(result), u = left_vectors(result),
+                       v = right_vectors(result)),
       RSpectra = list(d = result$d, u = result$u, v = result$v),
       irlba = list(d = result$d, u = result$u, v = result$v),
       base = list(d = result$d[seq_len(rank)], u = result$u, v = result$v)
     )
-    backward <- svd_backward_error(A, extracted$d, extracted$u, extracted$v)
+    converged <- length(extracted$d) >= rank &&
+      all(is.finite(extracted$d[seq_len(rank)]))
+    backward <- if (converged) {
+      svd_backward_error(A, extracted$d, extracted$u, extracted$v)
+    } else {
+      NA_real_
+    }
     data.frame(
-      regime = name,
-      task = "SVD",
-      method = method,
-      median_ms = timed$median_ms,
-      mem_mb = timed$mem_mb,
-      rel_error = relative_error(extracted$d, truth),
+      regime = name, task = "SVD", method = method,
+      median_ms = timed$median_ms, mem_mb = timed$mem_mb,
+      rel_error = if (converged && !is.null(truth)) {
+        relative_error(extracted$d, truth)
+      } else {
+        NA_real_
+      },
       backward_error = backward,
+      converged = converged,
       residual_check = isTRUE(backward <= tol),
       eigencore_label = if (method == "eigencore") result$method else NA_character_,
-      status = "ok",
+      status = if (converged) "ok" else "did not converge",
       stringsAsFactors = FALSE
     )
   })
   do.call(rbind, rows)
 }
 
-metric_table <- function(rows, metric, digits = 4L) {
+metric_table <- function(rows, metric, digits = 4L,
+                         methods = c("eigencore", "RSpectra", "irlba", "base")) {
   regimes <- unique(rows$regime)
-  methods <- c("eigencore", "RSpectra", "irlba", "base")
   out <- data.frame(regime = regimes, check.names = FALSE)
-
   for (method in methods) {
     out[[method]] <- vapply(regimes, function(regime) {
-      keep <- rows$regime == regime & rows$method == method & rows$status == "ok"
+      keep <- rows$regime == regime & rows$method == method &
+        rows$status == "ok"
       if (!any(keep)) NA_real_ else rows[[metric]][which(keep)[1L]]
     }, numeric(1))
     out[[method]] <- signif(out[[method]], digits)
   }
-
   out
 }
 
-timing_table <- function(rows) {
-  out <- metric_table(rows, "median_ms")
-  method_columns <- setdiff(names(out), "regime")
-  out$lowest_median <- vapply(out$regime, function(regime) {
-    current <- rows[
-      rows$regime == regime & rows$status == "ok",
-      c("method", "median_ms"),
-      drop = FALSE
-    ]
-    if (!nrow(current)) {
-      return(NA_character_)
+speedup_column <- function(rows, reference = "RSpectra") {
+  regimes <- unique(rows$regime)
+  vapply(regimes, function(regime) {
+    ec <- rows$median_ms[rows$regime == regime &
+                           rows$method == "eigencore" & rows$status == "ok"]
+    rf <- rows$median_ms[rows$regime == regime &
+                           rows$method == reference & rows$status == "ok"]
+    if (!length(ec) || !length(rf)) return(NA_character_)
+    ratio <- rf[[1L]] / ec[[1L]]
+    if (ratio >= 1) {
+      sprintf("%.1fx faster", ratio)
+    } else {
+      sprintf("%.1fx slower", 1 / ratio)
     }
-    current$method[[which.min(current$median_ms)]]
   }, character(1))
-  out[, c("regime", "lowest_median", method_columns)]
 }
 
 quality_table <- function(rows) {
@@ -318,11 +348,17 @@ quality_table <- function(rows) {
         stringsAsFactors = FALSE
       ))
     }
+    rel <- ok$rel_error[is.finite(ok$rel_error)]
     data.frame(
       regime = regime,
       successful_methods = sprintf("%d/%d", nrow(ok), nrow(current)),
-      max_relative_error = formatC(max(ok$rel_error), format = "e", digits = 2),
-      max_backward_error = formatC(max(ok$backward_error), format = "e", digits = 2),
+      max_relative_error = if (length(rel)) {
+        formatC(max(rel), format = "e", digits = 2)
+      } else {
+        "not compared"
+      },
+      max_backward_error = formatC(max(ok$backward_error), format = "e",
+                                   digits = 2),
       residual_checks = if (all(ok$residual_check)) "all pass" else "one or more fail",
       stringsAsFactors = FALSE
     )
@@ -330,190 +366,314 @@ quality_table <- function(rows) {
 }
 ```
 
-This vignette runs five small eigenvalue and SVD cases with eigencore,
-`RSpectra`, `irlba`, and base R. The matrices are intentionally small and each
-method is timed three times so the article remains practical to rebuild.
-Results describe one render on one machine; they are not evidence of package
-rankings or scaling behavior.
+Whether eigencore is faster than `RSpectra` or `irlba` depends almost entirely
+on the problem, and the dependence is strong enough that a single headline
+number would be misleading. This vignette measures three regimes that land in
+three different places, then varies one dimension at a time to locate the
+crossover between them.
+
+Everything below describes one render on one machine. Treat the ratios as
+illustrations of shape, not as constants.
 
 ```{r setup}
 library(eigencore)
 ```
 
-## What is included?
+## Three regimes, three outcomes
 
-Dense and sparse inputs exercise different code paths, and SVD has different
-comparison methods than Hermitian eigenproblems. The smoke suite covers these
-five cases:
+eigencore is not a faster implementation of the same algorithm that `RSpectra`
+runs. It inspects the operator, and when it recognizes exploitable structure it
+solves a different, cheaper problem. Where no such structure exists, it runs a
+thick-restart Lanczos iteration that has no particular advantage over ARPACK,
+which is what `RSpectra` wraps.
+
+That produces three regimes:
 
 ```{r regimes}
 benchmark_regimes <- data.frame(
   regime = c(
+    "banded Hermitian",
+    "wide sparse SVD",
     "dense Hermitian",
-    "sparse path Laplacian",
-    "dense low-rank SVD",
-    "tall sparse SVD",
-    "wide sparse SVD"
+    "general sparse Hermitian"
   ),
-  input = c("120 x 120 dense", "300 x 300 dgCMatrix", "180 x 70 dense",
-            "320 x 60 dgCMatrix", "60 x 320 dgCMatrix"),
-  compared_methods = c("eigencore, RSpectra, base",
-                       "eigencore, RSpectra, base",
-                       "eigencore, RSpectra, irlba, base",
-                       "eigencore, RSpectra, irlba, base",
-                       "eigencore, RSpectra, irlba, base")
+  input = c(
+    "1500 x 1500 tridiagonal",
+    "90 x 50000 dgCMatrix",
+    "1000 x 1000 dense",
+    "2000 x 2000 dgCMatrix, 1% dense"
+  ),
+  structure_used = c(
+    "banded factorization, shift-invert",
+    "bounded Gram problem",
+    "none",
+    "none"
+  )
 )
 knitr::kable(benchmark_regimes)
 ```
 
-Base R supplies the dense reference values. For sparse matrices it converts
-the input with `as.matrix()`, so its timing and memory results apply only to
-these small cases. `irlba` appears only in the SVD cases.
-
-## What is recorded?
-
-Each row records four things:
-
-- median elapsed time from `bench::mark()`;
-- allocated memory reported by `bench`;
-- relative error against a dense base truth for the requested values;
-- an explicit residual/backward-error check on the returned vectors.
-
-For eigencore, the planner label identifies the implementation used in each
-case.
-
-## Results from this render
-
-```{r build-cases, eval = benchmark_ready, include = FALSE}
-set.seed(1001)
-bench_cases <- list(
-  dense_hermitian = make_dense_hermitian(120L, seed = 1001L),
-  sparse_laplacian = path_laplacian(300L),
-  dense_low_rank_svd = make_dense_low_rank(180L, 70L, rank = 8L, seed = 1002L),
-  tall_sparse_svd = Matrix::rsparsematrix(320L, 60L, density = 0.035),
-  wide_sparse_svd = Matrix::rsparsematrix(60L, 320L, density = 0.035)
+```{r build-headline, eval = benchmark_ready, include = FALSE}
+headline_cases <- list(
+  banded = path_laplacian(1500L),
+  wide = rectangular_sparse(90L, 50000L),
+  dense = make_dense_hermitian(1000L, seed = 1001L),
+  general = random_sparse_hermitian(2000L, density = 0.01, seed = 7L)
 )
 ```
 
-```{r run-benchmarks, eval = benchmark_ready, include = FALSE}
-benchmark_rows <- rbind(
-  eigen_rows("dense Hermitian", bench_cases$dense_hermitian,
-             k = 6L, seed = 2001L),
-  eigen_rows("sparse path Laplacian", bench_cases$sparse_laplacian,
-             k = 6L, seed = 2002L),
-  svd_rows("dense low-rank SVD", bench_cases$dense_low_rank_svd,
-           rank = 6L, seed = 2003L),
-  svd_rows("tall sparse SVD", bench_cases$tall_sparse_svd,
-           rank = 6L, seed = 2004L),
-  svd_rows("wide sparse SVD", bench_cases$wide_sparse_svd,
-           rank = 6L, seed = 2005L)
+```{r run-headline, eval = benchmark_ready, include = FALSE}
+headline_rows <- rbind(
+  eigen_rows("banded Hermitian", headline_cases$banded,
+             k = 6L, seed = 2001L, ncv = 60L),
+  svd_rows("wide sparse SVD", headline_cases$wide,
+           rank = 6L, seed = 2002L),
+  eigen_rows("dense Hermitian", headline_cases$dense,
+             k = 6L, seed = 2003L),
+  eigen_rows("general sparse Hermitian", headline_cases$general,
+             k = 6L, seed = 2004L,
+             methods = c("eigencore", "RSpectra"),
+             truth = eigen(as.matrix(headline_cases$general), symmetric = TRUE,
+                           only.values = TRUE)$values[seq_len(6L)])
 )
-stopifnot(all(is.finite(benchmark_rows$median_ms[benchmark_rows$status == "ok"])))
-stopifnot(all(is.finite(benchmark_rows$rel_error[benchmark_rows$status == "ok"])))
-stopifnot(all(is.finite(benchmark_rows$backward_error[benchmark_rows$status == "ok"])))
 ```
 
-### Elapsed time
-
-The entries are median solver-call milliseconds; lower values are better. An
-eigencore solver call includes its native certificate. The external calls do
-not, and the shared residual check used elsewhere in this vignette runs after
-the timer. These smoke timings therefore describe call overhead, not a common
-time-to-certified-answer. The installed benchmark scripts report both raw
-solver time and a common eigencore-certified total. The `lowest_median` column
-is selected from unrounded measurements and reports the smallest value in each
-row.
-
-```{r timing-table, eval = benchmark_ready, echo = FALSE}
-timing_rows <- timing_table(benchmark_rows)
+```{r headline-table, eval = benchmark_ready, echo = FALSE}
+headline_timing <- metric_table(headline_rows, "median_ms")
+headline_timing$vs_rspectra <- speedup_column(headline_rows)
 knitr::kable(
-  timing_rows,
-  col.names = c("case", "lowest median", "eigencore", "RSpectra", "irlba", "base R"),
+  headline_timing[, c("regime", "vs_rspectra", "eigencore", "RSpectra",
+                      "irlba", "base")],
+  col.names = c("case", "eigencore vs RSpectra", "eigencore", "RSpectra",
+                "irlba", "base R"),
   align = c("l", "l", "r", "r", "r", "r"),
   caption = paste("Median solver-call time in milliseconds from",
-                  benchmark_iterations, "iterations per method.")
+                  benchmark_iterations,
+                  "iterations. The comparison column is RSpectra time divided",
+                  "by eigencore time.")
 )
 ```
 
-```{r timing-summary, eval = benchmark_ready, echo = FALSE, results = 'asis'}
-eigencore_lowest <- sum(timing_rows$lowest_median == "eigencore")
+The two wins come from structure, not from a faster inner loop. The banded case
+is the clearest. The largest eigenvalues of a path Laplacian are separated by
+gaps on the order of `1e-5`, which is punishing for a method that sees only a
+matrix-vector product: ARPACK has to grind through the cluster. Eigencore
+instead detects a tridiagonal operator, factorizes it, and runs shift-invert
+Lanczos, which converges in a handful of iterations regardless of how tight the
+cluster is.
+
+Because that cluster is what makes the case hard, the comparison is run with
+`ncv = 60` rather than the `RSpectra` default. With defaults `RSpectra` still
+converges at this size, but it needs roughly ten times as many iterations and is
+about 60% slower, so the wider basis is the more favorable setting for it. At
+`n = 2000` and above, the default basis stops converging within `maxitr`
+entirely.
+
+The two losses are equally structural. On a dense matrix and on a general
+sparse matrix there is nothing to exploit, and eigencore's Lanczos
+implementation is slower than ARPACK's per iteration.
+
+## Where the crossover is
+
+The rectangular sparse SVD case is the one worth studying, because it has a
+clean crossover. eigencore forms the smaller Gram problem and certifies the
+resulting triplets back in the original coordinates. If the small side stays
+bounded, that Gram problem does not grow as the long side does, while an
+iterative method pays for every matrix-vector product against a matrix that
+keeps getting longer.
+
+The sweep below fixes everything except the long dimension: small side 90, rank
+6, density 0.035, same tolerance, same fixture generator.
+
+```{r crossover, eval = benchmark_ready, include = FALSE}
+crossover_long_sides <- c(200L, 500L, 2000L, 8000L, 32000L)
+
+# base R is excluded from the timed methods here because timing a dense
+# decomposition of a 90 x 32000 operator says nothing useful. It is still used
+# once per case, outside the timer, to supply reference singular values.
+dense_truth <- function(A, rank) svd(as.matrix(A), nu = 0, nv = 0)$d[seq_len(rank)]
+
+crossover_rows <- do.call(rbind, lapply(crossover_long_sides, function(n) {
+  wide <- rectangular_sparse(90L, n)
+  tall <- rectangular_sparse(n, 90L)
+  rbind(
+    svd_rows(sprintf("wide 90 x %d", n), wide, rank = 6L, seed = 3001L,
+             methods = c("eigencore", "RSpectra", "irlba"),
+             truth = dense_truth(wide, 6L)),
+    svd_rows(sprintf("tall %d x 90", n), tall, rank = 6L, seed = 3002L,
+             methods = c("eigencore", "RSpectra", "irlba"),
+             truth = dense_truth(tall, 6L))
+  )
+}))
+```
+
+```{r crossover-table, eval = benchmark_ready, echo = FALSE}
+crossover_timing <- metric_table(
+  crossover_rows, "median_ms",
+  methods = c("eigencore", "RSpectra", "irlba")
+)
+crossover_timing$vs_rspectra <- speedup_column(crossover_rows)
+crossover_timing <- crossover_timing[
+  order(!grepl("^wide", crossover_timing$regime)),
+]
+knitr::kable(
+  crossover_timing[, c("regime", "vs_rspectra", "eigencore", "RSpectra",
+                       "irlba")],
+  row.names = FALSE,
+  col.names = c("case", "eigencore vs RSpectra", "eigencore", "RSpectra",
+                "irlba"),
+  align = c("l", "l", "r", "r", "r"),
+  caption = "Median solver-call time in milliseconds, small side fixed at 90."
+)
+```
+
+```{r crossover-summary, eval = benchmark_ready, echo = FALSE, results = 'asis'}
+crossing <- function(prefix) {
+  sub <- crossover_rows[grepl(prefix, crossover_rows$regime), , drop = FALSE]
+  sides <- crossover_long_sides
+  won <- vapply(sides, function(n) {
+    regime <- unique(sub$regime[grepl(sprintf("\\b%d\\b", n), sub$regime)])
+    if (!length(regime)) return(NA)
+    ec <- sub$median_ms[sub$regime == regime[[1L]] & sub$method == "eigencore"]
+    rs <- sub$median_ms[sub$regime == regime[[1L]] & sub$method == "RSpectra"]
+    if (!length(ec) || !length(rs)) return(NA)
+    ec[[1L]] < rs[[1L]]
+  }, logical(1))
+  first <- which(won)[1L]
+  if (is.na(first)) "did not cross in this sweep" else
+    sprintf("between %d and %d", sides[max(first - 1L, 1L)], sides[first])
+}
 cat(sprintf(
   paste0(
-    "In this render, eigencore recorded the lowest median in **%d of %d** ",
-    "cases. The result is mixed, and the sub-millisecond rows are especially ",
-    "sensitive to setup overhead and run-to-run noise."
+    "In this render the wide orientation crossed **%s**, and the tall ",
+    "orientation crossed **%s**.\n"
   ),
-  eigencore_lowest,
-  nrow(timing_rows)
+  crossing("^wide"),
+  crossing("^tall")
 ))
 ```
 
-### Why can larger cases look different?
+Both orientations contract the long side into a bounded Gram problem of the same
+size, and both cross.
 
-The smoke cases above are small enough that fixed work matters: dispatch,
-result construction, certification, and the dense eigensolve for a bounded
-Gram matrix can be a substantial fraction of total time. They are useful for
-checking behavior, but they are poor evidence about scaling.
+Where they cross is not a property of eigencore alone, so do not carry the
+number above to a different matrix. It moves with density: this sweep uses
+0.035, while the repository's controlled sweep in
+`inst/benchmarks/bench-svd-gram-cutoff.R` holds the small side at 90 as well but
+uses 0.003, about twelve times sparser, and there the tall orientation does not
+cross on raw solver time until a long side near 25,000. Fewer nonzeros per
+column make an iterative matrix-vector product cheaper while eigencore's Gram
+formation is comparatively less affected, which pushes the crossover out.
 
-For a highly rectangular sparse SVD, eigencore can form the smaller Gram
-problem and certify the resulting triplets in the original coordinates. If the
-smaller dimension stays bounded while the long dimension grows, the Gram
-eigensolve retains the same dimension while iterative methods perform more
-expensive matrix-vector products. A crossover is therefore plausible. The
-installed large endpoint cases show that eigencore can win in this regime, but
-those endpoints do not locate a crossover because their dimensions, density,
-rank, and random fixture all change together. The controlled mode of
-`bench-svd-gram-cutoff.R` fixes the small side, rank, density, and a nested
-sparse fixture while varying only the long side, and reports raw solver and
-common certified-total ratios separately.
+It also moves with eigencore's own per-call fixed costs, which is the subject of
+the next section and is the larger effect at the time of writing.
 
-In the 2026-07-15 installed five-iteration sweep with small side 90, the
-certified-total ratio crossed above one by long side 5,000 in both
-orientations. The raw-call ratio crossed there for the wide case and by 25,000
-for the tall case. These are machine-specific release measurements, not a
-universal crossover constant.
+Below the crossover, eigencore's fixed costs are simply larger than the whole
+problem. That is not an artifact of the measurement, and it does not go away
+with tuning.
 
-This does not mean that increasing either matrix dimension helps. The current
-planner limits the smaller dimension to 512 for tall matrices and 1024 for
-wide matrices, and also checks aspect ratio, requested-rank fraction, and a
-memory budget. The repository's cutoff evidence is mixed outside the core
-regime: increasing the smaller side can remove the advantage, particularly for
-tall matrices. The current full endpoint cases are `100000 x 500` and its
-transpose; see the
-[benchmark manifest](https://github.com/bbuchsbaum/eigencore/blob/main/docs/v1-benchmark-manifest.md)
-for the installed evidence and exact commands.
+## What the fixed costs are
 
-The larger benchmark scripts pass the requested tolerance to RSpectra and
-irlba, then recompute eigencore certificates for all external results. They
-retain both raw solver time and common time through certification. A row that
-still fails the requested certificate is excluded from time-to-certified-answer
-claims rather than being treated as a slow certified result.
+A `svd_partial()` or `eig_partial()` call does work that `RSpectra::svds()` does
+not do at all:
 
-### Allocated memory
+- **It checks the operator instead of trusting a claim.** `RSpectra::eigs_sym()`
+  is symmetric because of its name; you assert the property by choosing the
+  function. `eig_partial()` verifies it, which for a dense `n x n` input is an
+  `O(n^2)` scan.
+- **It plans.** The planner inspects structure, target, and requested rank to
+  choose a kernel, and records the choice.
+- **It records provenance.** Operators carry an identity and revision so that
+  results, restart states, and factorizations can be traced to the operator that
+  produced them. Deriving that identity for a built-in operator digests the
+  source data, so it also scales with the size of the input rather than with the
+  amount of solving requested.
+- **It certifies.** Every result carries residuals, a backward-error bound, and
+  an orthogonality measure. The comparison methods return none of these, and the
+  residual checks used elsewhere in this article run outside the timer.
+
+Only the last of those is about the answer. The rest is bookkeeping that a
+single call pays in full, which is why the small end of every sweep above goes
+to the competition.
+
+The breakdown below separates them on the dense case. `kernel` is the solver's
+own instrumented stage total, so the gap between it and the full call is
+everything else.
+
+```{r fixed-cost-breakdown, eval = benchmark_ready, echo = FALSE}
+dense_A <- headline_cases$dense
+dense_op <- as_operator(dense_A)
+fixed_cost <- bench::mark(
+  full = {
+    set.seed(11)
+    eig_partial(dense_A, k = 6L, target = largest(), tol = 1e-8)
+  },
+  prebuilt = {
+    set.seed(11)
+    eig_partial(dense_op, k = 6L, target = largest(), tol = 1e-8)
+  },
+  uncertified = {
+    set.seed(11)
+    eig_partial(dense_A, k = 6L, target = largest(), tol = 1e-8, certify = FALSE)
+  },
+  iterations = benchmark_iterations,
+  check = FALSE,
+  memory = FALSE,
+  filter_gc = FALSE
+)
+set.seed(11)
+dense_fit <- eig_partial(dense_A, k = 6L, target = largest(), tol = 1e-8)
+knitr::kable(
+  data.frame(
+    measurement = c(
+      "full call, matrix input",
+      "call with a prebuilt operator",
+      "call with certify = FALSE",
+      "solver kernel stages only"
+    ),
+    median_ms = signif(c(
+      as.numeric(fixed_cost$median) * 1000,
+      sum(dense_fit$stage_seconds) * 1000
+    ), 4)
+  ),
+  col.names = c("measurement", "median ms"),
+  align = c("l", "r"),
+  caption = paste("Same", nrow(dense_A), "x", ncol(dense_A),
+                  "dense Hermitian problem, k = 6.")
+)
+```
+
+Two things follow. Certification is not the expensive part: turning it off
+changes almost nothing. And building the operator once with `as_operator()` and
+reusing it removes a repeated share of the bookkeeping, which is worth doing
+whenever you solve more than one problem against the same matrix.
+
+
+## Allocated memory
 
 These values are megabytes allocated during the timed expression. They do not
 measure peak resident memory.
 
 ```{r memory-table, eval = benchmark_ready, echo = FALSE}
-memory_rows <- metric_table(benchmark_rows, "mem_mb")
 knitr::kable(
-  memory_rows,
+  metric_table(rbind(headline_rows, crossover_rows), "mem_mb"),
   col.names = c("case", "eigencore", "RSpectra", "irlba", "base R"),
   align = c("l", "r", "r", "r", "r"),
   caption = "Allocated memory in megabytes."
 )
 ```
 
-### Numerical checks
+## Numerical checks
 
-The summary below reports the largest error observed across the methods in
-each case. Timing should be ignored for any case that has a failed method or
-residual check.
+Timing means nothing without agreement on the answer. The summary below reports
+the largest error observed across the methods in each case. Relative error is
+compared against a dense `base` reference where computing one is affordable; the
+backward error is always measured directly on the returned vectors.
 
 ```{r quality-table, eval = benchmark_ready, echo = FALSE}
-quality_rows <- quality_table(benchmark_rows)
 knitr::kable(
-  quality_rows,
+  quality_table(rbind(headline_rows, crossover_rows)),
+  row.names = FALSE,
   col.names = c("case", "methods completed", "max relative error",
                 "max backward error", "residual checks"),
   align = c("l", "c", "r", "r", "l"),
@@ -521,11 +681,15 @@ knitr::kable(
 )
 ```
 
-### Eigencore planner paths
+## Eigencore planner paths
+
+The planner label records which kernel produced each result, so a timing change
+can be traced to a dispatch change.
 
 ```{r planner-table, eval = benchmark_ready, echo = FALSE}
-planner_rows <- benchmark_rows[
-  benchmark_rows$method == "eigencore",
+planner_rows <- rbind(headline_rows, crossover_rows)
+planner_rows <- planner_rows[
+  planner_rows$method == "eigencore",
   c("regime", "eigencore_label", "status"),
   drop = FALSE
 ]
@@ -537,16 +701,38 @@ knitr::kable(
 )
 ```
 
+## How to read this
+
+The honest summary is that eigencore is worth reaching for when one of these is
+true:
+
+- the operator has structure it can exploit (banded, tridiagonal, diagonal,
+  separable grid, or a bounded Gram side on a highly rectangular sparse matrix);
+- you want a certificate with the answer, and would otherwise write the
+  residual check yourself;
+- the spectrum is clustered enough that a generic Krylov method needs tuning to
+  converge at all, as `RSpectra` does on the banded case above once `n` passes
+  about 2000.
+
+For a dense symmetric matrix, or a general sparse matrix with no exploitable
+structure, `RSpectra` is faster and this vignette should not be read as
+suggesting otherwise.
+
 ## Limits of this comparison
 
-The rows above are deliberately small. They keep the vignette runnable, and
-they catch obvious problems: wrong target, broken sparse handling, missing
-vectors, certification drift, and large timing regressions. They do not prove
-large-scale speed claims.
+These cases are small enough to rebuild on every render. They catch obvious
+problems: wrong target, broken sparse handling, missing vectors, certification
+drift, and large timing regressions. They do not establish scaling behavior, and
+a single crossover measured on one machine is not a constant.
 
-For larger sparse matrices, base R is a truth oracle only while `as.matrix(A)`
-is affordable. Studying scaling and memory behavior requires installed-package
-runs, larger fixtures, repeated measurements, and saved artifacts.
+Two caveats matter for interpreting any row:
+
+- `base` R is a truth oracle only while `as.matrix(A)` is affordable, which is
+  why it is absent from the larger crossover rows.
+- A single-vector Krylov method may return fewer copies of a repeated eigenvalue
+  than its true multiplicity. Eigencore's certificate attests that each returned
+  pair is a genuine eigenpair; it does not attest that no eigenvalue was missed.
+  Benchmark fixtures here avoid degenerate spectra for that reason.
 
 The benchmark tables report `bench::mem_alloc`, which counts cumulative
 R-managed allocation. It does not see C/C++ working heaps used by eigencore or
@@ -583,7 +769,8 @@ R_LIBS=/tmp/eigencore-bench-lib \
   --subject=eigencore --strict --save
 ```
 
-Those scripts add strict pass/fail gates, larger sparse fixtures, saved RDS
-artifacts, memory ratios, and planner-provenance checks. Use
+The controlled mode of `bench-svd-gram-cutoff.R` fixes the small side, rank,
+density, and fixture while varying only the long side, and reports raw solver
+and common certified-total ratios separately. Use
 `docs/v1-benchmark-manifest.md` for the current release-gate inventory and
 `docs/post-v1-benchmark-gates.md` for future-promotion gates.

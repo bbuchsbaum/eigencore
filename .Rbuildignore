@@ -27,3 +27,4 @@
 ^[.]lintr$
 ^tests/testthat/test-geigen-parity[.]R$
 ^PACKAGES([.](gz|rds))?$
+^vignettes/articles$

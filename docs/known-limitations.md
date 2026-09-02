@@ -61,6 +61,24 @@ eigenvalue or singular-value return. Current limitations:
   tests.
 - Generalized and shift-invert certificates must continue to certify the
   original problem, not only the transformed operator.
+- **A certificate attests the pairs that were returned, not the completeness of
+  the requested set.** Every returned pair satisfies its residual, backward-error
+  and orthogonality bounds, and `passed = TRUE` means exactly that. It does not
+  mean that no eigenvalue was missed. On a spectrum with repeated eigenvalues a
+  single-vector Krylov method can return fewer copies of a repeated value than
+  its true multiplicity, filling the remaining slots from further down the
+  spectrum, and the certificate still passes. Measured on a `40x40` 2D grid
+  Laplacian (`n = 1600`, `k = 6`, `largest()`, `tol = 1e-8`, planner label
+  `native scalar thick-restart Hermitian Lanczos`): the true top six contain two
+  doubled values, eigencore returns six distinct values, and the relative error
+  against the true top six is `5.4e-3` with `passed = TRUE`. This is standard
+  single-vector Lanczos behavior rather than a defect in the certificate, and
+  ARPACK misses duplicates on the same fixture at other sizes. The reliable
+  remedy is an explicit `lanczos(block = 2)` or wider request: on the fixture
+  above, every block size from 2 to 4 recovers the full multiplicity set to
+  `2e-13`. Simply enlarging `k` is not a remedy, because it does not change the
+  block size: on the same fixture `k = 8` and `k = 12` happen to recover both
+  doubled values while `k = 10` still misses one, at `2.3e-3`.
 
 ## Complex ABI And Certificate Contract
 
