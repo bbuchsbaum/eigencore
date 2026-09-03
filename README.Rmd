@@ -20,6 +20,18 @@ knitr::opts_chunk$set(
 
 # eigencore
 
+<!-- badges: start -->
+[![R-CMD-check](https://github.com/bbuchsbaum/eigencore/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/bbuchsbaum/eigencore/actions/workflows/R-CMD-check.yaml)
+[![pkgdown](https://github.com/bbuchsbaum/eigencore/actions/workflows/pkgdown.yaml/badge.svg)](https://bbuchsbaum.github.io/eigencore/)
+[![Codecov test coverage](https://codecov.io/gh/bbuchsbaum/eigencore/branch/main/graph/badge.svg)](https://app.codecov.io/gh/bbuchsbaum/eigencore)
+[![test-coverage](https://github.com/bbuchsbaum/eigencore/actions/workflows/test-coverage.yaml/badge.svg)](https://github.com/bbuchsbaum/eigencore/actions/workflows/test-coverage.yaml)
+<!-- badges: end -->
+
+[Documentation](https://bbuchsbaum.github.io/eigencore/) ·
+[Getting started](https://bbuchsbaum.github.io/eigencore/articles/eigencore.html) ·
+[Reference](https://bbuchsbaum.github.io/eigencore/reference/) ·
+[Changelog](NEWS.md)
+
 **eigencore** computes the top-*k* singular triplets or eigenpairs of a large
 sparse or structured matrix in R — the computation behind PCA on big sparse
 data, spectral embeddings, LSA, and low-rank approximation. It also certifies
@@ -304,18 +316,24 @@ additionally return a certificate.
 
 ## Learning more
 
-`vignette("eigencore", package = "eigencore")` is the guided tour.
-`vignette("certificates", package = "eigencore")` explains how to read the
-numerical evidence and what to do when a check fails.
+The [package website](https://bbuchsbaum.github.io/eigencore/) hosts the
+reference and articles, including
+[certificates](https://bbuchsbaum.github.io/eigencore/articles/certificates.html)
+and
+[PSD geometry](https://bbuchsbaum.github.io/eigencore/articles/psd-geometry.html).
+Installed vignettes remain available as
+`vignette("eigencore", package = "eigencore")` and
+`vignette("certificates", package = "eigencore")`.
 
 ## Status
 
-eigencore 1.3.0 is the current release. Its additive API includes certified
-real-double PSD factors, image-space reduction, strict singular solves, metric
-block primitives, dense Gram factors, and non-densifying structural sparse
-Gram and graph-Laplacian paths. The generalized-eigen `B`/`metric=` surface
-remains SPD-only; singular forms use explicit image reduction. The exported API
-is frozen by snapshot tests, and breaking changes follow semantic versioning.
+eigencore 1.3.0 is the current GitHub release (`v1.3.0`). CRAN currently
+publishes 1.0.3. The 1.3.0 additive API includes certified real-double PSD
+factors, image-space reduction, strict singular solves, metric block
+primitives, dense Gram factors, and non-densifying structural sparse Gram and
+graph-Laplacian paths. The generalized-eigen `B`/`metric=` surface remains
+SPD-only; singular forms use explicit image reduction. The exported API is
+frozen by snapshot tests, and breaking changes follow semantic versioning.
 Unsupported solver or PSD capability families remain visibly unavailable
 rather than silently falling back.
 
