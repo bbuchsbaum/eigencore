@@ -4,7 +4,7 @@
 \alias{shift_invert}
 \title{Shift-invert method descriptor.}
 \usage{
-shift_invert(sigma, solve = NULL, factorization = NULL)
+shift_invert(sigma, solve = NULL, factorization = NULL, max_subspace = NULL)
 }
 \arguments{
 \item{sigma}{Shift value \code{sigma}.}
@@ -12,6 +12,10 @@ shift_invert(sigma, solve = NULL, factorization = NULL)
 \item{solve}{Optional user-supplied solve operator for \verb{(A - sigma B)}.}
 
 \item{factorization}{Optional precomputed factorization handle.}
+
+\item{max_subspace}{Optional maximum Krylov subspace size for the Lanczos
+(Hermitian) or Krylov-Schur Arnoldi (nonsymmetric) iteration on the
+inverted operator. \code{NULL} uses the route default.}
 }
 \value{
 An \code{eigencore_method} descriptor selecting shift-invert.

@@ -167,9 +167,9 @@ test_that("explicit generalized Lanczos supports sparse CSC SPD metric solves", 
   )
 
   expect_equal(fit$method, eigencore:::generalized_lanczos_label())
-  expect_equal(fit$restart$metric_solve, "native sparse tridiagonal Thomas solve for B")
-  expect_equal(fit$restart$metric_solve_kind, "native_sparse_tridiagonal_thomas")
-  expect_equal(fit$restart$metric_factorization, "tridiagonal_thomas")
+  expect_equal(fit$restart$metric_solve, "native sparse tridiagonal LU (dgttrf/dgttrs) solve for B")
+  expect_equal(fit$restart$metric_solve_kind, "native_sparse_tridiagonal_lu")
+  expect_equal(fit$restart$metric_factorization, "tridiagonal_lu")
   expect_true(fit$restart$metric_solve_native)
   expect_true(fit$restart$native_metric_solve)
   expect_gt(fit$restart$metric_solves, 0L)

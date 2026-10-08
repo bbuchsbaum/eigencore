@@ -331,6 +331,26 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
     stop("Native block Hermitian Lanczos currently supports dense double matrices, dgCMatrix, and real matrix-free Hermitian operators only.", call. = FALSE)
   }
 
+  # The kernel returns pairs in lock order (e.g. 9, 7, 9 when a repeated
+  # value locks late); present them in target order (C44). Locked pairs are
+  # the kernel's first n_locked columns, so track where they land.
+  locked <- seq_len(iter$n_locked %||% 0L)
+  if (length(iter$values) > 1L) {
+    perm <- order_indices(iter$values, target)
+    if (!identical(perm, seq_along(iter$values))) {
+      iter$values <- iter$values[perm]
+      if (!is.null(iter$vectors)) {
+        iter$vectors <- iter$vectors[, perm, drop = FALSE]
+      }
+      if (length(iter$residuals) == length(perm)) {
+        iter$residuals <- iter$residuals[perm]
+      }
+      if (length(iter$converged) == length(perm)) {
+        iter$converged <- iter$converged[perm]
+      }
+      locked <- which(perm %in% locked)
+    }
+  }
   values <- iter$values
   vec_matrix <- iter$vectors
   cert <- certify_eigen_operator_residuals(op, values, vec_matrix, iter$residuals, tol = tol)
@@ -340,7 +360,6 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
   ortho_passes <- as.integer(iter$ortho_passes %||% NA_integer_)
   locking_events <- as.integer(iter$locking_events %||% 0L)
   restarts_used <- as.integer(iter$restarts %||% 0L)
-  locked <- seq_len(iter$n_locked %||% 0L)
   operator_allocations <- as.numeric(iter$operator_allocations %||% NA_real_)
   operator_bytes_allocated <- as.numeric(iter$operator_bytes_allocated %||% NA_real_)
   stage_seconds <- iter$stage_seconds %||% numeric()

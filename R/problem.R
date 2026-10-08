@@ -129,9 +129,13 @@ svd_problem <- function(A, domain = NULL, codomain = NULL, target = largest()) {
 #'   identity, serialization capability, and retained-memory metadata.
 #' @details The eigen and SVD methods accept their usual request and method
 #'   arguments plus execution controls through `...`. Eigen plans freeze
-#'   `tol`, `maxit`, `vectors`, `certify`, `allow_dense_fallback`, and an
-#'   optional `initial_subspace`; SVD plans freeze `tol`, `vectors`, `certify`,
-#'   and `allow_dense_fallback`. Use `solve(plan)` to execute those values or
+#'   `tol`, `maxit`, `vectors`, `left_vectors`, `certify`,
+#'   `allow_dense_fallback`, and an optional `initial_subspace`; SVD plans
+#'   freeze `tol`, `vectors`, `certify`, and `allow_dense_fallback`. The
+#'   eigen `maxit` is resolved into the route's iteration limit (see
+#'   [eig_partial()]) and recorded in `plan$controls$iteration_limit` /
+#'   `plan$controls$iteration_limit_kind`; the Krylov subspace size is
+#'   `plan$controls$max_subspace`. Use `solve(plan)` to execute those values or
 #'   `solve(plan, replan = TRUE)` to make a fresh decision under current
 #'   policy.
 #' @examples
@@ -148,11 +152,14 @@ plan_solver.eigencore_eigen_problem <- function(
     problem, k, method = auto(), tol = 1e-8, maxit = NULL, vectors = TRUE,
     certify = TRUE,
     allow_dense_fallback = c("auto", "never", "always"),
-    initial_subspace = NULL, ...) {
+    initial_subspace = NULL,
+    left_vectors = c("auto", "none", "compute"), ...) {
   if (problem$A$dim[1L] != problem$A$dim[2L]) {
     stop("Eigenproblems require a square operator.", call. = FALSE)
   }
   k <- validate_solution_count(k, problem$A$dim[1L], "k")
+  left_vectors <- match.arg(left_vectors)
+  check_iteration_limit_conflict(method, maxit)
   problem$target <- canonical_hermitian_target(problem$target, problem$structure)
   if (inherits(problem$target, "eigencore_target") &&
       identical(problem$target$kind, "both_ends")) {
@@ -174,6 +181,7 @@ plan_solver.eigencore_eigen_problem <- function(
     allow_dense_fallback = allow_dense_fallback,
     initial_subspace = initial_subspace
   )
+  execution$left_vectors <- left_vectors
   auto_shift <- auto_shift_invert_route(problem, method)
   problem <- auto_shift$problem
   method <- auto_shift$method
@@ -292,12 +300,12 @@ plan_solver.eigencore_eigen_problem <- function(
   } else if (is_hermitian && is_native_csc && native_lanczos_target_supported(problem$target)) {
     "native scalar thick-restart Hermitian Lanczos"
   } else if (!is_hermitian && !has_metric &&
-      reference_arnoldi_target_supported(problem$target) &&
+      native_arnoldi_target_supported(problem$target) &&
       native_arnoldi_available(problem$A) &&
       (is_native_csc || is_dense_source)) {
     native_refined_arnoldi_label()
   } else if (!is_hermitian && !has_metric &&
-      reference_arnoldi_target_supported(problem$target) &&
+      native_arnoldi_target_supported(problem$target) &&
       native_matrix_free_arnoldi_available(problem$A)) {
     native_matrix_free_arnoldi_label()
   } else if (!is_hermitian && !has_metric &&
@@ -325,6 +333,11 @@ plan_solver.eigencore_eigen_problem <- function(
     paste0("target: ", target_label(problem$target)),
     if (has_metric) "metric/operator B supplied" else "standard eigenproblem",
     if (auto_shift$nearest_implicit) "nearest target routed through shift_invert(sigma)" else NULL,
+    if (isTRUE(auto_shift$smallest_magnitude_implicit)) {
+      "nonsymmetric smallest_magnitude target routed through shift_invert(sigma = 0) Arnoldi"
+    } else {
+      NULL
+    },
     if (auto_shift$tridiagonal_edge_implicit) {
       paste0(
         "tridiagonal ", target_label(problem$target),
@@ -360,21 +373,27 @@ plan_solver.eigencore_eigen_problem <- function(
       identical(chosen, native_refined_arnoldi_label()) ||
       identical(chosen, native_matrix_free_arnoldi_label()) ||
       identical(chosen, reference_arnoldi_label())) {
-    controls <- arnoldi_plan_controls(problem, k = k, chosen = chosen)
+    controls <- arnoldi_plan_controls(problem, k = k, chosen = chosen,
+                                      method = method)
+  }
+  if (chosen %in% shift_invert_arnoldi_labels()) {
+    controls <- shift_invert_arnoldi_plan_controls(problem, k = k)
   }
   if (identical(chosen, generalized_lanczos_label()) ||
       identical(chosen, native_generalized_lanczos_label())) {
     controls <- generalized_lanczos_plan_controls(problem, k = k, method = method)
   }
   if (identical(chosen, sparse_general_pencil_diagonal_arnoldi_label())) {
-    controls <- sparse_general_pencil_arnoldi_plan_controls(problem, k = k)
+    controls <- sparse_general_pencil_arnoldi_plan_controls(problem, k = k,
+                                                            method = method)
   }
   if (identical(chosen, structured_grid_laplacian_2d_label())) {
     controls <- structured_grid_laplacian_2d_controls(problem, k = k)
   }
   if (grepl("LOBPCG", chosen, fixed = TRUE)) {
-    controls <- lobpcg_plan_controls(method)
+    controls <- lobpcg_plan_controls(method, planner_policy = planner_policy)
   }
+  controls <- resolve_iteration_limit_controls(controls, problem, chosen, maxit)
   if (!is.null(initial_subspace) &&
       warm_start_plan_consumes_start(problem, list(method = chosen))) {
     controls$initial_subspace_supported <- TRUE
@@ -442,7 +461,7 @@ sparse_general_pencil_diagonal_arnoldi_supported <- function(problem) {
   if (is.null(problem$metric) || identical(problem$structure$kind, "hermitian")) {
     return(FALSE)
   }
-  if (!reference_arnoldi_target_supported(problem$target)) {
+  if (!native_arnoldi_target_supported(problem$target)) {
     return(FALSE)
   }
   B_values <- sparse_general_pencil_diagonal_values(problem$metric)
@@ -455,7 +474,7 @@ sparse_general_pencil_diagonal_arnoldi_supported <- function(problem) {
 }
 
 #' @keywords internal
-sparse_general_pencil_arnoldi_plan_controls <- function(problem, k) {
+sparse_general_pencil_arnoldi_plan_controls <- function(problem, k, method = NULL) {
   controls <- arnoldi_plan_controls(
     problem,
     k = k,
@@ -471,7 +490,12 @@ sparse_general_pencil_arnoldi_plan_controls <- function(problem, k) {
   controls$dense_fallback_policy <- "none; sparse general-pencil boundary is explicit"
   controls$alpha_beta_semantics <- "finite alpha/beta with beta = 1 from transformed Arnoldi"
   n <- as.integer(problem$A$dim[1L])
-  controls$max_subspace <- sparse_general_pencil_default_max_subspace(n, k)
+  requested_subspace <- method_requested_max_subspace(method, problem)
+  controls$max_subspace <- if (is.null(requested_subspace)) {
+    sparse_general_pencil_default_max_subspace(n, k)
+  } else {
+    min(n, requested_subspace)
+  }
   controls
 }
 
@@ -498,7 +522,7 @@ auto_nearest_shift_invert <- function(problem, method) {
     stop("nearest(sigma) auto-routing requires a single finite numeric sigma.", call. = FALSE)
   }
 
-  transform <- shift_invert(sigma)
+  transform <- shift_invert(sigma, max_subspace = method$max_subspace)
   problem$transform <- transform
   list(problem = problem, method = transform, implicit = TRUE)
 }
@@ -510,13 +534,54 @@ auto_shift_invert_route <- function(problem, method) {
     nearest_shift$nearest_implicit <- TRUE
     nearest_shift$tridiagonal_edge_implicit <- FALSE
     nearest_shift$sigma <- nearest_shift$method$sigma
+    nearest_shift$smallest_magnitude_implicit <- FALSE
     return(nearest_shift)
+  }
+
+  sm_shift <- auto_nonsymmetric_smallest_magnitude_shift_invert(problem, method)
+  if (isTRUE(sm_shift$implicit)) {
+    sm_shift$nearest_implicit <- FALSE
+    sm_shift$tridiagonal_edge_implicit <- FALSE
+    sm_shift$smallest_magnitude_implicit <- TRUE
+    sm_shift$sigma <- 0
+    return(sm_shift)
   }
 
   edge_shift <- auto_tridiagonal_edge_shift_invert(problem, method)
   edge_shift$nearest_implicit <- FALSE
   edge_shift$tridiagonal_edge_implicit <- isTRUE(edge_shift$implicit)
+  edge_shift$smallest_magnitude_implicit <- FALSE
   edge_shift
+}
+
+#' @keywords internal
+#' Nonsymmetric smallest-magnitude targets (C41) with a factorisable source
+#' (dense double or sparse CSC) route through shift-invert Arnoldi at
+#' sigma = 0: the wanted values become the dominant ones of A^{-1}, where a
+#' plain Krylov-Schur ranking by smallest magnitude converges slowly and can
+#' settle on the wrong set. A singular A is retried with a small perturbed
+#' shift at solve time. Matrix-free operators keep the direct Krylov-Schur
+#' smallest-magnitude ranking.
+auto_nonsymmetric_smallest_magnitude_shift_invert <- function(problem, method) {
+  no_route <- list(problem = problem, method = method, implicit = FALSE)
+  if (!is_auto_method(method) ||
+      is_transform_method(problem$transform) ||
+      !is.null(problem$metric) ||
+      identical(problem$structure$kind, "hermitian") ||
+      !inherits(problem$target, "eigencore_target") ||
+      !identical(problem$target$kind, "smallest_magnitude")) {
+    return(no_route)
+  }
+  source <- source_or_null(problem$A)
+  factorisable <- (is.matrix(source) && is.double(source)) ||
+    inherits(problem$A$metadata$matrix, "CsparseMatrix")
+  if (!factorisable || !identical(problem$A$dtype, "double")) {
+    return(no_route)
+  }
+  transform <- shift_invert(0, max_subspace = method$max_subspace)
+  transform$perturb_on_singular <- TRUE
+  problem$transform <- transform
+  list(problem = problem, method = transform, implicit = TRUE)
 }
 
 #' @keywords internal
@@ -552,7 +617,7 @@ auto_tridiagonal_edge_shift_invert <- function(problem, method) {
     return(list(problem = problem, method = method, implicit = FALSE, sigma = NULL))
   }
 
-  transform <- shift_invert(sigma)
+  transform <- shift_invert(sigma, max_subspace = method$max_subspace)
   problem$transform <- transform
   list(problem = problem, method = transform, implicit = TRUE, sigma = sigma)
 }
@@ -792,7 +857,7 @@ plan_solver.eigencore_svd_problem <- function(
 }
 
 #' @keywords internal
-arnoldi_plan_controls <- function(problem, k, chosen) {
+arnoldi_plan_controls <- function(problem, k, chosen, method = NULL) {
   n <- as.integer(problem$A$dim[1L])
   k <- as.integer(k)
   native_path <- identical(chosen, native_arnoldi_label()) ||
@@ -809,7 +874,10 @@ arnoldi_plan_controls <- function(problem, k, chosen) {
   # Native paths (dense, sparse, matrix-free) all run the restarted
   # Krylov-Schur Arnoldi with the ARPACK-style ncv default; dense inputs no
   # longer build an n-dimensional basis.
-  max_subspace <- if (native_path) {
+  requested_subspace <- method_requested_max_subspace(method, problem)
+  max_subspace <- if (!is.null(requested_subspace)) {
+    min(n, requested_subspace)
+  } else if (native_path) {
     native_krylov_schur_default_ncv(n, k)
   } else {
     min(n, max(k + 8L, 2L * k + 4L))
@@ -935,6 +1003,7 @@ lanczos_plan_controls <- function(problem, k, method, chosen) {
   }
   is_lanczos_method <- inherits(method, "eigencore_method") &&
     identical(method$kind, "lanczos")
+  requested_subspace <- method_requested_max_subspace(method, problem)
   promoted <- if (is_lanczos_method) NULL else promoted_block_lanczos_controls(problem, k)
   block <- if (is_lanczos_method) {
     method$block %||% 1L
@@ -943,11 +1012,14 @@ lanczos_plan_controls <- function(problem, k, method, chosen) {
   }
   block <- as.integer(block)
   n <- problem$A$dim[1L]
+  is_shift_invert <- inherits(problem$transform, "eigencore_method") &&
+    identical(problem$transform$kind, "shift_invert")
   max_restarts <- if (is_lanczos_method) method$max_restarts else NULL
   max_restarts <- as.integer(max_restarts %||% 100L)
-  max_subspace <- if (is_lanczos_method) method$max_subspace else NULL
-  max_subspace <- if (is.null(max_subspace)) {
-    if (!is.null(promoted$max_subspace)) {
+  max_subspace <- if (is.null(requested_subspace)) {
+    if (is_shift_invert) {
+      default_shift_invert_max_subspace(n, k)
+    } else if (!is.null(promoted$max_subspace)) {
       promoted$max_subspace
     } else if (block > 1L) {
       source <- source_or_null(problem$A)
@@ -960,11 +1032,14 @@ lanczos_plan_controls <- function(problem, k, method, chosen) {
       } else {
         default_block_lanczos_max_subspace(k, block)
       }
-    } else {
+    } else if (startsWith(chosen, "reference Hermitian Lanczos")) {
+      # Unrestarted reference Lanczos: the subspace is the whole iteration.
       max(as.integer(k) + 1L, 3L * as.integer(k) + 20L)
+    } else {
+      default_lanczos_max_subspace(k, n)
     }
   } else {
-    as.integer(max_subspace)
+    as.integer(requested_subspace)
   }
   max_subspace <- min(n, max_subspace)
   reorthogonalize <- if (is_lanczos_method) {
@@ -984,8 +1059,7 @@ lanczos_plan_controls <- function(problem, k, method, chosen) {
     check_stride = check_stride,
     reorthogonalize = reorthogonalize
   )
-  if (inherits(problem$transform, "eigencore_method") &&
-      identical(problem$transform$kind, "shift_invert")) {
+  if (is_shift_invert) {
     controls <- c(controls, list(
       transform = "shift_invert",
       transformed_operator_target = "largest_magnitude",
@@ -998,13 +1072,171 @@ lanczos_plan_controls <- function(problem, k, method, chosen) {
 }
 
 #' @keywords internal
-lobpcg_plan_controls <- function(method) {
+#' Default active subspace for scalar thick-restart Lanczos. C43 benchmarked
+#' the ARPACK `ncv = max(2k + 1, 20)` sizing against larger subspaces
+#' (sparse n = 20000 LA/SA/LM at k = 10 and k = 30, dense n = 1500): the
+#' native kernel's per-restart cost grows slowly with m, so 2k + 1 was the
+#' slowest choice (up to 1.5x), m in 30..50 was within noise for k = 10, and
+#' larger subspaces won at k = 30. `3k + 20` stays the default.
+default_lanczos_max_subspace <- function(k, n) {
+  k <- as.integer(k)
+  min(as.integer(n), max(k + 1L, 3L * k + 20L))
+}
+
+#' @keywords internal
+#' Default Krylov subspace for Hermitian shift-invert Lanczos.
+default_shift_invert_max_subspace <- function(n, k) {
+  min(as.integer(n), max(20L, 4L * as.integer(k) + 20L))
+}
+
+#' @keywords internal
+#' The subspace size a method descriptor (or a shift-invert transform the
+#' planner attached to the problem) requests, or NULL for the route default.
+method_requested_max_subspace <- function(method, problem = NULL) {
+  transform <- if (is.null(problem)) NULL else problem$transform
+  if (is_transform_method(transform) && !is.null(transform$max_subspace)) {
+    return(as.integer(transform$max_subspace))
+  }
+  if (inherits(method, "eigencore_method") &&
+      method$kind %in% c("auto", "lanczos", "golub_kahan", "shift_invert") &&
+      !is.null(method$max_subspace)) {
+    return(as.integer(method$max_subspace))
+  }
+  NULL
+}
+
+#' @keywords internal
+#' `maxit` is an iteration limit. A method descriptor that carries its own
+#' iteration limit (`lanczos(max_restarts =)`, `lobpcg(maxit =)`) must agree
+#' with it when both are supplied.
+check_iteration_limit_conflict <- function(method, maxit) {
+  if (is.null(maxit) || !inherits(method, "eigencore_method")) {
+    return(invisible(NULL))
+  }
+  maxit <- as.integer(maxit)
+  if (length(maxit) != 1L || is.na(maxit)) {
+    return(invisible(NULL))
+  }
+  if (identical(method$kind, "lanczos") && !is.null(method$max_restarts) &&
+      !identical(as.integer(method$max_restarts), maxit)) {
+    stop(
+      "maxit = ", maxit, " conflicts with lanczos(max_restarts = ",
+      method$max_restarts, "); both set the thick-restart limit. ",
+      "Supply only one (maxit is an iteration limit; the subspace size is ",
+      "lanczos(max_subspace =)).",
+      call. = FALSE
+    )
+  }
+  if (identical(method$kind, "lobpcg") && !is.null(method$maxit) &&
+      !identical(as.integer(method$maxit), maxit)) {
+    stop(
+      "maxit = ", maxit, " conflicts with lobpcg(maxit = ", method$maxit,
+      "); supply only one.",
+      call. = FALSE
+    )
+  }
+  invisible(NULL)
+}
+
+#' @keywords internal
+#' Labels of Hermitian shift-invert routes that run one unrestarted Lanczos
+#' cycle (native dense/tridiagonal kernels): `maxit` caps its Lanczos steps.
+unrestarted_shift_invert_labels <- function() {
+  c(
+    native_dense_shift_invert_label(),
+    native_dense_generalized_shift_invert_label(),
+    native_tridiagonal_shift_invert_label(),
+    native_tridiagonal_generalized_shift_invert_label()
+  )
+}
+
+#' @keywords internal
+#' Resolve the solve-level `maxit` (an iteration limit, never a subspace
+#' size) into the chosen route's own limit and record what it means.
+resolve_iteration_limit_controls <- function(controls, problem, chosen, maxit) {
+  maxit <- if (is.null(maxit)) NULL else as.integer(maxit)
+  is_shift_invert <- is_transform_method(problem$transform) &&
+    identical(problem$transform$kind, "shift_invert")
+  hermitian <- identical(problem$structure$kind, "hermitian")
+  kind <- if (grepl("LOBPCG", chosen, fixed = TRUE)) {
+    "lobpcg_iterations"
+  } else if (chosen %in% shift_invert_arnoldi_labels() ||
+             chosen %in% c(native_arnoldi_label(), native_refined_arnoldi_label(),
+                           native_matrix_free_arnoldi_label(),
+                           sparse_general_pencil_diagonal_arnoldi_label())) {
+    "krylov_schur_restarts"
+  } else if (identical(chosen, reference_arnoldi_label())) {
+    "arnoldi_restart_cycles"
+  } else if (is_shift_invert && hermitian &&
+             chosen %in% unrestarted_shift_invert_labels()) {
+    "lanczos_steps"
+  } else if (is_shift_invert && hermitian && grepl("Lanczos", chosen, fixed = TRUE)) {
+    "thick_restart_cycles"
+  } else if (chosen %in% c(
+    "native scalar thick-restart Hermitian Lanczos",
+    "native block Hermitian Lanczos thick-restart candidate",
+    "native block Hermitian Lanczos (thick restart, locking)",
+    native_matrix_free_block_lanczos_label(),
+    native_generalized_lanczos_label()
+  )) {
+    "thick_restart_cycles"
+  } else if (chosen %in% c(
+    "reference Hermitian Lanczos (target unsupported by native path)",
+    "reference Hermitian Lanczos (prototype/oracle fallback)",
+    generalized_lanczos_label()
+  )) {
+    "lanczos_steps"
+  } else {
+    "not_applicable"
+  }
+  limit <- switch(
+    kind,
+    lobpcg_iterations = {
+      controls$maxit <- as.integer(maxit %||% controls$maxit %||% 200L)
+      controls$maxit
+    },
+    krylov_schur_restarts = {
+      controls$krylov_schur_max_iterations <- as.integer(
+        maxit %||% controls$krylov_schur_max_iterations %||%
+          native_krylov_schur_default_maxit()
+      )
+      controls$krylov_schur_max_iterations
+    },
+    arnoldi_restart_cycles = {
+      controls$max_restarts <- as.integer(maxit %||% controls$max_restarts %||% 0L)
+      controls$max_restarts
+    },
+    thick_restart_cycles = {
+      controls$max_restarts <- as.integer(maxit %||% controls$max_restarts %||% 100L)
+      controls$max_restarts
+    },
+    lanczos_steps = {
+      if (!is.null(maxit) && !is.null(controls$max_subspace)) {
+        controls$max_subspace <- min(as.integer(controls$max_subspace), maxit)
+      }
+      maxit %||% NA_integer_
+    },
+    NA_integer_
+  )
+  controls$iteration_limit <- as.integer(limit)
+  controls$iteration_limit_kind <- kind
+  controls
+}
+
+#' @keywords internal
+lobpcg_plan_controls <- function(method, planner_policy = NULL) {
   is_lobpcg_method <- inherits(method, "eigencore_method") &&
     identical(method$kind, "lobpcg")
-  maxit <- if (is_lobpcg_method) {
-    method$maxit
+  default_maxit <- if (!is.null(planner_policy) &&
+                       "eigencore.lobpcg_maxit" %in% names(planner_policy)) {
+    planner_policy[["eigencore.lobpcg_maxit"]]
   } else {
     getOption("eigencore.lobpcg_maxit", 200L)
+  }
+  maxit <- if (is_lobpcg_method && !is.null(method$maxit)) {
+    method$maxit
+  } else {
+    default_maxit
   }
   maxit <- as.integer(maxit)
   if (length(maxit) != 1L || is.na(maxit) || maxit < 1L) {
@@ -1286,6 +1518,14 @@ svd_plan_controls <- function(problem, rank, method, chosen) {
     return(controls)
   }
 
+  if (identical(chosen, native_implicit_gram_svd_label())) {
+    requested_max_subspace <- method_requested_max_subspace(method)
+    if (!is.null(requested_max_subspace)) {
+      target_controls$max_subspace <- min(min(dims), requested_max_subspace)
+    }
+    return(target_controls)
+  }
+
   if (grepl("Golub-Kahan", chosen, fixed = TRUE)) {
     is_gk <- inherits(method, "eigencore_method") && identical(method$kind, "golub_kahan")
     is_auto <- inherits(method, "eigencore_method") && identical(method$kind, "auto")
@@ -1295,7 +1535,7 @@ svd_plan_controls <- function(problem, rank, method, chosen) {
     is_native_matrix_free <- identical(chosen, native_matrix_free_golub_kahan_label()) ||
       identical(chosen, native_matrix_free_smallest_golub_kahan_label()) ||
       identical(chosen, native_matrix_free_interior_golub_kahan_label())
-    requested_max_subspace <- if (is_gk) method$max_subspace else NULL
+    requested_max_subspace <- method_requested_max_subspace(method)
     method_reorthogonalize <- if (is_gk) {
       isTRUE(method$reorthogonalize)
     } else if (is_auto && is_native_csc && identical(chosen, "native prototype Golub-Kahan")) {

@@ -534,7 +534,7 @@ test_that("auto routes tridiagonal edge targets through native factorized shift-
   expect_true(certificate(fit)$passed)
   expect_equal(fit$restart$kind, "native_tridiagonal_shift_invert_lanczos")
   expect_true(fit$restart$factorization_native)
-  expect_identical(fit$transform$label_kind, "tridiagonal_thomas_native")
+  expect_identical(fit$transform$label_kind, "tridiagonal_lu_native")
 
   generic <- eigencore:::certify_eigen_operator(
     as_operator(A),

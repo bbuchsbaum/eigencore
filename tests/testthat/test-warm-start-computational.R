@@ -206,8 +206,8 @@ test_that("matrix-free work accounting matches an independently observed callbac
   start <- fixture$vectors[, seq_len(k), drop = FALSE] +
     matrix(stats::rnorm(n * k, sd = 1e-3), n, k)
   fit <- eig_partial(
-    op, k = k, target = largest(), method = lanczos(),
-    maxit = n, tol = 1e-8, seed = 133L, initial_subspace = start
+    op, k = k, target = largest(), method = lanczos(max_subspace = n),
+    tol = 1e-8, seed = 133L, initial_subspace = start
   )
 
   expect_identical(

@@ -133,7 +133,7 @@ test_that("matrix-free scalar (block == 1) stays on the reference path", {
   A <- clustered_decay_sym(n, seed = 9L)
   op <- matrix_free_hermitian_op(A)
   fit <- eig_partial(
-    op, k = k, target = largest(), method = lanczos(), maxit = n, seed = 2
+    op, k = k, target = largest(), method = lanczos(max_subspace = n), seed = 2
   )
   expect_identical(
     fit$method, "reference Hermitian Lanczos (prototype/oracle fallback)"

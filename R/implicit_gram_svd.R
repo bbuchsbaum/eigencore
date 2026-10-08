@@ -121,6 +121,16 @@ native_implicit_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
 
   lambda <- iter$values
   W <- iter$vectors
+  # The thick-restart kernel returns pairs in lock order; singular values are
+  # reported in decreasing order (C44).
+  if (length(lambda) > 1L && is.unsorted(rev(lambda))) {
+    perm <- order(lambda, decreasing = TRUE)
+    lambda <- lambda[perm]
+    W <- W[, perm, drop = FALSE]
+    if (length(iter$residuals) == length(perm)) {
+      iter$residuals <- iter$residuals[perm]
+    }
+  }
   sigma <- sqrt(pmax(lambda, 0))
   zero_tol <- gram_svd_zero_tolerance(sigma, tol)
   inv_sigma <- ifelse(sigma > zero_tol, 1 / sigma, 0)

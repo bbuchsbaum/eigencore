@@ -163,9 +163,9 @@ changes the implementation boundary:
 - `reference generalized SPD B-orthogonal Lanczos refinement`
 - `native dense generalized SPD shift-invert (factorized Lanczos)`
 - `native tridiagonal generalized SPD shift-invert (factorized Lanczos)`
-- `reference generalized SPD Lanczos shift-invert (user solve)`
-- `reference generalized SPD Lanczos shift-invert (dense QR)`
-- `reference generalized SPD Lanczos shift-invert (sparse LU)`
+- `native thick-restart generalized SPD Lanczos shift-invert (user solve callback)`
+- `native thick-restart generalized SPD Lanczos shift-invert (dense QR solve callback)`
+- `native thick-restart generalized SPD Lanczos shift-invert (sparse LU solve callback)`
 - `native transformed sparse general-pencil Arnoldi (diagonal B)`
 - `unsupported sparse general-pencil partial solver`
 

@@ -59,7 +59,10 @@ test_that("eigs_sym honours sigma, lower, ordering, and opts", {
 
   no_vec <- eigs_sym(M, 2, opts = list(retvec = FALSE, tol = 1e-10))
   expect_null(no_vec$vectors)
-  expect_warning(eigs_sym(M, 2, opts = list(maxitr = 10)), "not used")
+  # opts$maxitr is the ARPACK restart limit: it maps to maxit (C15).
+  expect_no_warning(capped <- eigs_sym(M, 2, opts = list(maxitr = 10)))
+  expect_equal(capped$diagnostics$plan$execution$maxit, 10L)
+  expect_warning(svds(M, 2, opts = list(maxitr = 10)), "not used")
   expect_warning(eigs_sym(M, 2, opts = list(bogus = 1)), "Unknown opts")
   expect_error(eigs_sym(M, 2, which = "XX"), "Unknown ARPACK selector")
   expect_error(eigs_sym(M, 2, sigma = 1, which = "LA"), "only which = 'LM'")

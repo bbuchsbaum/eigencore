@@ -58,7 +58,7 @@ native_generalized_lanczos_supported <- function(op, Bop, target = smallest()) {
 generalized_lanczos_plan_controls <- function(problem, k, method) {
   is_lanczos_method <- inherits(method, "eigencore_method") &&
     identical(method$kind, "lanczos")
-  max_subspace <- if (is_lanczos_method) method$max_subspace else NULL
+  max_subspace <- method_requested_max_subspace(method, problem)
   n <- as.integer(problem$A$dim[1L])
   max_subspace <- as.integer(max_subspace %||% min(n, max(20L, 4L * as.integer(k) + 20L)))
   max_subspace <- min(n, max(as.integer(k), max_subspace))
@@ -132,10 +132,10 @@ generalized_lanczos_metric_solve_metadata <- function(Bop) {
     native_parts <- generalized_lanczos_sparse_tridiagonal_metric_parts(Bop)
     if (!is.null(native_parts)) {
       list(
-        kind = "native_sparse_tridiagonal_thomas",
-        label = "native sparse tridiagonal Thomas solve for B",
+        kind = "native_sparse_tridiagonal_lu",
+        label = "native sparse tridiagonal LU (dgttrf/dgttrs) solve for B",
         native = TRUE,
-        factorization = "tridiagonal_thomas"
+        factorization = "tridiagonal_lu"
       )
     } else {
       list(
