@@ -782,24 +782,28 @@ arnoldi_plan_controls <- function(problem, k, chosen) {
     identical(chosen, native_matrix_free_arnoldi_label())
   refined_native_path <- identical(chosen, native_refined_arnoldi_label())
   matrix_free_native_path <- identical(chosen, native_matrix_free_arnoldi_label())
-  source_matrix <- source_or_null(problem$A)
-  dense_native_path <- native_path && is.matrix(source_matrix) && is.double(source_matrix)
   default_restarts <- if (native_path) 5L else 0L
   max_restarts <- getOption("eigencore.arnoldi_max_restarts", default_restarts)
   max_restarts <- as.integer(max_restarts)
   if (length(max_restarts) != 1L || is.na(max_restarts) || max_restarts < 0L) {
     max_restarts <- default_restarts
   }
-  max_subspace <- if (dense_native_path) {
-    n
-  } else if (native_path) {
-    native_arnoldi_default_max_subspace(n, k)
+  # Native paths (dense, sparse, matrix-free) all run the restarted
+  # Krylov-Schur Arnoldi with the ARPACK-style ncv default; dense inputs no
+  # longer build an n-dimensional basis.
+  max_subspace <- if (native_path) {
+    native_krylov_schur_default_ncv(n, k)
   } else {
     min(n, max(k + 8L, 2L * k + 4L))
   }
   list(
     max_subspace = max_subspace,
     max_restarts = max_restarts,
+    krylov_schur_max_iterations = if (native_path) {
+      native_krylov_schur_default_maxit()
+    } else {
+      NULL
+    },
     restart = if (matrix_free_native_path) {
       "native matrix-free Arnoldi callback restart budget"
     } else if (native_path) {
@@ -810,9 +814,9 @@ arnoldi_plan_controls <- function(problem, k, chosen) {
     ritz_extraction_native = native_path,
     arnoldi_extraction = if (refined_native_path) "refined_ritz" else "projected_ritz",
     refined_extraction_native = refined_native_path,
-    krylov_schur = FALSE,
-    krylov_schur_status = if (refined_native_path) {
-      "not implemented; V2 tranche promotes native refined Ritz extraction only"
+    krylov_schur = native_path,
+    krylov_schur_status = if (native_path) {
+      native_krylov_schur_status()
     } else {
       "not requested"
     },
