@@ -19,6 +19,47 @@ native_tridiagonal_generalized_shift_invert_label <- function() {
 }
 
 #' @keywords internal
+#' Nonsymmetric shift-invert: native Krylov-Schur Arnoldi on the factorised
+#' (A - sigma I)^{-1} through the matrix-free callback entry.
+shift_invert_arnoldi_label <- function(kind = c("dense_qr", "sparse_lu", "user_solve")) {
+  kind <- match.arg(kind)
+  suffix <- switch(
+    kind,
+    dense_qr = "dense QR solve callback",
+    sparse_lu = "sparse LU solve callback",
+    user_solve = "user solve callback"
+  )
+  paste0("native Krylov-Schur Arnoldi shift-invert (", suffix, ")")
+}
+
+#' @keywords internal
+shift_invert_arnoldi_labels <- function() {
+  vapply(c("dense_qr", "sparse_lu", "user_solve"), shift_invert_arnoldi_label,
+         character(1L), USE.NAMES = FALSE)
+}
+
+#' @keywords internal
+shift_invert_arnoldi_plan_controls <- function(problem, k) {
+  n <- as.integer(problem$A$dim[1L])
+  k <- as.integer(k)
+  requested_subspace <- method_requested_max_subspace(problem$transform, problem)
+  list(
+    max_subspace = if (is.null(requested_subspace)) {
+      native_krylov_schur_default_ncv(n, k)
+    } else {
+      min(n, requested_subspace)
+    },
+    max_restarts = 2L,
+    krylov_schur_max_iterations = native_krylov_schur_default_maxit(),
+    transform = "shift_invert",
+    transformed_operator_target = "largest_magnitude",
+    eigenvalue_recovery = "lambda = sigma + 1 / theta",
+    certified_in_original_coordinates = TRUE,
+    certification_policy = "right (and, when computed, left) residual certificate on the original nonsymmetric eigenproblem"
+  )
+}
+
+#' @keywords internal
 shift_invert_tridiagonal_parts <- function(A, shift = 0) {
   if (!inherits(A, "Matrix")) {
     return(NULL)
@@ -137,33 +178,48 @@ shift_invert_plan_label <- function(problem, has_metric, is_hermitian,
                                     is_dense_source, is_native_csc) {
   user_solve <- problem$transform$solve
   if (!is_hermitian) {
-    return("shift-invert requested (only Hermitian shift-invert is implemented)")
+    if (has_metric) {
+      return("shift-invert requested (nonsymmetric generalized shift-invert is not implemented)")
+    }
+    if (!is.null(user_solve)) {
+      return(shift_invert_arnoldi_label("user_solve"))
+    }
+    if (is_dense_source) {
+      return(shift_invert_arnoldi_label("dense_qr"))
+    }
+    if (is_native_csc || inherits(problem$A$metadata$matrix, "CsparseMatrix")) {
+      return(shift_invert_arnoldi_label("sparse_lu"))
+    }
+    return("shift-invert requested (provide method$solve for matrix-free A)")
   }
+  # Every non-native-kernel route below runs the native thick-restart Lanczos
+  # kernel on the factorised (A - sigma B)^{-1} through the matrix-free
+  # callback ABI (shift_invert_transformed_lanczos), so the labels say so (C35).
   if (has_metric) {
     Bstorage <- problem$metric$metadata$storage %||% NULL
     Bsource <- source_or_null(problem$metric)
     dense_metric <- is.matrix(Bsource) && is.double(Bsource)
     diagonal_metric <- identical(Bstorage, "ddiMatrix")
     if (!is.null(user_solve)) {
-      return("reference generalized SPD Lanczos shift-invert (user solve)")
+      return("native thick-restart generalized SPD Lanczos shift-invert (user solve callback)")
     }
     if (is_dense_source && dense_metric) {
       return(native_dense_generalized_shift_invert_label())
     }
     if (is_dense_source && diagonal_metric) {
-      return("reference generalized SPD Lanczos shift-invert (dense QR)")
+      return("native thick-restart generalized SPD Lanczos shift-invert (dense QR solve callback)")
     }
     if (diagonal_metric && shift_invert_is_native_tridiagonal(problem)) {
       return(native_tridiagonal_generalized_shift_invert_label())
     }
     csc_available <- inherits(problem$A$metadata$matrix, "CsparseMatrix")
     if ((is_native_csc || csc_available) && diagonal_metric) {
-      return("reference generalized SPD Lanczos shift-invert (sparse LU)")
+      return("native thick-restart generalized SPD Lanczos shift-invert (sparse LU solve callback)")
     }
     return("shift-invert requested (generalized SPD shift-invert requires dense A/B or sparse A with diagonal B)")
   }
   if (!is.null(user_solve)) {
-    return("reference Hermitian Lanczos shift-invert (user solve)")
+    return("native thick-restart Hermitian Lanczos shift-invert (user solve callback)")
   }
   csc_available <- inherits(problem$A$metadata$matrix, "CsparseMatrix")
   diagonal_available <- inherits(problem$A$metadata$matrix, "diagonalMatrix")
@@ -171,7 +227,7 @@ shift_invert_plan_label <- function(problem, has_metric, is_hermitian,
     if (shift_invert_is_native_tridiagonal(problem)) {
       return(native_tridiagonal_shift_invert_label())
     }
-    return("reference Hermitian Lanczos shift-invert (sparse LU)")
+    return("native thick-restart Hermitian Lanczos shift-invert (sparse LU solve callback)")
   }
   if (is_dense_source) {
     return(native_dense_shift_invert_label())
@@ -400,6 +456,7 @@ shift_invert_solver_dense <- function(A, sigma, B = NULL) {
       Z
     },
     label = "dense_qr",
+    factor = factor,
     M = M,
     cache = list(
       factorization = "base::qr(LAPACK=TRUE)",
@@ -465,6 +522,7 @@ shift_invert_solver_csc <- function(A, sigma, B = NULL) {
       if (inherits(Z, "Matrix")) as.matrix(Z) else Z
     },
     label = "sparse_lu",
+    factor = factor,
     M = M,
     cache = list(
       factorization = "Matrix::lu",
@@ -874,16 +932,16 @@ native_tridiagonal_shift_invert_lanczos <- function(problem, k, sigma, tol,
   cache_info <- shift_invert_factorization_cache_info(
     Aop,
     sigma,
-    label_kind = "tridiagonal_thomas_native"
+    label_kind = "tridiagonal_lu_native"
   )
   cache <- shift_invert_factorization_cache_merge(
     cache_info,
-    "tridiagonal_thomas_native",
+    "tridiagonal_lu_native",
     modifyList(
       native$factorization_cache,
       list(
         native = TRUE,
-        condition_estimate_type = "tridiagonal_thomas_pivot_ratio",
+        condition_estimate_type = "tridiagonal_lu_pivot_ratio",
         near_singular = FALSE,
         external_cache = FALSE,
         generalized = FALSE,
@@ -910,7 +968,7 @@ native_tridiagonal_shift_invert_lanczos <- function(problem, k, sigma, tol,
     transform = list(
       kind = "shift_invert",
       sigma = sigma,
-      label_kind = "tridiagonal_thomas_native",
+      label_kind = "tridiagonal_lu_native",
       factorization_cache = cache,
       certification = list(
         problem = "original",
@@ -992,7 +1050,7 @@ native_tridiagonal_shift_invert_lanczos_with_perturbation <- function(problem, k
           format(as.numeric(sigma), digits = 17),
           " to ",
           format(candidate, digits = 17),
-          " after singular or near-singular Thomas factorization"
+          " after a singular or near-singular pivoted tridiagonal LU (dgttrf) factorization"
         )
         result$warnings <- c(result$warnings, note)
         result$transform$requested_sigma <- as.numeric(sigma)
@@ -1106,16 +1164,16 @@ native_tridiagonal_generalized_shift_invert_lanczos <- function(problem, k,
     Aop,
     sigma,
     Bop = Bop,
-    label_kind = "tridiagonal_thomas_generalized_native"
+    label_kind = "tridiagonal_lu_generalized_native"
   )
   cache <- shift_invert_factorization_cache_merge(
     cache_info,
-    "tridiagonal_thomas_generalized_native",
+    "tridiagonal_lu_generalized_native",
     modifyList(
       native$factorization_cache,
       list(
         native = TRUE,
-        condition_estimate_type = "tridiagonal_thomas_pivot_ratio",
+        condition_estimate_type = "tridiagonal_lu_pivot_ratio",
         near_singular = FALSE,
         external_cache = FALSE,
         generalized = TRUE,
@@ -1142,7 +1200,7 @@ native_tridiagonal_generalized_shift_invert_lanczos <- function(problem, k,
     transform = list(
       kind = "shift_invert",
       sigma = sigma,
-      label_kind = "tridiagonal_thomas_generalized_native",
+      label_kind = "tridiagonal_lu_generalized_native",
       factorization_cache = cache,
       certification = list(
         problem = "original",
@@ -1310,9 +1368,11 @@ native_dense_generalized_shift_invert_lanczos <- function(problem, k, sigma,
 #' Largest-magnitude eigenpairs of the factorised shift-invert operator M.
 #' M is a matrix-free Hermitian callback (its apply is a factorised solve), so
 #' it drives the native thick-restart Lanczos kernel through the callback ABI
-#' (restarts, locking, no fixed subspace cap). The reference scalar Lanczos
-#' remains for subspaces too small for a thick restart (k + 1 > maxit).
-shift_invert_transformed_lanczos <- function(M, k, tol, maxit) {
+#' (restarts, locking, active subspace bounded by `maxit`, which here is the
+#' internal subspace size). The reference scalar Lanczos remains for subspaces
+#' too small for a thick restart (k + 1 > maxit).
+shift_invert_transformed_lanczos <- function(M, k, tol, maxit,
+                                             max_restarts = 100L) {
   n <- M$dim[1L]
   k <- as.integer(k)
   m_max <- min(n, as.integer(maxit))
@@ -1325,7 +1385,7 @@ shift_invert_transformed_lanczos <- function(M, k, tol, maxit) {
       tol = tol,
       maxit = m_max,
       block = 1L,
-      max_restarts = 100L,
+      max_restarts = as.integer(max_restarts),
       vectors = TRUE,
       full_subspace = FALSE,
       certificate_fallback = FALSE
@@ -1359,12 +1419,23 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
       call. = FALSE
     )
   }
+  # `maxit` is an iteration limit (C15): the planner has already resolved it
+  # into controls$max_restarts (thick-restart callback routes) or capped
+  # controls$max_subspace (unrestarted native Lanczos routes, where an
+  # iteration is one Lanczos step). The subspace size comes only from
+  # controls$max_subspace.
+  controls <- plan$controls %||% list()
+  subspace0 <- as.integer(
+    controls$max_subspace %||%
+      default_shift_invert_max_subspace(problem$A$dim[1L], k)
+  )
+  restart_limit <- as.integer(controls$max_restarts %||% maxit %||% 100L)
 
   if (identical(plan$method, native_dense_shift_invert_label()) &&
       is.null(problem$metric) &&
       is.null(method$solve)) {
     return(native_dense_shift_invert_lanczos(
-      problem, k = k, sigma = sigma, tol = tol, maxit = maxit,
+      problem, k = k, sigma = sigma, tol = tol, maxit = subspace0,
       vectors = vectors, certify = certify, plan = plan
     ))
   }
@@ -1372,7 +1443,7 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
       is.null(problem$metric) &&
       is.null(method$solve)) {
     return(native_tridiagonal_shift_invert_lanczos_with_perturbation(
-      problem, k = k, sigma = sigma, tol = tol, maxit = maxit,
+      problem, k = k, sigma = sigma, tol = tol, maxit = subspace0,
       vectors = vectors, certify = certify, plan = plan
     ))
   }
@@ -1380,7 +1451,7 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
       !is.null(problem$metric) &&
       is.null(method$solve)) {
     return(native_tridiagonal_generalized_shift_invert_lanczos(
-      problem, k = k, sigma = sigma, tol = tol, maxit = maxit,
+      problem, k = k, sigma = sigma, tol = tol, maxit = subspace0,
       vectors = vectors, certify = certify, plan = plan
     ))
   }
@@ -1388,7 +1459,7 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
       !is.null(problem$metric) &&
       is.null(method$solve)) {
     return(native_dense_generalized_shift_invert_lanczos(
-      problem, k = k, sigma = sigma, tol = tol, maxit = maxit,
+      problem, k = k, sigma = sigma, tol = tol, maxit = subspace0,
       vectors = vectors, certify = certify, plan = plan
     ))
   }
@@ -1397,7 +1468,7 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
   M <- prep$operator
   n <- M$dim[1L]
 
-  effective_maxit <- maxit %||% min(n, max(20L, 4L * as.integer(k) + 20L))
+  effective_maxit <- subspace0
   Aop <- problem$A
   Bop <- problem$metric
 
@@ -1409,7 +1480,8 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
   # returning the unconverged pairs silently.
   attempt <- function(inner_tol, subspace) {
     iter <- shift_invert_transformed_lanczos(M, k = k, tol = inner_tol,
-                                             maxit = subspace)
+                                             maxit = subspace,
+                                             max_restarts = restart_limit)
     mu <- iter$values
     vec <- iter$vectors
     if (any(abs(mu) < .Machine$double.eps)) {
@@ -1528,4 +1600,360 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
   result <- finalize_workflow_result(result, plan)
   class(result) <- "eigencore_eigen_result"
   result
+}
+
+#' @keywords internal
+#' Factorised solve for the nonsymmetric shifted operator A - sigma I (dense
+#' LAPACK QR or sparse LU with the AMD ordering used by the Hermitian path).
+#' The transposed factorisation needed by the left (adjoint) solve is built
+#' lazily, only when the adjoint operator is applied.
+shift_invert_general_solver <- function(Aop, sigma, user_solve = NULL) {
+  n <- Aop$dim[1L]
+  if (!is.null(user_solve)) {
+    if (!is.function(user_solve)) {
+      stop("shift_invert(solve = ...) must be a function.", call. = FALSE)
+    }
+    return(list(
+      solve_fn = user_solve,
+      adjoint_solve_fn = NULL,
+      label_kind = "user_solve",
+      cache = list(
+        factorization = "user_solve",
+        factorization_cached = NA,
+        condition_estimate = NA_real_,
+        condition_estimate_type = "user_supplied",
+        near_singular = NA,
+        external_cache = TRUE,
+        generalized = FALSE
+      )
+    ))
+  }
+  source_A <- source_or_null(Aop)
+  csc_A <- if (inherits(Aop$metadata$matrix, "CsparseMatrix")) {
+    methods::as(Aop$metadata$matrix, "generalMatrix")
+  } else {
+    NULL
+  }
+  dense <- is.matrix(source_A) && is.double(source_A)
+  if (!dense && is.null(csc_A)) {
+    stop(
+      "nonsymmetric shift_invert() supports dense double matrices and sparse ",
+      "CSC sources, or a user-supplied solve operator.",
+      call. = FALSE
+    )
+  }
+  forward <- if (dense) {
+    shift_invert_solver_dense(source_A, sigma)
+  } else {
+    shift_invert_solver_csc(csc_A, sigma)
+  }
+  factor <- forward$factor
+  # Transposed solves reuse the forward factorisation (no second factor):
+  #   dense  M P = Q R          =>  M^T x = b  <=>  x = Q R^{-T} b[pivot]
+  #   sparse M[p, q] = L U      =>  M^T x = b  <=>  x[p] = L^{-T} U^{-T} b[q]
+  adjoint_solve_fn <- if (dense) {
+    R_factor <- NULL
+    function(X) {
+      X <- as.matrix(X)
+      if (is.null(R_factor)) {
+        R_factor <<- qr.R(factor)
+      }
+      Y <- backsolve(R_factor, X[factor$pivot, , drop = FALSE], transpose = TRUE)
+      as.matrix(qr.qy(factor, Y))
+    }
+  } else if (all(c("L", "U", "p", "q") %in% methods::slotNames(factor))) {
+    Lt <- NULL
+    Ut <- NULL
+    function(X) {
+      X <- as.matrix(X)
+      if (is.null(Lt)) {
+        Lt <<- Matrix::t(methods::slot(factor, "L"))
+        Ut <<- Matrix::t(methods::slot(factor, "U"))
+      }
+      p1 <- methods::slot(factor, "p") + 1L
+      q1 <- methods::slot(factor, "q") + 1L
+      Z <- Matrix::solve(Ut, X[q1, , drop = FALSE])
+      Y <- as.matrix(Matrix::solve(Lt, Z))
+      out <- matrix(0, nrow(X), ncol(X))
+      out[p1, ] <- Y
+      out
+    }
+  } else {
+    transposed <- NULL
+    function(X) {
+      if (is.null(transposed)) {
+        transposed <<- shift_invert_solver_csc(
+          methods::as(Matrix::t(csc_A), "CsparseMatrix"), sigma
+        )
+      }
+      transposed$solve_fn(X)
+    }
+  }
+  list(
+    solve_fn = forward$solve_fn,
+    adjoint_solve_fn = adjoint_solve_fn,
+    label_kind = paste0(forward$label, "_general"),
+    cache = c(forward$cache, list(external_cache = FALSE, generalized = FALSE))
+  )
+}
+
+#' @keywords internal
+#' Nonsymmetric shift-invert (C41): Krylov-Schur Arnoldi on the factorised
+#' M = (A - sigma I)^{-1} through the native matrix-free callback, largest
+#' magnitude theta of M back-transformed to lambda = sigma + 1 / theta, and the
+#' right (optionally left) residual certificate computed on the original A.
+solve_shift_invert_general <- function(problem, k, method, tol, vectors,
+                                       certify, plan,
+                                       left_vectors = "auto") {
+  sigma <- method$sigma
+  if (length(sigma) != 1L || !is.finite(sigma)) {
+    stop("shift_invert(sigma) requires a single finite shift.", call. = FALSE)
+  }
+  if (is.complex(sigma)) {
+    if (Im(sigma) != 0) {
+      stop(
+        "nonsymmetric shift_invert() currently requires a real sigma; the ",
+        "native Krylov-Schur kernel runs in real arithmetic.",
+        call. = FALSE
+      )
+    }
+    sigma <- Re(sigma)
+  }
+  sigma <- as.numeric(sigma)
+  if (!is.null(method$factorization)) {
+    stop(
+      "shift_invert(factorization = ...) is not implemented yet; ",
+      "supply shift_invert(solve = ...) for a user-managed factorization cache.",
+      call. = FALSE
+    )
+  }
+  if (!is.null(problem$metric)) {
+    stop("nonsymmetric generalized shift_invert() is not implemented.", call. = FALSE)
+  }
+  Aop <- problem$A
+  n <- Aop$dim[1L]
+  controls <- plan$controls %||% list()
+  requested_sigma <- sigma
+  solver <- tryCatch(
+    shift_invert_general_solver(Aop, sigma, user_solve = method$solve),
+    error = function(e) e
+  )
+  perturbation_reason <- NULL
+  if (inherits(solver, "error")) {
+    # Only the planner's implicit smallest-magnitude route (sigma = 0 on a
+    # possibly singular A) perturbs the shift; an explicit sigma is the
+    # caller's choice and its singularity is reported.
+    if (!isTRUE(method$perturb_on_singular) ||
+        !grepl("singular|rank-deficient|could not factor", conditionMessage(solver))) {
+      stop(solver)
+    }
+    perturbation_reason <- conditionMessage(solver)
+    scale <- tryCatch(operator_norm_for_certificate_info(Aop)$value,
+                      error = function(e) NA_real_)
+    if (!is.finite(scale) || scale <= 0) scale <- 1
+    for (offset in scale * c(1e-6, -1e-6, 1e-4, -1e-4, 1e-3, -1e-3)) {
+      solver <- tryCatch(
+        shift_invert_general_solver(Aop, requested_sigma + offset),
+        error = function(e) e
+      )
+      if (!inherits(solver, "error")) {
+        sigma <- requested_sigma + offset
+        break
+      }
+    }
+    if (inherits(solver, "error")) {
+      stop("shift_invert(sigma = ", requested_sigma, ") failed at the requested ",
+           "shift and all perturbation retries: ", conditionMessage(solver),
+           call. = FALSE)
+    }
+  }
+  # Ritz vectors of a real nonsymmetric operator can be complex (conjugate
+  # pairs); the real factorisations solve the real and imaginary parts as one
+  # real block.
+  split_complex_solve <- function(f) {
+    force(f)
+    function(X) {
+      if (!is.complex(X)) {
+        return(f(X))
+      }
+      X <- as.matrix(X)
+      p <- ncol(X)
+      out <- as.matrix(f(cbind(Re(X), Im(X))))
+      matrix(complex(real = out[, seq_len(p), drop = FALSE],
+                     imaginary = out[, p + seq_len(p), drop = FALSE]),
+             nrow(out), p)
+    }
+  }
+  M <- linear_operator(
+    dim = c(n, n),
+    apply = shift_invert_apply_factory(split_complex_solve(solver$solve_fn)),
+    apply_adjoint = if (is.null(solver$adjoint_solve_fn)) {
+      NULL
+    } else {
+      shift_invert_apply_factory(split_complex_solve(solver$adjoint_solve_fn))
+    },
+    structure = general(),
+    name = paste0("shift_invert_", solver$label_kind)
+  )
+  cert_op <- arnoldi_certificate_operator(Aop)
+  subspace <- as.integer(controls$max_subspace %||% native_krylov_schur_default_ncv(n, k))
+  ks_maxit <- as.integer(controls$krylov_schur_max_iterations %||%
+                           native_krylov_schur_default_maxit())
+  inner_attempts <- as.integer(controls$max_restarts %||% 2L)
+
+  attempt <- function(inner_tol, subspace) {
+    iter <- native_arnoldi_general(
+      M,
+      k = k,
+      target = largest_magnitude(),
+      tol = inner_tol,
+      maxit = subspace,
+      max_restarts = inner_attempts,
+      vectors = TRUE,
+      extraction = "projected_ritz",
+      krylov_schur_maxit = ks_maxit
+    )
+    theta <- iter$values
+    if (any(Mod(theta) < .Machine$double.eps)) {
+      stop(
+        "shift_invert(sigma = ", sigma, ") produced a zero-magnitude eigenvalue ",
+        "of the inverted operator; sigma is too close to a true eigenvalue. ",
+        "Perturb sigma or use a tighter tolerance.",
+        call. = FALSE
+      )
+    }
+    lambda <- sigma + 1 / theta
+    ord <- order_indices(lambda, problem$target)
+    if (length(ord) > k) ord <- ord[seq_len(k)]
+    theta <- theta[ord]
+    lambda <- lambda[ord]
+    vec <- iter$vectors[, ord, drop = FALSE]
+    cert <- if (isTRUE(certify) && ncol(vec) > 0L) {
+      certify_general_eigen_operator(cert_op, lambda, vec, tol = tol)
+    } else {
+      empty_certificate(
+        tol,
+        note = if (!isTRUE(certify)) {
+          "shift-invert Arnoldi: certification disabled by caller"
+        } else {
+          "shift-invert Arnoldi: no eigenpairs returned; residual certificate not computed"
+        }
+      )
+    }
+    list(iter = iter, theta = theta, lambda = lambda, vec = vec, cert = cert)
+  }
+
+  inner_tol <- tol
+  current <- attempt(inner_tol, subspace)
+  total_iterations <- as.integer(current$iter$iterations %||% 0L)
+  total_matvecs <- as.integer(current$iter$matvecs %||% 0L)
+  retries <- 0L
+  # Inner convergence on M does not imply original-coordinate convergence
+  # (residuals scale by ||A - sigma I|| / |theta|): tighten and enlarge.
+  while (isTRUE(certify) && retries < 2L && length(current$cert$converged) &&
+         !all(current$cert$converged)) {
+    retries <- retries + 1L
+    inner_tol <- max(inner_tol * 1e-3, 10 * .Machine$double.eps)
+    subspace <- min(n, max(subspace + k, 2L * subspace))
+    candidate <- attempt(inner_tol, subspace)
+    total_iterations <- total_iterations +
+      as.integer(candidate$iter$iterations %||% 0L)
+    total_matvecs <- total_matvecs + as.integer(candidate$iter$matvecs %||% 0L)
+    if (sum(candidate$cert$converged) >= sum(current$cert$converged)) {
+      current <- candidate
+    }
+  }
+  iter <- current$iter
+  lambda <- current$lambda
+  vec <- current$vec
+  cert <- current$cert
+
+  left_contract <- if (identical(left_vectors, "none")) {
+    list(supported = FALSE, reason = "not requested (left_vectors = \"none\")")
+  } else {
+    contract <- arnoldi_left_eigen_contract(
+      M, current$theta, vec,
+      target = largest_magnitude(),
+      tol = inner_tol,
+      maxit = subspace,
+      max_restarts = inner_attempts,
+      extraction = "projected_ritz"
+    )
+    if (isTRUE(contract$supported)) {
+      # Left eigenvectors of M are left eigenvectors of A; certify them against
+      # the original operator and the back-transformed eigenvalues.
+      contract$certificate <- certify_left_eigen_operator(
+        cert_op, lambda, contract$vectors, right_vectors = vec, tol = tol
+      )
+    }
+    contract
+  }
+  if (identical(left_vectors, "compute") && !isTRUE(left_contract$supported)) {
+    stop(
+      "left_vectors = \"compute\" but left eigenvectors are unavailable on ",
+      plan$method, ": ", left_contract$reason,
+      call. = FALSE
+    )
+  }
+  warning_msg <- if (!isTRUE(cert$passed) && isTRUE(certify)) {
+    paste0(plan$method, " did not certify all ", k, " requested pairs after ",
+           retries, " tightened restart(s); subspace ", subspace)
+  } else {
+    character()
+  }
+  if (!is.null(perturbation_reason)) {
+    warning_msg <- c(warning_msg, paste0(
+      "shift-invert perturbed sigma from ", format(requested_sigma, digits = 17),
+      " to ", format(sigma, digits = 17), " after a singular factorization"
+    ))
+  }
+  if (!identical(left_vectors, "none") && !isTRUE(left_contract$supported)) {
+    warning_msg <- c(warning_msg,
+                     paste0("left eigenvectors unavailable: ", left_contract$reason))
+  }
+  iter$iterations <- total_iterations
+  iter$matvecs <- total_matvecs
+  iter$adjoint_block_calls <- left_contract$adjoint_block_calls %||% 0L
+  iter$adjoint_columns <- left_contract$adjoint_columns %||% 0L
+  restart <- iter$restart
+  restart$kind <- "native_krylov_schur_shift_invert_callback"
+  restart$max_subspace <- subspace
+  restart$inner_tolerance <- inner_tol
+  restart$certificate_retries <- retries
+  restart$transformed_operator_target <- "largest_magnitude"
+  restart$eigenvalue_recovery <- "lambda = sigma + 1 / theta"
+  iter$restart <- restart
+  make_eigen_result(
+    values = lambda,
+    vectors = if (isTRUE(vectors)) vec else NULL,
+    certificate = cert,
+    iter = iter,
+    requested = k,
+    method_label = plan$method,
+    target_label_value = target_label(problem$target),
+    plan = plan,
+    warnings = warning_msg,
+    extras = list(
+      sigma = sigma,
+      transform = list(
+        kind = "shift_invert",
+        sigma = sigma,
+        requested_sigma = requested_sigma,
+        sigma_perturbed = !is.null(perturbation_reason),
+        perturbation_reason = perturbation_reason,
+        label_kind = solver$label_kind,
+        factorization_cache = solver$cache,
+        certification = list(
+          problem = "original",
+          residual_formula = "A * x - lambda * x",
+          transformed_residuals_used = FALSE
+        )
+      ),
+      restart = restart,
+      right_vectors = if (isTRUE(vectors)) vec else NULL,
+      left_vectors = if (isTRUE(left_contract$supported)) left_contract$vectors else NULL,
+      left_certificate = if (isTRUE(left_contract$supported)) left_contract$certificate else NULL,
+      biorthogonality = if (isTRUE(left_contract$supported)) left_contract$biorthogonality else NULL
+    )
+  )
 }

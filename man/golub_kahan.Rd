@@ -7,7 +7,8 @@
 golub_kahan(max_subspace = NULL, reorthogonalize = TRUE)
 }
 \arguments{
-\item{max_subspace}{Optional maximum Krylov subspace size.}
+\item{max_subspace}{Optional maximum Krylov subspace size (the ARPACK
+\code{ncv}); fixes the subspace instead of the default adaptive growth.}
 
 \item{reorthogonalize}{Whether to apply full two-sided
 reorthogonalization. \code{FALSE} selects the native one-sided small-side

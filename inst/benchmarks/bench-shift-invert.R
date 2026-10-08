@@ -85,21 +85,21 @@ shift_invert_cases <- function(quick = FALSE) {
         case = "sparse_tridiagonal_native",
         n = 50L, k = 3L, sigma = 0.01,
         expected_native = TRUE,
-        expected_label_kind = "tridiagonal_thomas_native",
+        expected_label_kind = "tridiagonal_lu_native",
         build = function(n) list(A = shift_invert_path_laplacian(n), B = NULL)
       ),
       list(
         case = "diagonal_standard_native",
         n = 60L, k = 3L, sigma = 21.5,
         expected_native = TRUE,
-        expected_label_kind = "tridiagonal_thomas_native",
+        expected_label_kind = "tridiagonal_lu_native",
         build = function(n) list(A = Matrix::Diagonal(n, x = seq_len(n)), B = NULL)
       ),
       list(
         case = "sparse_tridiagonal_generalized_native",
         n = 40L, k = 3L, sigma = 0.01,
         expected_native = TRUE,
-        expected_label_kind = "tridiagonal_thomas_generalized_native",
+        expected_label_kind = "tridiagonal_lu_generalized_native",
         build = function(n) {
           list(
             A = shift_invert_path_laplacian(n),
@@ -168,21 +168,21 @@ shift_invert_cases <- function(quick = FALSE) {
       case = "sparse_tridiagonal_native",
       n = 300L, k = 6L, sigma = 0.01,
       expected_native = TRUE,
-      expected_label_kind = "tridiagonal_thomas_native",
+      expected_label_kind = "tridiagonal_lu_native",
       build = function(n) list(A = shift_invert_path_laplacian(n), B = NULL)
     ),
     list(
       case = "diagonal_standard_native",
       n = 300L, k = 6L, sigma = 121.5,
       expected_native = TRUE,
-      expected_label_kind = "tridiagonal_thomas_native",
+      expected_label_kind = "tridiagonal_lu_native",
       build = function(n) list(A = Matrix::Diagonal(n, x = seq_len(n)), B = NULL)
     ),
     list(
       case = "sparse_tridiagonal_generalized_native",
       n = 160L, k = 6L, sigma = 0.01,
       expected_native = TRUE,
-      expected_label_kind = "tridiagonal_thomas_generalized_native",
+      expected_label_kind = "tridiagonal_lu_generalized_native",
       build = function(n) {
         list(
           A = shift_invert_path_laplacian(n),

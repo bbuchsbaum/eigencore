@@ -92,7 +92,12 @@ best-attempt retention. Real matrix-free callback operators with supported
 targets keep the native callback Arnoldi cycle with native projected Ritz
 extraction. Adjoint-capable dense, sparse CSC, and matrix-free rows also return
 left vectors with separate left-residual and biorthogonality diagnostics through
-the `eigs()` shim. Treat this as the scoped compatibility surface; full
+the `eigs()` shim when you pass `left = TRUE`. Like RSpectra, the default
+(`left = FALSE`) computes right vectors only and skips the adjoint solve.
+`which = "SM"` and a real `sigma` (nearest eigenvalues) run shift-invert
+Krylov-Schur Arnoldi on a factorised `A - sigma I` (sigma = 0 for `"SM"`).
+`opts$ncv` becomes `auto(max_subspace = ncv)` and `opts$maxitr` becomes the
+iteration limit `maxit`. Treat this as the scoped compatibility surface; full
 Krylov-Schur or harmonic/interior extraction, matrix-free refined extraction,
 and native complex-valued sparse/operator paths remain future scope. Base
 complex dense matrices use native dense complex LAPACK labels with exact
@@ -197,7 +202,7 @@ explicit generalized-SPD `lanczos()` requests use native transformed Lanczos
 for dense and diagonal SPD metrics, including block requests inside that
 transformed boundary. Sparse CSC SPD metric solves remain an
 honest reference B-orthogonal refinement, but tridiagonal sparse CSC metrics now
-use an eigencore-owned native Thomas metric solve instead of the reference
+use an eigencore-owned native pivoted tridiagonal LU (dgttrf) metric solve instead of the reference
 Cholesky boundary. General sparse CSC metrics remain reference Cholesky-labelled.
 Matrix-free-B generalized LOBPCG, native shifted-diagonal/tridiagonal
 preconditioners, constraints, and adversarial B contract rows are covered by the

@@ -300,11 +300,20 @@ test_that("compatibility shims expose the same diagnostics contract", {
   expect_s3_class(sym$certificate, "eigencore_certificate")
   expect_identical(sym$diagnostics$plan$method, sym$diagnostics$method)
 
-  general <- eigs(rbind(c(0, -1), c(1, 0)), k = 2L, which = "LI")
+  # Like RSpectra, eigs() computes right vectors only by default (C46).
+  right_only <- eigs(rbind(c(0, -1), c(1, 0)), k = 2L, which = "LI")
+  expect_named(right_only, c(
+    "values", "vectors", "nconv", "niter", "nops", "certificate", "diagnostics"
+  ))
+  expect_null(right_only$diagnostics$left_vectors)
+  expect_equal(right_only$diagnostics$plan$execution$left_vectors, "none")
+  expect_equal(right_only$diagnostics$work$adjoint_block_calls, 0)
+
+  general <- eigs(rbind(c(0, -1), c(1, 0)), k = 2L, which = "LI", left = TRUE)
   expect_named(general, c(
-    "values", "vectors", "left_vectors", "right_vectors", "nconv", "niter",
-    "nops", "left_certificate", "biorthogonality", "certificate",
-    "diagnostics"
+    "values", "vectors", "nconv", "niter", "nops", "certificate",
+    "diagnostics", "left_vectors", "right_vectors", "left_certificate",
+    "biorthogonality"
   ))
   expect_equal(general$diagnostics$method, eigencore:::native_refined_arnoldi_label())
   expect_equal(general$certificate$certificate_type, "right_residual_backward_error")

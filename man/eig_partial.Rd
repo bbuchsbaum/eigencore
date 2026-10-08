@@ -16,7 +16,8 @@ eig_partial(
   seed = NULL,
   certify = TRUE,
   allow_dense_fallback = c("auto", "never", "always"),
-  initial_subspace = NULL
+  initial_subspace = NULL,
+  left_vectors = c("auto", "none", "compute")
 )
 }
 \arguments{
@@ -32,7 +33,18 @@ eig_partial(
 
 \item{tol}{Convergence and certification tolerance.}
 
-\item{maxit}{Optional iteration limit.}
+\item{maxit}{Optional iteration limit (\code{NULL} uses each route's default).
+It bounds outer iterations, never the Krylov subspace size: thick-restart
+cycles for (block, generalized, and shift-invert callback) Lanczos,
+Krylov-Schur restarts for nonsymmetric Arnoldi (including shift-invert
+Arnoldi), restart cycles for the reference Arnoldi, LOBPCG iterations,
+and Lanczos steps for the unrestarted reference and native-kernel
+shift-invert Lanczos routes. Dense direct routes ignore it. The resolved
+limit is recorded in \code{plan$controls$iteration_limit} and
+\code{plan$controls$iteration_limit_kind}. To set the subspace size (the
+ARPACK \code{ncv}), use the method descriptor's \code{max_subspace}
+(\code{\link[=lanczos]{lanczos()}}, \code{\link[=auto]{auto()}}, \code{\link[=shift_invert]{shift_invert()}}). A \code{lanczos(max_restarts =)} or
+\code{lobpcg(maxit =)} that disagrees with \code{maxit} is an error.}
 
 \item{vectors}{Whether to compute vectors.}
 
@@ -64,6 +76,15 @@ invariant at \code{tol} is discarded in favor of a cold start; provenance
 records that guard decision. Diagnostics distinguish operator block calls,
 operator columns, and certification columns. \code{NULL} (the default)
 preserves the cold random start exactly.}
+
+\item{left_vectors}{Left-eigenvector policy for nonsymmetric problems.
+\code{"auto"} (default) computes and certifies left eigenvectors (and the
+biorthogonality) on routes that support them, such as Krylov-Schur
+Arnoldi, and records the reason when they are unavailable; \code{"none"} skips
+the left solve and its certificate entirely (roughly halving the cost of a
+nonsymmetric Arnoldi solve); \code{"compute"} is like \code{"auto"} but an error
+when the route cannot return left eigenvectors. Hermitian problems are
+unaffected.}
 }
 \value{
 An \code{eigencore_eigen_result} containing computed values, optional

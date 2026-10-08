@@ -27,9 +27,11 @@ eigs_sym(
 
 \item{sigma}{Optional shift; eigenvalues nearest \code{sigma} are returned.}
 
-\item{opts}{RSpectra options list. \code{tol}, \code{ncv} (Krylov subspace size),
-\code{retvec} and \code{initvec} are honoured; \code{maxitr} is accepted but eigencore
-controls restarts itself, and other keys raise a warning.}
+\item{opts}{RSpectra options list. \code{tol}, \code{ncv} (Krylov subspace size,
+passed as \code{auto(max_subspace = ncv)}, or \code{lanczos(max_subspace = ncv)}
+when \code{initvec} forces a Lanczos route), \code{maxitr} (passed as the
+iteration limit \code{maxit}), \code{retvec} and \code{initvec} are honoured; other
+keys raise a warning.}
 
 \item{lower}{Whether to read the lower (\code{TRUE}) or upper (\code{FALSE}) triangle
 of a matrix input.}

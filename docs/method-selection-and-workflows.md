@@ -116,6 +116,23 @@ promotion. Complex-valued `Matrix`/sparse inputs remain rejected so imaginary
 components are not silently discarded, and complex matrix-free eigen/SVD
 callbacks fail with explicit future-scope messages.
 
+### Iteration limit versus subspace size
+
+`maxit` is an iteration limit. On thick-restart Lanczos routes it caps
+restart cycles, on Krylov-Schur Arnoldi routes it caps restarts, for LOBPCG
+it caps iterations, and on unrestarted routes it caps Lanczos steps. It never
+sets the Krylov subspace size. The subspace (ARPACK `ncv`) is set on the
+method descriptor:
+
+```r
+fit <- eigencore::eig_partial(A, k = 10, maxit = 300)                  # restart limit
+fit <- eigencore::eig_partial(A, k = 10,
+  method = eigencore::auto(max_subspace = 40))                         # subspace, planner keeps the route
+fit <- eigencore::eig_partial(A, k = 10,
+  method = eigencore::lanczos(max_subspace = 40, max_restarts = 300))  # both, Lanczos forced
+fit$plan$controls[c("max_subspace", "iteration_limit", "iteration_limit_kind")]
+```
+
 ## General Eigenproblems
 
 For RSpectra-shaped general eigen calls, use `eigs()`:
@@ -142,7 +159,12 @@ and best-attempt retention across restart attempts. Real matrix-free callback
 operators with supported targets keep the native callback Arnoldi cycle with
 native projected Ritz extraction and the same certification/restart boundary.
 This is the scoped compatibility surface; adjoint-capable rows also expose left
-vectors with left-residual and biorthogonality diagnostics. Full Krylov-Schur or
+vectors with left-residual and biorthogonality diagnostics
+(`left_vectors = "auto"`, the default; `"none"` skips the adjoint solve).
+`smallest_magnitude()` and `nearest(sigma)` targets on dense or sparse
+nonsymmetric matrices run Krylov-Schur Arnoldi on a factorised
+`(A - sigma I)^{-1}` (sigma = 0 for smallest magnitude) and certify in the
+original coordinates. Full Krylov-Schur or
 harmonic/interior extraction, matrix-free refined extraction, and native
 complex-valued input operators remain future scope. Base complex dense
 nonsymmetric matrices use the native dense complex general LAPACK label with
@@ -322,7 +344,7 @@ shifted-tridiagonal generalized SPD LOBPCG for largest/smallest targets, with
 explicit SPD matrix-free metrics, constraints, generalized-Lanczos reference
 rows, and adversarial B cases covered by the strict generalized gate.
 Generalized Lanczos now distinguishes sparse tridiagonal CSC metrics, which use
-a native Thomas metric solve inside the reference-labelled Lanczos refinement,
+a native pivoted tridiagonal LU (dgttrf) metric solve inside the reference-labelled Lanczos refinement,
 from general sparse CSC metrics, which retain `Matrix::Cholesky` reference
 provenance. Block B-orthogonal Lanczos is covered only inside the native
 dense/diagonal transformed generalized-Lanczos boundary; sparse-CSC block

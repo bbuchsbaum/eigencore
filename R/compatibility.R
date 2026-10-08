@@ -3,53 +3,70 @@
 #' Mirrors `RSpectra::eigs()`. `which` uses ARPACK codes (`"LM"`, `"SM"`,
 #' `"LR"`, `"SR"`, `"LI"`, `"SI"`). Unlike ARPACK, `"LI"`/`"SI"` rank by the
 #' signed imaginary part (see [largest_imaginary()]), not by its magnitude. A
-#' non-`NULL` `sigma` with `which = "LM"` requests the eigenvalues nearest
-#' `sigma`.
+#' non-`NULL` real `sigma` with `which = "LM"` requests the eigenvalues
+#' nearest `sigma`, computed by shift-invert Krylov-Schur Arnoldi on a
+#' factorised `A - sigma I` (dense QR or sparse LU).
+#'
+#' Like `RSpectra::eigs()`, only right eigenvectors are computed by default;
+#' `left = TRUE` also computes and certifies left eigenvectors and their
+#' biorthogonality with the right ones (the [eig_partial()] default).
 #'
 #' @param A Matrix, eigencore operator, or a function `f(x, args)` returning
 #'   `A %*% x` (then `n` is required).
 #' @param k Number of eigenpairs to compute.
 #' @param which RSpectra-style target selector.
-#' @param sigma Optional shift; eigenvalues nearest `sigma` are returned.
-#' @param opts RSpectra options list. `tol`, `ncv` (Krylov subspace size) and
-#'   `retvec` are honoured; `maxitr` is accepted but eigencore controls
-#'   restarts itself, and other keys raise a warning.
+#' @param sigma Optional real shift; eigenvalues nearest `sigma` are returned.
+#' @param opts RSpectra options list. `tol`, `ncv` (Krylov subspace size,
+#'   passed as `auto(max_subspace = ncv)` so the planner still chooses the
+#'   route), `maxitr` (passed as the iteration limit `maxit`) and `retvec` are
+#'   honoured; other keys raise a warning.
 #' @param ... Additional arguments passed to [eig_partial()].
 #' @param n Dimension of the operator when `A` is a function.
 #' @param args Extra argument passed to a function `A`.
+#' @param left Whether to compute and certify left eigenvectors
+#'   (`left_vectors = "auto"` in [eig_partial()]). `FALSE` (default) skips the
+#'   adjoint solve and its certificate entirely.
 #' @return A list compatible with `RSpectra::eigs()`, including `values`,
 #'   `vectors`, convergence counts, operation counts, certificate diagnostics,
-#'   and left/right vector fields when available.
+#'   and, with `left = TRUE`, `left_vectors`, `right_vectors`,
+#'   `left_certificate` and `biorthogonality`.
 #' @examples
 #' A <- diag(c(5, 4, 3, 2, 1))
 #' A[1, 2] <- 0.5
 #' res <- eigs(A, k = 2, which = "LM")
 #' res$values
 eigs <- function(A, k, which = "LM", sigma = NULL, opts = list(), ...,
-                 n = NULL, args = NULL) {
+                 n = NULL, args = NULL, left = FALSE) {
+  if (!is.logical(left) || length(left) != 1L || is.na(left)) {
+    stop("left must be TRUE or FALSE.", call. = FALSE)
+  }
   A <- compat_function_operator(A, n = n, args = args, structure = general())
-  controls <- compat_eigen_opts(opts, allow_initvec = FALSE)
+  controls <- compat_eigen_opts(opts, allow_initvec = FALSE, dots = list(...))
   retvec <- !isFALSE(opts$retvec)
   target <- compat_eigen_target(which, k = k, sigma = sigma, symmetric = FALSE)
   fit <- do.call(eig_partial, c(
-    list(A, k = k, target = target),
+    list(A, k = k, target = target,
+         left_vectors = if (isTRUE(left)) "auto" else "none"),
     controls,
     list(...)
   ))
   compat_warn_nconv(fit$nconv, k)
-  list(
+  out <- list(
     values = fit$values,
     vectors = if (retvec) fit$vectors,
-    left_vectors = if (retvec) left_vectors(fit),
-    right_vectors = if (retvec) right_vectors(fit),
     nconv = fit$nconv,
     niter = fit$iterations,
     nops = fit$matvecs,
-    left_certificate = fit$left_certificate,
-    biorthogonality = fit$biorthogonality,
     certificate = fit$certificate,
     diagnostics = diagnostics(fit)
   )
+  if (isTRUE(left)) {
+    out$left_vectors <- if (retvec) fit$left_vectors
+    out$right_vectors <- if (retvec) right_vectors(fit)
+    out$left_certificate <- fit$left_certificate
+    out$biorthogonality <- fit$biorthogonality
+  }
+  out
 }
 
 #' RSpectra-compatible symmetric eigen shim.
@@ -64,9 +81,11 @@ eigs <- function(A, k, which = "LM", sigma = NULL, opts = list(), ...,
 #' @param which RSpectra-style target selector (`"LM"`, `"SM"`, `"LA"`,
 #'   `"SA"`, `"BE"`).
 #' @param sigma Optional shift; eigenvalues nearest `sigma` are returned.
-#' @param opts RSpectra options list. `tol`, `ncv` (Krylov subspace size),
-#'   `retvec` and `initvec` are honoured; `maxitr` is accepted but eigencore
-#'   controls restarts itself, and other keys raise a warning.
+#' @param opts RSpectra options list. `tol`, `ncv` (Krylov subspace size,
+#'   passed as `auto(max_subspace = ncv)`, or `lanczos(max_subspace = ncv)`
+#'   when `initvec` forces a Lanczos route), `maxitr` (passed as the
+#'   iteration limit `maxit`), `retvec` and `initvec` are honoured; other
+#'   keys raise a warning.
 #' @param lower Whether to read the lower (`TRUE`) or upper (`FALSE`) triangle
 #'   of a matrix input.
 #' @param ... Additional arguments passed to [eig_partial()].
@@ -83,7 +102,8 @@ eigs_sym <- function(A, k, which = "LM", sigma = NULL, opts = list(),
                      lower = TRUE, ..., n = NULL, args = NULL) {
   A <- compat_function_operator(A, n = n, args = args, structure = hermitian())
   A <- compat_symmetric_from_triangle(A, lower = lower)
-  controls <- compat_eigen_opts(opts, allow_initvec = is.null(sigma))
+  controls <- compat_eigen_opts(opts, allow_initvec = is.null(sigma),
+                                dots = list(...))
   retvec <- !isFALSE(opts$retvec)
   target <- compat_eigen_target(which, k = k, sigma = sigma, symmetric = TRUE)
   P <- eigen_problem(A, structure = hermitian(), target = target)
@@ -114,8 +134,10 @@ eigs_sym <- function(A, k, which = "LM", sigma = NULL, opts = list(),
 #' @param nv Number of right singular vectors returned.
 #' @param opts RSpectra options list. `tol`, `center` and `scale` are
 #'   honoured (`center`/`scale` are applied as operators, without densifying);
-#'   `ncv` and `maxitr` are accepted but eigencore controls the subspace
-#'   itself, and other keys raise a warning.
+#'   `ncv` is passed as `auto(max_subspace = ncv)` (used by the Golub-Kahan
+#'   and implicit-Gram Lanczos routes; the explicit Gram route has no Krylov
+#'   subspace). `maxitr` is accepted but not used, since [svd_partial()] has
+#'   no iteration limit yet; other keys raise a warning.
 #' @param ... Additional arguments passed to [svd_partial()].
 #' @param Atrans Function `f(x, args)` returning `t(A) %*% x` when `A` is a
 #'   function.
@@ -138,9 +160,13 @@ svds <- function(A, k, nu = k, nv = k, opts = list(), ..., Atrans = NULL,
   }
   opts <- compat_check_opts(
     opts,
-    used = c("tol", "center", "scale"),
-    ignored = c("ncv", "maxitr")
+    used = c("tol", "ncv", "center", "scale"),
+    ignored = "maxitr"
   )
+  if (!is.null(opts$ncv) && !is.null(list(...)$method)) {
+    stop("opts$ncv cannot be combined with method =; set max_subspace on ",
+         "the method descriptor instead.", call. = FALSE)
+  }
   A <- compat_center_scale(A, center = opts$center %||% FALSE,
                            scale = opts$scale %||% FALSE)
   vector_mode <- if (nu > 0 && nv > 0) {
@@ -153,6 +179,9 @@ svds <- function(A, k, nu = k, nv = k, opts = list(), ..., Atrans = NULL,
     "none"
   }
   controls <- if (is.null(opts$tol)) list() else list(tol = opts$tol)
+  if (!is.null(opts$ncv)) {
+    controls$method <- auto(max_subspace = as.integer(opts$ncv))
+  }
   fit <- do.call(svd_partial, c(
     list(A, rank = k, vectors = vector_mode),
     controls,
@@ -242,26 +271,37 @@ compat_check_opts <- function(opts, used, ignored) {
   skipped <- intersect(keys, ignored)
   if (length(skipped)) {
     warning("opts entries ", paste(skipped, collapse = ", "),
-            " are accepted for RSpectra compatibility but not used; ",
-            "eigencore sizes and restarts its subspace adaptively.",
+            " are accepted for RSpectra compatibility but not used.",
             call. = FALSE)
   }
   opts[intersect(keys, used)]
 }
 
 #' @keywords internal
-compat_eigen_opts <- function(opts, allow_initvec) {
-  used <- c("tol", "ncv", "retvec", if (allow_initvec) "initvec")
-  ignored <- c("maxitr", "mode", if (!allow_initvec) "initvec")
+compat_eigen_opts <- function(opts, allow_initvec, dots = list()) {
+  used <- c("tol", "ncv", "maxitr", "retvec", if (allow_initvec) "initvec")
+  ignored <- c("mode", if (!allow_initvec) "initvec")
   opts <- compat_check_opts(opts, used = used, ignored = ignored)
   out <- list()
   if (!is.null(opts$tol)) out$tol <- opts$tol
-  if (!is.null(opts$ncv)) out$maxit <- as.integer(opts$ncv)
+  # ARPACK maxitr is the restart (outer iteration) limit: eigencore's maxit.
+  if (!is.null(opts$maxitr) && is.null(dots$maxit)) {
+    out$maxit <- as.integer(opts$maxitr)
+  }
+  ncv <- if (is.null(opts$ncv)) NULL else as.integer(opts$ncv)
+  if (!is.null(ncv) && !is.null(dots$method)) {
+    stop("opts$ncv cannot be combined with method =; set max_subspace on ",
+         "the method descriptor instead.", call. = FALSE)
+  }
   # retvec = FALSE still solves with vectors so the result stays certified
   # (as ARPACK does internally); the shims drop them afterwards.
   if (!is.null(opts$initvec)) {
     out$initial_subspace <- matrix(as.numeric(opts$initvec), ncol = 1L)
-    out$method <- lanczos()
+    out$method <- lanczos(max_subspace = ncv)
+  } else if (!is.null(ncv)) {
+    # The subspace request rides on auto(), so the planner's route choice is
+    # the same as without ncv.
+    out$method <- auto(max_subspace = ncv)
   }
   out
 }

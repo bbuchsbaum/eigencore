@@ -4,10 +4,13 @@
 \alias{lobpcg}
 \title{LOBPCG method descriptor.}
 \usage{
-lobpcg(maxit = 200L, preconditioner = NULL, constraints = NULL)
+lobpcg(maxit = NULL, preconditioner = NULL, constraints = NULL)
 }
 \arguments{
-\item{maxit}{Maximum LOBPCG iterations.}
+\item{maxit}{Maximum LOBPCG iterations. \code{NULL} (default) uses the solve's
+\code{maxit} argument when given, else the \code{eigencore.lobpcg_maxit} option
+(200). Supplying both this and a different solve-level \code{maxit} is an
+error.}
 
 \item{preconditioner}{Optional function taking a residual block and
 returning a preconditioned block with the same dimensions.}

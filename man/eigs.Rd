@@ -12,7 +12,8 @@ eigs(
   opts = list(),
   ...,
   n = NULL,
-  args = NULL
+  args = NULL,
+  left = FALSE
 )
 }
 \arguments{
@@ -23,29 +24,41 @@ eigs(
 
 \item{which}{RSpectra-style target selector.}
 
-\item{sigma}{Optional shift; eigenvalues nearest \code{sigma} are returned.}
+\item{sigma}{Optional real shift; eigenvalues nearest \code{sigma} are returned.}
 
-\item{opts}{RSpectra options list. \code{tol}, \code{ncv} (Krylov subspace size) and
-\code{retvec} are honoured; \code{maxitr} is accepted but eigencore controls
-restarts itself, and other keys raise a warning.}
+\item{opts}{RSpectra options list. \code{tol}, \code{ncv} (Krylov subspace size,
+passed as \code{auto(max_subspace = ncv)} so the planner still chooses the
+route), \code{maxitr} (passed as the iteration limit \code{maxit}) and \code{retvec} are
+honoured; other keys raise a warning.}
 
 \item{...}{Additional arguments passed to \code{\link[=eig_partial]{eig_partial()}}.}
 
 \item{n}{Dimension of the operator when \code{A} is a function.}
 
 \item{args}{Extra argument passed to a function \code{A}.}
+
+\item{left}{Whether to compute and certify left eigenvectors
+(\code{left_vectors = "auto"} in \code{\link[=eig_partial]{eig_partial()}}). \code{FALSE} (default) skips the
+adjoint solve and its certificate entirely.}
 }
 \value{
 A list compatible with \code{RSpectra::eigs()}, including \code{values},
 \code{vectors}, convergence counts, operation counts, certificate diagnostics,
-and left/right vector fields when available.
+and, with \code{left = TRUE}, \code{left_vectors}, \code{right_vectors},
+\code{left_certificate} and \code{biorthogonality}.
 }
 \description{
 Mirrors \code{RSpectra::eigs()}. \code{which} uses ARPACK codes (\code{"LM"}, \code{"SM"},
 \code{"LR"}, \code{"SR"}, \code{"LI"}, \code{"SI"}). Unlike ARPACK, \code{"LI"}/\code{"SI"} rank by the
 signed imaginary part (see \code{\link[=largest_imaginary]{largest_imaginary()}}), not by its magnitude. A
-non-\code{NULL} \code{sigma} with \code{which = "LM"} requests the eigenvalues nearest
-\code{sigma}.
+non-\code{NULL} real \code{sigma} with \code{which = "LM"} requests the eigenvalues
+nearest \code{sigma}, computed by shift-invert Krylov-Schur Arnoldi on a
+factorised \verb{A - sigma I} (dense QR or sparse LU).
+}
+\details{
+Like \code{RSpectra::eigs()}, only right eigenvectors are computed by default;
+\code{left = TRUE} also computes and certifies left eigenvectors and their
+biorthogonality with the right ones (the \code{\link[=eig_partial]{eig_partial()}} default).
 }
 \examples{
 A <- diag(c(5, 4, 3, 2, 1))

@@ -28,8 +28,10 @@ svds(
 
 \item{opts}{RSpectra options list. \code{tol}, \code{center} and \code{scale} are
 honoured (\code{center}/\code{scale} are applied as operators, without densifying);
-\code{ncv} and \code{maxitr} are accepted but eigencore controls the subspace
-itself, and other keys raise a warning.}
+\code{ncv} is passed as \code{auto(max_subspace = ncv)} (used by the Golub-Kahan
+and implicit-Gram Lanczos routes; the explicit Gram route has no Krylov
+subspace). \code{maxitr} is accepted but not used, since \code{\link[=svd_partial]{svd_partial()}} has
+no iteration limit yet; other keys raise a warning.}
 
 \item{...}{Additional arguments passed to \code{\link[=svd_partial]{svd_partial()}}.}
 

@@ -525,7 +525,8 @@ solve_svd_implicit_gram <- function(a, rank, tol, vectors, certify, plan) {
     rank = rank,
     target = a$target,
     tol = tol,
-    vectors = if (isTRUE(certify)) "both" else vectors
+    vectors = if (isTRUE(certify)) "both" else vectors,
+    max_subspace = plan$controls$max_subspace
   )
   cert <- if (isTRUE(certify)) {
     iter$certificate

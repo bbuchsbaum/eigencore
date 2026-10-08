@@ -198,9 +198,9 @@ of `A`, computed two ways:
 # Largest eigenvalues are well separated -> easy, converges fast.
 fit_pass <- eig_partial(A, k = 10, target = largest())
 
-# Smallest eigenvalues are densely clustered near 1 -> a tight maxit
+# Smallest eigenvalues are densely clustered near 1 -> a tight maxit (restart)
 # budget leaves them short of tolerance.
-fit_fail <- eig_partial(A, k = 10, target = smallest(), maxit = 15)
+fit_fail <- eig_partial(A, k = 10, target = smallest(), maxit = 4)
 
 c(largest_passed  = fit_pass$certificate$passed,
   smallest_passed = fit_fail$certificate$passed)
@@ -210,7 +210,7 @@ c(largest_passed  = fit_pass$certificate$passed,
 op <- par(mfrow = c(1, 2))
 ylim <- c(1e-16, 1e-1)
 plot_backward_error(fit_pass$certificate, main = "largest(): passed", ylim = ylim)
-plot_backward_error(fit_fail$certificate, main = "smallest(), maxit = 15: failed", ylim = ylim)
+plot_backward_error(fit_fail$certificate, main = "smallest(), maxit = 4: failed", ylim = ylim)
 par(op)
 ```
 
@@ -231,8 +231,8 @@ largest-eigenvalue target is essentially the exact norm.
 
 The right-hand panel above is a genuine failure. The smallest eigenvalues of
 `A` sit in a dense cluster just above 1, so they need many more iterations than
-the well-separated largest ones. With `maxit = 15` the solver runs out of
-budget before any pair converges, and the verdict flips. The `failed_indices`
+the well-separated largest ones. With `maxit = 4` the solver runs out of
+restart budget before all pairs converge, and the verdict flips. The `failed_indices`
 slot tells you which Ritz pairs missed:
 
 ```{r failed}
@@ -251,7 +251,7 @@ fit_ok <- eig_partial(A, k = 10, target = smallest(), maxit = 40)
 fit_ok$certificate$passed
 ```
 
-```{r convergence, echo = FALSE, fig.cap = "Worst backward error per restart for the ten smallest eigenpairs. A tight budget (red) stalls above the tolerance; a generous one (blue) drives the error under the line and the certificate passes.", fig.alt = "Line plot on a log scale of backward error versus restart number. The red maxit-15 curve plateaus above the tolerance line; the blue maxit-40 curve descends below it."}
+```{r convergence, echo = FALSE, fig.cap = "Worst backward error per restart for the ten smallest eigenpairs. A tight budget (red) stalls above the tolerance; a generous one (blue) drives the error under the line and the certificate passes.", fig.alt = "Line plot on a log scale of backward error versus restart number. The red maxit-4 curve plateaus above the tolerance line; the blue maxit-40 curve descends below it."}
 h_fail <- diagnostics(fit_fail)$convergence_history
 h_ok   <- diagnostics(fit_ok)$convergence_history
 tol <- fit_fail$certificate$tolerance
@@ -263,7 +263,7 @@ tryCatch({
        xlab = "restart", ylab = "max backward error (log scale)")
   lines(h_ok$restart, h_ok$max_backward_error, lwd = 2, col = ec_blue)
   abline(h = tol, col = ec_tol, lty = 2, lwd = 2)
-  legend("right", c("maxit = 15 (failed)", "maxit = 40 (passed)", "tolerance"),
+  legend("right", c("maxit = 4 (failed)", "maxit = 40 (passed)", "tolerance"),
          col = c(ec_red, ec_blue, ec_tol), lwd = 2, lty = c(1, 1, 2),
          bty = "n", cex = 0.9, inset = 0.02)
 }, finally = par(op))
@@ -271,7 +271,7 @@ tryCatch({
 
 What to do: increase `maxit`, raise `tol`, or — when you suspect a clustered
 spectrum — request a larger `k` (so the cluster is fully covered by the
-returned basis) and slice afterwards. Here, lifting `maxit` from 15 to 40 is
+returned basis) and slice afterwards. Here, lifting `maxit` (the restart limit) from 4 to 40 is
 enough.
 
 ### Norm bounds: exact or a lower bound

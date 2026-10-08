@@ -111,23 +111,52 @@ new_method <- function(kind, ...) {
   structure(c(list(kind = kind), list(...)), class = "eigencore_method")
 }
 
+#' @noRd
+validate_max_subspace <- function(max_subspace) {
+  if (is.null(max_subspace)) {
+    return(NULL)
+  }
+  if (!is.numeric(max_subspace) || length(max_subspace) != 1L ||
+      is.na(max_subspace) || max_subspace != round(max_subspace) ||
+      max_subspace < 2) {
+    stop("max_subspace must be NULL or a single whole number >= 2.",
+         call. = FALSE)
+  }
+  as.integer(max_subspace)
+}
+
 #' Automatic solver choice.
 #'
+#' @param max_subspace Optional maximum Krylov subspace size (the ARPACK
+#'   `ncv`). When the planner selects a restarted Krylov route (thick-restart
+#'   or block Lanczos, Krylov-Schur Arnoldi, shift-invert Lanczos or Arnoldi,
+#'   Golub-Kahan, or implicit-Gram Lanczos for SVD) this caps the active
+#'   basis; it is capped at the problem dimension and must leave room for the
+#'   wanted pairs (at least `k + 1`, `k + block` for block Lanczos). Routes
+#'   without a Krylov basis (dense LAPACK, explicit Gram SVD, LOBPCG) ignore
+#'   it. `NULL` (default) uses the route's own default. The solve's `maxit`
+#'   argument is the iteration (restart) limit and never changes the
+#'   subspace size.
 #' @return An `eigencore_method` descriptor that lets the planner choose a
 #'   solver based on problem structure.
 #' @export
-auto <- function() {
-  new_method("auto")
+auto <- function(max_subspace = NULL) {
+  new_method("auto", max_subspace = validate_max_subspace(max_subspace))
 }
 
 #' Hermitian Lanczos method descriptor.
 #'
-#' @param max_subspace Optional maximum active Krylov subspace size `m`. Must
-#'   be at least `k + 1`. The native thick-restart path keeps the active
-#'   basis bounded by this value across restart cycles.
+#' @param max_subspace Optional maximum active Krylov subspace size `m` (the
+#'   ARPACK `ncv`). Must be at least `k + 1` (`k + block` for block Lanczos).
+#'   The native thick-restart path keeps the active basis bounded by this
+#'   value across restart cycles; unrestarted reference paths build at most
+#'   this many Lanczos vectors. This is the only subspace-size control: the
+#'   solve's `maxit` argument is an iteration (restart) limit.
 #' @param max_restarts Optional non-negative integer giving the maximum
 #'   number of thick-restart cycles allowed before stopping with whatever
-#'   has converged. Default `100L`.
+#'   has converged. Default `100L`. Equivalent to the solve's `maxit`
+#'   argument on thick-restart routes; supplying both with different values
+#'   is an error.
 #' @param block Native block size. `1L` selects the scalar path; for a
 #'   matrix-free operator this remains the reference Hermitian Lanczos
 #'   boundary. Values greater than one select the native block Krylov path
@@ -162,7 +191,7 @@ lanczos <- function(max_subspace = NULL, max_restarts = NULL, block = 1L,
   }
   new_method(
     "lanczos",
-    max_subspace = max_subspace,
+    max_subspace = validate_max_subspace(max_subspace),
     max_restarts = max_restarts,
     block = block,
     check_stride = check_stride,
@@ -172,7 +201,8 @@ lanczos <- function(max_subspace = NULL, max_restarts = NULL, block = 1L,
 
 #' Golub-Kahan bidiagonalization method descriptor.
 #'
-#' @param max_subspace Optional maximum Krylov subspace size.
+#' @param max_subspace Optional maximum Krylov subspace size (the ARPACK
+#'   `ncv`); fixes the subspace instead of the default adaptive growth.
 #' @param reorthogonalize Whether to apply full two-sided
 #'   reorthogonalization. `FALSE` selects the native one-sided small-side
 #'   policy where supported, with final acceptance still controlled by the
@@ -183,7 +213,7 @@ lanczos <- function(max_subspace = NULL, max_restarts = NULL, block = 1L,
 golub_kahan <- function(max_subspace = NULL, reorthogonalize = TRUE) {
   new_method(
     "golub_kahan",
-    max_subspace = max_subspace,
+    max_subspace = validate_max_subspace(max_subspace),
     reorthogonalize = reorthogonalize
   )
 }
@@ -212,7 +242,10 @@ randomized <- function(oversample = 10, n_iter = 2, block = NULL,
 
 #' LOBPCG method descriptor.
 #'
-#' @param maxit Maximum LOBPCG iterations.
+#' @param maxit Maximum LOBPCG iterations. `NULL` (default) uses the solve's
+#'   `maxit` argument when given, else the `eigencore.lobpcg_maxit` option
+#'   (200). Supplying both this and a different solve-level `maxit` is an
+#'   error.
 #' @param preconditioner Optional function taking a residual block and
 #'   returning a preconditioned block with the same dimensions.
 #' @param constraints Optional matrix whose columns span a subspace to deflate.
@@ -224,10 +257,12 @@ randomized <- function(oversample = 10, n_iter = 2, block = NULL,
 #'   unsupported cases route to the reference prototype.
 #' @importFrom utils modifyList tail
 #' @export
-lobpcg <- function(maxit = 200L, preconditioner = NULL, constraints = NULL) {
-  maxit <- as.integer(maxit)
-  if (length(maxit) != 1L || is.na(maxit) || maxit < 1L) {
-    stop("maxit must be a single positive integer.", call. = FALSE)
+lobpcg <- function(maxit = NULL, preconditioner = NULL, constraints = NULL) {
+  if (!is.null(maxit)) {
+    maxit <- as.integer(maxit)
+    if (length(maxit) != 1L || is.na(maxit) || maxit < 1L) {
+      stop("maxit must be NULL or a single positive integer.", call. = FALSE)
+    }
   }
   if (!is.null(preconditioner) && !is.function(preconditioner)) {
     stop("preconditioner must be NULL or a function.", call. = FALSE)
@@ -253,10 +288,16 @@ lobpcg <- function(maxit = 200L, preconditioner = NULL, constraints = NULL) {
 #' @param sigma Shift value `sigma`.
 #' @param solve Optional user-supplied solve operator for `(A - sigma B)`.
 #' @param factorization Optional precomputed factorization handle.
+#' @param max_subspace Optional maximum Krylov subspace size for the Lanczos
+#'   (Hermitian) or Krylov-Schur Arnoldi (nonsymmetric) iteration on the
+#'   inverted operator. `NULL` uses the route default.
 #' @return An `eigencore_method` descriptor selecting shift-invert.
 #' @export
-shift_invert <- function(sigma, solve = NULL, factorization = NULL) {
-  new_method("shift_invert", sigma = sigma, solve = solve, factorization = factorization)
+shift_invert <- function(sigma, solve = NULL, factorization = NULL,
+                         max_subspace = NULL) {
+  new_method("shift_invert", sigma = sigma, solve = solve,
+             factorization = factorization,
+             max_subspace = validate_max_subspace(max_subspace))
 }
 
 #' General operator structure descriptor.

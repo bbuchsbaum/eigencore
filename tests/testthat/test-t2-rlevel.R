@@ -215,7 +215,7 @@ test_that("P7: sparse shift-invert runs the native thick-restart callback and ce
   S <- methods::as(methods::as(S, "generalMatrix"), "CsparseMatrix")
   sigma <- 200.3
   fit <- eig_partial(S, k = 6, target = nearest(sigma))
-  expect_identical(fit$method, "reference Hermitian Lanczos shift-invert (sparse LU)")
+  expect_identical(fit$method, "native thick-restart Hermitian Lanczos shift-invert (sparse LU solve callback)")
   expect_identical(fit$restart$kind, "native_thick_restart_shift_invert_callback")
   expect_true(fit$certificate$passed)
   dense <- eigen(as.matrix(S), symmetric = TRUE, only.values = TRUE)$values
@@ -224,7 +224,9 @@ test_that("P7: sparse shift-invert runs the native thick-restart callback and ce
 
   # A subspace that cannot hold all wanted pairs at once is restarted rather
   # than returned unconverged.
-  tight <- eig_partial(S, k = 6, target = nearest(sigma), maxit = 8L)
+  tight <- eig_partial(S, k = 6, target = nearest(sigma),
+                       method = auto(max_subspace = 8L))
+  expect_equal(tight$plan$controls$max_subspace, 8L)
   expect_true(tight$certificate$passed)
   expect_equal(sort(values(tight)), sort(expected), tolerance = 1e-8)
 
