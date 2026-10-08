@@ -375,6 +375,7 @@ new_restart_serialization <- function(plan, method_state) {
   ))
   structure(list(
     schema_version = 1L,
+    hash_format = identity_hash_format(),
     portable = identity_portable,
     method_state_portable = if (is.null(method_state)) {
       TRUE
@@ -620,6 +621,14 @@ validate_restart_state <- function(state) {
   missing <- setdiff(required_restart_state_fields(), names(state))
   if (length(missing)) {
     restart_state_error("corrupt_state", missing[[1L]], "present", NULL)
+  }
+  if (inherits(state$serialization, "eigencore_serialization") &&
+      !identical(state$serialization$hash_format, identity_hash_format())) {
+    restart_state_error(
+      "identity_format_changed", "serialization$hash_format",
+      identity_hash_format(), state$serialization$hash_format %||% NULL,
+      identity_hash_format_message("restart state")
+    )
   }
   validate_problem_signature(state$problem_signature)
   validate_restart_basis(state$basis, state$problem_signature)

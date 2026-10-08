@@ -4,6 +4,7 @@
 
 extern "C" SEXP eigencore_dense_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_stable_raw_hash(SEXP);
+extern "C" SEXP eigencore_identity_hash(SEXP);
 extern "C" SEXP eigencore_dense_complex_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_randomized_apply(SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_randomized_sketch(SEXP, SEXP);
@@ -127,6 +128,7 @@ extern "C" SEXP eigencore_tridiagonal_solve(SEXP, SEXP, SEXP, SEXP);
 
 static const R_CallMethodDef CallEntries[] = {
   {"eigencore_stable_raw_hash", (DL_FUNC) &eigencore_stable_raw_hash, 1},
+  {"eigencore_identity_hash", (DL_FUNC) &eigencore_identity_hash, 1},
   {"eigencore_dense_block_apply", (DL_FUNC) &eigencore_dense_block_apply, 6},
   {"eigencore_dense_complex_block_apply", (DL_FUNC) &eigencore_dense_complex_block_apply, 6},
   {"eigencore_dense_randomized_apply", (DL_FUNC) &eigencore_dense_randomized_apply, 3},

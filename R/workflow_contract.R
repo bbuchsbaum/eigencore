@@ -16,12 +16,40 @@ eigencore_session_id <- local({
   }
 })
 
+# Identity and workflow tokens (C45). stable_raw_hash() digests an R value
+# with a native structural hash (src/identity_hash.cpp): type, length,
+# attributes (sorted by name) and values are streamed straight from the data
+# buffers, with no serialisation and no copy. Equal values in the identical()
+# sense hash equal (-0 and 0, NaN payloads); NA_real_ stays distinct from NaN;
+# dimnames and other attributes count. The digest is 128 bits (32 hex
+# characters), built from values rather than memory order, so it is the same
+# across sessions and platforms. Closures, environments and external pointers
+# have no value-level fast path and are digested through serialize() as
+# before. Changing this algorithm changes every persisted token, so bump
+# identity_hash_format(); plans and restart states record it and are rejected
+# with a "re-plan" message when it differs.
 #' @keywords internal
 stable_raw_hash <- function(x) {
-  if (!is.raw(x)) {
-    x <- serialize(x, NULL, version = 3L)
-  }
-  .Call("eigencore_stable_raw_hash", x, PACKAGE = "eigencore")
+  .Call("eigencore_identity_hash", x, PACKAGE = "eigencore")
+}
+
+#' @keywords internal
+identity_hash_format <- function() {
+  "eigencore-identity-hash-v2"
+}
+
+#' @keywords internal
+identity_hash_format_message <- function(kind = "plan") {
+  paste0(
+    "This ", kind, " was created with an older eigencore identity hash ",
+    "format (identity format changed to ", identity_hash_format(), "); ",
+    "its operator identity and integrity tokens can no longer be verified. ",
+    if (identical(kind, "plan")) {
+      "Re-plan from the original problem."
+    } else {
+      "Re-plan and re-solve from the original problem to obtain a new restart state."
+    }
+  )
 }
 
 #' @keywords internal
@@ -175,8 +203,8 @@ make_operator_identity <- function(dim, dtype, structure, metadata,
   }
   if (operator_has_builtin_provenance(metadata)) {
     if (isTRUE(defer_builtin)) {
-      # The built-in identity digests the whole source matrix (a serialisation
-      # of 8 n^2 bytes for a dense source). linear_operator() defers it: the
+      # The built-in identity digests the whole source matrix (one native
+      # pass over 8 n^2 bytes for a dense source). linear_operator() defers it: the
       # digest is computed on first request and cached on the operator, see
       # refresh_operator_identity().
       return(structure(
@@ -577,6 +605,7 @@ new_plan_serialization <- function(identities, planned_method,
   portable <- all(vapply(identities, function(x) isTRUE(x$portable), logical(1L)))
   structure(list(
     schema_version = 1L,
+    hash_format = identity_hash_format(),
     portable = portable,
     originating_session = eigencore_session_id(),
     incompatibility_reason = if (portable) NULL else "opaque callback identity is session-local",
@@ -636,6 +665,14 @@ validate_eigencore_plan <- function(plan) {
   missing <- setdiff(required_plan_fields(), names(plan))
   if (length(missing)) {
     plan_error("missing_field", missing[[1L]], "present", NULL)
+  }
+  if (is.list(plan$serialization) &&
+      !identical(plan$serialization$hash_format, identity_hash_format())) {
+    plan_error(
+      "identity_format_changed", "serialization$hash_format",
+      identity_hash_format(), plan$serialization$hash_format %||% NULL,
+      identity_hash_format_message("plan")
+    )
   }
   if (!plan$problem_type %in% c("eigen", "svd") ||
       !identical(plan$problem$type, plan$problem_type)) {

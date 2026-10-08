@@ -190,6 +190,16 @@
 
 ## Performance
 
+* Operator identities and workflow tokens use a native 128-bit structural
+  hash over the data buffers instead of hashing `serialize()` output, about
+  10x faster (dense 1500 x 1500 source: 0.047 s -> 0.005 s; 4000 x 4000:
+  0.54 s -> 0.04 s). Equal values hash equal (`-0`/`0`, NaN payloads),
+  attributes count regardless of order, and digests are the same across
+  sessions and platforms. **Identity format change:** built-in operator
+  identities, plan tokens and restart-state tokens all change value. Plans
+  and restart states now record `serialization$hash_format`; ones saved by an
+  earlier version are rejected with code `identity_format_changed` and a
+  message asking to re-plan, rather than a generic identity mismatch.
 * Sparse tridiagonal shift-invert now parses and validates the three matrix
   bands once per solve and reuses that immutable representation for planning,
   shift perturbation, factorization, and certification. The native kernel
