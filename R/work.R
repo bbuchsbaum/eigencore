@@ -85,7 +85,10 @@ work_operator_enter <- function(identity, kind = c("operator", "adjoint"), X) {
   context$operator_depth <- context$operator_depth + 1L
   if (outermost) {
     columns <- work_block_columns(X)
-    metric <- work_identity_equal(identity, context$identity_B)
+    metric <- !is.null(context$identity_B) && work_identity_equal(
+      if (is.function(identity)) identity() else identity,
+      context$identity_B
+    )
     phase <- context$phase
     if (metric) {
       block_field <- "metric_block_calls"

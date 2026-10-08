@@ -348,11 +348,27 @@ shift_invert_factorization_cache_merge <- function(cache_info, label_kind,
 
 #' @keywords internal
 shift_invert_solver_dense <- function(A, sigma, B = NULL) {
+  # Form M = A - sigma * B without materialising an n x n identity for the
+  # standard problem, and factor it exactly once.
   if (is.null(B)) {
-    B <- diag(nrow(A))
+    M <- A
+    diag(M) <- diag(M) - sigma
+  } else {
+    M <- A - sigma * B
   }
-  M <- A - sigma * B
-  cond <- tryCatch(base::rcond(M), error = function(e) NA_real_)
+  # LAPACK QR (column pivoting) with an explicit diag(R) tolerance gives a
+  # stricter rank check than base::qr(LINPACK), whose qr.coef silently returns
+  # NA on rank-deficient columns instead of erroring.
+  factor <- tryCatch(qr(M, LAPACK = TRUE), error = function(e) NULL)
+  R_factor <- if (is.null(factor)) NULL else qr.R(factor)
+  # Reciprocal condition estimate from the same factorisation: M P = Q R with
+  # Q orthogonal, so cond(M) and cond(R) agree up to the norm-equivalence
+  # factor; dtrcon on R costs O(n^2) instead of a second O(n^3) LU.
+  cond <- if (is.null(R_factor)) {
+    NA_real_
+  } else {
+    tryCatch(base::rcond(R_factor, triangular = TRUE), error = function(e) NA_real_)
+  }
   if (!is.finite(cond) || cond <= sqrt(.Machine$double.eps)) {
     stop(
       "shift_invert(sigma = ", sigma, ") produced a singular or near-singular ",
@@ -360,13 +376,7 @@ shift_invert_solver_dense <- function(A, sigma, B = NULL) {
       call. = FALSE
     )
   }
-  # LAPACK QR with explicit diag(R) tolerance gives a stricter rank check than
-  # base::qr(LINPACK), whose qr.coef silently returns NA on rank-deficient
-  # columns instead of erroring. Borderline shifts can pass the rcond gate
-  # above, so we still verify R has no near-zero diagonals before declaring
-  # the factorization usable.
-  factor <- qr(M, LAPACK = TRUE)
-  R_diag <- abs(diag(qr.R(factor)))
+  R_diag <- abs(diag(R_factor))
   rank_tol <- max(dim(M)) * .Machine$double.eps * max(R_diag, 1)
   if (any(R_diag <= rank_tol)) {
     stop(
@@ -395,7 +405,7 @@ shift_invert_solver_dense <- function(A, sigma, B = NULL) {
       factorization = "base::qr(LAPACK=TRUE)",
       factorization_cached = TRUE,
       condition_estimate = cond,
-      condition_estimate_type = "dense_rcond",
+      condition_estimate_type = "dense_qr_triangular_rcond",
       near_singular = FALSE
     )
   )
@@ -408,8 +418,14 @@ shift_invert_solver_csc <- function(A, sigma, B = NULL) {
     B <- Matrix::Diagonal(n)
   }
   M <- methods::as(A - sigma * B, "CsparseMatrix")
+  # Shift-invert is Hermitian-only and B is diagonal here, so M has a
+  # symmetric pattern: order = 1 (AMD on A + A') is the matching fill-reducing
+  # ordering. Matrix's default (AMD on A'A, order = 2/NA) produced 2.2x the fill
+  # and 3x the factor time on random sparse symmetric matrices. Partial
+  # pivoting (tol = 1) is unchanged. Older Matrix versions without an integer
+  # `order` fall back to the default.
   factor <- tryCatch(
-    Matrix::lu(M),
+    tryCatch(Matrix::lu(M, order = 1L), error = function(e) Matrix::lu(M)),
     error = function(e) {
       stop(
         "shift_invert(sigma = ", sigma, ") could not factor the sparse shifted ",
@@ -1291,6 +1307,45 @@ native_dense_generalized_shift_invert_lanczos <- function(problem, k, sigma,
 }
 
 #' @keywords internal
+#' Largest-magnitude eigenpairs of the factorised shift-invert operator M.
+#' M is a matrix-free Hermitian callback (its apply is a factorised solve), so
+#' it drives the native thick-restart Lanczos kernel through the callback ABI
+#' (restarts, locking, no fixed subspace cap). The reference scalar Lanczos
+#' remains for subspaces too small for a thick restart (k + 1 > maxit).
+shift_invert_transformed_lanczos <- function(M, k, tol, maxit) {
+  n <- M$dim[1L]
+  k <- as.integer(k)
+  m_max <- min(n, as.integer(maxit))
+  if (!is.na(m_max) && m_max >= k + 1L &&
+      native_matrix_free_block_lanczos_available(M)) {
+    iter <- native_block_lanczos_hermitian(
+      M,
+      k = k,
+      target = largest_magnitude(),
+      tol = tol,
+      maxit = m_max,
+      block = 1L,
+      max_restarts = 100L,
+      vectors = TRUE,
+      full_subspace = FALSE,
+      certificate_fallback = FALSE
+    )
+    iter$restart$kind <- "native_thick_restart_shift_invert_callback"
+    iter$restart$native_shift_invert_callback <- TRUE
+    return(iter)
+  }
+  reference_lanczos_hermitian(
+    M,
+    k = k,
+    target = largest_magnitude(),
+    tol = tol,
+    maxit = maxit,
+    vectors = TRUE,
+    reorthogonalize = TRUE
+  )
+}
+
+#' @keywords internal
 solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
                                           vectors, certify, plan) {
   sigma <- method$sigma
@@ -1343,49 +1398,75 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
   n <- M$dim[1L]
 
   effective_maxit <- maxit %||% min(n, max(20L, 4L * as.integer(k) + 20L))
-
-  iter <- reference_lanczos_hermitian(
-    M,
-    k = k,
-    target = largest_magnitude(),
-    tol = tol,
-    maxit = effective_maxit,
-    vectors = TRUE,
-    reorthogonalize = TRUE
-  )
-
-  mu <- iter$values
-  vec <- iter$vectors
-  if (any(abs(mu) < .Machine$double.eps)) {
-    stop(
-      "shift_invert(sigma = ", sigma, ") produced a zero-magnitude eigenvalue ",
-      "of the inverted operator; sigma is too close to a true eigenvalue. ",
-      "Perturb sigma or use a tighter tolerance.",
-      call. = FALSE
-    )
-  }
-  lambda <- sigma + 1 / mu
-
   Aop <- problem$A
   Bop <- problem$metric
 
-  ord <- order_indices(lambda, problem$target)
-  if (length(ord) > k) ord <- ord[seq_len(k)]
-  lambda <- lambda[ord]
-  vec <- prep$recover_vectors(vec[, ord, drop = FALSE])
-
-  cert <- if (isTRUE(certify) && !is.null(vec) && ncol(vec) > 0L) {
-    certify_eigen_operator(Aop, lambda, vec, Bop = Bop, tol = tol)
-  } else {
-    empty_certificate(
-      tol,
-      note = if (!isTRUE(certify)) {
-        "shift-invert: certification disabled by caller"
-      } else {
-        "shift-invert: no eigenpairs returned; residual certificate not computed"
-      }
-    )
+  # Transformed-operator solve followed by the original-coordinate
+  # certificate. Inner convergence on M = (A - sigma B)^{-1} does not imply
+  # original-coordinate convergence (the residuals scale by ||A - sigma B|| /
+  # |mu|), so an unconverged original certificate triggers a retry with a
+  # tighter inner tolerance and a larger restart subspace instead of
+  # returning the unconverged pairs silently.
+  attempt <- function(inner_tol, subspace) {
+    iter <- shift_invert_transformed_lanczos(M, k = k, tol = inner_tol,
+                                             maxit = subspace)
+    mu <- iter$values
+    vec <- iter$vectors
+    if (any(abs(mu) < .Machine$double.eps)) {
+      stop(
+        "shift_invert(sigma = ", sigma, ") produced a zero-magnitude eigenvalue ",
+        "of the inverted operator; sigma is too close to a true eigenvalue. ",
+        "Perturb sigma or use a tighter tolerance.",
+        call. = FALSE
+      )
+    }
+    lambda <- sigma + 1 / mu
+    ord <- order_indices(lambda, problem$target)
+    if (length(ord) > k) ord <- ord[seq_len(k)]
+    lambda <- lambda[ord]
+    vec <- prep$recover_vectors(vec[, ord, drop = FALSE])
+    cert <- if (isTRUE(certify) && !is.null(vec) && ncol(vec) > 0L) {
+      certify_eigen_operator(Aop, lambda, vec, Bop = Bop, tol = tol)
+    } else {
+      empty_certificate(
+        tol,
+        note = if (!isTRUE(certify)) {
+          "shift-invert: certification disabled by caller"
+        } else {
+          "shift-invert: no eigenpairs returned; residual certificate not computed"
+        }
+      )
+    }
+    list(iter = iter, lambda = lambda, vec = vec, cert = cert)
   }
+
+  inner_tol <- tol
+  subspace <- effective_maxit
+  current <- attempt(inner_tol, subspace)
+  total_iterations <- as.integer(current$iter$iterations %||% 0L)
+  total_matvecs <- as.integer(current$iter$matvecs %||% 0L)
+  retries <- 0L
+  native_inner <- isTRUE(current$iter$restart$native_shift_invert_callback)
+  while (native_inner && isTRUE(certify) && retries < 2L &&
+         length(current$cert$converged) &&
+         !all(current$cert$converged)) {
+    retries <- retries + 1L
+    inner_tol <- max(inner_tol * 1e-3, 10 * .Machine$double.eps)
+    subspace <- min(n, max(subspace, 2L * subspace))
+    candidate <- attempt(inner_tol, subspace)
+    total_iterations <- total_iterations +
+      as.integer(candidate$iter$iterations %||% 0L)
+    total_matvecs <- total_matvecs + as.integer(candidate$iter$matvecs %||% 0L)
+    if (sum(candidate$cert$converged) >= sum(current$cert$converged)) {
+      current <- candidate
+    }
+  }
+  iter <- current$iter
+  lambda <- current$lambda
+  vec <- current$vec
+  cert <- current$cert
+  iter$iterations <- total_iterations
+  iter$matvecs <- total_matvecs
 
   result <- list(
     values = lambda,
@@ -1417,10 +1498,32 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
         transformed_residuals_used = FALSE
       )
     ),
-    warnings = paste0(
-      "using reference Hermitian Lanczos shift-invert (",
-      prep$label_kind, "); native shift-invert hot loop not yet implemented"
-    )
+    restart = list(
+      kind = iter$restart$kind %||% "reference_hermitian_lanczos_shift_invert",
+      native = isTRUE(iter$restart$native_shift_invert_callback),
+      factorization_native = FALSE,
+      max_subspace = subspace,
+      restarts_used = as.integer(iter$restarts %||% 0L),
+      inner_tolerance = inner_tol,
+      certificate_retries = retries,
+      transformed_operator_target = "largest_magnitude",
+      eigenvalue_recovery = "lambda = sigma + 1 / mu"
+    ),
+    warnings = if (isTRUE(iter$restart$native_shift_invert_callback)) {
+      if (!isTRUE(cert$passed) && isTRUE(certify)) {
+        paste0(
+          plan$method, " did not certify all ", k, " requested pairs after ",
+          retries, " tightened restart(s); subspace ", subspace
+        )
+      } else {
+        character()
+      }
+    } else {
+      paste0(
+        "using reference Hermitian Lanczos shift-invert (",
+        prep$label_kind, "); native shift-invert hot loop not yet implemented"
+      )
+    }
   )
   result <- finalize_workflow_result(result, plan)
   class(result) <- "eigencore_eigen_result"

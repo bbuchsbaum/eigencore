@@ -26,7 +26,37 @@ stable_raw_hash <- function(x) {
 
 #' @keywords internal
 deep_copy_record <- function(x) {
+  # Plain data (atomic vectors and lists of them) already has value semantics
+  # in R, so the serialise round trip is only needed when the record reaches
+  # an environment, closure, or external pointer.
+  if (!record_has_reference_semantics(x)) {
+    return(x)
+  }
   unserialize(serialize(x, NULL, version = 3L))
+}
+
+#' @keywords internal
+record_has_reference_semantics <- function(x) {
+  if (is.environment(x) || is.function(x) ||
+      typeof(x) %in% c("externalptr", "weakref", "promise", "S4", "symbol",
+                       "language", "bytecode")) {
+    return(TRUE)
+  }
+  attrs <- attributes(x)
+  if (length(attrs) && any(vapply(
+    attrs[setdiff(names(attrs), c("names", "dim", "dimnames", "class", "row.names"))],
+    record_has_reference_semantics, logical(1L)
+  ))) {
+    return(TRUE)
+  }
+  if (is.list(x)) {
+    for (element in x) {
+      if (record_has_reference_semantics(element)) {
+        return(TRUE)
+      }
+    }
+  }
+  FALSE
 }
 
 #' @keywords internal
@@ -110,7 +140,7 @@ next_opaque_identity_token <- local({
 #' @keywords internal
 make_operator_identity <- function(dim, dtype, structure, metadata,
                                    operator_id = NULL, revision = NULL,
-                                   portable = FALSE) {
+                                   portable = FALSE, defer_builtin = FALSE) {
   supplied <- !is.null(operator_id) || !is.null(revision)
   if (xor(is.null(operator_id), is.null(revision))) {
     stop("operator_id and revision must be supplied together.", call. = FALSE)
@@ -144,24 +174,28 @@ make_operator_identity <- function(dim, dtype, structure, metadata,
     )
   }
   if (operator_has_builtin_provenance(metadata)) {
-    proto <- list(
-      dim = as.integer(dim),
-      apply = NULL,
-      apply_adjoint = NULL,
-      dtype = dtype,
-      structure = structure,
-      metadata = metadata
-    )
-    digest <- stable_raw_hash(builtin_operator_identity_payload(proto))
-    return(new_operator_identity(
-      operator_id = paste0("builtin-", digest),
-      revision = digest,
-      origin = "builtin",
-      dim = dim,
-      dtype = dtype,
-      structure = structure$kind,
-      portable = TRUE
-    ))
+    if (isTRUE(defer_builtin)) {
+      # The built-in identity digests the whole source matrix (a serialisation
+      # of 8 n^2 bytes for a dense source). linear_operator() defers it: the
+      # digest is computed on first request and cached on the operator, see
+      # refresh_operator_identity().
+      return(structure(
+        list(
+          schema_version = 1L,
+          operator_id = NULL,
+          revision = NULL,
+          origin = "builtin",
+          dim = as.integer(dim),
+          dtype = as.character(dtype),
+          structure = as.character(structure$kind),
+          portable = TRUE,
+          session_id = NULL
+        ),
+        deferred = TRUE,
+        class = "eigencore_operator_identity"
+      ))
+    }
+    return(builtin_identity_from_parts(dim, dtype, structure, metadata))
   }
   token <- next_opaque_identity_token(dim, dtype, structure$kind)
   new_operator_identity(
@@ -184,16 +218,68 @@ refresh_operator_identity <- function(op) {
   if (!identical(identity$origin, "builtin")) {
     return(identity)
   }
+  cache <- op$cache %||% NULL
+  if (isTRUE(attr(identity, "deferred", exact = TRUE)) &&
+      operator_identity_cache_matches(op, cache)) {
+    return(operator_identity_cache_resolve(cache))
+  }
   digest <- stable_raw_hash(builtin_operator_identity_payload(op))
+  builtin_identity_from_digest(digest, op$dim, op$dtype, op$structure$kind)
+}
+
+#' @keywords internal
+builtin_identity_from_digest <- function(digest, dim, dtype, structure_kind) {
   new_operator_identity(
     operator_id = paste0("builtin-", digest),
     revision = digest,
     origin = "builtin",
-    dim = op$dim,
-    dtype = op$dtype,
-    structure = op$structure$kind,
+    dim = dim,
+    dtype = dtype,
+    structure = structure_kind,
     portable = TRUE
   )
+}
+
+#' @keywords internal
+builtin_identity_from_parts <- function(dim, dtype, structure, metadata) {
+  proto <- list(
+    dim = as.integer(dim),
+    apply = NULL,
+    apply_adjoint = NULL,
+    dtype = dtype,
+    structure = structure,
+    metadata = metadata
+  )
+  digest <- stable_raw_hash(builtin_operator_identity_payload(proto))
+  builtin_identity_from_digest(digest, dim, dtype, structure$kind)
+}
+
+# Per-operator identity cache (P6). The cache is the linear_operator()
+# evaluation frame, which the operator's apply closures already capture, so it
+# adds no serialised payload. It holds the construction-time dim, dtype,
+# structure and metadata; the built-in digest is computed from those on first
+# request and reused while the operator's fields are still those objects.
+# identical() is O(1) for the same object; an operator whose fields were
+# replaced after construction is re-hashed exactly as before.
+#' @keywords internal
+operator_identity_cache_resolve <- function(cache) {
+  resolved <- cache$resolved_identity
+  if (is.null(resolved)) {
+    resolved <- builtin_identity_from_parts(
+      cache$dim, cache$dtype, cache$structure, cache$metadata
+    )
+    cache$resolved_identity <- resolved
+  }
+  resolved
+}
+
+#' @keywords internal
+operator_identity_cache_matches <- function(op, cache) {
+  is.environment(cache) &&
+    identical(op$metadata, cache$metadata) &&
+    identical(op$dtype, cache$dtype) &&
+    identical(op$structure$kind, cache$structure$kind) &&
+    identical(as.integer(op$dim), as.integer(cache$dim))
 }
 
 #' Return operator identity and revision provenance.
