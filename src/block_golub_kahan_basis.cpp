@@ -179,24 +179,22 @@ static int block_accept_columns_blas3(const double* X, int ldx, int x_cols,
     if (chol_ok) {
       F77_CALL(dtrsm)(&right, &uplo, &trans_N, &diag, &n, &cols, &one,
                       coeff, &cols, Z_block, &n FCONE FCONE FCONE FCONE);
-      if (n < 64) {
-        F77_CALL(dgemm)(&trans_T, &trans_N, &cols, &cols, &n,
-                        &one, Z_block, &n, Z_block, &n,
-                        &zero, coeff, &cols FCONE FCONE);
-        symmetrize_packed_square(coeff, cols);
-        F77_CALL(dpotrf)(&uplo, &cols, coeff, &cols, &info FCONE);
-        chol_ok = (info == 0);
-        for (int col = 0; chol_ok && col < cols; ++col) {
-          if (coeff[col + static_cast<int64_t>(col) * cols] <= 100.0 * DBL_EPSILON) {
-            chol_ok = false;
-          }
+      // Second CholQR pass (CholQR2): a single pass loses orthogonality
+      // like cond(Z)^2 * eps, so always repeat it regardless of n.
+      F77_CALL(dgemm)(&trans_T, &trans_N, &cols, &cols, &n,
+                      &one, Z_block, &n, Z_block, &n,
+                      &zero, coeff, &cols FCONE FCONE);
+      symmetrize_packed_square(coeff, cols);
+      F77_CALL(dpotrf)(&uplo, &cols, coeff, &cols, &info FCONE);
+      chol_ok = (info == 0);
+      for (int col = 0; chol_ok && col < cols; ++col) {
+        if (coeff[col + static_cast<int64_t>(col) * cols] <= 100.0 * DBL_EPSILON) {
+          chol_ok = false;
         }
       }
       if (chol_ok) {
-        if (n < 64) {
-          F77_CALL(dtrsm)(&right, &uplo, &trans_N, &diag, &n, &cols, &one,
-                          coeff, &cols, Z_block, &n FCONE FCONE FCONE FCONE);
-        }
+        F77_CALL(dtrsm)(&right, &uplo, &trans_N, &diag, &n, &cols, &one,
+                        coeff, &cols, Z_block, &n FCONE FCONE FCONE FCONE);
         for (int col = 0; col < cols && *m_active < m_max; ++col) {
           std::memcpy(V_active + static_cast<int64_t>(*m_active) * n,
                       Z_block + static_cast<int64_t>(col) * n,

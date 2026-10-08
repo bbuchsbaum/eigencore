@@ -63,7 +63,7 @@ static void gram_upper_dsyrk_cert(const double* X, int rows, int k,
 
 static double column_norm_cert(const double* X, int rows, int col) {
   long double sum = 0.0L;
-  const int offset = col * rows;
+  const R_xlen_t offset = static_cast<R_xlen_t>(col) * rows;
   for (int row = 0; row < rows; ++row) {
     const long double value = X[offset + row];
     sum += value * value;
@@ -71,9 +71,9 @@ static double column_norm_cert(const double* X, int rows, int col) {
   return sqrt(static_cast<double>(sum));
 }
 
-static double frobenius_norm_dense_cert(const double* X, int len) {
+static double frobenius_norm_dense_cert(const double* X, R_xlen_t len) {
   long double sum = 0.0L;
-  for (int i = 0; i < len; ++i) {
+  for (R_xlen_t i = 0; i < len; ++i) {
     const long double value = X[i];
     sum += value * value;
   }
@@ -169,7 +169,7 @@ extern "C" SEXP eigencore_dense_eigen_residuals(SEXP A_, SEXP values_,
   if (B_ == R_NilValue) {
     for (int col = 0; col < k; ++col) {
       const double lambda = REAL(values_)[col];
-      const int offset = col * n;
+      const R_xlen_t offset = static_cast<R_xlen_t>(col) * n;
       for (int row = 0; row < n; ++row) {
         REAL(residual_)[offset + row] -= lambda * REAL(vectors_)[offset + row];
       }
@@ -181,7 +181,7 @@ extern "C" SEXP eigencore_dense_eigen_residuals(SEXP A_, SEXP values_,
                     &zero, REAL(Bv_), &n FCONE FCONE);
     for (int col = 0; col < k; ++col) {
       const double lambda = REAL(values_)[col];
-      const int offset = col * n;
+      const R_xlen_t offset = static_cast<R_xlen_t>(col) * n;
       for (int row = 0; row < n; ++row) {
         REAL(residual_)[offset + row] -= lambda * REAL(Bv_)[offset + row];
       }
@@ -231,8 +231,8 @@ extern "C" SEXP eigencore_dense_eigen_certificate(SEXP A_, SEXP values_,
   const double zero = 0.0;
   const double eps = DBL_EPSILON;
   const double tol = asReal(tol_);
-  const double norm_A = frobenius_norm_dense_cert(REAL(A_), n * n);
-  const double norm_B = (B_ == R_NilValue) ? 1.0 : frobenius_norm_dense_cert(REAL(B_), n * n);
+  const double norm_A = frobenius_norm_dense_cert(REAL(A_), static_cast<R_xlen_t>(n) * n);
+  const double norm_B = (B_ == R_NilValue) ? 1.0 : frobenius_norm_dense_cert(REAL(B_), static_cast<R_xlen_t>(n) * n);
 
   int protect_count = 0;
   SEXP residual_matrix_ = PROTECT(allocMatrix(REALSXP, n, k));
@@ -265,7 +265,7 @@ extern "C" SEXP eigencore_dense_eigen_certificate(SEXP A_, SEXP values_,
 
   for (int col = 0; col < k; ++col) {
     const double lambda = REAL(values_)[col];
-    const int offset = col * n;
+    const R_xlen_t offset = static_cast<R_xlen_t>(col) * n;
     for (int row = 0; row < n; ++row) {
       REAL(residual_matrix_)[offset + row] -= lambda * bv[offset + row];
     }
@@ -349,8 +349,8 @@ extern "C" SEXP eigencore_dense_svd_residuals(SEXP A_, SEXP d_,
 
   for (int col = 0; col < k; ++col) {
     const double sigma = REAL(d_)[col];
-    const int left_offset = col * m;
-    const int right_offset = col * n;
+    const R_xlen_t left_offset = static_cast<R_xlen_t>(col) * m;
+    const R_xlen_t right_offset = static_cast<R_xlen_t>(col) * n;
     for (int row = 0; row < m; ++row) {
       REAL(left_matrix_)[left_offset + row] -= sigma * REAL(u_)[left_offset + row];
     }
@@ -411,7 +411,7 @@ extern "C" SEXP eigencore_dense_svd_certificate(SEXP A_, SEXP d_,
   const double zero = 0.0;
   const double eps = DBL_EPSILON;
   const double tol = asReal(tol_);
-  const double norm_A = frobenius_norm_dense_cert(REAL(A_), m * n);
+  const double norm_A = frobenius_norm_dense_cert(REAL(A_), static_cast<R_xlen_t>(m) * n);
   const double scale_value = fmax(norm_A, eps);
 
   SEXP left_matrix_ = PROTECT(allocMatrix(REALSXP, m, k));
@@ -433,8 +433,8 @@ extern "C" SEXP eigencore_dense_svd_certificate(SEXP A_, SEXP d_,
 
   for (int col = 0; col < k; ++col) {
     const double sigma = REAL(d_)[col];
-    const int left_offset = col * m;
-    const int right_offset = col * n;
+    const R_xlen_t left_offset = static_cast<R_xlen_t>(col) * m;
+    const R_xlen_t right_offset = static_cast<R_xlen_t>(col) * n;
     for (int row = 0; row < m; ++row) {
       REAL(left_matrix_)[left_offset + row] -= sigma * REAL(u_)[left_offset + row];
     }
@@ -503,7 +503,7 @@ extern "C" SEXP eigencore_dense_svd_certificate_cached_av(SEXP A_, SEXP d_,
   const int m = INTEGER(dimA)[0];
   const int n = INTEGER(dimA)[1];
   DenseColumnMajorOperator impl = {m, n, REAL(A_)};
-  const double norm_A = frobenius_norm_dense_cert(REAL(A_), m * n);
+  const double norm_A = frobenius_norm_dense_cert(REAL(A_), static_cast<R_xlen_t>(m) * n);
   return native_operator_svd_certificate_cached_av(
     &impl, eigencore_dense_apply, m, n, norm_A, d_, u_, v_, av_, tol_
   );
@@ -545,7 +545,7 @@ static SEXP native_operator_eigen_certificate(void* impl,
 
   for (int col = 0; col < k; ++col) {
     const double lambda = REAL(values_)[col];
-    const int offset = col * n;
+    const R_xlen_t offset = static_cast<R_xlen_t>(col) * n;
     for (int row = 0; row < n; ++row) {
       REAL(residual_matrix_)[offset + row] -= lambda * REAL(vectors_)[offset + row];
     }
@@ -634,8 +634,8 @@ static SEXP native_operator_svd_certificate(void* impl,
 
   for (int col = 0; col < k; ++col) {
     const double sigma = REAL(d_)[col];
-    const int left_offset = col * m;
-    const int right_offset = col * n;
+    const R_xlen_t left_offset = static_cast<R_xlen_t>(col) * m;
+    const R_xlen_t right_offset = static_cast<R_xlen_t>(col) * n;
     for (int row = 0; row < m; ++row) {
       REAL(left_matrix_)[left_offset + row] -= sigma * REAL(u_)[left_offset + row];
     }
@@ -741,8 +741,8 @@ SEXP native_operator_svd_certificate_cached_av(void* impl,
 
   for (int col = 0; col < k; ++col) {
     const double sigma = REAL(d_)[col];
-    const int left_offset = col * m;
-    const int right_offset = col * n;
+    const R_xlen_t left_offset = static_cast<R_xlen_t>(col) * m;
+    const R_xlen_t right_offset = static_cast<R_xlen_t>(col) * n;
     double left_sum = 0.0;
     for (int row = 0; row < m; ++row) {
       const double residual = REAL(av_)[left_offset + row] -
@@ -876,7 +876,7 @@ extern "C" SEXP eigencore_tridiagonal_eigen_certificate(SEXP alpha_, SEXP beta_,
   const double* vectors = REAL(vectors_);
   for (int col = 0; col < k; ++col) {
     const double lambda = values[col];
-    const int offset = col * n;
+    const R_xlen_t offset = static_cast<R_xlen_t>(col) * n;
     long double residual_sum = 0.0L;
     long double vector_sum = 0.0L;
     for (int row = 0; row < n; ++row) {

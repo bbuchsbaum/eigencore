@@ -574,10 +574,10 @@ static int retained_cached_av_certificate_passed(void* impl,
       diagnostics->converged[static_cast<size_t>(col)] =
         (R_FINITE(backward) && backward <= tol) ? 1 : 0;
     }
-    if (backward > *max_backward_error || col == 0) {
+    if (ISNAN(backward) || backward > *max_backward_error || col == 0) {
       *max_backward_error = backward;
     }
-    if (combined > *max_residual || col == 0) {
+    if (ISNAN(combined) || combined > *max_residual || col == 0) {
       *max_residual = combined;
     }
     const bool col_converged = R_FINITE(backward) && backward <= tol;
@@ -1359,6 +1359,7 @@ extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start
                                             reorthogonalize_u,
                                             reorthogonalize_v);
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native dense Golub-Kahan failed with status=%d", status);
   }
 
@@ -1476,6 +1477,7 @@ extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP di
                                             reorthogonalize_u,
                                             reorthogonalize_v);
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native CSC Golub-Kahan failed with status=%d", status);
   }
 
@@ -2677,6 +2679,7 @@ static SEXP irlba_lbd_retained_impl(ConfigureOperator configure_operator,
       reorthogonalize_u, reorthogonalize_v
     );
     if (status != 0) {
+      eigencore_check_nonfinite_status(status);
       error("native retained one-sided IRLBA/LBD failed with status=%d", status);
     }
     attempted_subspaces.push_back(work);

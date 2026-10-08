@@ -1,4 +1,5 @@
 #include <cfloat>
+#include <climits>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -176,8 +177,13 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevd(SEXP A_) {
     }
     lwork = static_cast<int>(work_query);
     liwork = iwork_query;
-    if (lwork < 1 + 6 * n + 2 * n * n) {
-      lwork = 1 + 6 * n + 2 * n * n;
+    const int64_t lwork_min = 1 + 6 * static_cast<int64_t>(n) +
+      2 * static_cast<int64_t>(n) * static_cast<int64_t>(n);
+    if (lwork_min > static_cast<int64_t>(INT_MAX)) {
+      error("dense symmetric eigensolver workspace exceeds LP64 LAPACK integer range");
+    }
+    if (lwork < lwork_min) {
+      lwork = static_cast<int>(lwork_min);
     }
     if (liwork < 3 + 5 * n) {
       liwork = 3 + 5 * n;
@@ -878,6 +884,10 @@ extern "C" SEXP eigencore_dense_is_symmetric(SEXP A_, SEXP tol_) {
   const double* A = REAL(A_);
   double scale = 1.0;
   for (int64_t i = 0; i < static_cast<int64_t>(n) * n; ++i) {
+    // Non-finite entries cannot certify symmetry.
+    if (!R_FINITE(A[i])) {
+      return ScalarLogical(FALSE);
+    }
     const double ai = fabs(A[i]);
     if (ai > scale) {
       scale = ai;
@@ -888,7 +898,7 @@ extern "C" SEXP eigencore_dense_is_symmetric(SEXP A_, SEXP tol_) {
     for (int row = 0; row < col; ++row) {
       const double a = A[row + static_cast<int64_t>(col) * n];
       const double b = A[col + static_cast<int64_t>(row) * n];
-      if (fabs(a - b) > threshold) {
+      if (!(fabs(a - b) <= threshold)) {
         return ScalarLogical(FALSE);
       }
     }
@@ -1234,7 +1244,7 @@ extern "C" SEXP eigencore_dense_svd(SEXP A_) {
 
     for (int col = 0; col < r; ++col) {
       for (int row = 0; row < n; ++row) {
-        REAL(v_)[row + col * n] = REAL(vt_)[col + row * r];
+        REAL(v_)[row + static_cast<R_xlen_t>(col) * n] = REAL(vt_)[col + static_cast<R_xlen_t>(row) * r];
       }
     }
   }
@@ -1648,7 +1658,7 @@ extern "C" SEXP eigencore_bidiagonal_svd(SEXP alpha_, SEXP beta_) {
 
     for (int col = 0; col < n; ++col) {
       for (int row = 0; row < n; ++row) {
-        REAL(v_)[row + col * n] = REAL(vt_)[col + row * n];
+        REAL(v_)[row + static_cast<R_xlen_t>(col) * n] = REAL(vt_)[col + static_cast<R_xlen_t>(row) * n];
       }
     }
   }

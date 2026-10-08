@@ -50,7 +50,18 @@ static inline int eigencore_int_indexable(int64_t value) {
   return value >= 0 && value <= static_cast<int64_t>(INT_MAX);
 }
 
+// Status returned by the scalar Krylov kernels when the start vector or a
+// recurrence coefficient is NaN/Inf.
+#define EIGENCORE_STATUS_NONFINITE (-10)
+
+static inline void eigencore_check_nonfinite_status(int status) {
+  if (status == EIGENCORE_STATUS_NONFINITE) {
+    error("non-finite value encountered (check input for NA/NaN/Inf)");
+  }
+}
+
 static inline void eigencore_apply_status_error(const char* context, int status) {
+  eigencore_check_nonfinite_status(status);
   if (status == -2) {
     error("%s failed: dimensions exceed LP64 BLAS/R integer range; LAPACK64 is not enabled",
           context);
