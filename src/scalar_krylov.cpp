@@ -412,6 +412,13 @@ static int native_lanczos_run(void* impl,
     start_norm2 += static_cast<long double>(start[row]) * start[row];
   }
   double q_norm = sqrt(static_cast<double>(start_norm2));
+  if (!R_FINITE(q_norm)) {
+    std::free(q);
+    std::free(q_prev);
+    std::free(z);
+    std::free(coeff);
+    return EIGENCORE_STATUS_NONFINITE;
+  }
   if (q_norm == 0.0) {
     q[0] = 1.0;
   } else {
@@ -435,7 +442,7 @@ static int native_lanczos_run(void* impl,
   }
   for (int j = 0; j < maxit; ++j) {
     *iterations = j + 1;
-    std::memcpy(Q + j * n, q, sizeof(double) * static_cast<size_t>(n));
+    std::memcpy(Q + static_cast<R_xlen_t>(j) * n, q, sizeof(double) * static_cast<size_t>(n));
     std::memset(z, 0, sizeof(double) * static_cast<size_t>(n));
 
     const int status = apply(impl, EIGENCORE_TRANSPOSE_NONE, 1, q, n,
@@ -462,6 +469,14 @@ static int native_lanczos_run(void* impl,
       aj += static_cast<long double>(q[row]) * z[row];
     }
     alpha[j] = static_cast<double>(aj);
+    if (!R_FINITE(alpha[j])) {
+      convergence_scratch.release();
+      std::free(q);
+      std::free(q_prev);
+      std::free(z);
+      std::free(coeff);
+      return EIGENCORE_STATUS_NONFINITE;
+    }
     for (int row = 0; row < n; ++row) {
       z[row] -= alpha[j] * q[row];
     }
@@ -510,6 +525,14 @@ static int native_lanczos_run(void* impl,
       beta_norm2 += static_cast<long double>(z[row]) * z[row];
     }
     beta[j] = sqrt(static_cast<double>(beta_norm2));
+    if (!R_FINITE(beta[j])) {
+      convergence_scratch.release();
+      std::free(q);
+      std::free(q_prev);
+      std::free(z);
+      std::free(coeff);
+      return EIGENCORE_STATUS_NONFINITE;
+    }
     history_nconv[j] = 0;
     history_max_residual[j] = R_PosInf;
     if (j + 1 >= k) {
@@ -613,6 +636,14 @@ int native_golub_kahan_run(void* impl,
     start_norm2 += static_cast<long double>(start[row]) * start[row];
   }
   double v_norm = sqrt(static_cast<double>(start_norm2));
+  if (!R_FINITE(v_norm)) {
+    std::free(v);
+    std::free(z);
+    std::free(u);
+    std::free(u_prev);
+    std::free(coeff);
+    return EIGENCORE_STATUS_NONFINITE;
+  }
   if (v_norm == 0.0) {
     v[0] = 1.0;
   } else {
@@ -650,7 +681,7 @@ int native_golub_kahan_run(void* impl,
 
   for (int j = 0; j < maxit; ++j) {
     *iterations = j + 1;
-    std::memcpy(V + j * n, v, sizeof(double) * static_cast<size_t>(n));
+    std::memcpy(V + static_cast<R_xlen_t>(j) * n, v, sizeof(double) * static_cast<size_t>(n));
     std::memset(u, 0, sizeof(double) * static_cast<size_t>(m));
 
     auto stage_timer = native_timer_now();
@@ -699,7 +730,7 @@ int native_golub_kahan_run(void* impl,
                         &one, u, &one_col FCONE);
         } else {
           for (int prev = 0; prev < j; ++prev) {
-            const double* uprev_basis = U + prev * m;
+            const double* uprev_basis = U + static_cast<R_xlen_t>(prev) * m;
             double dot = 0.0;
             for (int row = 0; row < m; ++row) {
               dot += uprev_basis[row] * u[row];
@@ -731,13 +762,27 @@ int native_golub_kahan_run(void* impl,
       alpha_norm2 += static_cast<long double>(u[row]) * u[row];
     }
     alpha[j] = sqrt(static_cast<double>(alpha_norm2));
+    if (!R_FINITE(alpha[j])) {
+      projected_scratch.release();
+      std::free(v);
+      std::free(z);
+      std::free(u);
+      std::free(u_prev);
+      std::free(coeff);
+      return EIGENCORE_STATUS_NONFINITE;
+    }
     if (alpha[j] <= 100.0 * DBL_EPSILON) {
+      // Alpha breakdown deliberately keeps step j (iterations = j + 1) with
+      // a zero U column: dropping it would discard the beta[j-1] coupling to
+      // v_j, and the Ritz values of the truncated square bidiagonal are then
+      // no longer exact. The zero column pairs with a zero singular value
+      // and is completed downstream.
       break;
     }
     for (int row = 0; row < m; ++row) {
       u[row] /= alpha[j];
     }
-    std::memcpy(U + j * m, u, sizeof(double) * static_cast<size_t>(m));
+    std::memcpy(U + static_cast<R_xlen_t>(j) * m, u, sizeof(double) * static_cast<size_t>(m));
     *stage_recurrence_seconds += native_timer_elapsed(stage_timer);
 
     std::memset(z, 0, sizeof(double) * static_cast<size_t>(n));
@@ -786,7 +831,7 @@ int native_golub_kahan_run(void* impl,
                         &one, z, &one_col FCONE);
         } else {
           for (int prev = 0; prev <= j; ++prev) {
-            const double* vprev_basis = V + prev * n;
+            const double* vprev_basis = V + static_cast<R_xlen_t>(prev) * n;
             double dot = 0.0;
             for (int row = 0; row < n; ++row) {
               dot += vprev_basis[row] * z[row];
@@ -819,6 +864,15 @@ int native_golub_kahan_run(void* impl,
     }
     beta[j] = sqrt(static_cast<double>(beta_norm2));
     *stage_recurrence_seconds += native_timer_elapsed(stage_timer);
+    if (!R_FINITE(beta[j])) {
+      projected_scratch.release();
+      std::free(v);
+      std::free(z);
+      std::free(u);
+      std::free(u_prev);
+      std::free(coeff);
+      return EIGENCORE_STATUS_NONFINITE;
+    }
     const int remaining_iterations = maxit - (j + 1);
     if (enable_projected_stop && j + 1 >= k &&
         remaining_iterations >= min_projected_savings &&
@@ -917,6 +971,7 @@ extern "C" SEXP eigencore_lanczos_dense(SEXP A_, SEXP maxit_, SEXP start_,
                                         REAL(history_max_residual_),
                                         &iterations, &matvecs);
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native dense Lanczos failed with status=%d", status);
   }
 
@@ -1028,6 +1083,7 @@ extern "C" SEXP eigencore_shift_invert_lanczos_dense(SEXP A_, SEXP sigma_,
     &iterations, &matvecs
   );
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native dense shift-invert Lanczos failed with status=%d", status);
   }
 
@@ -1155,6 +1211,7 @@ extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal(
     &iterations, &matvecs
   );
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native tridiagonal shift-invert Lanczos failed with status=%d", status);
   }
 
@@ -1356,6 +1413,7 @@ extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal_generalized(
     &iterations, &matvecs
   );
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native generalized tridiagonal shift-invert Lanczos failed with status=%d", status);
   }
 
@@ -1501,6 +1559,7 @@ extern "C" SEXP eigencore_shift_invert_lanczos_dense_generalized(
     &iterations, &matvecs
   );
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native dense generalized shift-invert Lanczos failed with status=%d", status);
   }
 
@@ -1593,6 +1652,7 @@ extern "C" SEXP eigencore_lanczos_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                         REAL(history_max_residual_),
                                         &iterations, &matvecs);
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native CSC Lanczos failed with status=%d", status);
   }
 
@@ -1687,6 +1747,7 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
                                             &reorthogonalization_passes,
                                             1, 1);
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native dense Golub-Kahan failed with status=%d", status);
   }
 
@@ -1813,6 +1874,7 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                             &reorthogonalization_passes,
                                             1, 1);
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native CSC Golub-Kahan failed with status=%d", status);
   }
 
@@ -1945,6 +2007,7 @@ extern "C" SEXP eigencore_golub_kahan_centered_scaled_csc(
     &reorthogonalization_passes, reorthogonalize_u, reorthogonalize_v
   );
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native centered-scaled CSC Golub-Kahan failed with status=%d", status);
   }
 
@@ -2060,6 +2123,7 @@ extern "C" SEXP eigencore_golub_kahan_r_operator(
     &reorthogonalization_passes, reorthogonalize_u, reorthogonalize_v
   );
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native matrix-free Golub-Kahan failed with status=%d", status);
   }
 

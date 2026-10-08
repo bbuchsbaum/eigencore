@@ -987,9 +987,9 @@ struct DenseRandomizedCertificate {
   bool passed = false;
 };
 
-static double dense_randomized_frobenius_norm(const double* A, int len) {
+static double dense_randomized_frobenius_norm(const double* A, int64_t len) {
   double sum = 0.0;
-  for (int pos = 0; pos < len; ++pos) {
+  for (int64_t pos = 0; pos < len; ++pos) {
     sum += A[pos] * A[pos];
   }
   return std::sqrt(sum);
@@ -1050,7 +1050,7 @@ static DenseRandomizedCertificate dense_randomized_certificate(
   cert.combined.assign(static_cast<size_t>(rank), 0.0);
   cert.backward.assign(static_cast<size_t>(rank), 0.0);
   cert.converged.assign(static_cast<size_t>(rank), 0);
-  cert.scale = dense_randomized_frobenius_norm(A, m * n);
+  cert.scale = dense_randomized_frobenius_norm(A, static_cast<int64_t>(m) * n);
   if (cert.scale < 2.2204460492503131e-16) {
     cert.scale = 2.2204460492503131e-16;
   }

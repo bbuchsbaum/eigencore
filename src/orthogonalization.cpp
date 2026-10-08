@@ -47,15 +47,15 @@ static int mgs_once_dense(const double* X,
                           int ldr) {
   int rank = 0;
   for (int col = 0; col < p; ++col) {
-    double* v = Q + rank * ldq;
-    const double* x_col = X + col * n;
+    double* v = Q + static_cast<R_xlen_t>(rank) * ldq;
+    const double* x_col = X + static_cast<R_xlen_t>(col) * n;
     for (int row = 0; row < n; ++row) {
       v[row] = x_col[row];
     }
 
     for (int pass = 0; pass < 2; ++pass) {
       for (int prev = 0; prev < rank; ++prev) {
-        const double* q_prev = Q + prev * ldq;
+        const double* q_prev = Q + static_cast<R_xlen_t>(prev) * ldq;
         long double dot = 0.0L;
         for (int row = 0; row < n; ++row) {
           dot += static_cast<long double>(q_prev[row]) * v[row];
@@ -139,8 +139,8 @@ extern "C" SEXP eigencore_mgs2(SEXP X_, SEXP tol_) {
 
   SEXP Q1_compact_ = PROTECT(allocMatrix(REALSXP, n, rank1));
   for (int col = 0; col < rank1; ++col) {
-    std::memcpy(REAL(Q1_compact_) + col * n,
-                REAL(Q1_) + col * n,
+    std::memcpy(REAL(Q1_compact_) + static_cast<R_xlen_t>(col) * n,
+                REAL(Q1_) + static_cast<R_xlen_t>(col) * n,
                 sizeof(double) * static_cast<size_t>(n));
   }
 
@@ -153,8 +153,8 @@ extern "C" SEXP eigencore_mgs2(SEXP X_, SEXP tol_) {
 
   SEXP Q_ = PROTECT(allocMatrix(REALSXP, n, rank2));
   for (int col = 0; col < rank2; ++col) {
-    std::memcpy(REAL(Q_) + col * n,
-                REAL(Q2_) + col * n,
+    std::memcpy(REAL(Q_) + static_cast<R_xlen_t>(col) * n,
+                REAL(Q2_) + static_cast<R_xlen_t>(col) * n,
                 sizeof(double) * static_cast<size_t>(n));
   }
 
@@ -378,7 +378,7 @@ extern "C" SEXP eigencore_diagonal_b_cholqr2(SEXP X_, SEXP diag_, SEXP unit_) {
   }
   if (!unit) {
     for (int row = 0; row < n; ++row) {
-      if (REAL(diag_)[row] <= 0.0) {
+      if (!(REAL(diag_)[row] > 0.0)) {
         error("B diagonal must be positive");
       }
     }

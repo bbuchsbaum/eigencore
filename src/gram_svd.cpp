@@ -176,6 +176,21 @@ static void csc_right_normal_apply_vec(const int* Ai, const int* Ap,
   csc_transpose_apply_vec(Ai, Ap, Ax, m, n, tmp_m, y);
 }
 
+// Deterministic pseudo-random +-1 start vector entry. The raw LCG-style key
+// has its low bit equal to the row parity, so it must be mixed (splitmix64
+// finalizer) before taking a sign bit; otherwise the start vector is the
+// alternating pattern, orthogonal to the constant vector for even m.
+static inline double gram_lanczos_start_sign(int row, int rank) {
+  uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(row + 1)) << 32) ^
+    static_cast<uint64_t>(static_cast<uint32_t>(rank) * 2654435761u);
+  key ^= key >> 30;
+  key *= 0xbf58476d1ce4e5b9ULL;
+  key ^= key >> 27;
+  key *= 0x94d049bb133111ebULL;
+  key ^= key >> 31;
+  return (key >> 63) ? 1.0 : -1.0;
+}
+
 static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
                                                    const int* Ap,
                                                    const double* Ax,
@@ -201,9 +216,7 @@ static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
 
   std::vector<double> start(static_cast<size_t>(m), 0.0);
   for (int row = 0; row < m; ++row) {
-    const uint32_t key = static_cast<uint32_t>((row + 1) * 1103515245u) ^
-      static_cast<uint32_t>(rank * 2654435761u);
-    start[row] = (key & 1u) ? 1.0 : -1.0;
+    start[row] = gram_lanczos_start_sign(row, rank);
   }
 
   std::vector<double> Q(static_cast<size_t>(m) * static_cast<size_t>(max_steps), 0.0);
@@ -514,9 +527,7 @@ static int gram_krylov_left_normal_attempt(const double* gram,
   std::vector<double> beta(static_cast<size_t>(max_steps), 0.0);
 
   for (int row = 0; row < m; ++row) {
-    const uint32_t key = static_cast<uint32_t>((row + 1) * 1103515245u) ^
-      static_cast<uint32_t>(rank * 2654435761u);
-    Q[row] = (key & 1u) ? 1.0 : -1.0;
+    Q[row] = gram_lanczos_start_sign(row, rank);
   }
   double q_norm = trl_norm2_gram(Q.data(), m);
   if (q_norm <= 100.0 * DBL_EPSILON) {
@@ -623,7 +634,7 @@ static int gram_krylov_left_normal_attempt(const double* gram,
       residual2 += static_cast<long double>(residual) * residual;
     }
     const double backward = sqrt(static_cast<double>(residual2)) / scale_value;
-    if (backward > max_backward) {
+    if (ISNAN(backward) || backward > max_backward) {
       max_backward = backward;
     }
   }
@@ -750,7 +761,7 @@ static int gram_top_subspace_attempt(const double* gram,
       residual2 += static_cast<long double>(residual) * residual;
     }
     const double backward = sqrt(static_cast<double>(residual2)) / scale_value;
-    if (backward > max_backward) {
+    if (ISNAN(backward) || backward > max_backward) {
       max_backward = backward;
     }
   }
@@ -1459,7 +1470,7 @@ static SEXP eigencore_csc_right_gram_svd_impl(
   if (used_implicit_lanczos) {
     double max_backward = 0.0;
     for (int scol = 0; scol < rank; ++scol) {
-      if (REAL(backward_)[scol] > max_backward || scol == 0) {
+      if (ISNAN(REAL(backward_)[scol]) || REAL(backward_)[scol] > max_backward || scol == 0) {
         max_backward = REAL(backward_)[scol];
       }
     }
@@ -1592,10 +1603,16 @@ static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
   SEXP implicit_iter_ = VECTOR_ELT(native_, 8);
   SEXP gram_krylov_iter_ = VECTOR_ELT(native_, 9);
 
-  double max_d = 1.0;
+  // Scale-invariant cutoff: relative to the largest computed singular value
+  // (an absolute floor of 1 would classify every value of a small-scale
+  // matrix as numerically zero). An all-zero spectrum falls back to 1.
+  double max_d = 0.0;
   for (int i = 0; i < rank; ++i) {
     const double di = REAL(d_)[i];
     if (R_finite(di) && di > max_d) max_d = di;
+  }
+  if (!(max_d > 0.0)) {
+    max_d = 1.0;
   }
   const double zero_tol = std::max(
     std::max(100.0 * DBL_EPSILON * max_d, sqrt(DBL_EPSILON) * max_d),
@@ -1618,8 +1635,8 @@ static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
   double max_backward = 0.0;
   double max_residual = 0.0;
   for (int i = 0; i < rank; ++i) {
-    if (REAL(backward_)[i] > max_backward) max_backward = REAL(backward_)[i];
-    if (REAL(combined_)[i] > max_residual) max_residual = REAL(combined_)[i];
+    if (ISNAN(REAL(backward_)[i]) || REAL(backward_)[i] > max_backward) max_backward = REAL(backward_)[i];
+    if (ISNAN(REAL(combined_)[i]) || REAL(combined_)[i] > max_residual) max_residual = REAL(combined_)[i];
   }
   double max_orth = NA_REAL;
   if (LENGTH(orth_) > 0) {
