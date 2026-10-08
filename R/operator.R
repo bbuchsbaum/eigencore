@@ -9,7 +9,12 @@
 #' @param structure Eigencore structure descriptor such as [general()] or
 #'   [hermitian()].
 #' @param name Optional operator label used in plans and diagnostics.
-#' @param metadata Optional list of implementation metadata.
+#' @param metadata Optional list of implementation metadata. Certificates
+#'   read two optional entries, trusted as given: `two_norm`, the exact
+#'   spectral norm `||A||_2` (makes the certificate scale exact), and
+#'   `frobenius_norm`, whose `||A||_F / sqrt(min(dim))` gives a structural
+#'   lower bound on `||A||_2`. Without them certificates use lower bounds from
+#'   the computed vectors.
 #' @param operator_id Optional non-empty character identity for a logical
 #'   callback-operator lineage. Supply together with `revision`.
 #' @param revision Optional non-empty character revision for the values and

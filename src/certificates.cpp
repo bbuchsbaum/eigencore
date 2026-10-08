@@ -1,5 +1,6 @@
 #include <cfloat>
 #include <cmath>
+#include <vector>
 #include <R.h>
 #include <Rinternals.h>
 #include <R_ext/BLAS.h>
@@ -74,13 +75,98 @@ static double column_norm_cert(const double* X, int rows, int col) {
   return sqrt(static_cast<double>(sum));
 }
 
-static double frobenius_norm_dense_cert(const double* X, R_xlen_t len) {
-  long double sum = 0.0L;
-  for (R_xlen_t i = 0; i < len; ++i) {
-    const long double value = X[i];
-    sum += value * value;
+// Largest column 2-norm of a dense column-major matrix: ||A e_j|| <= ||A||_2,
+// so this is a cheap structural LOWER bound on the spectral norm (C12). The
+// backward-error denominators below use lower bounds only, which makes the
+// reported backward error an over-estimate and keeps `passed` sound.
+static double max_column_norm_dense_cert(const double* X, int rows, int cols) {
+  double best = 0.0;
+  for (int col = 0; col < cols; ++col) {
+    const double value = column_norm_cert(X, rows, col);
+    if (value > best) {
+      best = value;
+    }
   }
-  return sqrt(static_cast<double>(sum));
+  return best;
+}
+
+// max_j ||Y e_j|| / ||X e_j|| over columns with ||X e_j|| > 0, where Y = A X
+// was computed from the operator in the same call: each ratio is <= ||A||_2.
+static double applied_ratio_bound_cert(const double* applied_norms,
+                                       const double* vector_norms, int k) {
+  double best = 0.0;
+  for (int col = 0; col < k; ++col) {
+    const double denom = vector_norms[col];
+    if (!(denom > 0.0) || !R_FINITE(denom) || !R_FINITE(applied_norms[col])) {
+      continue;
+    }
+    const double ratio = applied_norms[col] / denom;
+    if (ratio > best) {
+      best = ratio;
+    }
+  }
+  return best;
+}
+
+// Two-sided SVD certificate core. On entry `left_matrix` holds A V and
+// `right_matrix` holds A^T U, both computed from the operator in this call.
+// The spectral-norm lower bound used in the denominator is
+//   L = max(norm_lower, max_j ||A v_j|| / ||v_j||, max_j ||A^T u_j|| / ||u_j||),
+// each term <= ||A||_2 (C12). Returns L and the applied-vector part.
+static double svd_certificate_finalize_cert(double* left_matrix,
+                                            double* right_matrix,
+                                            int m, int n, int k,
+                                            const double* d,
+                                            const double* u,
+                                            const double* v,
+                                            double norm_lower,
+                                            double tol,
+                                            double* left,
+                                            double* right,
+                                            double* combined,
+                                            double* scale,
+                                            double* backward,
+                                            int* converged,
+                                            double* applied_bound_out) {
+  const double eps = DBL_EPSILON;
+  double applied = 0.0;
+  for (int col = 0; col < k; ++col) {
+    const double av_norm = column_norm_cert(left_matrix, m, col);
+    const double atu_norm = column_norm_cert(right_matrix, n, col);
+    const double u_norm = column_norm_cert(u, m, col);
+    const double v_norm = column_norm_cert(v, n, col);
+    if (v_norm > 0.0 && R_FINITE(av_norm) && av_norm / v_norm > applied) {
+      applied = av_norm / v_norm;
+    }
+    if (u_norm > 0.0 && R_FINITE(atu_norm) && atu_norm / u_norm > applied) {
+      applied = atu_norm / u_norm;
+    }
+    const double sigma = d[col];
+    const R_xlen_t left_offset = static_cast<R_xlen_t>(col) * m;
+    const R_xlen_t right_offset = static_cast<R_xlen_t>(col) * n;
+    for (int row = 0; row < m; ++row) {
+      left_matrix[left_offset + row] -= sigma * u[left_offset + row];
+    }
+    for (int row = 0; row < n; ++row) {
+      right_matrix[right_offset + row] -= sigma * v[right_offset + row];
+    }
+    left[col] = column_norm_cert(left_matrix, m, col);
+    right[col] = column_norm_cert(right_matrix, n, col);
+    combined[col] = sqrt(left[col] * left[col] + right[col] * right[col]);
+  }
+  double lower = (R_FINITE(norm_lower) && norm_lower > 0.0) ? norm_lower : 0.0;
+  const double norm_A = fmax(lower, applied);
+  const double scale_value = fmax(norm_A, eps);
+  for (int col = 0; col < k; ++col) {
+    const double be = combined[col] / scale_value;
+    scale[col] = scale_value;
+    backward[col] = be;
+    converged[col] = (R_FINITE(be) && be <= tol) ? TRUE : FALSE;
+  }
+  if (applied_bound_out != nullptr) {
+    *applied_bound_out = applied;
+  }
+  return norm_A;
 }
 
 extern "C" SEXP eigencore_orthogonality_loss(SEXP Q_, SEXP B_) {
@@ -234,8 +320,11 @@ extern "C" SEXP eigencore_dense_eigen_certificate(SEXP A_, SEXP values_,
   const double zero = 0.0;
   const double eps = DBL_EPSILON;
   const double tol = asReal(tol_);
-  const double norm_A = frobenius_norm_dense_cert(REAL(A_), static_cast<R_xlen_t>(n) * n);
-  const double norm_B = (B_ == R_NilValue) ? 1.0 : frobenius_norm_dense_cert(REAL(B_), static_cast<R_xlen_t>(n) * n);
+  // Two-norm lower bounds (C12): the largest column norm of A (and B), raised
+  // by ||A x_j|| / ||x_j|| for the candidate vectors themselves.
+  const double col_bound_A = max_column_norm_dense_cert(REAL(A_), n, n);
+  const double col_bound_B = (B_ == R_NilValue) ? 1.0 :
+    max_column_norm_dense_cert(REAL(B_), n, n);
 
   int protect_count = 0;
   SEXP residual_matrix_ = PROTECT(allocMatrix(REALSXP, n, k));
@@ -250,6 +339,12 @@ extern "C" SEXP eigencore_dense_eigen_certificate(SEXP A_, SEXP values_,
   SEXP backward_ = PROTECT(allocVector(REALSXP, k));
   ++protect_count;
   SEXP converged_ = PROTECT(allocVector(LGLSXP, k));
+  ++protect_count;
+  SEXP vector_norms_ = PROTECT(allocVector(REALSXP, k));
+  ++protect_count;
+  SEXP av_norms_ = PROTECT(allocVector(REALSXP, k));
+  ++protect_count;
+  SEXP bv_norms_ = PROTECT(allocVector(REALSXP, k));
   ++protect_count;
 
   F77_CALL(dgemm)(&notrans, &notrans, &n, &k, &n,
@@ -269,14 +364,28 @@ extern "C" SEXP eigencore_dense_eigen_certificate(SEXP A_, SEXP values_,
   for (int col = 0; col < k; ++col) {
     const double lambda = REAL(values_)[col];
     const R_xlen_t offset = static_cast<R_xlen_t>(col) * n;
+    REAL(av_norms_)[col] = column_norm_cert(REAL(residual_matrix_), n, col);
+    REAL(vector_norms_)[col] = column_norm_cert(REAL(vectors_), n, col);
+    REAL(bv_norms_)[col] = (B_ == R_NilValue) ? REAL(vector_norms_)[col] :
+      column_norm_cert(bv, n, col);
     for (int row = 0; row < n; ++row) {
       REAL(residual_matrix_)[offset + row] -= lambda * bv[offset + row];
     }
-    const double residual = column_norm_cert(REAL(residual_matrix_), n, col);
-    const double vector_norm = column_norm_cert(REAL(vectors_), n, col);
+    REAL(residuals_)[col] = column_norm_cert(REAL(residual_matrix_), n, col);
+  }
+  const double applied_bound_A =
+    applied_ratio_bound_cert(REAL(av_norms_), REAL(vector_norms_), k);
+  const double applied_bound_B = (B_ == R_NilValue) ? 1.0 :
+    applied_ratio_bound_cert(REAL(bv_norms_), REAL(vector_norms_), k);
+  const double norm_A = fmax(col_bound_A, applied_bound_A);
+  const double norm_B = (B_ == R_NilValue) ? 1.0 : fmax(col_bound_B, applied_bound_B);
+
+  for (int col = 0; col < k; ++col) {
+    const double lambda = REAL(values_)[col];
+    const double residual = REAL(residuals_)[col];
+    const double vector_norm = REAL(vector_norms_)[col];
     const double scale = fmax((norm_A + fabs(lambda) * norm_B) * fmax(vector_norm, eps), eps);
     const double backward = residual / scale;
-    REAL(residuals_)[col] = residual;
     REAL(scale_)[col] = scale;
     REAL(backward_)[col] = backward;
     LOGICAL(converged_)[col] = (R_FINITE(backward) && backward <= tol) ? TRUE : FALSE;
@@ -293,7 +402,8 @@ extern "C" SEXP eigencore_dense_eigen_certificate(SEXP A_, SEXP values_,
     orth = max_orthogonality_loss_cert(REAL(gram_), k);
   }
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 6));
+  const int n_out = 13;
+  SEXP out_ = PROTECT(allocVector(VECSXP, n_out));
   ++protect_count;
   SET_VECTOR_ELT(out_, 0, residuals_);
   SET_VECTOR_ELT(out_, 1, backward_);
@@ -301,14 +411,24 @@ extern "C" SEXP eigencore_dense_eigen_certificate(SEXP A_, SEXP values_,
   SET_VECTOR_ELT(out_, 3, scale_);
   SET_VECTOR_ELT(out_, 4, converged_);
   SET_VECTOR_ELT(out_, 5, ScalarReal(norm_A));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 6));
+  SET_VECTOR_ELT(out_, 6, ScalarReal(norm_B));
+  SET_VECTOR_ELT(out_, 7, ScalarReal(col_bound_A));
+  SET_VECTOR_ELT(out_, 8, ScalarReal(applied_bound_A));
+  SET_VECTOR_ELT(out_, 9, ScalarReal(col_bound_B));
+  SET_VECTOR_ELT(out_, 10, ScalarReal(applied_bound_B));
+  SET_VECTOR_ELT(out_, 11, vector_norms_);
+  SET_VECTOR_ELT(out_, 12, bv_norms_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, n_out));
   ++protect_count;
-  SET_STRING_ELT(names_, 0, mkChar("residuals"));
-  SET_STRING_ELT(names_, 1, mkChar("backward_error"));
-  SET_STRING_ELT(names_, 2, mkChar("orthogonality"));
-  SET_STRING_ELT(names_, 3, mkChar("scale"));
-  SET_STRING_ELT(names_, 4, mkChar("converged"));
-  SET_STRING_ELT(names_, 5, mkChar("norm_A"));
+  const char* out_names[] = {
+    "residuals", "backward_error", "orthogonality", "scale", "converged",
+    "norm_A", "norm_B", "norm_A_column_bound", "norm_A_applied_bound",
+    "norm_B_column_bound", "norm_B_applied_bound", "vector_norms",
+    "bv_norms"
+  };
+  for (int i = 0; i < n_out; ++i) {
+    SET_STRING_ELT(names_, i, mkChar(out_names[i]));
+  }
   setAttrib(out_, R_NamesSymbol, names_);
 
   UNPROTECT(protect_count);
@@ -414,8 +534,7 @@ extern "C" SEXP eigencore_dense_svd_certificate(SEXP A_, SEXP d_,
   const double zero = 0.0;
   const double eps = DBL_EPSILON;
   const double tol = asReal(tol_);
-  const double norm_A = frobenius_norm_dense_cert(REAL(A_), static_cast<R_xlen_t>(m) * n);
-  const double scale_value = fmax(norm_A, eps);
+  const double col_bound = max_column_norm_dense_cert(REAL(A_), m, n);
 
   SEXP left_matrix_ = PROTECT(allocMatrix(REALSXP, m, k));
   SEXP right_matrix_ = PROTECT(allocMatrix(REALSXP, n, k));
@@ -434,27 +553,13 @@ extern "C" SEXP eigencore_dense_svd_certificate(SEXP A_, SEXP d_,
                   &one, REAL(A_), &m, REAL(u_), &m,
                   &zero, REAL(right_matrix_), &n FCONE FCONE);
 
-  for (int col = 0; col < k; ++col) {
-    const double sigma = REAL(d_)[col];
-    const R_xlen_t left_offset = static_cast<R_xlen_t>(col) * m;
-    const R_xlen_t right_offset = static_cast<R_xlen_t>(col) * n;
-    for (int row = 0; row < m; ++row) {
-      REAL(left_matrix_)[left_offset + row] -= sigma * REAL(u_)[left_offset + row];
-    }
-    for (int row = 0; row < n; ++row) {
-      REAL(right_matrix_)[right_offset + row] -= sigma * REAL(v_)[right_offset + row];
-    }
-    const double left = column_norm_cert(REAL(left_matrix_), m, col);
-    const double right = column_norm_cert(REAL(right_matrix_), n, col);
-    const double combined = sqrt(left * left + right * right);
-    const double backward = combined / scale_value;
-    REAL(left_)[col] = left;
-    REAL(right_)[col] = right;
-    REAL(combined_)[col] = combined;
-    REAL(scale_)[col] = scale_value;
-    REAL(backward_)[col] = backward;
-    LOGICAL(converged_)[col] = (R_FINITE(backward) && backward <= tol) ? TRUE : FALSE;
-  }
+  double applied_bound = 0.0;
+  const double norm_A = svd_certificate_finalize_cert(
+    REAL(left_matrix_), REAL(right_matrix_), m, n, k, REAL(d_), REAL(u_),
+    REAL(v_), col_bound, tol, REAL(left_), REAL(right_), REAL(combined_),
+    REAL(scale_), REAL(backward_), LOGICAL(converged_), &applied_bound
+  );
+  const double scale_value = fmax(norm_A, eps);
 
   SEXP gram_u_ = PROTECT(allocMatrix(REALSXP, k, k));
   SEXP gram_v_ = PROTECT(allocMatrix(REALSXP, k, k));
@@ -467,7 +572,7 @@ extern "C" SEXP eigencore_dense_svd_certificate(SEXP A_, SEXP d_,
   SET_STRING_ELT(orth_names_, 1, mkChar("V"));
   setAttrib(orth_, R_NamesSymbol, orth_names_);
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 9));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 11));
   SET_VECTOR_ELT(out_, 0, left_);
   SET_VECTOR_ELT(out_, 1, right_);
   SET_VECTOR_ELT(out_, 2, combined_);
@@ -477,7 +582,9 @@ extern "C" SEXP eigencore_dense_svd_certificate(SEXP A_, SEXP d_,
   SET_VECTOR_ELT(out_, 6, converged_);
   SET_VECTOR_ELT(out_, 7, ScalarReal(norm_A));
   SET_VECTOR_ELT(out_, 8, ScalarReal(scale_value));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 9));
+  SET_VECTOR_ELT(out_, 9, ScalarReal(col_bound));
+  SET_VECTOR_ELT(out_, 10, ScalarReal(applied_bound));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 11));
   SET_STRING_ELT(names_, 0, mkChar("left"));
   SET_STRING_ELT(names_, 1, mkChar("right"));
   SET_STRING_ELT(names_, 2, mkChar("combined"));
@@ -487,6 +594,8 @@ extern "C" SEXP eigencore_dense_svd_certificate(SEXP A_, SEXP d_,
   SET_STRING_ELT(names_, 6, mkChar("converged"));
   SET_STRING_ELT(names_, 7, mkChar("norm_A"));
   SET_STRING_ELT(names_, 8, mkChar("scale_value"));
+  SET_STRING_ELT(names_, 9, mkChar("norm_A_column_bound"));
+  SET_STRING_ELT(names_, 10, mkChar("norm_A_applied_bound"));
   setAttrib(out_, R_NamesSymbol, names_);
 
   UNPROTECT(14);
@@ -506,7 +615,7 @@ extern "C" SEXP eigencore_dense_svd_certificate_cached_av(SEXP A_, SEXP d_,
   const int m = INTEGER(dimA)[0];
   const int n = INTEGER(dimA)[1];
   DenseColumnMajorOperator impl = {m, n, REAL(A_)};
-  const double norm_A = frobenius_norm_dense_cert(REAL(A_), static_cast<R_xlen_t>(m) * n);
+  const double norm_A = max_column_norm_dense_cert(REAL(A_), m, n);
   return native_operator_svd_certificate_cached_av(
     &impl, eigencore_dense_apply, m, n, norm_A, d_, u_, v_, av_, tol_
   );
@@ -546,17 +655,30 @@ static SEXP native_operator_eigen_certificate(void* impl,
     error("native operator eigen certificate apply failed with status=%d", status);
   }
 
+  // Two-norm lower bound (C12): the caller's structural bound raised by
+  // ||A x_j|| / ||x_j|| for the candidate vectors (A x_j from this call).
+  std::vector<double> vector_norms(static_cast<size_t>(k), 0.0);
+  std::vector<double> av_norms(static_cast<size_t>(k), 0.0);
   for (int col = 0; col < k; ++col) {
     const double lambda = REAL(values_)[col];
     const R_xlen_t offset = static_cast<R_xlen_t>(col) * n;
+    av_norms[static_cast<size_t>(col)] = column_norm_cert(REAL(residual_matrix_), n, col);
+    vector_norms[static_cast<size_t>(col)] = column_norm_cert(REAL(vectors_), n, col);
     for (int row = 0; row < n; ++row) {
       REAL(residual_matrix_)[offset + row] -= lambda * REAL(vectors_)[offset + row];
     }
-    const double residual = column_norm_cert(REAL(residual_matrix_), n, col);
-    const double vector_norm = column_norm_cert(REAL(vectors_), n, col);
-    const double scale = fmax((norm_A + fabs(lambda)) * fmax(vector_norm, eps), eps);
+    REAL(residuals_)[col] = column_norm_cert(REAL(residual_matrix_), n, col);
+  }
+  const double applied_bound =
+    applied_ratio_bound_cert(av_norms.data(), vector_norms.data(), k);
+  const double norm_lower = (R_FINITE(norm_A) && norm_A > 0.0) ? norm_A : 0.0;
+  const double norm_used = fmax(norm_lower, applied_bound);
+  for (int col = 0; col < k; ++col) {
+    const double lambda = REAL(values_)[col];
+    const double residual = REAL(residuals_)[col];
+    const double vector_norm = vector_norms[static_cast<size_t>(col)];
+    const double scale = fmax((norm_used + fabs(lambda)) * fmax(vector_norm, eps), eps);
     const double backward = residual / scale;
-    REAL(residuals_)[col] = residual;
     REAL(scale_)[col] = scale;
     REAL(backward_)[col] = backward;
     LOGICAL(converged_)[col] = (R_FINITE(backward) && backward <= tol) ? TRUE : FALSE;
@@ -565,20 +687,24 @@ static SEXP native_operator_eigen_certificate(void* impl,
   gram_upper_dsyrk_cert(REAL(vectors_), n, k, REAL(gram_));
   const double orth = max_orthogonality_loss_upper_cert(REAL(gram_), k);
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 6));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 8));
   SET_VECTOR_ELT(out_, 0, residuals_);
   SET_VECTOR_ELT(out_, 1, backward_);
   SET_VECTOR_ELT(out_, 2, ScalarReal(orth));
   SET_VECTOR_ELT(out_, 3, scale_);
   SET_VECTOR_ELT(out_, 4, converged_);
   SET_VECTOR_ELT(out_, 5, workspace_counters_cert(&workspace));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 6));
+  SET_VECTOR_ELT(out_, 6, ScalarReal(norm_used));
+  SET_VECTOR_ELT(out_, 7, ScalarReal(applied_bound));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 8));
   SET_STRING_ELT(names_, 0, mkChar("residuals"));
   SET_STRING_ELT(names_, 1, mkChar("backward_error"));
   SET_STRING_ELT(names_, 2, mkChar("orthogonality"));
   SET_STRING_ELT(names_, 3, mkChar("scale"));
   SET_STRING_ELT(names_, 4, mkChar("converged"));
   SET_STRING_ELT(names_, 5, mkChar("workspace"));
+  SET_STRING_ELT(names_, 6, mkChar("norm_A"));
+  SET_STRING_ELT(names_, 7, mkChar("norm_A_applied_bound"));
   setAttrib(out_, R_NamesSymbol, names_);
 
   UNPROTECT(8);
@@ -609,7 +735,6 @@ static SEXP native_operator_svd_certificate(void* impl,
 
   const double eps = DBL_EPSILON;
   const double tol = asReal(tol_);
-  const double scale_value = fmax(norm_A, eps);
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
 
   SEXP left_matrix_ = PROTECT(allocMatrix(REALSXP, m, k));
@@ -635,27 +760,13 @@ static SEXP native_operator_svd_certificate(void* impl,
     error("native operator SVD certificate adjoint apply failed with status=%d", status);
   }
 
-  for (int col = 0; col < k; ++col) {
-    const double sigma = REAL(d_)[col];
-    const R_xlen_t left_offset = static_cast<R_xlen_t>(col) * m;
-    const R_xlen_t right_offset = static_cast<R_xlen_t>(col) * n;
-    for (int row = 0; row < m; ++row) {
-      REAL(left_matrix_)[left_offset + row] -= sigma * REAL(u_)[left_offset + row];
-    }
-    for (int row = 0; row < n; ++row) {
-      REAL(right_matrix_)[right_offset + row] -= sigma * REAL(v_)[right_offset + row];
-    }
-    const double left = column_norm_cert(REAL(left_matrix_), m, col);
-    const double right = column_norm_cert(REAL(right_matrix_), n, col);
-    const double combined = sqrt(left * left + right * right);
-    const double backward = combined / scale_value;
-    REAL(left_)[col] = left;
-    REAL(right_)[col] = right;
-    REAL(combined_)[col] = combined;
-    REAL(scale_)[col] = scale_value;
-    REAL(backward_)[col] = backward;
-    LOGICAL(converged_)[col] = (R_FINITE(backward) && backward <= tol) ? TRUE : FALSE;
-  }
+  double applied_bound = 0.0;
+  const double norm_used = svd_certificate_finalize_cert(
+    REAL(left_matrix_), REAL(right_matrix_), m, n, k, REAL(d_), REAL(u_),
+    REAL(v_), norm_A, tol, REAL(left_), REAL(right_), REAL(combined_),
+    REAL(scale_), REAL(backward_), LOGICAL(converged_), &applied_bound
+  );
+  const double scale_value = fmax(norm_used, eps);
 
   SEXP gram_u_ = PROTECT(allocMatrix(REALSXP, k, k));
   SEXP gram_v_ = PROTECT(allocMatrix(REALSXP, k, k));
@@ -668,7 +779,7 @@ static SEXP native_operator_svd_certificate(void* impl,
   SET_STRING_ELT(orth_names_, 1, mkChar("V"));
   setAttrib(orth_, R_NamesSymbol, orth_names_);
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 9));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 11));
   SET_VECTOR_ELT(out_, 0, left_);
   SET_VECTOR_ELT(out_, 1, right_);
   SET_VECTOR_ELT(out_, 2, combined_);
@@ -678,7 +789,9 @@ static SEXP native_operator_svd_certificate(void* impl,
   SET_VECTOR_ELT(out_, 6, converged_);
   SET_VECTOR_ELT(out_, 7, ScalarReal(scale_value));
   SET_VECTOR_ELT(out_, 8, workspace_counters_cert(&workspace));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 9));
+  SET_VECTOR_ELT(out_, 9, ScalarReal(norm_used));
+  SET_VECTOR_ELT(out_, 10, ScalarReal(applied_bound));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 11));
   SET_STRING_ELT(names_, 0, mkChar("left"));
   SET_STRING_ELT(names_, 1, mkChar("right"));
   SET_STRING_ELT(names_, 2, mkChar("combined"));
@@ -688,6 +801,8 @@ static SEXP native_operator_svd_certificate(void* impl,
   SET_STRING_ELT(names_, 6, mkChar("converged"));
   SET_STRING_ELT(names_, 7, mkChar("scale_value"));
   SET_STRING_ELT(names_, 8, mkChar("workspace"));
+  SET_STRING_ELT(names_, 9, mkChar("norm_A"));
+  SET_STRING_ELT(names_, 10, mkChar("norm_A_applied_bound"));
   setAttrib(out_, R_NamesSymbol, names_);
 
   UNPROTECT(14);
@@ -790,7 +905,7 @@ extern "C" SEXP eigencore_tridiagonal_eigen_certificate(SEXP alpha_, SEXP beta_,
   }
 
   const double eps = DBL_EPSILON;
-  const double norm_A = asReal(norm_A_);
+  const double norm_A_in = asReal(norm_A_);
   const double tol = asReal(tol_);
 
   SEXP residuals_ = PROTECT(allocVector(REALSXP, k));
@@ -803,11 +918,30 @@ extern "C" SEXP eigencore_tridiagonal_eigen_certificate(SEXP alpha_, SEXP beta_,
   const double* beta = REAL(beta_);
   const double* values = REAL(values_);
   const double* vectors = REAL(vectors_);
+  // Two-norm lower bounds (C12): the largest column norm of T and
+  // ||T x_j|| / ||x_j|| for the candidate vectors.
+  double column_bound = 0.0;
+  for (int row = 0; row < n; ++row) {
+    double sq = alpha[row] * alpha[row];
+    if (row > 0) {
+      sq += beta[row - 1] * beta[row - 1];
+    }
+    if (row + 1 < n) {
+      sq += beta[row] * beta[row];
+    }
+    if (sq > column_bound) {
+      column_bound = sq;
+    }
+  }
+  column_bound = sqrt(column_bound);
+  std::vector<double> vector_norms(static_cast<size_t>(k), 0.0);
+  std::vector<double> av_norms(static_cast<size_t>(k), 0.0);
   for (int col = 0; col < k; ++col) {
     const double lambda = values[col];
     const R_xlen_t offset = static_cast<R_xlen_t>(col) * n;
     long double residual_sum = 0.0L;
     long double vector_sum = 0.0L;
+    long double av_sum = 0.0L;
     for (int row = 0; row < n; ++row) {
       const double v = vectors[offset + row];
       double Av = alpha[row] * v;
@@ -820,12 +954,22 @@ extern "C" SEXP eigencore_tridiagonal_eigen_certificate(SEXP alpha_, SEXP beta_,
       const long double residual = Av - lambda * v;
       residual_sum += residual * residual;
       vector_sum += static_cast<long double>(v) * v;
+      av_sum += static_cast<long double>(Av) * Av;
     }
-    const double residual = sqrt(static_cast<double>(residual_sum));
-    const double vector_norm = sqrt(static_cast<double>(vector_sum));
+    REAL(residuals_)[col] = sqrt(static_cast<double>(residual_sum));
+    vector_norms[static_cast<size_t>(col)] = sqrt(static_cast<double>(vector_sum));
+    av_norms[static_cast<size_t>(col)] = sqrt(static_cast<double>(av_sum));
+  }
+  const double applied_bound =
+    applied_ratio_bound_cert(av_norms.data(), vector_norms.data(), k);
+  double norm_A = (R_FINITE(norm_A_in) && norm_A_in > 0.0) ? norm_A_in : 0.0;
+  norm_A = fmax(norm_A, fmax(column_bound, applied_bound));
+  for (int col = 0; col < k; ++col) {
+    const double lambda = values[col];
+    const double residual = REAL(residuals_)[col];
+    const double vector_norm = vector_norms[static_cast<size_t>(col)];
     const double scale = fmax((norm_A + fabs(lambda)) * fmax(vector_norm, eps), eps);
     const double backward = residual / scale;
-    REAL(residuals_)[col] = residual;
     REAL(scale_)[col] = scale;
     REAL(backward_)[col] = backward;
     LOGICAL(converged_)[col] = (R_FINITE(backward) && backward <= tol) ? TRUE : FALSE;
@@ -834,18 +978,24 @@ extern "C" SEXP eigencore_tridiagonal_eigen_certificate(SEXP alpha_, SEXP beta_,
   gram_upper_dsyrk_cert(REAL(vectors_), n, k, REAL(gram_));
   const double orth = max_orthogonality_loss_upper_cert(REAL(gram_), k);
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 5));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 8));
   SET_VECTOR_ELT(out_, 0, residuals_);
   SET_VECTOR_ELT(out_, 1, backward_);
   SET_VECTOR_ELT(out_, 2, ScalarReal(orth));
   SET_VECTOR_ELT(out_, 3, scale_);
   SET_VECTOR_ELT(out_, 4, converged_);
-  SEXP names_ = PROTECT(allocVector(STRSXP, 5));
+  SET_VECTOR_ELT(out_, 5, ScalarReal(norm_A));
+  SET_VECTOR_ELT(out_, 6, ScalarReal(column_bound));
+  SET_VECTOR_ELT(out_, 7, ScalarReal(applied_bound));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 8));
   SET_STRING_ELT(names_, 0, mkChar("residuals"));
   SET_STRING_ELT(names_, 1, mkChar("backward_error"));
   SET_STRING_ELT(names_, 2, mkChar("orthogonality"));
   SET_STRING_ELT(names_, 3, mkChar("scale"));
   SET_STRING_ELT(names_, 4, mkChar("converged"));
+  SET_STRING_ELT(names_, 5, mkChar("norm_A"));
+  SET_STRING_ELT(names_, 6, mkChar("norm_A_column_bound"));
+  SET_STRING_ELT(names_, 7, mkChar("norm_A_applied_bound"));
   setAttrib(out_, R_NamesSymbol, names_);
 
   UNPROTECT(7);

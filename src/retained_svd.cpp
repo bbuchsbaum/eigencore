@@ -36,13 +36,22 @@ static double max_orthogonality_loss(const double* gram, int k) {
   return loss;
 }
 
-static double frobenius_norm_from_values(const double* x, int64_t len) {
-  long double sum = 0.0L;
-  for (int64_t idx = 0; idx < len; ++idx) {
-    sum += static_cast<long double>(x[idx]) * x[idx];
+// Largest column 2-norm (dense column-major or CSC): a structural lower bound
+// on ||A||_2 used for backward-error denominators (C12).
+static double max_column_norm_retained(const double* x, int rows, int cols,
+                                       const int* col_ptr) {
+  double best = 0.0;
+  for (int col = 0; col < cols; ++col) {
+    const int64_t lo = col_ptr ? col_ptr[col] : static_cast<int64_t>(col) * rows;
+    const int64_t hi = col_ptr ? col_ptr[col + 1] : lo + rows;
+    long double sum = 0.0L;
+    for (int64_t idx = lo; idx < hi; ++idx) {
+      sum += static_cast<long double>(x[idx]) * x[idx];
+    }
+    const double value = sqrt(static_cast<double>(sum));
+    if (value > best) best = value;
   }
-  const double norm = sqrt(static_cast<double>(sum));
-  return R_FINITE(norm) ? norm : R_NaN;
+  return R_FINITE(best) ? best : R_NaN;
 }
 
 static SEXP block_golub_kahan_fit_pack(int n,
@@ -332,6 +341,7 @@ static int retained_subspace_sequence(int n,
 struct CachedSvdDiagnostics {
   int k = 0;
   double scale_value = R_NaReal;
+  double applied_bound = 0.0;
   double orth_u = R_NaReal;
   double orth_v = R_NaReal;
   int workspace_allocation_count = 0;
@@ -397,7 +407,7 @@ static SEXP cached_svd_diagnostics_pack(const CachedSvdDiagnostics& diagnostics)
   SET_STRING_ELT(workspace_names_, 1, mkChar("bytes_allocated"));
   setAttrib(workspace_, R_NamesSymbol, workspace_names_);
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 9));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 11));
   SET_VECTOR_ELT(out_, 0, left_);
   SET_VECTOR_ELT(out_, 1, right_);
   SET_VECTOR_ELT(out_, 2, combined_);
@@ -407,7 +417,9 @@ static SEXP cached_svd_diagnostics_pack(const CachedSvdDiagnostics& diagnostics)
   SET_VECTOR_ELT(out_, 6, converged_);
   SET_VECTOR_ELT(out_, 7, ScalarReal(diagnostics.scale_value));
   SET_VECTOR_ELT(out_, 8, workspace_);
-  SEXP names_ = PROTECT(allocVector(STRSXP, 9));
+  SET_VECTOR_ELT(out_, 9, ScalarReal(diagnostics.scale_value));
+  SET_VECTOR_ELT(out_, 10, ScalarReal(diagnostics.applied_bound));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 11));
   SET_STRING_ELT(names_, 0, mkChar("left"));
   SET_STRING_ELT(names_, 1, mkChar("right"));
   SET_STRING_ELT(names_, 2, mkChar("combined"));
@@ -417,6 +429,8 @@ static SEXP cached_svd_diagnostics_pack(const CachedSvdDiagnostics& diagnostics)
   SET_STRING_ELT(names_, 6, mkChar("converged"));
   SET_STRING_ELT(names_, 7, mkChar("scale_value"));
   SET_STRING_ELT(names_, 8, mkChar("workspace"));
+  SET_STRING_ELT(names_, 9, mkChar("norm_A"));
+  SET_STRING_ELT(names_, 10, mkChar("norm_A_applied_bound"));
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(12);
   return out_;
@@ -526,10 +540,6 @@ static int retained_cached_av_certificate_passed(void* impl,
                                                  int* leading_converged_count,
                                                  CachedSvdDiagnostics* diagnostics = nullptr) {
   const double eps = DBL_EPSILON;
-  const double scale_value = fmax(norm_A, eps);
-  if (diagnostics != nullptr) {
-    diagnostics->reset(k, scale_value);
-  }
   // The cached Av (Avectors = AV * coefficients from the projected SVD, so
   // equal to U * diag(d) by construction) is not trusted for the left
   // residual: A v is recomputed with one forward block apply (C13).
@@ -546,6 +556,36 @@ static int retained_cached_av_certificate_passed(void* impl,
                  u, m, 1.0, 0.0, right.data(), n, &workspace);
   if (status != 0) {
     return status < 0 ? status : -status;
+  }
+  // Spectral-norm lower bound (C12): the caller's bound raised by
+  // ||A v_j|| / ||v_j|| and ||A^T u_j|| / ||u_j|| from the fresh applies.
+  double applied = 0.0;
+  for (int col = 0; col < k; ++col) {
+    const int64_t lo = static_cast<int64_t>(col) * m;
+    const int64_t ro = static_cast<int64_t>(col) * n;
+    double av_sq = 0.0, u_sq = 0.0, atu_sq = 0.0, v_sq = 0.0;
+    for (int row = 0; row < m; ++row) {
+      av_sq += left[lo + row] * left[lo + row];
+      u_sq += u[lo + row] * u[lo + row];
+    }
+    for (int row = 0; row < n; ++row) {
+      atu_sq += right[ro + row] * right[ro + row];
+      v_sq += v[ro + row] * v[ro + row];
+    }
+    if (v_sq > 0.0) {
+      const double ratio = sqrt(av_sq / v_sq);
+      if (R_FINITE(ratio) && ratio > applied) applied = ratio;
+    }
+    if (u_sq > 0.0) {
+      const double ratio = sqrt(atu_sq / u_sq);
+      if (R_FINITE(ratio) && ratio > applied) applied = ratio;
+    }
+  }
+  const double norm_lower = (R_FINITE(norm_A) && norm_A > 0.0) ? norm_A : 0.0;
+  const double scale_value = fmax(fmax(norm_lower, applied), eps);
+  if (diagnostics != nullptr) {
+    diagnostics->reset(k, scale_value);
+    diagnostics->applied_bound = applied;
   }
 
   int passed = 1;
@@ -2786,7 +2826,8 @@ extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP A_, SEXP initial_start_,
     *impl = &impl_holder;
     *apply = eigencore_dense_apply;
   };
-  const double norm_A = frobenius_norm_from_values(REAL(A_), LENGTH(A_));
+  const double norm_A = max_column_norm_retained(
+    REAL(A_), INTEGER(dimA)[0], INTEGER(dimA)[1], nullptr);
   return irlba_lbd_retained_impl(
     configure, INTEGER(dimA)[0], INTEGER(dimA)[1],
     REAL(initial_start_), REAL(retained_right_), REAL(retained_left_),
@@ -2827,7 +2868,8 @@ extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP i_, SEXP p_, SEXP x_,
     *impl = &impl_holder;
     *apply = eigencore_csc_apply;
   };
-  const double norm_A = frobenius_norm_from_values(REAL(x_), LENGTH(x_));
+  const double norm_A = max_column_norm_retained(
+    REAL(x_), INTEGER(dim_)[0], INTEGER(dim_)[1], INTEGER(p_));
   return irlba_lbd_retained_impl(
     configure, INTEGER(dim_)[0], INTEGER(dim_)[1],
     REAL(initial_start_), REAL(retained_right_), REAL(retained_left_),

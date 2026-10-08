@@ -18,6 +18,27 @@ result does not carry a certificate field.
 \description{
 Extract a result certificate.
 }
+\details{
+Backward errors use the standard normwise 2-norm definition:
+\verb{||A x - lambda B x|| / ((||A||_2 + |lambda| ||B||_2) ||x||)} for eigenpairs
+and \verb{sqrt(||A v - sigma u||^2 + ||A^H u - sigma v||^2) / ||A||_2} for
+singular triplets. The norms in the denominator are exact or LOWER bounds
+(never estimates), so the reported backward error is never smaller than the
+true one and \code{passed} is sound. Fields describing the scale:
+\describe{
+\item{\code{norm_bound_type}}{\code{"two_norm_exact"} or \code{"two_norm_lower_bound"}
+(eigen certificates report \code{A+B} parts; \code{B = I} is
+\code{"identity_exact"}).}
+\item{\code{norm_source}}{Where each value came from: \code{"diagonal"},
+\code{"full_spectrum"}, \code{"metadata"} (an operator's \code{metadata$two_norm}),
+\code{"column_norms"}, \code{"applied_vectors"} (\verb{||A x|| / ||x||} for the
+certified vectors), \code{"ritz"} (residual-corrected Ritz values),
+\code{"frobenius_rank_bound"}, or \code{"lanczos"} (a short deterministic
+Krylov estimate run only when it could change the verdict).}
+\item{\code{norm_values}}{The values used, named \code{A} (and \code{B}).}
+\item{\code{scale_is_estimate}}{Always \code{FALSE} for built-in certificates.}
+}
+}
 \examples{
 fit <- eig_partial(diag(c(3, 2, 1)), k = 1, target = largest())
 cert <- certificate(fit)
