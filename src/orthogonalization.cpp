@@ -7,6 +7,7 @@
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
 #include "eigencore_lapack_compat.h"
+#include "eigencore_common.h"
 
 struct BasisWorkspace {
   int64_t rows;
@@ -53,26 +54,18 @@ static int mgs_once_dense(const double* X,
       v[row] = x_col[row];
     }
 
+    int inc = 1;
     for (int pass = 0; pass < 2; ++pass) {
       for (int prev = 0; prev < rank; ++prev) {
         const double* q_prev = Q + static_cast<R_xlen_t>(prev) * ldq;
-        long double dot = 0.0L;
-        for (int row = 0; row < n; ++row) {
-          dot += static_cast<long double>(q_prev[row]) * v[row];
-        }
-        const double r = static_cast<double>(dot);
+        const double r = ec_dot(q_prev, v, n);
         R[prev + col * ldr] += r;
-        for (int row = 0; row < n; ++row) {
-          v[row] -= r * q_prev[row];
-        }
+        const double minus_r = -r;
+        F77_CALL(daxpy)(&n, &minus_r, q_prev, &inc, v, &inc);
       }
     }
 
-    long double norm2 = 0.0L;
-    for (int row = 0; row < n; ++row) {
-      norm2 += static_cast<long double>(v[row]) * v[row];
-    }
-    const double rjj = sqrt(static_cast<double>(norm2));
+    const double rjj = ec_norm2(v, n);
     if (rjj > tol) {
       for (int row = 0; row < n; ++row) {
         v[row] /= rjj;
@@ -162,12 +155,11 @@ extern "C" SEXP eigencore_mgs2(SEXP X_, SEXP tol_) {
   std::memset(REAL(R_), 0, sizeof(double) * static_cast<size_t>(rank2) * p);
   for (int col = 0; col < p; ++col) {
     for (int row = 0; row < rank2; ++row) {
-      long double value = 0.0L;
+      double value = 0.0;
       for (int inner = 0; inner < rank1; ++inner) {
-        value += static_cast<long double>(REAL(R2_)[row + inner * rank1]) *
-                 REAL(R1_)[inner + col * p];
+        value += REAL(R2_)[row + inner * rank1] * REAL(R1_)[inner + col * p];
       }
-      REAL(R_)[row + col * rank2] = static_cast<double>(value);
+      REAL(R_)[row + col * rank2] = value;
     }
   }
 

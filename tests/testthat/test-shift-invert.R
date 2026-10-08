@@ -20,8 +20,9 @@ test_that("shift-invert returns interior eigenvalues nearest sigma on dense Herm
   expect_identical(fit$transform$kind, "shift_invert")
   expect_identical(fit$transform$label_kind, "dense_lu_native")
   expect_true(fit$transform$factorization_cache$native)
+  # T2 (P5): the symmetric shifted matrix is factored with Bunch-Kaufman.
   expect_identical(fit$transform$factorization_cache$factorization,
-                   "LAPACK dgetrf/dgetrs")
+                   "LAPACK dsytrf/dsytrs")
   expect_identical(fit$restart$kind, "native_dense_shift_invert_lanczos")
   expect_true(fit$restart$native)
   expect_identical(fit$transform$certification$problem, "original")
@@ -178,7 +179,8 @@ test_that("shift-invert uses native tridiagonal factorized Lanczos for sparse CS
   expect_identical(fit$transform$label_kind, "tridiagonal_thomas_native")
   cache <- fit$transform$factorization_cache
   expect_true(cache$native)
-  expect_equal(cache$factorization, "native tridiagonal Thomas")
+  # T2 (C21): pivoted tridiagonal LU replaced the unpivoted Thomas recurrence.
+  expect_equal(cache$factorization, "LAPACK dgttrf/dgttrs")
   expect_equal(cache$condition_estimate_type, "tridiagonal_thomas_pivot_ratio")
   expect_true(is.finite(cache$condition_estimate))
   expect_gt(cache$condition_estimate, 0)
@@ -316,7 +318,7 @@ test_that("generalized shift-invert handles sparse A with diagonal B without den
                "tridiagonal_thomas_generalized_native")
   expect_true(fit$transform$factorization_cache$native)
   expect_equal(fit$transform$factorization_cache$factorization,
-               "native tridiagonal Thomas + diagonal sqrt(B)")
+               "LAPACK dgttrf/dgttrs + diagonal sqrt(B)")  # T2 (C21)
   expect_equal(fit$transform$factorization_cache$metric_factorization,
                "diagonal sqrt(B)")
   expect_identical(fit$restart$kind,
@@ -444,7 +446,7 @@ test_that("shift-invert result exposes factorization-cache provenance", {
   expect_s3_class(cache$key, "eigencore_shift_invert_cache_key")
   expect_equal(cache$key$sigma, 4.2)
   expect_equal(cache$label_kind, "dense_lu_native")
-  expect_equal(cache$factorization, "LAPACK dgetrf/dgetrs")
+  expect_equal(cache$factorization, "LAPACK dsytrf/dsytrs")  # T2 (P5)
   expect_true(cache$factorization_cached)
   expect_equal(cache$condition_estimate_type, "dense_lu_pivot_ratio")
   expect_true(is.finite(cache$condition_estimate))
