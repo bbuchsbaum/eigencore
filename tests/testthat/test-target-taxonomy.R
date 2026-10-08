@@ -39,7 +39,8 @@ test_that("eigs_sym BE returns both algebraic ends", {
 
   fit <- eigs_sym(A, k = 3, which = "BE")
 
-  expect_equal(fit$values, c(-7, 11, 2), tolerance = 1e-10)
+  # RSpectra returns eigs_sym() values in decreasing order.
+  expect_equal(fit$values, c(11, 2, -7), tolerance = 1e-10)
   expect_match(paste(fit$diagnostics$plan$reasons, collapse = "\n"), "target: both_ends")
   expect_equal(fit$diagnostics$method, "native dense Hermitian LAPACK fallback")
   expect_true(fit$certificate$passed)
@@ -121,7 +122,7 @@ test_that("complex ABI contract matches dense and operator certificate semantics
                Conj(t(eig$vectors)) %*% eig$vectors)
 
   norm_info <- eigencore:::operator_norm_for_certificate_info(op)
-  expect_equal(norm_info$value, norm(A, type = "F"))
+  expect_equal(norm_info$value, sqrt(sum(Mod(A)^2)))
   expect_equal(norm_info$norm_bound_type, "frobenius_exact")
   expect_false(norm_info$scale_is_estimate)
 

@@ -29,7 +29,8 @@ svd_partial(
 
 \item{vectors}{Which singular-vector sides to compute.}
 
-\item{seed}{Optional random seed for stochastic solver components.}
+\item{seed}{Optional random seed for stochastic solver components. The
+global random number stream is restored on exit.}
 
 \item{certify}{Whether to compute certification diagnostics.}
 

@@ -16,12 +16,18 @@
 #include "scalar_krylov.h"
 #include "block_golub_kahan_basis.h"
 
+extern "C" void eigencore_validate_csc_structure(SEXP i_, SEXP p_, SEXP x_,
+                                                 SEXP dim_, const char* context);
+
 static double max_orthogonality_loss(const double* gram, int k) {
   double loss = 0.0;
   for (int col = 0; col < k; ++col) {
     for (int row = 0; row < k; ++row) {
       const double target = (row == col) ? 1.0 : 0.0;
       const double err = fabs(gram[row + col * k] - target);
+      if (ISNAN(err)) {
+        return err;
+      }
       if (err > loss) {
         loss = err;
       }
@@ -37,16 +43,6 @@ static double frobenius_norm_from_values(const double* x, int64_t len) {
   }
   const double norm = sqrt(static_cast<double>(sum));
   return R_FINITE(norm) ? norm : R_NaN;
-}
-
-static void symmetrize_packed_square(double* A, int n) {
-  for (int i = 0; i < n; ++i) {
-    for (int j = i + 1; j < n; ++j) {
-      const double avg = 0.5 * (A[i + j * n] + A[j + i * n]);
-      A[i + j * n] = avg;
-      A[j + i * n] = avg;
-    }
-  }
 }
 
 static SEXP block_golub_kahan_fit_pack(int n,
@@ -534,10 +530,20 @@ static int retained_cached_av_certificate_passed(void* impl,
   if (diagnostics != nullptr) {
     diagnostics->reset(k, scale_value);
   }
+  // The cached Av (Avectors = AV * coefficients from the projected SVD, so
+  // equal to U * diag(d) by construction) is not trusted for the left
+  // residual: A v is recomputed with one forward block apply (C13).
+  (void)av;
+  std::vector<double> left(static_cast<size_t>(m) * static_cast<size_t>(k), 0.0);
   std::vector<double> right(static_cast<size_t>(n) * static_cast<size_t>(k), 0.0);
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
-  const int status = apply(impl, EIGENCORE_TRANSPOSE_ADJOINT, k,
-                           u, m, 1.0, 0.0, right.data(), n, &workspace);
+  int status = apply(impl, EIGENCORE_TRANSPOSE_NONE, k,
+                     v, n, 1.0, 0.0, left.data(), m, &workspace);
+  if (status != 0) {
+    return status < 0 ? status : -status;
+  }
+  status = apply(impl, EIGENCORE_TRANSPOSE_ADJOINT, k,
+                 u, m, 1.0, 0.0, right.data(), n, &workspace);
   if (status != 0) {
     return status < 0 ? status : -status;
   }
@@ -555,7 +561,7 @@ static int retained_cached_av_certificate_passed(void* impl,
     const int64_t left_offset = static_cast<int64_t>(col) * m;
     const int64_t right_offset = static_cast<int64_t>(col) * n;
     for (int row = 0; row < m; ++row) {
-      const double residual = av[left_offset + row] -
+      const double residual = left[left_offset + row] -
         sigma * u[left_offset + row];
       left_sum += residual * residual;
     }
@@ -574,10 +580,10 @@ static int retained_cached_av_certificate_passed(void* impl,
       diagnostics->converged[static_cast<size_t>(col)] =
         (R_FINITE(backward) && backward <= tol) ? 1 : 0;
     }
-    if (backward > *max_backward_error || col == 0) {
+    if (ISNAN(backward) || backward > *max_backward_error || col == 0) {
       *max_backward_error = backward;
     }
-    if (combined > *max_residual || col == 0) {
+    if (ISNAN(combined) || combined > *max_residual || col == 0) {
       *max_residual = combined;
     }
     const bool col_converged = R_FINITE(backward) && backward <= tol;
@@ -592,25 +598,23 @@ static int retained_cached_av_certificate_passed(void* impl,
     }
   }
 
+  // Upper-triangle dsyrk Grams (half the flops of dgemm); the strictly lower
+  // triangle stays zero and contributes no loss in max_orthogonality_loss().
+  const char uplo = 'U';
   const char trans = 'T';
-  const char notrans = 'N';
   const double one = 1.0;
   const double zero = 0.0;
   std::vector<double> gram_u(static_cast<size_t>(k) * static_cast<size_t>(k), 0.0);
   std::vector<double> gram_v(static_cast<size_t>(k) * static_cast<size_t>(k), 0.0);
-  F77_CALL(dgemm)(&trans, &notrans, &k, &k, &m,
-                  &one, const_cast<double*>(u), &m, const_cast<double*>(u), &m,
+  F77_CALL(dsyrk)(&uplo, &trans, &k, &m, &one, u, &m,
                   &zero, gram_u.data(), &k FCONE FCONE);
-  F77_CALL(dgemm)(&trans, &notrans, &k, &k, &n,
-                  &one, const_cast<double*>(v), &n, const_cast<double*>(v), &n,
+  F77_CALL(dsyrk)(&uplo, &trans, &k, &n, &one, v, &n,
                   &zero, gram_v.data(), &k FCONE FCONE);
-  const double orth = fmax(
-    max_orthogonality_loss(gram_u.data(), k),
-    max_orthogonality_loss(gram_v.data(), k)
-  );
+  const double orth_u = max_orthogonality_loss(gram_u.data(), k);
+  const double orth_v = max_orthogonality_loss(gram_v.data(), k);
   if (diagnostics != nullptr) {
-    diagnostics->orth_u = max_orthogonality_loss(gram_u.data(), k);
-    diagnostics->orth_v = max_orthogonality_loss(gram_v.data(), k);
+    diagnostics->orth_u = orth_u;
+    diagnostics->orth_v = orth_v;
     diagnostics->workspace_allocation_count =
       static_cast<int>(workspace.allocation_count);
     diagnostics->workspace_bytes_allocated =
@@ -618,7 +622,8 @@ static int retained_cached_av_certificate_passed(void* impl,
     diagnostics->valid = true;
   }
   const double orth_tol = (tol > sqrt(DBL_EPSILON)) ? tol : sqrt(DBL_EPSILON);
-  if (orth > orth_tol) {
+  // Written as !(x <= tol) so a NaN loss fails instead of passing.
+  if (!(orth_u <= orth_tol) || !(orth_v <= orth_tol)) {
     passed = 0;
     *converged_count = 0;
     *leading_converged_count = 0;
@@ -644,10 +649,9 @@ static int normalize_retained_cached_prefix(double* V,
   const double zero = 0.0;
   int info = 0;
 
-  F77_CALL(dgemm)(&trans, &notrans, &cols, &cols, &n,
-                  &one, V, &n, V, &n,
+  // dpotrf reads only the upper triangle, so a dsyrk Gram suffices.
+  F77_CALL(dsyrk)(&uplo, &trans, &cols, &n, &one, V, &n,
                   &zero, gram.data(), &cols FCONE FCONE);
-  symmetrize_packed_square(gram.data(), cols);
   F77_CALL(dpotrf)(&uplo, &cols, gram.data(), &cols, &info FCONE);
   if (info != 0) {
     return -1;
@@ -1128,6 +1132,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit(SEXP i_, SEXP p_,
       !isInteger(dim_) || !isReal(start_)) {
     error("invalid CSC block Golub-Kahan fit inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "block_golub_kahan_csc_fit");
   SEXP dimS = getAttrib(start_, R_DimSymbol);
   if (dimS == R_NilValue || LENGTH(dim_) != 2) {
     error("start must be a matrix and dim must have length 2");
@@ -1188,6 +1193,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit_cached(SEXP i_, SEXP p_,
       !isInteger(dim_) || !isReal(start_) || !isReal(start_av_)) {
     error("invalid cached CSC block Golub-Kahan fit inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "block_golub_kahan_csc_fit_cached");
   SEXP dimS = getAttrib(start_, R_DimSymbol);
   SEXP dimAV = getAttrib(start_av_, R_DimSymbol);
   if (dimS == R_NilValue || dimAV == R_NilValue || LENGTH(dim_) != 2) {
@@ -1258,6 +1264,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_retained_cycle(SEXP i_, SEXP p_,
       !isInteger(dim_) || !isReal(initial_start_) || !isReal(random_tails_)) {
     error("invalid CSC retained block Golub-Kahan inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "block_golub_kahan_csc_retained_cycle");
   SEXP dimS = getAttrib(initial_start_, R_DimSymbol);
   SEXP dimT = getAttrib(random_tails_, R_DimSymbol);
   if (dimS == R_NilValue || dimT == R_NilValue || LENGTH(dim_) != 2) {
@@ -1359,6 +1366,7 @@ extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start
                                             reorthogonalize_u,
                                             reorthogonalize_v);
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native dense Golub-Kahan failed with status=%d", status);
   }
 
@@ -1414,6 +1422,7 @@ extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP di
       !isReal(start_)) {
     error("invalid CSC Golub-Kahan inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "golub_kahan_csc_fit");
   const int m = INTEGER(dim_)[0];
   const int n = INTEGER(dim_)[1];
   if (LENGTH(start_) != n) {
@@ -1476,6 +1485,7 @@ extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP di
                                             reorthogonalize_u,
                                             reorthogonalize_v);
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native CSC Golub-Kahan failed with status=%d", status);
   }
 
@@ -1914,12 +1924,11 @@ static double basis_orthogonality_loss(const double* basis, int n, int cols) {
   }
   std::vector<double> gram(static_cast<size_t>(cols) * static_cast<size_t>(cols), 0.0);
   const char trans = 'T';
-  const char notrans = 'N';
   const double one = 1.0;
   const double zero = 0.0;
-  F77_CALL(dgemm)(&trans, &notrans, &cols, &cols, &n,
-                  &one, const_cast<double*>(basis), &n,
-                  const_cast<double*>(basis), &n,
+  // Upper-triangle dsyrk Gram; the zero lower triangle adds no loss.
+  const char uplo = 'U';
+  F77_CALL(dsyrk)(&uplo, &trans, &cols, &n, &one, basis, &n,
                   &zero, gram.data(), &cols FCONE FCONE);
   return max_orthogonality_loss(gram.data(), cols);
 }
@@ -2677,6 +2686,7 @@ static SEXP irlba_lbd_retained_impl(ConfigureOperator configure_operator,
       reorthogonalize_u, reorthogonalize_v
     );
     if (status != 0) {
+      eigencore_check_nonfinite_status(status);
       error("native retained one-sided IRLBA/LBD failed with status=%d", status);
     }
     attempted_subspaces.push_back(work);
@@ -2804,6 +2814,7 @@ extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP i_, SEXP p_, SEXP x_,
       LENGTH(dim_) != 2) {
     error("invalid CSC retained IRLBA/LBD inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "irlba_lbd_csc_retained");
   validate_irlba_lbd_retained_contract(
     INTEGER(dim_)[0], INTEGER(dim_)[1], initial_start_, retained_right_,
     retained_left_, alpha_, beta_, random_tails_, work_, retained_,

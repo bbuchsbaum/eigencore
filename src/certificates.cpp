@@ -6,6 +6,9 @@
 #include "native_operators.h"
 #include "certificates.h"
 
+extern "C" void eigencore_validate_csc_structure(SEXP i_, SEXP p_, SEXP x_,
+                                                 SEXP dim_, const char* context);
+
 static SEXP workspace_counters_cert(EigencoreWorkspace* workspace) {
   SEXP out = PROTECT(allocVector(INTSXP, 2));
   INTEGER(out)[0] = static_cast<int>(workspace->allocation_count);
@@ -63,7 +66,7 @@ static void gram_upper_dsyrk_cert(const double* X, int rows, int k,
 
 static double column_norm_cert(const double* X, int rows, int col) {
   long double sum = 0.0L;
-  const int offset = col * rows;
+  const R_xlen_t offset = static_cast<R_xlen_t>(col) * rows;
   for (int row = 0; row < rows; ++row) {
     const long double value = X[offset + row];
     sum += value * value;
@@ -71,9 +74,9 @@ static double column_norm_cert(const double* X, int rows, int col) {
   return sqrt(static_cast<double>(sum));
 }
 
-static double frobenius_norm_dense_cert(const double* X, int len) {
+static double frobenius_norm_dense_cert(const double* X, R_xlen_t len) {
   long double sum = 0.0L;
-  for (int i = 0; i < len; ++i) {
+  for (R_xlen_t i = 0; i < len; ++i) {
     const long double value = X[i];
     sum += value * value;
   }
@@ -169,7 +172,7 @@ extern "C" SEXP eigencore_dense_eigen_residuals(SEXP A_, SEXP values_,
   if (B_ == R_NilValue) {
     for (int col = 0; col < k; ++col) {
       const double lambda = REAL(values_)[col];
-      const int offset = col * n;
+      const R_xlen_t offset = static_cast<R_xlen_t>(col) * n;
       for (int row = 0; row < n; ++row) {
         REAL(residual_)[offset + row] -= lambda * REAL(vectors_)[offset + row];
       }
@@ -181,7 +184,7 @@ extern "C" SEXP eigencore_dense_eigen_residuals(SEXP A_, SEXP values_,
                     &zero, REAL(Bv_), &n FCONE FCONE);
     for (int col = 0; col < k; ++col) {
       const double lambda = REAL(values_)[col];
-      const int offset = col * n;
+      const R_xlen_t offset = static_cast<R_xlen_t>(col) * n;
       for (int row = 0; row < n; ++row) {
         REAL(residual_)[offset + row] -= lambda * REAL(Bv_)[offset + row];
       }
@@ -231,8 +234,8 @@ extern "C" SEXP eigencore_dense_eigen_certificate(SEXP A_, SEXP values_,
   const double zero = 0.0;
   const double eps = DBL_EPSILON;
   const double tol = asReal(tol_);
-  const double norm_A = frobenius_norm_dense_cert(REAL(A_), n * n);
-  const double norm_B = (B_ == R_NilValue) ? 1.0 : frobenius_norm_dense_cert(REAL(B_), n * n);
+  const double norm_A = frobenius_norm_dense_cert(REAL(A_), static_cast<R_xlen_t>(n) * n);
+  const double norm_B = (B_ == R_NilValue) ? 1.0 : frobenius_norm_dense_cert(REAL(B_), static_cast<R_xlen_t>(n) * n);
 
   int protect_count = 0;
   SEXP residual_matrix_ = PROTECT(allocMatrix(REALSXP, n, k));
@@ -265,7 +268,7 @@ extern "C" SEXP eigencore_dense_eigen_certificate(SEXP A_, SEXP values_,
 
   for (int col = 0; col < k; ++col) {
     const double lambda = REAL(values_)[col];
-    const int offset = col * n;
+    const R_xlen_t offset = static_cast<R_xlen_t>(col) * n;
     for (int row = 0; row < n; ++row) {
       REAL(residual_matrix_)[offset + row] -= lambda * bv[offset + row];
     }
@@ -349,8 +352,8 @@ extern "C" SEXP eigencore_dense_svd_residuals(SEXP A_, SEXP d_,
 
   for (int col = 0; col < k; ++col) {
     const double sigma = REAL(d_)[col];
-    const int left_offset = col * m;
-    const int right_offset = col * n;
+    const R_xlen_t left_offset = static_cast<R_xlen_t>(col) * m;
+    const R_xlen_t right_offset = static_cast<R_xlen_t>(col) * n;
     for (int row = 0; row < m; ++row) {
       REAL(left_matrix_)[left_offset + row] -= sigma * REAL(u_)[left_offset + row];
     }
@@ -411,7 +414,7 @@ extern "C" SEXP eigencore_dense_svd_certificate(SEXP A_, SEXP d_,
   const double zero = 0.0;
   const double eps = DBL_EPSILON;
   const double tol = asReal(tol_);
-  const double norm_A = frobenius_norm_dense_cert(REAL(A_), m * n);
+  const double norm_A = frobenius_norm_dense_cert(REAL(A_), static_cast<R_xlen_t>(m) * n);
   const double scale_value = fmax(norm_A, eps);
 
   SEXP left_matrix_ = PROTECT(allocMatrix(REALSXP, m, k));
@@ -433,8 +436,8 @@ extern "C" SEXP eigencore_dense_svd_certificate(SEXP A_, SEXP d_,
 
   for (int col = 0; col < k; ++col) {
     const double sigma = REAL(d_)[col];
-    const int left_offset = col * m;
-    const int right_offset = col * n;
+    const R_xlen_t left_offset = static_cast<R_xlen_t>(col) * m;
+    const R_xlen_t right_offset = static_cast<R_xlen_t>(col) * n;
     for (int row = 0; row < m; ++row) {
       REAL(left_matrix_)[left_offset + row] -= sigma * REAL(u_)[left_offset + row];
     }
@@ -503,7 +506,7 @@ extern "C" SEXP eigencore_dense_svd_certificate_cached_av(SEXP A_, SEXP d_,
   const int m = INTEGER(dimA)[0];
   const int n = INTEGER(dimA)[1];
   DenseColumnMajorOperator impl = {m, n, REAL(A_)};
-  const double norm_A = frobenius_norm_dense_cert(REAL(A_), m * n);
+  const double norm_A = frobenius_norm_dense_cert(REAL(A_), static_cast<R_xlen_t>(m) * n);
   return native_operator_svd_certificate_cached_av(
     &impl, eigencore_dense_apply, m, n, norm_A, d_, u_, v_, av_, tol_
   );
@@ -545,7 +548,7 @@ static SEXP native_operator_eigen_certificate(void* impl,
 
   for (int col = 0; col < k; ++col) {
     const double lambda = REAL(values_)[col];
-    const int offset = col * n;
+    const R_xlen_t offset = static_cast<R_xlen_t>(col) * n;
     for (int row = 0; row < n; ++row) {
       REAL(residual_matrix_)[offset + row] -= lambda * REAL(vectors_)[offset + row];
     }
@@ -634,8 +637,8 @@ static SEXP native_operator_svd_certificate(void* impl,
 
   for (int col = 0; col < k; ++col) {
     const double sigma = REAL(d_)[col];
-    const int left_offset = col * m;
-    const int right_offset = col * n;
+    const R_xlen_t left_offset = static_cast<R_xlen_t>(col) * m;
+    const R_xlen_t right_offset = static_cast<R_xlen_t>(col) * n;
     for (int row = 0; row < m; ++row) {
       REAL(left_matrix_)[left_offset + row] -= sigma * REAL(u_)[left_offset + row];
     }
@@ -717,88 +720,13 @@ SEXP native_operator_svd_certificate_cached_av(void* impl,
       rowsAV != m || colsAV != k || LENGTH(d_) != k) {
     error("non-conformable cached-Av native operator SVD certificate inputs");
   }
-
-  const double eps = DBL_EPSILON;
-  const double tol = asReal(tol_);
-  const double scale_value = fmax(norm_A, eps);
-  EigencoreWorkspace workspace = {0, 0, nullptr, 0};
-
-  SEXP right_matrix_ = PROTECT(allocMatrix(REALSXP, n, k));
-  SEXP left_ = PROTECT(allocVector(REALSXP, k));
-  SEXP right_ = PROTECT(allocVector(REALSXP, k));
-  SEXP combined_ = PROTECT(allocVector(REALSXP, k));
-  SEXP scale_ = PROTECT(allocVector(REALSXP, k));
-  SEXP backward_ = PROTECT(allocVector(REALSXP, k));
-  SEXP orth_ = PROTECT(allocVector(REALSXP, 2));
-  SEXP converged_ = PROTECT(allocVector(LGLSXP, k));
-
-  const int status = apply(impl, EIGENCORE_TRANSPOSE_ADJOINT, k,
-                           REAL(u_), m, 1.0, 0.0,
-                           REAL(right_matrix_), n, &workspace);
-  if (status != 0) {
-    error("cached-Av native operator SVD certificate adjoint apply failed with status=%d", status);
-  }
-
-  for (int col = 0; col < k; ++col) {
-    const double sigma = REAL(d_)[col];
-    const int left_offset = col * m;
-    const int right_offset = col * n;
-    double left_sum = 0.0;
-    for (int row = 0; row < m; ++row) {
-      const double residual = REAL(av_)[left_offset + row] -
-        sigma * REAL(u_)[left_offset + row];
-      left_sum += residual * residual;
-    }
-    for (int row = 0; row < n; ++row) {
-      REAL(right_matrix_)[right_offset + row] -= sigma * REAL(v_)[right_offset + row];
-    }
-    const double left = sqrt(left_sum);
-    const double right = column_norm_cert(REAL(right_matrix_), n, col);
-    const double combined = sqrt(left * left + right * right);
-    const double backward = combined / scale_value;
-    REAL(left_)[col] = left;
-    REAL(right_)[col] = right;
-    REAL(combined_)[col] = combined;
-    REAL(scale_)[col] = scale_value;
-    REAL(backward_)[col] = backward;
-    LOGICAL(converged_)[col] = (R_FINITE(backward) && backward <= tol) ? TRUE : FALSE;
-  }
-
-  SEXP gram_u_ = PROTECT(allocMatrix(REALSXP, k, k));
-  SEXP gram_v_ = PROTECT(allocMatrix(REALSXP, k, k));
-  gram_upper_dsyrk_cert(REAL(u_), m, k, REAL(gram_u_));
-  gram_upper_dsyrk_cert(REAL(v_), n, k, REAL(gram_v_));
-  REAL(orth_)[0] = max_orthogonality_loss_upper_cert(REAL(gram_u_), k);
-  REAL(orth_)[1] = max_orthogonality_loss_upper_cert(REAL(gram_v_), k);
-  SEXP orth_names_ = PROTECT(allocVector(STRSXP, 2));
-  SET_STRING_ELT(orth_names_, 0, mkChar("U"));
-  SET_STRING_ELT(orth_names_, 1, mkChar("V"));
-  setAttrib(orth_, R_NamesSymbol, orth_names_);
-
-  SEXP out_ = PROTECT(allocVector(VECSXP, 9));
-  SET_VECTOR_ELT(out_, 0, left_);
-  SET_VECTOR_ELT(out_, 1, right_);
-  SET_VECTOR_ELT(out_, 2, combined_);
-  SET_VECTOR_ELT(out_, 3, backward_);
-  SET_VECTOR_ELT(out_, 4, orth_);
-  SET_VECTOR_ELT(out_, 5, scale_);
-  SET_VECTOR_ELT(out_, 6, converged_);
-  SET_VECTOR_ELT(out_, 7, ScalarReal(scale_value));
-  SET_VECTOR_ELT(out_, 8, workspace_counters_cert(&workspace));
-  SEXP names_ = PROTECT(allocVector(STRSXP, 9));
-  SET_STRING_ELT(names_, 0, mkChar("left"));
-  SET_STRING_ELT(names_, 1, mkChar("right"));
-  SET_STRING_ELT(names_, 2, mkChar("combined"));
-  SET_STRING_ELT(names_, 3, mkChar("backward_error"));
-  SET_STRING_ELT(names_, 4, mkChar("orthogonality"));
-  SET_STRING_ELT(names_, 5, mkChar("scale"));
-  SET_STRING_ELT(names_, 6, mkChar("converged"));
-  SET_STRING_ELT(names_, 7, mkChar("scale_value"));
-  SET_STRING_ELT(names_, 8, mkChar("workspace"));
-  setAttrib(out_, R_NamesSymbol, names_);
-
-  UNPROTECT(13);
-  return out_;
+  // The cached Av is validated for shape only and is NOT trusted for the
+  // left residual: a stale or inconsistent cache (e.g. Avectors formed as
+  // U * diag(d) from the projected SVD) would make ||A v - d u|| zero by
+  // construction. Both residuals are recomputed against the operator (one
+  // extra forward block apply of k columns), see C13.
+  return native_operator_svd_certificate(impl, apply, m, n, norm_A,
+                                         d_, u_, v_, tol_);
 }
 
 extern "C" SEXP eigencore_csc_eigen_certificate(SEXP i_, SEXP p_, SEXP x_,
@@ -809,6 +737,7 @@ extern "C" SEXP eigencore_csc_eigen_certificate(SEXP i_, SEXP p_, SEXP x_,
       !isReal(values_) || !isReal(vectors_)) {
     error("invalid CSC eigen certificate inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_eigen_certificate");
   const int n = INTEGER(dim_)[0];
   if (INTEGER(dim_)[1] != n) {
     error("CSC eigen certificate requires a square operator");
@@ -876,7 +805,7 @@ extern "C" SEXP eigencore_tridiagonal_eigen_certificate(SEXP alpha_, SEXP beta_,
   const double* vectors = REAL(vectors_);
   for (int col = 0; col < k; ++col) {
     const double lambda = values[col];
-    const int offset = col * n;
+    const R_xlen_t offset = static_cast<R_xlen_t>(col) * n;
     long double residual_sum = 0.0L;
     long double vector_sum = 0.0L;
     for (int row = 0; row < n; ++row) {
@@ -931,6 +860,7 @@ extern "C" SEXP eigencore_csc_svd_certificate(SEXP i_, SEXP p_, SEXP x_,
       !isReal(d_) || !isReal(u_) || !isReal(v_)) {
     error("invalid CSC SVD certificate inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_svd_certificate");
   const int m = INTEGER(dim_)[0];
   const int n = INTEGER(dim_)[1];
   CSCOperator impl = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
@@ -947,6 +877,7 @@ extern "C" SEXP eigencore_csc_svd_certificate_cached_av(SEXP i_, SEXP p_, SEXP x
       !isReal(d_) || !isReal(u_) || !isReal(v_) || !isReal(av_)) {
     error("invalid cached-Av CSC SVD certificate inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_svd_certificate_cached_av");
   const int m = INTEGER(dim_)[0];
   const int n = INTEGER(dim_)[1];
   CSCOperator impl = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};

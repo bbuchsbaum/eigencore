@@ -190,7 +190,8 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
       as.numeric(tol),
       PACKAGE = "eigencore"
     )
-    zero_tol <- gram_svd_zero_tolerance(native$d, tol)
+    zero_tol <- gram_svd_zero_tolerance(native$d, tol,
+                                      norm_A = sqrt(sum(methods::slot(A, "x")^2)))
     if (any(native$d <= zero_tol)) {
       return(solve_svd_gram(
         list(A = op, target = target),
@@ -247,7 +248,7 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
       stage_seconds = native$stage_seconds,
       zero_singular_completion = FALSE,
       zero_singular_threshold = zero_tol,
-      certificate_reuses_gram_sides = TRUE,
+      certificate_reuses_gram_sides = FALSE,
       certified_in_original_coordinates = TRUE,
       fallback_attempted = FALSE,
       fallback_used = FALSE,
@@ -299,7 +300,8 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
     as.numeric(tol),
     PACKAGE = "eigencore"
   )
-  zero_tol <- gram_svd_zero_tolerance(native$d, tol)
+  zero_tol <- gram_svd_zero_tolerance(native$d, tol,
+                                      norm_A = sqrt(sum(methods::slot(A, "x")^2)))
   if (any(native$d <= zero_tol)) {
     return(solve_svd_gram(
       list(A = op, target = target),
@@ -356,7 +358,7 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
     stage_seconds = native$stage_seconds,
     zero_singular_completion = FALSE,
     zero_singular_threshold = zero_tol,
-    certificate_reuses_gram_sides = TRUE,
+    certificate_reuses_gram_sides = FALSE,
     certified_in_original_coordinates = TRUE,
     fallback_attempted = FALSE,
     fallback_used = FALSE,
@@ -365,6 +367,19 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
     gram_certificate_passed = isTRUE(cert$passed),
     gram_max_backward_error = cert$max_backward_error
   )
+  if (isTRUE(certify) && identical(vectors, "both") && !isTRUE(cert$passed)) {
+    # Same certification-gated fallback as the right-Gram branch: an
+    # uncertified left-Gram triplet set goes through solve_svd_gram(), whose
+    # native Golub-Kahan fallback runs when the Gram certificate still fails.
+    return(solve_svd_gram(
+      list(A = op, target = target),
+      rank = rank,
+      tol = tol,
+      vectors = vectors,
+      certify = certify,
+      plan = plan
+    ))
+  }
   iter <- list(
     d = native$d,
     u = u,

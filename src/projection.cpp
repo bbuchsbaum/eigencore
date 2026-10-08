@@ -144,6 +144,35 @@ static int selected_ritz_indices_projection(const double* values,
   return count;
 }
 
+// Thin SVD of an m x p block via LAPACK dgesvd, returning the s = min(m, p)
+// singular values, the full m x s left factor and the s x p right factor.
+static void ritz_dense_thin_svd(double* B, int m, int p, double* d_all,
+                                double* u_all, double* vt_all) {
+  const int s = (m < p) ? m : p;
+  char jobu = 'S';
+  char jobvt = 'S';
+  int info = 0;
+  int lwork = -1;
+  double work_query = 0.0;
+  F77_CALL(dgesvd)(&jobu, &jobvt, &m, &p, B, &m,
+                   d_all, u_all, &m, vt_all, &s,
+                   &work_query, &lwork, &info FCONE FCONE);
+  if (info != 0) {
+    error("LAPACK dgesvd workspace query failed with info=%d", info);
+  }
+  lwork = static_cast<int>(work_query);
+  if (lwork < 1) {
+    lwork = 1;
+  }
+  std::vector<double> work(static_cast<size_t>(lwork), 0.0);
+  F77_CALL(dgesvd)(&jobu, &jobvt, &m, &p, B, &m,
+                   d_all, u_all, &m, vt_all, &s,
+                   work.data(), &lwork, &info FCONE FCONE);
+  if (info != 0) {
+    error("LAPACK dgesvd failed with info=%d", info);
+  }
+}
+
 SEXP eigencore_block_golub_kahan_ritz_from_ptr(const double* V,
                                                int n,
                                                const double* AV,
@@ -159,34 +188,48 @@ SEXP eigencore_block_golub_kahan_ritz_from_ptr(const double* V,
     rank = s;
   }
 
+  // Ritz extraction from the projected block AV = U_k S W^T. For the usual
+  // tall case (m >= p) factor AV = Q R once, take the SVD of the small p x p
+  // R, and apply Q only to the selected left singular vectors (dormqr on
+  // count columns) instead of forming all p columns of an m x p U with a
+  // full dgesvd(jobu = 'S') of AV.
   std::vector<double> B(static_cast<size_t>(m) * p, 0.0);
-  for (int col = 0; col < p; ++col) {
-    std::memcpy(B.data() + static_cast<size_t>(col) * m,
-                AV + static_cast<size_t>(col) * m,
-                sizeof(double) * static_cast<size_t>(m));
-  }
+  std::memcpy(B.data(), AV, sizeof(double) * static_cast<size_t>(m) * p);
   std::vector<double> d_all(static_cast<size_t>(s), 0.0);
-  std::vector<double> u_all(static_cast<size_t>(m) * s, 0.0);
   std::vector<double> vt_all(static_cast<size_t>(s) * p, 0.0);
-
-  char jobu = 'S';
-  char jobvt = 'S';
-  int info = 0;
-  int lwork = -1;
-  double work_query = 0.0;
-  F77_CALL(dgesvd)(&jobu, &jobvt, &m, &p, B.data(), &m,
-                   d_all.data(), u_all.data(), &m, vt_all.data(), &s,
-                   &work_query, &lwork, &info FCONE FCONE);
-  if (info != 0) {
-    error("LAPACK dgesvd workspace query failed with info=%d", info);
-  }
-  lwork = static_cast<int>(work_query);
-  std::vector<double> work(static_cast<size_t>(lwork), 0.0);
-  F77_CALL(dgesvd)(&jobu, &jobvt, &m, &p, B.data(), &m,
-                   d_all.data(), u_all.data(), &m, vt_all.data(), &s,
-                   work.data(), &lwork, &info FCONE FCONE);
-  if (info != 0) {
-    error("LAPACK dgesvd failed with info=%d", info);
+  std::vector<double> u_small;   // tall: p x p left factor of R
+  std::vector<double> u_all;     // wide: m x s left factor of AV
+  std::vector<double> tau;
+  const bool tall = (m >= p);
+  if (tall) {
+    tau.assign(static_cast<size_t>(p), 0.0);
+    int info = 0;
+    int lwork = -1;
+    double work_query = 0.0;
+    F77_CALL(dgeqrf)(&m, &p, B.data(), &m, tau.data(), &work_query, &lwork, &info);
+    if (info != 0) {
+      error("LAPACK dgeqrf workspace query failed with info=%d", info);
+    }
+    lwork = static_cast<int>(work_query);
+    if (lwork < 1) {
+      lwork = 1;
+    }
+    std::vector<double> work(static_cast<size_t>(lwork), 0.0);
+    F77_CALL(dgeqrf)(&m, &p, B.data(), &m, tau.data(), work.data(), &lwork, &info);
+    if (info != 0) {
+      error("LAPACK dgeqrf failed with info=%d", info);
+    }
+    std::vector<double> R(static_cast<size_t>(p) * p, 0.0);
+    for (int col = 0; col < p; ++col) {
+      for (int row = 0; row <= col; ++row) {
+        R[row + static_cast<size_t>(col) * p] = B[row + static_cast<size_t>(col) * m];
+      }
+    }
+    u_small.assign(static_cast<size_t>(p) * p, 0.0);
+    ritz_dense_thin_svd(R.data(), p, p, d_all.data(), u_small.data(), vt_all.data());
+  } else {
+    u_all.assign(static_cast<size_t>(m) * s, 0.0);
+    ritz_dense_thin_svd(B.data(), m, p, d_all.data(), u_all.data(), vt_all.data());
   }
 
   std::vector<int> selected(static_cast<size_t>(rank));
@@ -200,16 +243,51 @@ SEXP eigencore_block_golub_kahan_ritz_from_ptr(const double* V,
   SEXP avectors_ = PROTECT(allocMatrix(REALSXP, m, count));
   SEXP coeff_ = PROTECT(allocMatrix(REALSXP, p, count));
 
+  if (tall) {
+    std::memset(REAL(u_), 0, sizeof(double) * static_cast<size_t>(m) * count);
+  }
   for (int col = 0; col < count; ++col) {
     const int idx = selected[static_cast<size_t>(col)];
     REAL(d_)[col] = d_all[static_cast<size_t>(idx)];
-    for (int row = 0; row < m; ++row) {
-      REAL(u_)[row + static_cast<size_t>(col) * m] =
-        u_all[row + static_cast<size_t>(idx) * m];
+    if (tall) {
+      for (int row = 0; row < p; ++row) {
+        REAL(u_)[row + static_cast<size_t>(col) * m] =
+          u_small[row + static_cast<size_t>(idx) * p];
+      }
+    } else {
+      for (int row = 0; row < m; ++row) {
+        REAL(u_)[row + static_cast<size_t>(col) * m] =
+          u_all[row + static_cast<size_t>(idx) * m];
+      }
     }
     for (int row = 0; row < p; ++row) {
       REAL(coeff_)[row + static_cast<size_t>(col) * p] =
         vt_all[idx + static_cast<size_t>(row) * s];
+    }
+  }
+
+  if (tall && count > 0) {
+    // u_ holds [U_R(:, selected); 0]; apply Q from the left.
+    char side = 'L';
+    char trans = 'N';
+    int info = 0;
+    int lwork = -1;
+    double work_query = 0.0;
+    int ncols = count;
+    F77_CALL(dormqr)(&side, &trans, &m, &ncols, &p, B.data(), &m, tau.data(),
+                     REAL(u_), &m, &work_query, &lwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK dormqr workspace query failed with info=%d", info);
+    }
+    lwork = static_cast<int>(work_query);
+    if (lwork < 1) {
+      lwork = 1;
+    }
+    std::vector<double> work(static_cast<size_t>(lwork), 0.0);
+    F77_CALL(dormqr)(&side, &trans, &m, &ncols, &p, B.data(), &m, tau.data(),
+                     REAL(u_), &m, work.data(), &lwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK dormqr failed with info=%d", info);
     }
   }
 

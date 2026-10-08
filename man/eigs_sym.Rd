@@ -4,19 +4,41 @@
 \alias{eigs_sym}
 \title{RSpectra-compatible symmetric eigen shim.}
 \usage{
-eigs_sym(A, k, which = "LA", opts = list(), ...)
+eigs_sym(
+  A,
+  k,
+  which = "LM",
+  sigma = NULL,
+  opts = list(),
+  lower = TRUE,
+  ...,
+  n = NULL,
+  args = NULL
+)
 }
 \arguments{
-\item{A}{Matrix or eigencore operator.}
+\item{A}{Matrix, eigencore operator, or a function \code{f(x, args)} returning
+\code{A \%*\% x} (then \code{n} is required).}
 
 \item{k}{Number of eigenpairs to compute.}
 
-\item{which}{RSpectra-style target selector.}
+\item{which}{RSpectra-style target selector (\code{"LM"}, \code{"SM"}, \code{"LA"},
+\code{"SA"}, \code{"BE"}).}
 
-\item{opts}{Compatibility options list; currently accepted for API
-compatibility and not interpreted directly.}
+\item{sigma}{Optional shift; eigenvalues nearest \code{sigma} are returned.}
 
-\item{...}{Additional arguments passed to \code{\link[=solve.eigencore_eigen_problem]{solve.eigencore_eigen_problem()}}.}
+\item{opts}{RSpectra options list. \code{tol}, \code{ncv} (Krylov subspace size),
+\code{retvec} and \code{initvec} are honoured; \code{maxitr} is accepted but eigencore
+controls restarts itself, and other keys raise a warning.}
+
+\item{lower}{Whether to read the lower (\code{TRUE}) or upper (\code{FALSE}) triangle
+of a matrix input.}
+
+\item{...}{Additional arguments passed to \code{\link[=eig_partial]{eig_partial()}}.}
+
+\item{n}{Dimension of the operator when \code{A} is a function.}
+
+\item{args}{Extra argument passed to a function \code{A}.}
 }
 \value{
 A list compatible with \code{RSpectra::eigs_sym()}, including \code{values},
@@ -24,7 +46,9 @@ A list compatible with \code{RSpectra::eigs_sym()}, including \code{values},
 and eigencore diagnostics.
 }
 \description{
-RSpectra-compatible symmetric eigen shim.
+Mirrors \code{RSpectra::eigs_sym()}: only the \code{lower} (or upper) triangle of a
+dense or \code{Matrix} input is read, values are returned in decreasing order,
+and \code{sigma} requests the eigenvalues nearest the shift.
 }
 \examples{
 A <- diag(c(5, 4, 3, 2, 1))

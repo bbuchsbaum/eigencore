@@ -1,11 +1,22 @@
 #' RSpectra-compatible eigen shim.
 #'
-#' @param A Matrix or eigencore operator.
+#' Mirrors `RSpectra::eigs()`. `which` uses ARPACK codes (`"LM"`, `"SM"`,
+#' `"LR"`, `"SR"`, `"LI"`, `"SI"`). Unlike ARPACK, `"LI"`/`"SI"` rank by the
+#' signed imaginary part (see [largest_imaginary()]), not by its magnitude. A
+#' non-`NULL` `sigma` with `which = "LM"` requests the eigenvalues nearest
+#' `sigma`.
+#'
+#' @param A Matrix, eigencore operator, or a function `f(x, args)` returning
+#'   `A %*% x` (then `n` is required).
 #' @param k Number of eigenpairs to compute.
 #' @param which RSpectra-style target selector.
-#' @param opts Compatibility options list; currently accepted for API
-#'   compatibility and not interpreted directly.
+#' @param sigma Optional shift; eigenvalues nearest `sigma` are returned.
+#' @param opts RSpectra options list. `tol`, `ncv` (Krylov subspace size) and
+#'   `retvec` are honoured; `maxitr` is accepted but eigencore controls
+#'   restarts itself, and other keys raise a warning.
 #' @param ... Additional arguments passed to [eig_partial()].
+#' @param n Dimension of the operator when `A` is a function.
+#' @param args Extra argument passed to a function `A`.
 #' @return A list compatible with `RSpectra::eigs()`, including `values`,
 #'   `vectors`, convergence counts, operation counts, certificate diagnostics,
 #'   and left/right vector fields when available.
@@ -14,14 +25,23 @@
 #' A[1, 2] <- 0.5
 #' res <- eigs(A, k = 2, which = "LM")
 #' res$values
-eigs <- function(A, k, which = "LM", opts = list(), ...) {
-  target <- target_from_which(which, k = k)
-  fit <- eig_partial(A, k = k, target = target, ...)
+eigs <- function(A, k, which = "LM", sigma = NULL, opts = list(), ...,
+                 n = NULL, args = NULL) {
+  A <- compat_function_operator(A, n = n, args = args, structure = general())
+  controls <- compat_eigen_opts(opts, allow_initvec = FALSE)
+  retvec <- !isFALSE(opts$retvec)
+  target <- compat_eigen_target(which, k = k, sigma = sigma, symmetric = FALSE)
+  fit <- do.call(eig_partial, c(
+    list(A, k = k, target = target),
+    controls,
+    list(...)
+  ))
+  compat_warn_nconv(fit$nconv, k)
   list(
     values = fit$values,
-    vectors = fit$vectors,
-    left_vectors = left_vectors(fit),
-    right_vectors = right_vectors(fit),
+    vectors = if (retvec) fit$vectors,
+    left_vectors = if (retvec) left_vectors(fit),
+    right_vectors = if (retvec) right_vectors(fit),
     nconv = fit$nconv,
     niter = fit$iterations,
     nops = fit$matvecs,
@@ -34,12 +54,24 @@ eigs <- function(A, k, which = "LM", opts = list(), ...) {
 
 #' RSpectra-compatible symmetric eigen shim.
 #'
-#' @param A Matrix or eigencore operator.
+#' Mirrors `RSpectra::eigs_sym()`: only the `lower` (or upper) triangle of a
+#' dense or `Matrix` input is read, values are returned in decreasing order,
+#' and `sigma` requests the eigenvalues nearest the shift.
+#'
+#' @param A Matrix, eigencore operator, or a function `f(x, args)` returning
+#'   `A %*% x` (then `n` is required).
 #' @param k Number of eigenpairs to compute.
-#' @param which RSpectra-style target selector.
-#' @param opts Compatibility options list; currently accepted for API
-#'   compatibility and not interpreted directly.
-#' @param ... Additional arguments passed to [solve.eigencore_eigen_problem()].
+#' @param which RSpectra-style target selector (`"LM"`, `"SM"`, `"LA"`,
+#'   `"SA"`, `"BE"`).
+#' @param sigma Optional shift; eigenvalues nearest `sigma` are returned.
+#' @param opts RSpectra options list. `tol`, `ncv` (Krylov subspace size),
+#'   `retvec` and `initvec` are honoured; `maxitr` is accepted but eigencore
+#'   controls restarts itself, and other keys raise a warning.
+#' @param lower Whether to read the lower (`TRUE`) or upper (`FALSE`) triangle
+#'   of a matrix input.
+#' @param ... Additional arguments passed to [eig_partial()].
+#' @param n Dimension of the operator when `A` is a function.
+#' @param args Extra argument passed to a function `A`.
 #' @return A list compatible with `RSpectra::eigs_sym()`, including `values`,
 #'   `vectors`, convergence counts, operation counts, certificate diagnostics,
 #'   and eigencore diagnostics.
@@ -47,13 +79,24 @@ eigs <- function(A, k, which = "LM", opts = list(), ...) {
 #' A <- diag(c(5, 4, 3, 2, 1))
 #' res <- eigs_sym(A, k = 2, which = "LA")
 #' res$values
-eigs_sym <- function(A, k, which = "LA", opts = list(), ...) {
-  target <- target_from_which(which, k = k)
+eigs_sym <- function(A, k, which = "LM", sigma = NULL, opts = list(),
+                     lower = TRUE, ..., n = NULL, args = NULL) {
+  A <- compat_function_operator(A, n = n, args = args, structure = hermitian())
+  A <- compat_symmetric_from_triangle(A, lower = lower)
+  controls <- compat_eigen_opts(opts, allow_initvec = is.null(sigma))
+  retvec <- !isFALSE(opts$retvec)
+  target <- compat_eigen_target(which, k = k, sigma = sigma, symmetric = TRUE)
   P <- eigen_problem(A, structure = hermitian(), target = target)
-  fit <- solve(P, k = k, ...)
+  fit <- do.call(solve, c(list(P, k = k), controls, list(...)))
+  compat_warn_nconv(fit$nconv, k)
+  values <- fit$values
+  vectors <- fit$vectors
+  ord <- order(values, decreasing = TRUE)
+  values <- values[ord]
+  vectors <- if (retvec && !is.null(vectors)) vectors[, ord, drop = FALSE]
   list(
-    values = fit$values,
-    vectors = fit$vectors,
+    values = values,
+    vectors = vectors,
     nconv = fit$nconv,
     niter = fit$iterations,
     nops = fit$matvecs,
@@ -64,13 +107,20 @@ eigs_sym <- function(A, k, which = "LA", opts = list(), ...) {
 
 #' RSpectra-compatible SVD shim.
 #'
-#' @param A Matrix or eigencore operator.
+#' @param A Matrix, eigencore operator, or a function `f(x, args)` returning
+#'   `A %*% x` (then `Atrans` and `dim` are required).
 #' @param k Number of singular values to compute.
-#' @param nu Number of left singular vectors requested.
-#' @param nv Number of right singular vectors requested.
-#' @param opts Compatibility options list; currently accepted for API
-#'   compatibility and not interpreted directly.
+#' @param nu Number of left singular vectors returned.
+#' @param nv Number of right singular vectors returned.
+#' @param opts RSpectra options list. `tol`, `center` and `scale` are
+#'   honoured (`center`/`scale` are applied as operators, without densifying);
+#'   `ncv` and `maxitr` are accepted but eigencore controls the subspace
+#'   itself, and other keys raise a warning.
 #' @param ... Additional arguments passed to [svd_partial()].
+#' @param Atrans Function `f(x, args)` returning `t(A) %*% x` when `A` is a
+#'   function.
+#' @param dim Dimensions of `A` when `A` is a function.
+#' @param args Extra argument passed to function inputs.
 #' @return A list compatible with `RSpectra::svds()`, including `d`, optional
 #'   `u` and `v`, convergence counts, operation counts, certificate
 #'   diagnostics, and eigencore diagnostics.
@@ -79,7 +129,20 @@ eigs_sym <- function(A, k, which = "LA", opts = list(), ...) {
 #' X <- matrix(rnorm(60), 10, 6)
 #' res <- svds(X, k = 2)
 #' res$d
-svds <- function(A, k, nu = k, nv = k, opts = list(), ...) {
+svds <- function(A, k, nu = k, nv = k, opts = list(), ..., Atrans = NULL,
+                 dim = NULL, args = NULL) {
+  nu <- compat_vector_count(nu, k, "nu")
+  nv <- compat_vector_count(nv, k, "nv")
+  if (is.function(A)) {
+    A <- compat_function_svd_operator(A, Atrans = Atrans, dim = dim, args = args)
+  }
+  opts <- compat_check_opts(
+    opts,
+    used = c("tol", "center", "scale"),
+    ignored = c("ncv", "maxitr")
+  )
+  A <- compat_center_scale(A, center = opts$center %||% FALSE,
+                           scale = opts$scale %||% FALSE)
   vector_mode <- if (nu > 0 && nv > 0) {
     "both"
   } else if (nu > 0) {
@@ -89,11 +152,17 @@ svds <- function(A, k, nu = k, nv = k, opts = list(), ...) {
   } else {
     "none"
   }
-  fit <- svd_partial(A, rank = k, vectors = vector_mode, ...)
+  controls <- if (is.null(opts$tol)) list() else list(tol = opts$tol)
+  fit <- do.call(svd_partial, c(
+    list(A, rank = k, vectors = vector_mode),
+    controls,
+    list(...)
+  ))
+  compat_warn_nconv(fit$nconv, k)
   list(
     d = fit$d,
-    u = fit$u,
-    v = fit$v,
+    u = if (nu > 0 && !is.null(fit$u)) fit$u[, seq_len(min(nu, ncol(fit$u))), drop = FALSE],
+    v = if (nv > 0 && !is.null(fit$v)) fit$v[, seq_len(min(nv, ncol(fit$v))), drop = FALSE],
     nconv = fit$nconv,
     niter = fit$iterations,
     nops = fit$matvecs,
@@ -113,8 +182,12 @@ target_from_which <- function(which, k = NULL) {
     k_high <- k - k_low
     both_ends(k_low, k_high)
   }
+  if (!is.character(which) || length(which) != 1L || is.na(which)) {
+    stop("which must be a single ARPACK selector string.", call. = FALSE)
+  }
+  code <- toupper(which)
   switch(
-    toupper(which),
+    code,
     LM = largest_magnitude(),
     SM = smallest_magnitude(),
     LA = largest(),
@@ -124,6 +197,211 @@ target_from_which <- function(which, k = NULL) {
     LI = largest_imaginary(),
     SI = smallest_imaginary(),
     BE = both_ends_from_k(k),
-    largest()
+    stop("Unknown ARPACK selector which = '", which, "'.", call. = FALSE)
   )
+}
+
+#' @keywords internal
+compat_eigen_target <- function(which, k, sigma, symmetric) {
+  if (is.null(sigma)) {
+    if (!symmetric && toupper(which) %in% c("LA", "SA", "BE")) {
+      stop("which = '", which, "' is only valid for eigs_sym().", call. = FALSE)
+    }
+    if (symmetric && toupper(which) %in% c("LR", "SR", "LI", "SI")) {
+      stop("which = '", which, "' is only valid for eigs().", call. = FALSE)
+    }
+    return(target_from_which(which, k = k))
+  }
+  if (!is.numeric(sigma) && !is.complex(sigma) || length(sigma) != 1L ||
+      is.na(sigma)) {
+    stop("sigma must be a single finite number.", call. = FALSE)
+  }
+  if (!identical(toupper(which), "LM")) {
+    stop(
+      "With sigma, only which = 'LM' (eigenvalues nearest sigma) is supported.",
+      call. = FALSE
+    )
+  }
+  nearest(sigma)
+}
+
+#' @keywords internal
+compat_check_opts <- function(opts, used, ignored) {
+  if (is.null(opts)) {
+    return(list())
+  }
+  if (!is.list(opts)) {
+    stop("opts must be a list.", call. = FALSE)
+  }
+  keys <- names(opts) %||% rep("", length(opts))
+  unknown <- setdiff(keys, c(used, ignored))
+  if (length(unknown)) {
+    warning("Unknown opts entries ignored: ",
+            paste(unknown, collapse = ", "), ".", call. = FALSE)
+  }
+  skipped <- intersect(keys, ignored)
+  if (length(skipped)) {
+    warning("opts entries ", paste(skipped, collapse = ", "),
+            " are accepted for RSpectra compatibility but not used; ",
+            "eigencore sizes and restarts its subspace adaptively.",
+            call. = FALSE)
+  }
+  opts[intersect(keys, used)]
+}
+
+#' @keywords internal
+compat_eigen_opts <- function(opts, allow_initvec) {
+  used <- c("tol", "ncv", "retvec", if (allow_initvec) "initvec")
+  ignored <- c("maxitr", "mode", if (!allow_initvec) "initvec")
+  opts <- compat_check_opts(opts, used = used, ignored = ignored)
+  out <- list()
+  if (!is.null(opts$tol)) out$tol <- opts$tol
+  if (!is.null(opts$ncv)) out$maxit <- as.integer(opts$ncv)
+  # retvec = FALSE still solves with vectors so the result stays certified
+  # (as ARPACK does internally); the shims drop them afterwards.
+  if (!is.null(opts$initvec)) {
+    out$initial_subspace <- matrix(as.numeric(opts$initvec), ncol = 1L)
+    out$method <- lanczos()
+  }
+  out
+}
+
+#' @keywords internal
+compat_warn_nconv <- function(nconv, k) {
+  if (!is.null(nconv) && length(nconv) == 1L && !is.na(nconv) && nconv < k) {
+    warning("only ", nconv, " eigenvalue(s) converged, less than k = ", k,
+            call. = FALSE)
+  }
+  invisible(NULL)
+}
+
+#' @keywords internal
+compat_vector_count <- function(x, k, name) {
+  x <- as.integer(x)
+  if (length(x) != 1L || is.na(x) || x < 0L || x > k) {
+    stop(name, " must be an integer between 0 and k.", call. = FALSE)
+  }
+  x
+}
+
+#' @keywords internal
+compat_symmetric_from_triangle <- function(A, lower) {
+  if (is.matrix(A)) {
+    if (nrow(A) != ncol(A)) {
+      stop("A must be square.", call. = FALSE)
+    }
+    if (is.double(A) &&
+        isTRUE(.Call("eigencore_dense_is_symmetric", A, 0, PACKAGE = "eigencore"))) {
+      return(A)
+    }
+    mirror <- Conj(t(A))
+    if (isTRUE(lower)) {
+      A[upper.tri(A)] <- mirror[upper.tri(A)]
+    } else {
+      A[lower.tri(A)] <- mirror[lower.tri(A)]
+    }
+    return(A)
+  }
+  if (inherits(A, "Matrix") && !inherits(A, "symmetricMatrix") &&
+      !inherits(A, "diagonalMatrix")) {
+    return(Matrix::forceSymmetric(A, uplo = if (isTRUE(lower)) "L" else "U"))
+  }
+  A
+}
+
+#' @keywords internal
+compat_function_operator <- function(A, n, args, structure) {
+  if (!is.function(A)) {
+    return(A)
+  }
+  if (is.null(n)) {
+    stop("n must be supplied when A is a function.", call. = FALSE)
+  }
+  n <- as.integer(n)
+  f <- A
+  apply_fun <- compat_columnwise(f, n, args)
+  linear_operator(
+    dim = c(n, n),
+    apply = apply_fun,
+    apply_adjoint = if (identical(structure$kind, "hermitian")) apply_fun else NULL,
+    structure = structure,
+    name = "RSpectra function operator"
+  )
+}
+
+#' @keywords internal
+compat_function_svd_operator <- function(A, Atrans, dim, args) {
+  if (!is.function(Atrans) || is.null(dim) || length(dim) != 2L) {
+    stop("Function A requires Atrans and a length-2 dim.", call. = FALSE)
+  }
+  dim <- as.integer(dim)
+  linear_operator(
+    dim = dim,
+    apply = compat_columnwise(A, dim[1L], args),
+    apply_adjoint = compat_columnwise(Atrans, dim[2L], args),
+    name = "RSpectra function operator"
+  )
+}
+
+#' @keywords internal
+compat_columnwise <- function(f, out_rows, args) {
+  force(f)
+  force(out_rows)
+  force(args)
+  function(X, alpha = 1, beta = 0, Y = NULL) {
+    X <- as.matrix(X)
+    Z <- matrix(0, out_rows, ncol(X))
+    for (j in seq_len(ncol(X))) {
+      Z[, j] <- as.numeric(f(X[, j], args))
+    }
+    Z <- alpha * Z
+    if (!is.null(Y) && beta != 0) Z + beta * Y else Z
+  }
+}
+
+#' @keywords internal
+compat_center_scale <- function(A, center, scale) {
+  if (isFALSE(center) && isFALSE(scale)) {
+    return(A)
+  }
+  if (!is.matrix(A) && !inherits(A, "Matrix")) {
+    stop("opts$center and opts$scale require a matrix input.", call. = FALSE)
+  }
+  m <- nrow(A)
+  col_sums <- if (inherits(A, "Matrix")) Matrix::colSums(A) else colSums(A)
+  col_means <- if (isTRUE(center)) {
+    col_sums / m
+  } else if (is.numeric(center)) {
+    if (length(center) != ncol(A)) {
+      stop("opts$center must have length ncol(A).", call. = FALSE)
+    }
+    as.numeric(center)
+  } else {
+    NULL
+  }
+  scale_by <- if (isTRUE(scale)) {
+    col_sq <- if (inherits(A, "Matrix")) Matrix::colSums(A^2) else colSums(A^2)
+    cm <- col_means %||% 0
+    sqrt(pmax(col_sq - 2 * cm * col_sums + m * cm^2, 0) / (m - 1))
+  } else if (is.numeric(scale)) {
+    if (length(scale) != ncol(A)) {
+      stop("opts$scale must have length ncol(A).", call. = FALSE)
+    }
+    as.numeric(scale)
+  } else {
+    NULL
+  }
+  op <- if (is.null(col_means)) {
+    A
+  } else {
+    center(A, rows = FALSE, columns = TRUE, col_means = col_means)
+  }
+  if (!is.null(scale_by)) {
+    if (any(!is.finite(scale_by)) || any(scale_by <= 0)) {
+      stop("opts$scale produced zero or non-finite column scales.",
+           call. = FALSE)
+    }
+    op <- scale_cols(op, 1 / scale_by)
+  }
+  op
 }

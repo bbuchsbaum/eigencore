@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <cfloat>
 #include <cstdlib>
@@ -49,6 +50,41 @@ static int selected_ritz_indices(const double* values,
     }
   }
   return count;
+}
+
+// Convergence threshold for a Ritz value (C16). Relative to |theta|, with a
+// floor proportional to an operator-norm estimate (largest |Ritz value| /
+// largest projected entry) instead of the former absolute floor of 1, so a
+// matrix scaled by 1e-12 or 1e12 converges exactly like the matrix at scale 1.
+static const double kRitzThresholdFloor = 1.4901161193847656e-08;  // sqrt(eps)
+
+static inline double ritz_convergence_threshold(double tol, double theta,
+                                                double norm_est) {
+  const double floor_value = kRitzThresholdFloor * norm_est;
+  const double magnitude = fabs(theta);
+  return tol * ((magnitude > floor_value) ? magnitude : floor_value);
+}
+
+// Breakdown threshold for a Lanczos / Golub-Kahan coefficient (C16): relative
+// to the running operator-norm estimate, not an absolute 100 * eps.
+static inline bool krylov_coefficient_breakdown(double value, double norm_est) {
+  return !(value > 100.0 * DBL_EPSILON * norm_est);
+}
+
+// Golub-Kahan coefficient norms keep the extended-precision accumulation for
+// now (P4 deferred for this kernel only): the retained one-sided IRLBA/LBD
+// driver (retained_svd.cpp) built on native_golub_kahan_run is sensitive to
+// last-bit changes in alpha/beta -- with plain double sums its native attempt
+// on the seed-702 regression problem flips to the certified fallback, and the
+// baseline already falls back on ~40% of seeds. Switch this to ec_norm2 once
+// that driver is made robust (tracked with the SVD workstream). These norms
+// are O(n) per step; the hot reorthogonalisation already runs through BLAS.
+static double gk_norm2(const double* x, int n) {
+  long double sum = 0.0L;
+  for (int i = 0; i < n; ++i) {
+    sum += static_cast<long double>(x[i]) * x[i];
+  }
+  return sqrt(static_cast<double>(sum));
 }
 
 // Reusable scratch for the Lanczos convergence estimate. The estimate runs
@@ -158,7 +194,8 @@ static int lanczos_convergence_estimate(const double* alpha,
 
   if (iter == 1) {
     const double residual = fabs(beta[0]);
-    const double threshold = tol * ((fabs(alpha[0]) > 1.0) ? fabs(alpha[0]) : 1.0);
+    const double norm_est = fmax(fabs(alpha[0]), fabs(beta[0]));
+    const double threshold = ritz_convergence_threshold(tol, alpha[0], norm_est);
     if (residual <= threshold) {
       ++conv;
     }
@@ -182,6 +219,12 @@ static int lanczos_convergence_estimate(const double* alpha,
     return info;
   }
 
+  // ||T|| (dsterf returns the eigenvalues in ascending order) and the trailing
+  // coupling bound the operator norm from below.
+  double norm_est = fmax(fabs(s->w[0]), fabs(s->w[iter - 1]));
+  if (fabs(beta[iter - 1]) > norm_est) {
+    norm_est = fabs(beta[iter - 1]);
+  }
   const int count = selected_ritz_indices(s->w, iter, k, target_kind, s->selected);
   // Sort the selected indices so contiguous runs can be recovered with a
   // single dstevr range each; the selection order itself is irrelevant to
@@ -235,7 +278,7 @@ static int lanczos_convergence_estimate(const double* alpha,
       const double residual =
         fabs(beta[iter - 1] * s->z[(iter - 1) + static_cast<int64_t>(z_col) * iter]);
       const double value = s->w[idx];
-      const double threshold = tol * ((fabs(value) > 1.0) ? fabs(value) : 1.0);
+      const double threshold = ritz_convergence_threshold(tol, value, norm_est);
       if (residual <= threshold) {
         ++conv;
       }
@@ -357,13 +400,18 @@ static int golub_kahan_projected_convergence_estimate(const double* alpha,
   }
 
   const int count = selected_ritz_indices(s->d, iter, k, target_kind, s->selected);
+  double norm_est = fabs(beta[iter - 1]);
+  for (int i = 0; i < iter; ++i) {
+    if (fabs(s->d[i]) > norm_est) {
+      norm_est = fabs(s->d[i]);
+    }
+  }
   double max_selected = 0.0;
   int conv = 0;
   for (int i = 0; i < count; ++i) {
     const int idx = s->selected[i];
     const double residual = fabs(beta[iter - 1] * s->u_last[idx]);
-    const double scale = (fabs(s->d[idx]) > 1.0) ? fabs(s->d[idx]) : 1.0;
-    const double threshold = tol * scale;
+    const double threshold = ritz_convergence_threshold(tol, s->d[idx], norm_est);
     if (residual <= threshold) {
       ++conv;
     }
@@ -407,11 +455,14 @@ static int native_lanczos_run(void* impl,
     return -2;
   }
 
-  long double start_norm2 = 0.0L;
-  for (int row = 0; row < n; ++row) {
-    start_norm2 += static_cast<long double>(start[row]) * start[row];
+  double q_norm = ec_norm2(start, n);
+  if (!R_FINITE(q_norm)) {
+    std::free(q);
+    std::free(q_prev);
+    std::free(z);
+    std::free(coeff);
+    return EIGENCORE_STATUS_NONFINITE;
   }
-  double q_norm = sqrt(static_cast<double>(start_norm2));
   if (q_norm == 0.0) {
     q[0] = 1.0;
   } else {
@@ -433,9 +484,12 @@ static int native_lanczos_run(void* impl,
     std::free(coeff);
     return -2;
   }
+  // Running operator-norm estimate max(|alpha_i|, beta_i) for the relative
+  // breakdown test (C16).
+  double norm_est = 0.0;
   for (int j = 0; j < maxit; ++j) {
     *iterations = j + 1;
-    std::memcpy(Q + j * n, q, sizeof(double) * static_cast<size_t>(n));
+    std::memcpy(Q + static_cast<R_xlen_t>(j) * n, q, sizeof(double) * static_cast<size_t>(n));
     std::memset(z, 0, sizeof(double) * static_cast<size_t>(n));
 
     const int status = apply(impl, EIGENCORE_TRANSPOSE_NONE, 1, q, n,
@@ -457,11 +511,15 @@ static int native_lanczos_run(void* impl,
       }
     }
 
-    long double aj = 0.0L;
-    for (int row = 0; row < n; ++row) {
-      aj += static_cast<long double>(q[row]) * z[row];
+    alpha[j] = ec_dot(q, z, n);
+    if (!R_FINITE(alpha[j])) {
+      convergence_scratch.release();
+      std::free(q);
+      std::free(q_prev);
+      std::free(z);
+      std::free(coeff);
+      return EIGENCORE_STATUS_NONFINITE;
     }
-    alpha[j] = static_cast<double>(aj);
     for (int row = 0; row < n; ++row) {
       z[row] -= alpha[j] * q[row];
     }
@@ -480,11 +538,7 @@ static int native_lanczos_run(void* impl,
       const double minus_one = -1.0;
       const double dgks_eta = 0.7071067811865475;
       const int active = j + 1;
-      long double pre2 = 0.0L;
-      for (int row = 0; row < n; ++row) {
-        pre2 += static_cast<long double>(z[row]) * z[row];
-      }
-      const double pre_norm = sqrt(static_cast<double>(pre2));
+      const double pre_norm = ec_norm2(z, n);
       for (int pass = 0; pass < 2; ++pass) {
         F77_CALL(dgemv)(&trans_T, &n, &active, &one,
                         Q, &n, z, &one_col,
@@ -493,11 +547,7 @@ static int native_lanczos_run(void* impl,
                         Q, &n, coeff, &one_col,
                         &one, z, &one_col FCONE);
         if (pass == 0) {
-          long double post2 = 0.0L;
-          for (int row = 0; row < n; ++row) {
-            post2 += static_cast<long double>(z[row]) * z[row];
-          }
-          const double post_norm = sqrt(static_cast<double>(post2));
+          const double post_norm = ec_norm2(z, n);
           if (post_norm >= dgks_eta * pre_norm) {
             break;
           }
@@ -505,11 +555,15 @@ static int native_lanczos_run(void* impl,
       }
     }
 
-    long double beta_norm2 = 0.0L;
-    for (int row = 0; row < n; ++row) {
-      beta_norm2 += static_cast<long double>(z[row]) * z[row];
+    beta[j] = ec_norm2(z, n);
+    if (!R_FINITE(beta[j])) {
+      convergence_scratch.release();
+      std::free(q);
+      std::free(q_prev);
+      std::free(z);
+      std::free(coeff);
+      return EIGENCORE_STATUS_NONFINITE;
     }
-    beta[j] = sqrt(static_cast<double>(beta_norm2));
     history_nconv[j] = 0;
     history_max_residual[j] = R_PosInf;
     if (j + 1 >= k) {
@@ -533,7 +587,13 @@ static int native_lanczos_run(void* impl,
         break;
       }
     }
-    if (j + 1 == maxit || beta[j] <= 100.0 * DBL_EPSILON) {
+    if (fabs(alpha[j]) > norm_est) {
+      norm_est = fabs(alpha[j]);
+    }
+    if (beta[j] > norm_est) {
+      norm_est = beta[j];
+    }
+    if (j + 1 == maxit || krylov_coefficient_breakdown(beta[j], norm_est)) {
       break;
     }
 
@@ -608,11 +668,15 @@ int native_golub_kahan_run(void* impl,
     return -2;
   }
 
-  long double start_norm2 = 0.0L;
-  for (int row = 0; row < n; ++row) {
-    start_norm2 += static_cast<long double>(start[row]) * start[row];
+  double v_norm = gk_norm2(start, n);
+  if (!R_FINITE(v_norm)) {
+    std::free(v);
+    std::free(z);
+    std::free(u);
+    std::free(u_prev);
+    std::free(coeff);
+    return EIGENCORE_STATUS_NONFINITE;
   }
-  double v_norm = sqrt(static_cast<double>(start_norm2));
   if (v_norm == 0.0) {
     v[0] = 1.0;
   } else {
@@ -647,10 +711,13 @@ int native_golub_kahan_run(void* impl,
   }
   const int check_interval = (2 * k > 10) ? 2 * k : 10;
   const int min_projected_savings = (k > 5) ? k : 5;
+  // Running operator-norm estimate max(alpha_i, beta_i, |A v_j|) for the
+  // relative breakdown tests (C16).
+  double norm_est = 0.0;
 
   for (int j = 0; j < maxit; ++j) {
     *iterations = j + 1;
-    std::memcpy(V + j * n, v, sizeof(double) * static_cast<size_t>(n));
+    std::memcpy(V + static_cast<R_xlen_t>(j) * n, v, sizeof(double) * static_cast<size_t>(n));
     std::memset(u, 0, sizeof(double) * static_cast<size_t>(m));
 
     auto stage_timer = native_timer_now();
@@ -668,6 +735,12 @@ int native_golub_kahan_run(void* impl,
     }
     ++(*matvecs);
     stage_timer = native_timer_now();
+    {
+      const double av_norm = gk_norm2(u, m);
+      if (av_norm > norm_est) {
+        norm_est = av_norm;
+      }
+    }
     if (j > 0) {
       for (int row = 0; row < m; ++row) {
         u[row] -= beta_prev * u_prev[row];
@@ -677,11 +750,7 @@ int native_golub_kahan_run(void* impl,
 
     stage_timer = native_timer_now();
     if (reorthogonalize_u && j > 0) {
-      double norm_before2 = 0.0;
-      for (int row = 0; row < m; ++row) {
-        norm_before2 += u[row] * u[row];
-      }
-      const double norm_before = sqrt(norm_before2);
+      const double norm_before = gk_norm2(u, m);
       const char trans_T = 'T';
       const char trans_N = 'N';
       const int one_col = 1;
@@ -699,7 +768,7 @@ int native_golub_kahan_run(void* impl,
                         &one, u, &one_col FCONE);
         } else {
           for (int prev = 0; prev < j; ++prev) {
-            const double* uprev_basis = U + prev * m;
+            const double* uprev_basis = U + static_cast<R_xlen_t>(prev) * m;
             double dot = 0.0;
             for (int row = 0; row < m; ++row) {
               dot += uprev_basis[row] * u[row];
@@ -712,11 +781,7 @@ int native_golub_kahan_run(void* impl,
         }
         ++(*reorthogonalization_passes);
         if (pass == 0 && norm_before > 0.0) {
-          double norm_after2 = 0.0;
-          for (int row = 0; row < m; ++row) {
-            norm_after2 += u[row] * u[row];
-          }
-          const double norm_after = sqrt(norm_after2);
+          const double norm_after = gk_norm2(u, m);
           if (norm_after < 0.717 * norm_before) {
             passes = 2;
           }
@@ -726,18 +791,31 @@ int native_golub_kahan_run(void* impl,
     *stage_reorthogonalization_seconds += native_timer_elapsed(stage_timer);
 
     stage_timer = native_timer_now();
-    long double alpha_norm2 = 0.0L;
-    for (int row = 0; row < m; ++row) {
-      alpha_norm2 += static_cast<long double>(u[row]) * u[row];
+    alpha[j] = gk_norm2(u, m);
+    if (!R_FINITE(alpha[j])) {
+      projected_scratch.release();
+      std::free(v);
+      std::free(z);
+      std::free(u);
+      std::free(u_prev);
+      std::free(coeff);
+      return EIGENCORE_STATUS_NONFINITE;
     }
-    alpha[j] = sqrt(static_cast<double>(alpha_norm2));
-    if (alpha[j] <= 100.0 * DBL_EPSILON) {
+    if (alpha[j] > norm_est) {
+      norm_est = alpha[j];
+    }
+    if (krylov_coefficient_breakdown(alpha[j], norm_est)) {
+      // Alpha breakdown deliberately keeps step j (iterations = j + 1) with
+      // a zero U column: dropping it would discard the beta[j-1] coupling to
+      // v_j, and the Ritz values of the truncated square bidiagonal are then
+      // no longer exact. The zero column pairs with a zero singular value
+      // and is completed downstream.
       break;
     }
     for (int row = 0; row < m; ++row) {
       u[row] /= alpha[j];
     }
-    std::memcpy(U + j * m, u, sizeof(double) * static_cast<size_t>(m));
+    std::memcpy(U + static_cast<R_xlen_t>(j) * m, u, sizeof(double) * static_cast<size_t>(m));
     *stage_recurrence_seconds += native_timer_elapsed(stage_timer);
 
     std::memset(z, 0, sizeof(double) * static_cast<size_t>(n));
@@ -764,11 +842,7 @@ int native_golub_kahan_run(void* impl,
     stage_timer = native_timer_now();
     if (reorthogonalize_v) {
       const int active_v = j + 1;
-      double norm_before2 = 0.0;
-      for (int row = 0; row < n; ++row) {
-        norm_before2 += z[row] * z[row];
-      }
-      const double norm_before = sqrt(norm_before2);
+      const double norm_before = gk_norm2(z, n);
       const char trans_T = 'T';
       const char trans_N = 'N';
       const int one_col = 1;
@@ -786,7 +860,7 @@ int native_golub_kahan_run(void* impl,
                         &one, z, &one_col FCONE);
         } else {
           for (int prev = 0; prev <= j; ++prev) {
-            const double* vprev_basis = V + prev * n;
+            const double* vprev_basis = V + static_cast<R_xlen_t>(prev) * n;
             double dot = 0.0;
             for (int row = 0; row < n; ++row) {
               dot += vprev_basis[row] * z[row];
@@ -799,11 +873,7 @@ int native_golub_kahan_run(void* impl,
         }
         ++(*reorthogonalization_passes);
         if (pass == 0 && norm_before > 0.0) {
-          double norm_after2 = 0.0;
-          for (int row = 0; row < n; ++row) {
-            norm_after2 += z[row] * z[row];
-          }
-          const double norm_after = sqrt(norm_after2);
+          const double norm_after = gk_norm2(z, n);
           if (norm_after < 0.717 * norm_before) {
             passes = 2;
           }
@@ -813,12 +883,17 @@ int native_golub_kahan_run(void* impl,
     *stage_reorthogonalization_seconds += native_timer_elapsed(stage_timer);
 
     stage_timer = native_timer_now();
-    long double beta_norm2 = 0.0L;
-    for (int row = 0; row < n; ++row) {
-      beta_norm2 += static_cast<long double>(z[row]) * z[row];
-    }
-    beta[j] = sqrt(static_cast<double>(beta_norm2));
+    beta[j] = gk_norm2(z, n);
     *stage_recurrence_seconds += native_timer_elapsed(stage_timer);
+    if (!R_FINITE(beta[j])) {
+      projected_scratch.release();
+      std::free(v);
+      std::free(z);
+      std::free(u);
+      std::free(u_prev);
+      std::free(coeff);
+      return EIGENCORE_STATUS_NONFINITE;
+    }
     const int remaining_iterations = maxit - (j + 1);
     if (enable_projected_stop && j + 1 >= k &&
         remaining_iterations >= min_projected_savings &&
@@ -848,7 +923,10 @@ int native_golub_kahan_run(void* impl,
         break;
       }
     }
-    if (j + 1 == maxit || beta[j] <= 100.0 * DBL_EPSILON) {
+    if (beta[j] > norm_est) {
+      norm_est = beta[j];
+    }
+    if (j + 1 == maxit || krylov_coefficient_breakdown(beta[j], norm_est)) {
       break;
     }
 
@@ -867,6 +945,348 @@ int native_golub_kahan_run(void* impl,
   std::free(u);
   std::free(u_prev);
   std::free(coeff);
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Shift-invert factorizations (P5 / C21).
+//
+// Symmetric shifted matrices A - sigma I (or A - sigma B) are indefinite for an
+// interior shift, so:
+//   * tridiagonal ones are factored with LAPACK dgttrf (LU with partial
+//     pivoting) instead of the unpivoted Thomas algorithm, which divides by
+//     whatever pivot the elimination produces and loses all accuracy (or
+//     breaks down) at pivot-hostile shifts;
+//   * dense ones use the symmetric indefinite Bunch-Kaufman factorization
+//     dsytrf/dsytrs (half the flops and storage traffic of dgetrf).
+// Singular / near-singular detection is kept: an exactly zero pivot is
+// reported as before, and the min/max pivot-magnitude ratio is compared with
+// sqrt(eps) (for Bunch-Kaufman the pivots are the eigenvalues of the 1x1 and
+// 2x2 diagonal blocks of D).
+// ---------------------------------------------------------------------------
+
+struct TridiagonalLUFactor {
+  int n = 0;
+  std::vector<double> dl;
+  std::vector<double> d;
+  std::vector<double> du;
+  std::vector<double> du2;
+  std::vector<int> ipiv;
+  double min_abs_pivot = R_PosInf;
+  double max_abs_pivot = 0.0;
+};
+
+// Returns 0 on success, i > 0 when U(i,i) is (numerically) zero.
+static int tridiagonal_lu_factor(const double* lower, const double* diag,
+                                 const double* upper, int n,
+                                 TridiagonalLUFactor* f) {
+  f->n = n;
+  f->d.assign(diag, diag + n);
+  f->dl.assign(static_cast<size_t>(n > 1 ? n - 1 : 1), 0.0);
+  f->du.assign(static_cast<size_t>(n > 1 ? n - 1 : 1), 0.0);
+  f->du2.assign(static_cast<size_t>(n > 2 ? n - 2 : 1), 0.0);
+  f->ipiv.assign(static_cast<size_t>(n), 0);
+  double scale = 0.0;
+  for (int i = 0; i < n; ++i) {
+    scale = fmax(scale, fabs(diag[i]));
+  }
+  for (int i = 0; i + 1 < n; ++i) {
+    f->dl[static_cast<size_t>(i)] = lower[i];
+    f->du[static_cast<size_t>(i)] = upper[i];
+    scale = fmax(scale, fmax(fabs(lower[i]), fabs(upper[i])));
+  }
+  int info = 0;
+  F77_CALL(dgttrf)(&n, f->dl.data(), f->d.data(), f->du.data(), f->du2.data(),
+                   f->ipiv.data(), &info);
+  if (info < 0) {
+    return info;
+  }
+  if (info > 0) {
+    return info;
+  }
+  f->min_abs_pivot = R_PosInf;
+  f->max_abs_pivot = 0.0;
+  for (int i = 0; i < n; ++i) {
+    const double value = fabs(f->d[static_cast<size_t>(i)]);
+    // Relative zero-pivot test: a pivot at rounding level of the matrix
+    // entries is a numerical zero whatever the scale of A (C16).
+    if (!(value > DBL_EPSILON * scale)) {
+      return i + 1;
+    }
+    f->min_abs_pivot = fmin(f->min_abs_pivot, value);
+    f->max_abs_pivot = fmax(f->max_abs_pivot, value);
+  }
+  return 0;
+}
+
+struct TridiagonalLUShiftInvertOperator {
+  TridiagonalLUFactor* factor;
+  const double* sqrt_metric;  // nullptr: standard problem
+  double* work;
+};
+
+extern "C" {
+static int tridiagonal_lu_shift_invert_apply(void* impl, EigencoreTranspose op,
+                                             int64_t block_cols, const double* X,
+                                             int64_t ldx, double alpha,
+                                             double beta, double* Y,
+                                             int64_t ldy,
+                                             EigencoreWorkspace* workspace) {
+  (void) workspace;
+  TridiagonalLUShiftInvertOperator* si =
+    static_cast<TridiagonalLUShiftInvertOperator*>(impl);
+  TridiagonalLUFactor* f = si->factor;
+  int n = f->n;
+  if (op != EIGENCORE_TRANSPOSE_NONE || block_cols != 1 || ldx < n || ldy < n) {
+    return -1;
+  }
+  if (si->sqrt_metric != nullptr) {
+    for (int row = 0; row < n; ++row) {
+      si->work[row] = si->sqrt_metric[row] * X[row];
+    }
+  } else {
+    std::memcpy(si->work, X, sizeof(double) * static_cast<size_t>(n));
+  }
+  char trans = 'N';
+  int nrhs = 1;
+  int info = 0;
+  F77_CALL(dgttrs)(&trans, &n, &nrhs, f->dl.data(), f->d.data(), f->du.data(),
+                   f->du2.data(), f->ipiv.data(), si->work, &n, &info FCONE);
+  if (info != 0) {
+    return info;
+  }
+  for (int row = 0; row < n; ++row) {
+    const double value = (si->sqrt_metric != nullptr)
+      ? si->sqrt_metric[row] * si->work[row]
+      : si->work[row];
+    Y[row] = (beta == 0.0) ? alpha * value : beta * Y[row] + alpha * value;
+  }
+  return 0;
+}
+}
+
+struct SymmetricIndefiniteFactor {
+  int n = 0;
+  std::vector<double> ldl;   // dsytrf output (lower), n x n
+  std::vector<int> ipiv;
+  double min_abs_pivot = R_PosInf;
+  double max_abs_pivot = 0.0;
+};
+
+// Bunch-Kaufman factorization of the symmetric matrix held (fully) in f->ldl.
+// Returns 0 on success, i > 0 when D(i,i) is exactly zero, < 0 on argument
+// errors.
+static int symmetric_indefinite_factor(SymmetricIndefiniteFactor* f) {
+  int n = f->n;
+  char uplo = 'L';
+  int info = 0;
+  int lwork = -1;
+  double work_query = 0.0;
+  f->ipiv.assign(static_cast<size_t>(n), 0);
+  F77_CALL(dsytrf)(&uplo, &n, f->ldl.data(), &n, f->ipiv.data(), &work_query,
+                   &lwork, &info FCONE);
+  if (info != 0) {
+    return info;
+  }
+  lwork = static_cast<int>(work_query);
+  if (lwork < 1) {
+    lwork = n > 0 ? n : 1;
+  }
+  std::vector<double> work(static_cast<size_t>(lwork), 0.0);
+  F77_CALL(dsytrf)(&uplo, &n, f->ldl.data(), &n, f->ipiv.data(), work.data(),
+                   &lwork, &info FCONE);
+  if (info != 0) {
+    return info;
+  }
+  f->min_abs_pivot = R_PosInf;
+  f->max_abs_pivot = 0.0;
+  const double* a = f->ldl.data();
+  for (int k = 0; k < n;) {
+    if (f->ipiv[static_cast<size_t>(k)] > 0 || k + 1 >= n) {
+      const double value = fabs(a[k + static_cast<int64_t>(k) * n]);
+      f->min_abs_pivot = fmin(f->min_abs_pivot, value);
+      f->max_abs_pivot = fmax(f->max_abs_pivot, value);
+      k += 1;
+    } else {
+      // 2x2 pivot block [[p, q], [q, r]] (lower storage): its eigenvalue
+      // magnitudes are the block's pivots.
+      const double p = a[k + static_cast<int64_t>(k) * n];
+      const double q = a[(k + 1) + static_cast<int64_t>(k) * n];
+      const double r = a[(k + 1) + static_cast<int64_t>(k + 1) * n];
+      const double mean = 0.5 * (p + r);
+      const double radius = hypot(0.5 * (p - r), q);
+      const double e1 = fabs(mean + radius);
+      const double e2 = fabs(mean - radius);
+      f->min_abs_pivot = fmin(f->min_abs_pivot, fmin(e1, e2));
+      f->max_abs_pivot = fmax(f->max_abs_pivot, fmax(e1, e2));
+      k += 2;
+    }
+  }
+  return 0;
+}
+
+struct SymmetricIndefiniteShiftInvertOperator {
+  SymmetricIndefiniteFactor* factor;
+  const double* chol;  // upper Cholesky factor of B, nullptr for standard
+  double* work;
+};
+
+extern "C" {
+static int symmetric_indefinite_shift_invert_apply(void* impl,
+                                                   EigencoreTranspose op,
+                                                   int64_t block_cols,
+                                                   const double* X,
+                                                   int64_t ldx, double alpha,
+                                                   double beta, double* Y,
+                                                   int64_t ldy,
+                                                   EigencoreWorkspace* workspace) {
+  (void) workspace;
+  SymmetricIndefiniteShiftInvertOperator* si =
+    static_cast<SymmetricIndefiniteShiftInvertOperator*>(impl);
+  SymmetricIndefiniteFactor* f = si->factor;
+  int n = f->n;
+  if (op != EIGENCORE_TRANSPOSE_NONE || block_cols != 1 || ldx < n || ldy < n) {
+    return -1;
+  }
+  char uplo_u = 'U';
+  char uplo_l = 'L';
+  char trans_T = 'T';
+  char trans_N = 'N';
+  char diag = 'N';
+  int inc = 1;
+  int nrhs = 1;
+  int info = 0;
+  std::memcpy(si->work, X, sizeof(double) * static_cast<size_t>(n));
+  if (si->chol != nullptr) {
+    F77_CALL(dtrmv)(&uplo_u, &trans_T, &diag, &n, si->chol, &n, si->work, &inc
+                    FCONE FCONE FCONE);
+  }
+  F77_CALL(dsytrs)(&uplo_l, &n, &nrhs, f->ldl.data(), &n, f->ipiv.data(),
+                   si->work, &n, &info FCONE);
+  if (info != 0) {
+    return info;
+  }
+  if (si->chol != nullptr) {
+    F77_CALL(dtrmv)(&uplo_u, &trans_N, &diag, &n, si->chol, &n, si->work, &inc
+                    FCONE FCONE FCONE);
+  }
+  for (int row = 0; row < n; ++row) {
+    Y[row] = (beta == 0.0) ? alpha * si->work[row]
+                           : beta * Y[row] + alpha * si->work[row];
+  }
+  return 0;
+}
+}
+
+// Selected eigenpairs of the symmetric tridiagonal (alpha, beta) of order
+// iter (P5): eigenvalues from dsterf, then only the wanted eigenvectors from
+// dstevr over the contiguous index runs of the selection (magnitude targets
+// select from both ends: at most two runs) instead of dstev with every
+// eigenvector. values[p] / column p of vectors (ld iter) follow the target
+// order of selected_ritz_indices. Falls back to dstev when dstevr cannot
+// resolve a run (eigenvalues tied at a run boundary).
+static int tridiagonal_selected_eigenpairs(const double* alpha,
+                                           const double* beta, int iter,
+                                           int k, int target_kind,
+                                           double* values, double* vectors) {
+  const int count = (k < iter) ? k : iter;
+  if (iter <= 0 || count <= 0) {
+    return 0;
+  }
+  std::vector<double> w(alpha, alpha + iter);
+  std::vector<double> e(static_cast<size_t>(iter > 1 ? iter - 1 : 1), 0.0);
+  if (iter > 1) {
+    std::memcpy(e.data(), beta, sizeof(double) * static_cast<size_t>(iter - 1));
+  }
+  int info = 0;
+  F77_CALL(dsterf)(&iter, w.data(), e.data(), &info);
+  if (info != 0) {
+    return info;
+  }
+  std::vector<int> selected(static_cast<size_t>(count), 0);
+  selected_ritz_indices(w.data(), iter, count, target_kind, selected.data());
+  std::vector<int> sorted(selected);
+  std::sort(sorted.begin(), sorted.end());
+
+  std::vector<double> d2(static_cast<size_t>(iter), 0.0);
+  std::vector<double> e2(static_cast<size_t>(iter), 0.0);
+  std::vector<double> w2(static_cast<size_t>(iter), 0.0);
+  std::vector<double> z(static_cast<size_t>(iter) * static_cast<size_t>(count), 0.0);
+  std::vector<int> isuppz(static_cast<size_t>(2 * count), 0);
+  int lwork = 20 * iter;
+  int liwork = 10 * iter;
+  std::vector<double> work(static_cast<size_t>(lwork), 0.0);
+  std::vector<int> iwork(static_cast<size_t>(liwork), 0);
+  bool ok = true;
+  int run_start = 0;
+  while (ok && run_start < count) {
+    int run_end = run_start;
+    while (run_end + 1 < count &&
+           sorted[static_cast<size_t>(run_end + 1)] ==
+             sorted[static_cast<size_t>(run_end)] + 1) {
+      ++run_end;
+    }
+    int il = sorted[static_cast<size_t>(run_start)] + 1;
+    int iu = sorted[static_cast<size_t>(run_end)] + 1;
+    std::memcpy(d2.data(), alpha, sizeof(double) * static_cast<size_t>(iter));
+    if (iter > 1) {
+      std::memcpy(e2.data(), beta, sizeof(double) * static_cast<size_t>(iter - 1));
+    }
+    char jobz = 'V';
+    char range = 'I';
+    double vl = 0.0;
+    double vu = 0.0;
+    double abstol = 0.0;
+    int found = 0;
+    int n_local = iter;
+    F77_CALL(dstevr)(&jobz, &range, &n_local, d2.data(), e2.data(), &vl, &vu,
+                     &il, &iu, &abstol, &found, w2.data(), z.data(), &n_local,
+                     isuppz.data(), work.data(), &lwork, iwork.data(), &liwork,
+                     &info FCONE FCONE);
+    if (info != 0 || found != iu - il + 1) {
+      ok = false;
+      break;
+    }
+    for (int p = 0; p < count; ++p) {
+      const int idx = selected[static_cast<size_t>(p)];
+      if (idx + 1 < il || idx + 1 > iu) {
+        continue;
+      }
+      const int zcol = idx + 1 - il;
+      values[p] = w2[static_cast<size_t>(zcol)];
+      std::memcpy(vectors + static_cast<int64_t>(p) * iter,
+                  z.data() + static_cast<int64_t>(zcol) * iter,
+                  sizeof(double) * static_cast<size_t>(iter));
+    }
+    run_start = run_end + 1;
+  }
+  if (ok) {
+    return 0;
+  }
+
+  // Fallback: all eigenpairs (dstev), then pick the selection.
+  std::vector<double> all_values(alpha, alpha + iter);
+  std::vector<double> offdiag(static_cast<size_t>(iter > 1 ? iter - 1 : 1), 0.0);
+  if (iter > 1) {
+    std::memcpy(offdiag.data(), beta, sizeof(double) * static_cast<size_t>(iter - 1));
+  }
+  std::vector<double> all_vectors(static_cast<size_t>(iter) * static_cast<size_t>(iter), 0.0);
+  std::vector<double> stev_work(static_cast<size_t>(2 * iter > 2 ? 2 * iter - 2 : 1), 0.0);
+  char jobz = 'V';
+  int n_local = iter;
+  F77_CALL(dstev)(&jobz, &n_local, all_values.data(), offdiag.data(),
+                  all_vectors.data(), &n_local, stev_work.data(), &info FCONE);
+  if (info != 0) {
+    return info;
+  }
+  selected_ritz_indices(all_values.data(), iter, count, target_kind, selected.data());
+  for (int p = 0; p < count; ++p) {
+    const int idx = selected[static_cast<size_t>(p)];
+    values[p] = all_values[static_cast<size_t>(idx)];
+    std::memcpy(vectors + static_cast<int64_t>(p) * iter,
+                all_vectors.data() + static_cast<int64_t>(idx) * iter,
+                sizeof(double) * static_cast<size_t>(iter));
+  }
   return 0;
 }
 
@@ -917,6 +1337,7 @@ extern "C" SEXP eigencore_lanczos_dense(SEXP A_, SEXP maxit_, SEXP start_,
                                         REAL(history_max_residual_),
                                         &iterations, &matvecs);
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native dense Lanczos failed with status=%d", status);
   }
 
@@ -971,32 +1392,23 @@ extern "C" SEXP eigencore_shift_invert_lanczos_dense(SEXP A_, SEXP sigma_,
     error("sigma must be finite");
   }
 
-  std::vector<double> lu(static_cast<size_t>(n) * static_cast<size_t>(n), 0.0);
-  std::memcpy(lu.data(), REAL(A_), sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(n));
+  // A - sigma I is symmetric indefinite: Bunch-Kaufman LDL^T (P5).
+  SymmetricIndefiniteFactor factor;
+  factor.n = n;
+  factor.ldl.assign(REAL(A_), REAL(A_) + static_cast<size_t>(n) * static_cast<size_t>(n));
   for (int i = 0; i < n; ++i) {
-    lu[static_cast<int64_t>(i) + static_cast<int64_t>(i) * n] -= sigma;
+    factor.ldl[static_cast<size_t>(i) + static_cast<size_t>(i) * n] -= sigma;
   }
-  std::vector<int> pivots(static_cast<size_t>(n), 0);
-  int info = 0;
-  F77_CALL(dgetrf)(&n, &n, lu.data(), &n, pivots.data(), &info);
+  const int info = symmetric_indefinite_factor(&factor);
   if (info < 0) {
-    error("LAPACK dgetrf failed for native dense shift-invert with info=%d", info);
+    error("LAPACK dsytrf failed for native dense shift-invert with info=%d", info);
   }
   if (info > 0) {
-    error("native dense shift-invert factorization is singular at U[%d,%d]; perturb sigma", info, info);
+    error("native dense shift-invert factorization is singular at D[%d,%d]; perturb sigma", info, info);
   }
 
-  double min_abs_u = R_PosInf;
-  double max_abs_u = 0.0;
-  for (int i = 0; i < n; ++i) {
-    const double value = fabs(lu[static_cast<int64_t>(i) + static_cast<int64_t>(i) * n]);
-    if (value < min_abs_u) {
-      min_abs_u = value;
-    }
-    if (value > max_abs_u) {
-      max_abs_u = value;
-    }
-  }
+  const double min_abs_u = factor.min_abs_pivot;
+  const double max_abs_u = factor.max_abs_pivot;
   const double pivot_ratio = (max_abs_u > 0.0 && R_FINITE(max_abs_u))
     ? min_abs_u / max_abs_u
     : NA_REAL;
@@ -1018,21 +1430,22 @@ extern "C" SEXP eigencore_shift_invert_lanczos_dense(SEXP A_, SEXP sigma_,
   }
 
   std::vector<double> apply_work(static_cast<size_t>(n), 0.0);
-  DenseShiftInvertOperator impl = {n, lu.data(), pivots.data(), apply_work.data()};
+  SymmetricIndefiniteShiftInvertOperator impl = {&factor, nullptr, apply_work.data()};
   int iterations = 0;
   int matvecs = 0;
   const int status = native_lanczos_run(
-    &impl, eigencore_dense_shift_invert_apply, n, maxit,
+    &impl, symmetric_indefinite_shift_invert_apply, n, maxit,
     k, target_kind, tol, REAL(start_), REAL(Q_), REAL(alpha_), REAL(beta_),
     INTEGER(history_nconv_), REAL(history_max_residual_),
     &iterations, &matvecs
   );
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native dense shift-invert Lanczos failed with status=%d", status);
   }
 
   SEXP cache_ = PROTECT(allocVector(VECSXP, 5));
-  SET_VECTOR_ELT(cache_, 0, mkString("LAPACK dgetrf/dgetrs"));
+  SET_VECTOR_ELT(cache_, 0, mkString("LAPACK dsytrf/dsytrs"));
   SET_VECTOR_ELT(cache_, 1, ScalarLogical(TRUE));
   SET_VECTOR_ELT(cache_, 2, ScalarReal(pivot_ratio));
   SET_VECTOR_ELT(cache_, 3, ScalarReal(min_abs_u));
@@ -1093,36 +1506,19 @@ extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal(
   const double* lower = REAL(lower_);
   const double* diag = REAL(diag_);
   const double* upper = REAL(upper_);
-  std::vector<double> cprime(static_cast<size_t>(n > 1 ? n - 1 : 1), 0.0);
-  std::vector<double> denom(static_cast<size_t>(n), 0.0);
-  if (fabs(diag[0]) <= DBL_EPSILON) {
-    error("native tridiagonal shift-invert factorization has a zero first pivot; perturb sigma");
+  // LU with partial pivoting (dgttrf, C21): the shifted matrix is indefinite
+  // for interior shifts, where the unpivoted Thomas recurrence breaks down.
+  TridiagonalLUFactor factor;
+  const int factor_info = tridiagonal_lu_factor(lower, diag, upper, n, &factor);
+  if (factor_info < 0) {
+    error("LAPACK dgttrf failed for native tridiagonal shift-invert with info=%d", factor_info);
   }
-  denom[0] = diag[0];
-  if (n > 1) {
-    cprime[0] = upper[0] / denom[0];
-  }
-  for (int i = 1; i < n; ++i) {
-    denom[i] = diag[i] - lower[i - 1] * cprime[i - 1];
-    if (fabs(denom[i]) <= DBL_EPSILON) {
-      error("native tridiagonal shift-invert factorization has a zero pivot; perturb sigma");
-    }
-    if (i < n - 1) {
-      cprime[i] = upper[i] / denom[i];
-    }
+  if (factor_info > 0) {
+    error("native tridiagonal shift-invert factorization has a zero pivot; perturb sigma");
   }
 
-  double min_abs_pivot = R_PosInf;
-  double max_abs_pivot = 0.0;
-  for (int i = 0; i < n; ++i) {
-    const double value = fabs(denom[i]);
-    if (value < min_abs_pivot) {
-      min_abs_pivot = value;
-    }
-    if (value > max_abs_pivot) {
-      max_abs_pivot = value;
-    }
-  }
+  const double min_abs_pivot = factor.min_abs_pivot;
+  const double max_abs_pivot = factor.max_abs_pivot;
   const double pivot_ratio = (max_abs_pivot > 0.0 && R_FINITE(max_abs_pivot))
     ? min_abs_pivot / max_abs_pivot
     : NA_REAL;
@@ -1143,18 +1539,17 @@ extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal(
   }
 
   std::vector<double> apply_work(static_cast<size_t>(n), 0.0);
-  TridiagonalShiftInvertOperator impl = {
-    n, lower, cprime.data(), denom.data(), apply_work.data()
-  };
+  TridiagonalLUShiftInvertOperator impl = {&factor, nullptr, apply_work.data()};
   int iterations = 0;
   int matvecs = 0;
   const int status = native_lanczos_run(
-    &impl, eigencore_tridiagonal_shift_invert_apply, n, maxit,
+    &impl, tridiagonal_lu_shift_invert_apply, n, maxit,
     k, target_kind, tol, REAL(start_), Q.data(), REAL(alpha_), REAL(beta_),
     INTEGER(history_nconv_), REAL(history_max_residual_),
     &iterations, &matvecs
   );
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native tridiagonal shift-invert Lanczos failed with status=%d", status);
   }
 
@@ -1162,54 +1557,22 @@ extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal(
   // return only the requested Ritz vectors. Returning the full n x iterations
   // basis forced R to retain and copy an internal workspace before forming the
   // n x k result.
-  std::vector<double> projected_values(
-    REAL(alpha_), REAL(alpha_) + static_cast<size_t>(iterations)
+  // Only the k wanted Ritz pairs of the projected tridiagonal (P5).
+  const int selected_count = (k < iterations) ? k : iterations;
+  std::vector<double> selected_projected(
+    static_cast<size_t>(iterations) * static_cast<size_t>(selected_count), 0.0
   );
-  std::vector<double> projected_offdiag(
-    static_cast<size_t>((iterations > 1) ? iterations - 1 : 1), 0.0
-  );
-  if (iterations > 1) {
-    std::memcpy(
-      projected_offdiag.data(), REAL(beta_),
-      sizeof(double) * static_cast<size_t>(iterations - 1)
-    );
-  }
-  std::vector<double> projected_vectors(
-    static_cast<size_t>(iterations) * static_cast<size_t>(iterations), 0.0
-  );
-  std::vector<double> projected_work(
-    static_cast<size_t>((2 * iterations - 2 > 1) ? 2 * iterations - 2 : 1), 0.0
-  );
-  char projected_jobz = 'V';
-  int projected_info = 0;
-  int projected_n = iterations;
-  F77_CALL(dstev)(
-    &projected_jobz, &projected_n, projected_values.data(),
-    projected_offdiag.data(), projected_vectors.data(), &projected_n,
-    projected_work.data(), &projected_info FCONE
+  std::vector<double> selected_values(static_cast<size_t>(selected_count), 0.0);
+  const int projected_info = tridiagonal_selected_eigenpairs(
+    REAL(alpha_), REAL(beta_), iterations, selected_count, target_kind,
+    selected_values.data(), selected_projected.data()
   );
   if (projected_info != 0) {
     error("native tridiagonal shift-invert projected solve failed with info=%d", projected_info);
   }
-
-  const int selected_count = (k < iterations) ? k : iterations;
-  std::vector<int> selected(static_cast<size_t>(selected_count), 0);
-  selected_ritz_indices(
-    projected_values.data(), iterations, selected_count, target_kind,
-    selected.data()
-  );
-  std::vector<double> selected_projected(
-    static_cast<size_t>(iterations) * static_cast<size_t>(selected_count), 0.0
-  );
   SEXP ritz_values_ = PROTECT(allocVector(REALSXP, selected_count));
   for (int col = 0; col < selected_count; ++col) {
-    const int source_col = selected[static_cast<size_t>(col)];
-    REAL(ritz_values_)[col] = projected_values[static_cast<size_t>(source_col)];
-    std::memcpy(
-      selected_projected.data() + static_cast<size_t>(col) * iterations,
-      projected_vectors.data() + static_cast<size_t>(source_col) * iterations,
-      sizeof(double) * static_cast<size_t>(iterations)
-    );
+    REAL(ritz_values_)[col] = selected_values[static_cast<size_t>(col)];
   }
   SEXP ritz_vectors_ = PROTECT(allocMatrix(REALSXP, n, selected_count));
   const char notrans = 'N';
@@ -1222,7 +1585,7 @@ extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal(
   );
 
   SEXP cache_ = PROTECT(allocVector(VECSXP, 5));
-  SET_VECTOR_ELT(cache_, 0, mkString("native tridiagonal Thomas"));
+  SET_VECTOR_ELT(cache_, 0, mkString("LAPACK dgttrf/dgttrs"));
   SET_VECTOR_ELT(cache_, 1, ScalarLogical(TRUE));
   SET_VECTOR_ELT(cache_, 2, ScalarReal(pivot_ratio));
   SET_VECTOR_ELT(cache_, 3, ScalarReal(min_abs_pivot));
@@ -1293,36 +1656,18 @@ extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal_generalized(
     }
   }
 
-  std::vector<double> cprime(static_cast<size_t>(n > 1 ? n - 1 : 1), 0.0);
-  std::vector<double> denom(static_cast<size_t>(n), 0.0);
-  if (fabs(diag[0]) <= DBL_EPSILON) {
-    error("native generalized tridiagonal shift-invert factorization has a zero first pivot; perturb sigma");
+  // LU with partial pivoting (dgttrf, C21) of the indefinite shifted matrix.
+  TridiagonalLUFactor factor;
+  const int factor_info = tridiagonal_lu_factor(lower, diag, upper, n, &factor);
+  if (factor_info < 0) {
+    error("LAPACK dgttrf failed for native generalized tridiagonal shift-invert with info=%d", factor_info);
   }
-  denom[0] = diag[0];
-  if (n > 1) {
-    cprime[0] = upper[0] / denom[0];
-  }
-  for (int i = 1; i < n; ++i) {
-    denom[i] = diag[i] - lower[i - 1] * cprime[i - 1];
-    if (fabs(denom[i]) <= DBL_EPSILON) {
-      error("native generalized tridiagonal shift-invert factorization has a zero pivot; perturb sigma");
-    }
-    if (i < n - 1) {
-      cprime[i] = upper[i] / denom[i];
-    }
+  if (factor_info > 0) {
+    error("native generalized tridiagonal shift-invert factorization has a zero pivot; perturb sigma");
   }
 
-  double min_abs_pivot = R_PosInf;
-  double max_abs_pivot = 0.0;
-  for (int i = 0; i < n; ++i) {
-    const double value = fabs(denom[i]);
-    if (value < min_abs_pivot) {
-      min_abs_pivot = value;
-    }
-    if (value > max_abs_pivot) {
-      max_abs_pivot = value;
-    }
-  }
+  const double min_abs_pivot = factor.min_abs_pivot;
+  const double max_abs_pivot = factor.max_abs_pivot;
   const double pivot_ratio = (max_abs_pivot > 0.0 && R_FINITE(max_abs_pivot))
     ? min_abs_pivot / max_abs_pivot
     : NA_REAL;
@@ -1344,23 +1689,22 @@ extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal_generalized(
   }
 
   std::vector<double> apply_work(static_cast<size_t>(n), 0.0);
-  TridiagonalGeneralizedShiftInvertOperator impl = {
-    n, lower, cprime.data(), denom.data(), sqrt_metric, apply_work.data()
-  };
+  TridiagonalLUShiftInvertOperator impl = {&factor, sqrt_metric, apply_work.data()};
   int iterations = 0;
   int matvecs = 0;
   const int status = native_lanczos_run(
-    &impl, eigencore_tridiagonal_generalized_shift_invert_apply, n, maxit,
+    &impl, tridiagonal_lu_shift_invert_apply, n, maxit,
     k, target_kind, tol, REAL(start_), REAL(Q_), REAL(alpha_), REAL(beta_),
     INTEGER(history_nconv_), REAL(history_max_residual_),
     &iterations, &matvecs
   );
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native generalized tridiagonal shift-invert Lanczos failed with status=%d", status);
   }
 
   SEXP cache_ = PROTECT(allocVector(VECSXP, 6));
-  SET_VECTOR_ELT(cache_, 0, mkString("native tridiagonal Thomas + diagonal sqrt(B)"));
+  SET_VECTOR_ELT(cache_, 0, mkString("LAPACK dgttrf/dgttrs + diagonal sqrt(B)"));
   SET_VECTOR_ELT(cache_, 1, ScalarLogical(TRUE));
   SET_VECTOR_ELT(cache_, 2, ScalarReal(pivot_ratio));
   SET_VECTOR_ELT(cache_, 3, ScalarReal(min_abs_pivot));
@@ -1443,30 +1787,23 @@ extern "C" SEXP eigencore_shift_invert_lanczos_dense_generalized(
     }
   }
 
-  std::vector<double> lu(static_cast<size_t>(n) * static_cast<size_t>(n), 0.0);
+  // A - sigma B is symmetric indefinite: Bunch-Kaufman LDL^T (P5).
+  SymmetricIndefiniteFactor factor;
+  factor.n = n;
+  factor.ldl.assign(static_cast<size_t>(n) * static_cast<size_t>(n), 0.0);
   for (int64_t pos = 0; pos < static_cast<int64_t>(n) * n; ++pos) {
-    lu[static_cast<size_t>(pos)] = REAL(A_)[pos] - sigma * REAL(B_)[pos];
+    factor.ldl[static_cast<size_t>(pos)] = REAL(A_)[pos] - sigma * REAL(B_)[pos];
   }
-  std::vector<int> pivots(static_cast<size_t>(n), 0);
-  F77_CALL(dgetrf)(&n, &n, lu.data(), &n, pivots.data(), &info);
+  info = symmetric_indefinite_factor(&factor);
   if (info < 0) {
-    error("LAPACK dgetrf failed for native dense generalized shift-invert with info=%d", info);
+    error("LAPACK dsytrf failed for native dense generalized shift-invert with info=%d", info);
   }
   if (info > 0) {
-    error("native dense generalized shift-invert factorization is singular at U[%d,%d]; perturb sigma", info, info);
+    error("native dense generalized shift-invert factorization is singular at D[%d,%d]; perturb sigma", info, info);
   }
 
-  double min_abs_u = R_PosInf;
-  double max_abs_u = 0.0;
-  for (int i = 0; i < n; ++i) {
-    const double value = fabs(lu[static_cast<int64_t>(i) + static_cast<int64_t>(i) * n]);
-    if (value < min_abs_u) {
-      min_abs_u = value;
-    }
-    if (value > max_abs_u) {
-      max_abs_u = value;
-    }
-  }
+  const double min_abs_u = factor.min_abs_pivot;
+  const double max_abs_u = factor.max_abs_pivot;
   const double pivot_ratio = (max_abs_u > 0.0 && R_FINITE(max_abs_u))
     ? min_abs_u / max_abs_u
     : NA_REAL;
@@ -1487,25 +1824,23 @@ extern "C" SEXP eigencore_shift_invert_lanczos_dense_generalized(
     REAL(history_max_residual_)[i] = R_PosInf;
   }
 
-  std::vector<double> rhs(static_cast<size_t>(n), 0.0);
-  std::vector<double> sol(static_cast<size_t>(n), 0.0);
-  DenseGeneralizedShiftInvertOperator impl = {
-    n, lu.data(), pivots.data(), chol.data(), rhs.data(), sol.data()
-  };
+  std::vector<double> apply_work(static_cast<size_t>(n), 0.0);
+  SymmetricIndefiniteShiftInvertOperator impl = {&factor, chol.data(), apply_work.data()};
   int iterations = 0;
   int matvecs = 0;
   const int status = native_lanczos_run(
-    &impl, eigencore_dense_generalized_shift_invert_apply, n, maxit,
+    &impl, symmetric_indefinite_shift_invert_apply, n, maxit,
     k, target_kind, tol, REAL(start_), REAL(Q_), REAL(alpha_), REAL(beta_),
     INTEGER(history_nconv_), REAL(history_max_residual_),
     &iterations, &matvecs
   );
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native dense generalized shift-invert Lanczos failed with status=%d", status);
   }
 
   SEXP cache_ = PROTECT(allocVector(VECSXP, 6));
-  SET_VECTOR_ELT(cache_, 0, mkString("LAPACK dpotrf(B) + dgetrf/dgetrs(A - sigma B)"));
+  SET_VECTOR_ELT(cache_, 0, mkString("LAPACK dpotrf(B) + dsytrf/dsytrs(A - sigma B)"));
   SET_VECTOR_ELT(cache_, 1, ScalarLogical(TRUE));
   SET_VECTOR_ELT(cache_, 2, ScalarReal(pivot_ratio));
   SET_VECTOR_ELT(cache_, 3, ScalarReal(min_abs_u));
@@ -1593,6 +1928,7 @@ extern "C" SEXP eigencore_lanczos_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                         REAL(history_max_residual_),
                                         &iterations, &matvecs);
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native CSC Lanczos failed with status=%d", status);
   }
 
@@ -1687,6 +2023,7 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
                                             &reorthogonalization_passes,
                                             1, 1);
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native dense Golub-Kahan failed with status=%d", status);
   }
 
@@ -1813,6 +2150,7 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                             &reorthogonalization_passes,
                                             1, 1);
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native CSC Golub-Kahan failed with status=%d", status);
   }
 
@@ -1945,6 +2283,7 @@ extern "C" SEXP eigencore_golub_kahan_centered_scaled_csc(
     &reorthogonalization_passes, reorthogonalize_u, reorthogonalize_v
   );
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native centered-scaled CSC Golub-Kahan failed with status=%d", status);
   }
 
@@ -2060,6 +2399,7 @@ extern "C" SEXP eigencore_golub_kahan_r_operator(
     &reorthogonalization_passes, reorthogonalize_u, reorthogonalize_v
   );
   if (status != 0) {
+    eigencore_check_nonfinite_status(status);
     error("native matrix-free Golub-Kahan failed with status=%d", status);
   }
 

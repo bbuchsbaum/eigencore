@@ -53,15 +53,31 @@ linear_operator <- function(dim, apply, apply_adjoint = NULL, dtype = "double",
     metadata = metadata,
     operator_id = operator_id,
     revision = revision,
-    portable = portable
+    portable = portable,
+    defer_builtin = TRUE
   )
+  # This evaluation frame, already captured by the apply closures, doubles as
+  # the per-operator cache (lazy built-in identity, norm estimates); see
+  # operator_identity_cache_resolve() and operator_cache_matches().
+  operator_cache <- environment()
+  memo_token <- next_operator_memo_token()
+  # The work accounting below needs the identity only to recognise metric
+  # applies (when the plan has a B), so a deferred built-in identity is
+  # resolved lazily there.
+  work_identity <- function() {
+    if (isTRUE(attr(identity, "deferred", exact = TRUE))) {
+      operator_identity_cache_resolve(operator_cache)
+    } else {
+      identity
+    }
+  }
 
   adjoint_view <- identical(metadata$fused %||% NULL, "adjoint")
   raw_apply <- apply
   raw_apply_adjoint <- apply_adjoint
   wrapped_apply <- function(X, alpha = 1, beta = 0, Y = NULL) {
     token <- work_operator_enter(
-      identity,
+      work_identity,
       kind = if (adjoint_view) "adjoint" else "operator",
       X = X
     )
@@ -73,7 +89,7 @@ linear_operator <- function(dim, apply, apply_adjoint = NULL, dtype = "double",
   } else {
     function(X, alpha = 1, beta = 0, Y = NULL) {
       token <- work_operator_enter(
-        identity,
+        work_identity,
         kind = if (adjoint_view) "operator" else "adjoint",
         X = X
       )
@@ -90,11 +106,21 @@ linear_operator <- function(dim, apply, apply_adjoint = NULL, dtype = "double",
     structure = structure,
     name = name %||% "linear_operator",
     metadata = metadata,
-    identity = identity
+    identity = identity,
+    cache = operator_cache
   )
   class(op) <- "eigencore_operator"
   op
 }
+
+#' @keywords internal
+next_operator_memo_token <- local({
+  counter <- 0
+  function() {
+    counter <<- counter + 1
+    paste0(eigencore_session_id(), ":", format(counter, scientific = FALSE))
+  }
+})
 
 #' Convert an object to an eigencore operator.
 #'
@@ -116,6 +142,7 @@ as_operator.eigencore_operator <- function(x, ...) {
 
 #' @export
 as_operator.matrix <- function(x, ...) {
+  stop_if_nonfinite_input(x)
   if (is.complex(x)) {
     return(complex_dense_matrix_as_operator(x))
   }
@@ -144,6 +171,7 @@ as_operator.matrix <- function(x, ...) {
 #' @export
 as_operator.default <- function(x, ...) {
   stop_if_complex_matrix_input(x)
+  stop_if_nonfinite_input(x)
   if (inherits(x, "ddiMatrix")) {
     return(diagonal_matrix_as_operator(x))
   }
@@ -154,9 +182,66 @@ as_operator.default <- function(x, ...) {
     return(csc_matrix_as_operator(x))
   }
   if (inherits(x, "Matrix")) {
+    # Convert other Matrix classes once to a storage with a native kernel
+    # instead of dispatching R-level %*% / Matrix::t() on every apply.
+    converted <- native_matrix_storage(x)
+    if (!is.null(converted)) {
+      if (is.matrix(converted)) {
+        return(as_operator.matrix(converted))
+      }
+      return(csc_matrix_as_operator(converted, input_storage = class(x)[[1L]]))
+    }
     return(matrix_as_operator(x))
   }
   stop("Cannot convert object of class ", paste(class(x), collapse = "/"), " to an eigencore operator.", call. = FALSE)
+}
+
+#' @keywords internal
+#' Convert a Matrix-package object once to a storage that has a native block
+#' apply: a base double matrix for dense classes (dge/dsy/dtr/dpo/...), or a
+#' dgCMatrix (dsCMatrix when stored symmetric) for sparse classes
+#' (dgR/dgT/dtC/dsT/...). Returns NULL when no conversion applies.
+native_matrix_storage <- function(x) {
+  tryCatch({
+    if (inherits(x, "denseMatrix")) {
+      out <- base::as.matrix(x)
+      if (!is.matrix(out) || is.complex(out)) {
+        return(NULL)
+      }
+      if (storage.mode(out) != "double") {
+        storage.mode(out) <- "double"
+      }
+      return(out)
+    }
+    if (inherits(x, "sparseMatrix")) {
+      out <- methods::as(x, "CsparseMatrix")
+      if (!methods::is(out, "dMatrix")) {
+        out <- methods::as(out, "dMatrix")
+      }
+      if (!inherits(out, "dsCMatrix")) {
+        out <- methods::as(out, "generalMatrix")
+      }
+      if (inherits(out, "dgCMatrix") || inherits(out, "dsCMatrix")) {
+        return(out)
+      }
+    }
+    NULL
+  }, error = function(e) NULL)
+}
+
+#' @keywords internal
+stop_if_nonfinite_input <- function(x) {
+  values <- if (inherits(x, "Matrix")) {
+    if (methods::.hasSlot(x, "x")) methods::slot(x, "x") else NULL
+  } else if (is.numeric(x) || is.complex(x)) {
+    x
+  } else {
+    NULL
+  }
+  if (!is.null(values) && !all(is.finite(values))) {
+    stop("Matrix input contains NA, NaN, or Inf entries.", call. = FALSE)
+  }
+  invisible(TRUE)
 }
 
 #' @keywords internal
@@ -364,9 +449,9 @@ csc_native_matrix <- function(x) {
 }
 
 #' @keywords internal
-csc_matrix_as_operator <- function(x) {
+csc_matrix_as_operator <- function(x, input_storage = class(x)[[1L]]) {
+  force(input_storage)
   dim_x <- dim(x)
-  input_storage <- class(x)[[1L]]
   symmetric_storage <- inherits(x, "symmetricMatrix")
   moments <- if (inherits(x, "dgCMatrix") &&
                  !inherits(x, "symmetricMatrix")) {
@@ -517,7 +602,17 @@ is_square_symmetric <- function(x, tol = sqrt(.Machine$double.eps)) {
     return(FALSE)
   }
   if (inherits(x, "Matrix")) {
-    return(isTRUE(Matrix::isSymmetric(x, tol = tol)))
+    if (inherits(x, "symmetricMatrix")) {
+      return(TRUE)
+    }
+    # Matrix::isSymmetric(tol =) is absolute; scale it by the largest entry
+    # so a rescaled nonsymmetric matrix is never classified as symmetric.
+    values <- if (methods::.hasSlot(x, "x")) methods::slot(x, "x") else NULL
+    scale <- if (length(values)) max(abs(values)) else 1
+    if (!is.finite(scale)) {
+      return(FALSE)
+    }
+    return(isTRUE(Matrix::isSymmetric(x, tol = tol * scale)))
   }
   if (is.matrix(x) && is.double(x)) {
     return(isTRUE(.Call("eigencore_dense_is_symmetric", x, as.numeric(tol), PACKAGE = "eigencore")))

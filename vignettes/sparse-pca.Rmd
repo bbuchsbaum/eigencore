@@ -150,23 +150,23 @@ factors.
 
 ## Read the certificate on a composed operator
 
-`fit$certificate$passed` is `FALSE` here, but look at why before treating
-that as a problem:
+The centered operator is never formed, yet its certificate can still pass:
 
 ```{r composed-certificate}
+fit$certificate$passed
 fit$certificate$max_backward_error
 fit$certificate$norm_bound_type
 fit$certificate$scale_is_estimate
 ```
 
-The residual is tiny — far below the `1e-8` tolerance. What's withheld is
-the *scale*: computing an exact Frobenius norm bound for a centered operator
-would mean a second full pass over the data, so eigencore instead reports a
-stochastic (Hutchinson) estimate and refuses to mark the certificate
-`passed` while that estimate is the only evidence. This is the same
-certificate rule that `vignette("certificates")` covers in detail — a composed
-operator trades the exact bound for an estimated one unless you supply
-norm metadata yourself, which the next section shows.
+The backward error divides each residual by `||A_c||_F`, and for a
+column-centered CSC matrix that norm follows exactly from the sparse column
+moments eigencore already computed when it built the operator:
+`||A_c||_F^2 = sum_j sum_i (A_ij - mean_j)^2`. No second pass over the data
+and no stochastic estimate is needed. Operators without such metadata (for
+example a double-centered matrix or a hand-written callback) fall back to a
+Hutchinson estimate, and then `passed` is withheld; `vignette("certificates")`
+covers that rule in detail.
 
 ## Does it match what you'd get by densifying?
 

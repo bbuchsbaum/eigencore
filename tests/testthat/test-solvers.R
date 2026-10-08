@@ -25,14 +25,14 @@ test_that("native dense Hermitian fallback matches base eigen ordering", {
   expect_true(fit$restart$selected_range)
 })
 
-test_that("native dense Hermitian full and magnitude requests retain full dsyev", {
+test_that("native dense Hermitian full and magnitude requests retain full dsyevr", {
   A <- diag(c(-8, 5, 3, 2))
   full <- eig_partial(A, k = 4, target = largest())
   magnitude <- eig_partial(A, k = 2, target = largest_magnitude())
 
-  expect_identical(full$restart$eigensolver, "lapack_dsyev_full")
+  expect_identical(full$restart$eigensolver, "lapack_dsyevr_full")
   expect_false(full$restart$selected_range)
-  expect_identical(magnitude$restart$eigensolver, "lapack_dsyev_full")
+  expect_identical(magnitude$restart$eigensolver, "lapack_dsyevr_full")
   expect_false(magnitude$restart$selected_range)
   expect_equal(values(magnitude), c(-8, 5))
   expect_true(certificate(full)$passed)

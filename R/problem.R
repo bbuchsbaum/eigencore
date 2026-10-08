@@ -29,11 +29,28 @@ eigen_problem <- function(A, metric = NULL, structure = NULL, target = largest()
     A = Aop,
     metric = Bop,
     structure = structure,
-    target = target,
+    target = canonical_hermitian_target(target, structure),
     transform = transform
   )
   class(problem) <- "eigencore_eigen_problem"
   problem
+}
+
+# Hermitian (and Hermitian-definite) problems have real spectra, so the
+# real-part targets coincide with the algebraic ones. Canonicalising lets the
+# native Lanczos routes (which accept largest/smallest) serve "LR"/"SR".
+#' @keywords internal
+canonical_hermitian_target <- function(target, structure) {
+  if (inherits(target, "eigencore_target") &&
+      identical(structure$kind %||% NULL, "hermitian")) {
+    if (identical(target$kind, "largest_real")) {
+      return(largest())
+    }
+    if (identical(target$kind, "smallest_real")) {
+      return(smallest())
+    }
+  }
+  target
 }
 
 #' @keywords internal
@@ -132,6 +149,19 @@ plan_solver.eigencore_eigen_problem <- function(
     certify = TRUE,
     allow_dense_fallback = c("auto", "never", "always"),
     initial_subspace = NULL, ...) {
+  if (problem$A$dim[1L] != problem$A$dim[2L]) {
+    stop("Eigenproblems require a square operator.", call. = FALSE)
+  }
+  k <- validate_solution_count(k, problem$A$dim[1L], "k")
+  problem$target <- canonical_hermitian_target(problem$target, problem$structure)
+  if (inherits(problem$target, "eigencore_target") &&
+      identical(problem$target$kind, "both_ends")) {
+    ends <- problem$target$value$k_low + problem$target$value$k_high
+    if (!identical(as.integer(ends), k)) {
+      stop("both_ends(k_low, k_high) requires k = k_low + k_high (", ends,
+           "), got k = ", k, ".", call. = FALSE)
+    }
+  }
   method_descriptor <- method
   planner_policy <- planner_policy_snapshot()
   allow_dense_fallback <- match.arg(allow_dense_fallback)
@@ -619,6 +649,7 @@ plan_solver.eigencore_svd_problem <- function(
     problem, rank, method = auto(), tol = 1e-8,
     vectors = c("both", "left", "right", "none"), certify = TRUE,
     allow_dense_fallback = c("auto", "never", "always"), ...) {
+  rank <- validate_solution_count(rank, min(problem$A$dim), "rank")
   method_descriptor <- method
   planner_policy <- planner_policy_snapshot()
   vectors <- match.arg(vectors)
@@ -769,24 +800,28 @@ arnoldi_plan_controls <- function(problem, k, chosen) {
     identical(chosen, native_matrix_free_arnoldi_label())
   refined_native_path <- identical(chosen, native_refined_arnoldi_label())
   matrix_free_native_path <- identical(chosen, native_matrix_free_arnoldi_label())
-  source_matrix <- source_or_null(problem$A)
-  dense_native_path <- native_path && is.matrix(source_matrix) && is.double(source_matrix)
   default_restarts <- if (native_path) 5L else 0L
   max_restarts <- getOption("eigencore.arnoldi_max_restarts", default_restarts)
   max_restarts <- as.integer(max_restarts)
   if (length(max_restarts) != 1L || is.na(max_restarts) || max_restarts < 0L) {
     max_restarts <- default_restarts
   }
-  max_subspace <- if (dense_native_path) {
-    n
-  } else if (native_path) {
-    native_arnoldi_default_max_subspace(n, k)
+  # Native paths (dense, sparse, matrix-free) all run the restarted
+  # Krylov-Schur Arnoldi with the ARPACK-style ncv default; dense inputs no
+  # longer build an n-dimensional basis.
+  max_subspace <- if (native_path) {
+    native_krylov_schur_default_ncv(n, k)
   } else {
     min(n, max(k + 8L, 2L * k + 4L))
   }
   list(
     max_subspace = max_subspace,
     max_restarts = max_restarts,
+    krylov_schur_max_iterations = if (native_path) {
+      native_krylov_schur_default_maxit()
+    } else {
+      NULL
+    },
     restart = if (matrix_free_native_path) {
       "native matrix-free Arnoldi callback restart budget"
     } else if (native_path) {
@@ -797,9 +832,9 @@ arnoldi_plan_controls <- function(problem, k, chosen) {
     ritz_extraction_native = native_path,
     arnoldi_extraction = if (refined_native_path) "refined_ritz" else "projected_ritz",
     refined_extraction_native = refined_native_path,
-    krylov_schur = FALSE,
-    krylov_schur_status = if (refined_native_path) {
-      "not implemented; V2 tranche promotes native refined Ritz extraction only"
+    krylov_schur = native_path,
+    krylov_schur_status = if (native_path) {
+      native_krylov_schur_status()
     } else {
       "not requested"
     },
@@ -1428,4 +1463,17 @@ print.eigencore_plan <- function(x, ...) {
   }
   cat("  fallback:", x$fallback, "\n")
   invisible(x)
+}
+
+#' @keywords internal
+validate_solution_count <- function(k, limit, name) {
+  if (!is.numeric(k) || length(k) != 1L || is.na(k) || k != round(k)) {
+    stop(name, " must be a single whole number.", call. = FALSE)
+  }
+  k <- as.integer(k)
+  if (k < 1L || k > limit) {
+    stop(name, " must be between 1 and ", limit, ", got ", k, ".",
+         call. = FALSE)
+  }
+  k
 }

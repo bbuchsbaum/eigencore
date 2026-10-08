@@ -1002,7 +1002,28 @@ native_builtin_svd_certificate_cached_av <- function(Aop, d, u, v, Av, tol = 1e-
 
 #' @keywords internal
 matrix_norm <- function(x) {
-  norm(x, type = "F")
+  # base::norm() drops imaginary parts, so complex inputs use Mod().
+  if (inherits(x, "sparseMatrix")) {
+    x <- methods::as(x, "generalMatrix")
+    if (methods::.hasSlot(x, "x")) {
+      return(sqrt(sum(Mod(x@x)^2)))
+    }
+    return(sqrt(sum(Mod(as.matrix(x))^2)))
+  }
+  if (is.complex(x)) {
+    return(sqrt(sum(Mod(x)^2)))
+  }
+  norm(as.matrix(x), type = "F")
+}
+
+#' @keywords internal
+matrix_norm_one <- function(x) {
+  # base::norm() drops imaginary parts of complex matrices.
+  x <- as.matrix(x)
+  if (!length(x)) {
+    return(0)
+  }
+  max(colSums(Mod(x)))
 }
 
 #' @keywords internal
@@ -1043,16 +1064,52 @@ operator_norm_for_certificate_info <- function(op) {
   src <- source_or_null(op)
   if (!is.null(src)) {
     return(list(
-      value = matrix_norm(as.matrix(src)),
+      value = matrix_norm(src),
       norm_bound_type = "frobenius_exact",
       scale_is_estimate = FALSE
     ))
   }
   list(
-    value = estimate_operator_frobenius_norm(op),
+    value = operator_memoised_value(
+      op, "frobenius_hutchinson_estimate", estimate_operator_frobenius_norm(op)
+    ),
     norm_bound_type = "frobenius_hutchinson_estimate",
     scale_is_estimate = TRUE
   )
+}
+
+# Session-level memo for per-operator values such as the Hutchinson norm
+# estimate (P7), which otherwise costs 8 operator applies (8 factorised solves
+# for shift-invert) on every certificate. Entries are keyed by the
+# construction token linear_operator() assigns, and reused only while the
+# operator still carries its construction-time metadata and apply closure, so
+# an operator whose fields were replaced after construction recomputes. The
+# memo lives outside the operator so solving never mutates a plan's
+# serialised state. `value` is a promise, evaluated only on a miss.
+.eigencore_operator_memo <- new.env(parent = emptyenv())
+
+#' @keywords internal
+operator_memoised_value <- function(op, key, value) {
+  cache <- if (is.list(op)) op$cache else NULL
+  valid <- is.environment(cache) &&
+    is.character(cache$memo_token) &&
+    identical(op$metadata, cache$metadata) &&
+    identical(op$apply, cache$wrapped_apply) &&
+    identical(as.integer(op$dim), as.integer(cache$dim))
+  if (!valid) {
+    return(value)
+  }
+  memo_key <- paste(cache$memo_token, key, sep = "|")
+  hit <- .eigencore_operator_memo[[memo_key]]
+  if (!is.null(hit)) {
+    return(hit)
+  }
+  if (length(.eigencore_operator_memo) >= 512L) {
+    rm(list = ls(.eigencore_operator_memo, all.names = TRUE),
+       envir = .eigencore_operator_memo)
+  }
+  assign(memo_key, value, envir = .eigencore_operator_memo)
+  value
 }
 
 #' @keywords internal

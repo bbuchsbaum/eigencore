@@ -10,13 +10,32 @@
 #include <R_ext/Lapack.h>
 #include "eigencore_lapack_compat.h"
 #include "eigencore_common.h"
+#include "native_operators.h"
 
-static double max_orthogonality_loss_gram(const double* gram, int k) {
+extern "C" void eigencore_validate_csc_structure(SEXP i_, SEXP p_, SEXP x_,
+                                                 SEXP dim_, const char* context);
+
+// Orthogonality loss max |X^T X - I| of a rows x k block, from the upper
+// triangle of a dsyrk Gram (half the flops of a dgemm cross-product).
+static double block_orthogonality_loss_dsyrk(const double* X, int rows, int k) {
+  if (k <= 0) {
+    return 0.0;
+  }
+  std::vector<double> gram(static_cast<size_t>(k) * static_cast<size_t>(k), 0.0);
+  const char uplo = 'U';
+  const char trans = 'T';
+  const double one = 1.0;
+  const double zero = 0.0;
+  F77_CALL(dsyrk)(&uplo, &trans, &k, &rows, &one, X, &rows,
+                  &zero, gram.data(), &k FCONE FCONE);
   double loss = 0.0;
   for (int col = 0; col < k; ++col) {
-    for (int row = 0; row < k; ++row) {
+    for (int row = 0; row <= col; ++row) {
       const double target = (row == col) ? 1.0 : 0.0;
-      const double err = fabs(gram[row + col * k] - target);
+      const double err = fabs(gram[row + static_cast<int64_t>(col) * k] - target);
+      if (ISNAN(err)) {
+        return err;
+      }
       if (err > loss) {
         loss = err;
       }
@@ -25,19 +44,146 @@ static double max_orthogonality_loss_gram(const double* gram, int k) {
   return loss;
 }
 
-static void small_column_crossprod_gram(const double* X, int rows, int cols,
-                                        double* gram) {
-  for (int col = 0; col < cols; ++col) {
-    const double* x_col = X + static_cast<int64_t>(col) * rows;
-    for (int row_col = 0; row_col <= col; ++row_col) {
-      const double* x_row = X + static_cast<int64_t>(row_col) * rows;
-      long double dot = 0.0L;
-      for (int row = 0; row < rows; ++row) {
-        dot += static_cast<long double>(x_row[row]) * x_col[row];
+// Exact two-sided SVD certificate in ORIGINAL coordinates for a CSC matrix A
+// and candidate triplets (d, U, V):
+//   left_j  = ||A v_j   - d_j u_j||,   right_j = ||A^T u_j - d_j v_j||,
+// with orthogonality measured on the returned U and V themselves. Neither
+// residual is taken from the Gram matrix or assumed zero because one factor
+// was formed from the other. `av_known` / `atu_known` may pass the exact
+// products A V / A^T U that this same call computed from A and the FINAL V / U
+// while forming the opposite factor (bitwise what a recompute would give);
+// any side passed as nullptr is applied here. Never pass a cached, Gram-
+// derived, or otherwise stale product.
+static void csc_two_sided_svd_certificate(const int* Ai, const int* Ap,
+                                          const double* Ax, int m, int n, int k,
+                                          const double* d, const double* U,
+                                          const double* V,
+                                          const double* av_known,
+                                          const double* atu_known,
+                                          double scale_value,
+                                          double tol, double* left,
+                                          double* right, double* combined,
+                                          double* backward, int* converged,
+                                          double* orth_u, double* orth_v) {
+  if (k <= 0) {
+    *orth_u = 0.0;
+    *orth_v = 0.0;
+    return;
+  }
+  CSCOperator impl = {m, n, Ai, Ap, Ax};
+  std::vector<double> av_work;
+  std::vector<double> atu_work;
+  const double* av = av_known;
+  const double* atu = atu_known;
+  if (av == nullptr) {
+    av_work.assign(static_cast<size_t>(m) * static_cast<size_t>(k), 0.0);
+    eigencore_csc_apply(&impl, EIGENCORE_TRANSPOSE_NONE, k, V, n, 1.0, 0.0,
+                        av_work.data(), m, nullptr);
+    av = av_work.data();
+  }
+  if (atu == nullptr) {
+    atu_work.assign(static_cast<size_t>(n) * static_cast<size_t>(k), 0.0);
+    eigencore_csc_apply(&impl, EIGENCORE_TRANSPOSE_ADJOINT, k, U, m, 1.0, 0.0,
+                        atu_work.data(), n, nullptr);
+    atu = atu_work.data();
+  }
+  for (int col = 0; col < k; ++col) {
+    const double sigma = d[col];
+    const double* av_col = av + static_cast<int64_t>(col) * m;
+    const double* u_col = U + static_cast<int64_t>(col) * m;
+    const double* atu_col = atu + static_cast<int64_t>(col) * n;
+    const double* v_col = V + static_cast<int64_t>(col) * n;
+    long double left_sum = 0.0L;
+    long double right_sum = 0.0L;
+    for (int row = 0; row < m; ++row) {
+      const double residual = av_col[row] - sigma * u_col[row];
+      left_sum += static_cast<long double>(residual) * residual;
+    }
+    for (int row = 0; row < n; ++row) {
+      const double residual = atu_col[row] - sigma * v_col[row];
+      right_sum += static_cast<long double>(residual) * residual;
+    }
+    const double l = sqrt(static_cast<double>(left_sum));
+    const double r = sqrt(static_cast<double>(right_sum));
+    const double c = sqrt(l * l + r * r);
+    const double be = c / scale_value;
+    left[col] = l;
+    right[col] = r;
+    combined[col] = c;
+    backward[col] = be;
+    converged[col] = (R_FINITE(be) && be <= tol) ? TRUE : FALSE;
+  }
+  *orth_u = block_orthogonality_loss_dsyrk(U, m, k);
+  *orth_v = block_orthogonality_loss_dsyrk(V, n, k);
+}
+
+// Upper triangle of G = sum_j a_j a_j^T for `count` sparse vectors of length
+// `dim` stored in compressed form (ptr/idx/val), then mirrored to the lower
+// triangle. Short vectors use the scalar pair loop with writes running down a
+// single Gram column (idx sorted ascending, as in a valid dgCMatrix; unsorted
+// input stays correct via the min/max swap). Vectors with many nonzeros are
+// scattered into a dense panel and folded in with dsyrk, which beats the
+// scalar loop once a vector is a sizeable fraction of dense.
+static void accumulate_sparse_gram_upper(int dim, int count, const int* ptr,
+                                         const int* idx, const double* val,
+                                         double* G) {
+  const int64_t ld = dim;
+  const int panel_capacity = 64;
+  const int dense_threshold = std::max(32, dim / 8);
+  std::vector<double> panel;
+  int panel_cols = 0;
+  const char uplo = 'U';
+  const char notrans = 'N';
+  const double one = 1.0;
+  auto flush_panel = [&]() {
+    if (panel_cols == 0) {
+      return;
+    }
+    F77_CALL(dsyrk)(&uplo, &notrans, &dim, &panel_cols, &one, panel.data(), &dim,
+                    &one, G, &dim FCONE FCONE);
+    std::fill(panel.begin(),
+              panel.begin() + static_cast<int64_t>(panel_cols) * ld, 0.0);
+    panel_cols = 0;
+  };
+  for (int j = 0; j < count; ++j) {
+    const int start = ptr[j];
+    const int end = ptr[j + 1];
+    const int nnz = end - start;
+    if (nnz <= 0) {
+      continue;
+    }
+    if (nnz >= dense_threshold) {
+      if (panel.empty()) {
+        panel.assign(static_cast<size_t>(ld) * panel_capacity, 0.0);
       }
-      const double value = static_cast<double>(dot);
-      gram[row_col + static_cast<int64_t>(col) * cols] = value;
-      gram[col + static_cast<int64_t>(row_col) * cols] = value;
+      double* dst = panel.data() + static_cast<int64_t>(panel_cols) * ld;
+      for (int pos = start; pos < end; ++pos) {
+        dst[idx[pos]] += val[pos];
+      }
+      if (++panel_cols == panel_capacity) {
+        flush_panel();
+      }
+      continue;
+    }
+    for (int bb = start; bb < end; ++bb) {
+      const int rb = idx[bb];
+      const double xb = val[bb];
+      double* g_col = G + static_cast<int64_t>(rb) * ld;
+      for (int aa = start; aa <= bb; ++aa) {
+        const int ra = idx[aa];
+        const double update = val[aa] * xb;
+        if (ra <= rb) {
+          g_col[ra] += update;
+        } else {
+          G[rb + static_cast<int64_t>(ra) * ld] += update;
+        }
+      }
+    }
+  }
+  flush_panel();
+  for (int col = 0; col < dim; ++col) {
+    for (int row = col + 1; row < dim; ++row) {
+      G[row + static_cast<int64_t>(col) * ld] = G[col + static_cast<int64_t>(row) * ld];
     }
   }
 }
@@ -176,6 +322,21 @@ static void csc_right_normal_apply_vec(const int* Ai, const int* Ap,
   csc_transpose_apply_vec(Ai, Ap, Ax, m, n, tmp_m, y);
 }
 
+// Deterministic pseudo-random +-1 start vector entry. The raw LCG-style key
+// has its low bit equal to the row parity, so it must be mixed (splitmix64
+// finalizer) before taking a sign bit; otherwise the start vector is the
+// alternating pattern, orthogonal to the constant vector for even m.
+static inline double gram_lanczos_start_sign(int row, int rank) {
+  uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(row + 1)) << 32) ^
+    static_cast<uint64_t>(static_cast<uint32_t>(rank) * 2654435761u);
+  key ^= key >> 30;
+  key *= 0xbf58476d1ce4e5b9ULL;
+  key ^= key >> 27;
+  key *= 0x94d049bb133111ebULL;
+  key ^= key >> 31;
+  return (key >> 63) ? 1.0 : -1.0;
+}
+
 static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
                                                    const int* Ap,
                                                    const double* Ax,
@@ -201,9 +362,7 @@ static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
 
   std::vector<double> start(static_cast<size_t>(m), 0.0);
   for (int row = 0; row < m; ++row) {
-    const uint32_t key = static_cast<uint32_t>((row + 1) * 1103515245u) ^
-      static_cast<uint32_t>(rank * 2654435761u);
-    start[row] = (key & 1u) ? 1.0 : -1.0;
+    start[row] = gram_lanczos_start_sign(row, rank);
   }
 
   std::vector<double> Q(static_cast<size_t>(m) * static_cast<size_t>(max_steps), 0.0);
@@ -514,9 +673,7 @@ static int gram_krylov_left_normal_attempt(const double* gram,
   std::vector<double> beta(static_cast<size_t>(max_steps), 0.0);
 
   for (int row = 0; row < m; ++row) {
-    const uint32_t key = static_cast<uint32_t>((row + 1) * 1103515245u) ^
-      static_cast<uint32_t>(rank * 2654435761u);
-    Q[row] = (key & 1u) ? 1.0 : -1.0;
+    Q[row] = gram_lanczos_start_sign(row, rank);
   }
   double q_norm = trl_norm2_gram(Q.data(), m);
   if (q_norm <= 100.0 * DBL_EPSILON) {
@@ -623,7 +780,7 @@ static int gram_krylov_left_normal_attempt(const double* gram,
       residual2 += static_cast<long double>(residual) * residual;
     }
     const double backward = sqrt(static_cast<double>(residual2)) / scale_value;
-    if (backward > max_backward) {
+    if (ISNAN(backward) || backward > max_backward) {
       max_backward = backward;
     }
   }
@@ -750,7 +907,7 @@ static int gram_top_subspace_attempt(const double* gram,
       residual2 += static_cast<long double>(residual) * residual;
     }
     const double backward = sqrt(static_cast<double>(residual2)) / scale_value;
-    if (backward > max_backward) {
+    if (ISNAN(backward) || backward > max_backward) {
       max_backward = backward;
     }
   }
@@ -765,6 +922,7 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
     error("invalid CSC inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_gram_svd");
   const int m = INTEGER(dim_)[0];
   const int n = INTEGER(dim_)[1];
   int rank = asInteger(rank_);
@@ -818,21 +976,7 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   if (!used_implicit_lanczos) {
     stage_timer = native_timer_now();
     gram.assign(static_cast<size_t>(m) * static_cast<size_t>(m), 0.0);
-    for (int col = 0; col < n; ++col) {
-      const int start = Ap[col];
-      const int end = Ap[col + 1];
-      for (int aa = start; aa < end; ++aa) {
-        const int row_a = Ai[aa];
-        const double x_a = Ax[aa];
-        gram[row_a + static_cast<int64_t>(row_a) * m] += x_a * x_a;
-        for (int bb = aa + 1; bb < end; ++bb) {
-          const int row_b = Ai[bb];
-          const double update = x_a * Ax[bb];
-          gram[row_a + static_cast<int64_t>(row_b) * m] += update;
-          gram[row_b + static_cast<int64_t>(row_a) * m] += update;
-        }
-      }
-    }
+    accumulate_sparse_gram_upper(m, n, Ap, Ai, Ax, gram.data());
     stage_gram_seconds = native_timer_elapsed(stage_timer);
 
     stage_timer = native_timer_now();
@@ -996,17 +1140,22 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
     REAL(d_)[col] = sigma;
   }
 
+  // A^T U is formed once from A and the final U: it yields V = A^T U diag(1/d)
+  // and is the exact adjoint product for the right certificate residual.
+  std::vector<double> atu_form(static_cast<size_t>(n) * static_cast<size_t>(rank), 0.0);
+  {
+    CSCOperator form_impl = {m, n, Ai, Ap, Ax};
+    eigencore_csc_apply(&form_impl, EIGENCORE_TRANSPOSE_ADJOINT, rank, REAL(u_), m,
+                        1.0, 0.0, atu_form.data(), n, nullptr);
+  }
   for (int scol = 0; scol < rank; ++scol) {
     const double sigma = REAL(d_)[scol];
-    const double inv_sigma = sigma > 100.0 * DBL_EPSILON ? 1.0 / sigma : 0.0;
-    const double* u_col = REAL(u_) + static_cast<int64_t>(scol) * m;
+    const double inv_sigma =
+      sigma > 100.0 * DBL_EPSILON * scale_value ? 1.0 / sigma : 0.0;
+    const double* atu_col = atu_form.data() + static_cast<int64_t>(scol) * n;
     double* v_col = REAL(v_) + static_cast<int64_t>(scol) * n;
     for (int acol = 0; acol < n; ++acol) {
-      double sum = 0.0;
-      for (int jj = Ap[acol]; jj < Ap[acol + 1]; ++jj) {
-        sum += Ax[jj] * u_col[Ai[jj]];
-      }
-      v_col[acol] = sum * inv_sigma;
+      v_col[acol] = atu_col[acol] * inv_sigma;
     }
   }
   stage_vector_form_seconds = native_timer_elapsed(stage_timer);
@@ -1019,104 +1168,21 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   SEXP converged_ = PROTECT(allocVector(LGLSXP, rank));
   SEXP scale_ = PROTECT(allocVector(REALSXP, rank));
   SEXP orth_ = PROTECT(allocVector(REALSXP, 2));
-
-  std::vector<double> gram_u_small(static_cast<size_t>(rank) * rank, 0.0);
-  std::vector<double> gram_v_small(static_cast<size_t>(rank) * rank, 0.0);
-  std::vector<double> gu;
-  std::vector<double> gu_block;
-  if (used_implicit_lanczos) {
-    small_column_crossprod_gram(REAL(u_), m, rank, gram_u_small.data());
-    small_column_crossprod_gram(REAL(v_), n, rank, gram_v_small.data());
-    gu.assign(static_cast<size_t>(m), 0.0);
-  } else {
-    gu_block.assign(static_cast<size_t>(m) * static_cast<size_t>(rank), 0.0);
-    for (int col = 0; col < rank; ++col) {
-      const double sigma_col = REAL(d_)[col];
-      const double inv_col = sigma_col > 100.0 * DBL_EPSILON ? 1.0 / sigma_col : 0.0;
-      const double* gu_col = gu_block.data() + static_cast<int64_t>(col) * m;
-      double* gu_write = gu_block.data() + static_cast<int64_t>(col) * m;
-      const double* u_col = REAL(u_) + static_cast<int64_t>(col) * m;
-      for (int gcol = 0; gcol < m; ++gcol) {
-        const double coeff = u_col[gcol];
-        const double* gram_col = gram.data() + static_cast<int64_t>(gcol) * m;
-        for (int row = 0; row < m; ++row) {
-          gu_write[row] += gram_col[row] * coeff;
-        }
-      }
-      const double lambda = sigma_col * sigma_col;
-      double left_sum = 0.0;
-      for (int row = 0; row < m; ++row) {
-        const double residual = (gu_col[row] - lambda * u_col[row]) * inv_col;
-        left_sum += residual * residual;
-      }
-      const double left = sqrt(left_sum);
-      REAL(left_)[col] = left;
-      REAL(right_)[col] = 0.0;
-      REAL(combined_)[col] = left;
-      REAL(scale_)[col] = scale_value;
-      REAL(backward_)[col] = left / scale_value;
-      LOGICAL(converged_)[col] = (REAL(backward_)[col] <= tol) ? TRUE : FALSE;
-      for (int row_col = 0; row_col < rank; ++row_col) {
-        const double sigma_row = REAL(d_)[row_col];
-        const double inv_row = sigma_row > 100.0 * DBL_EPSILON ? 1.0 / sigma_row : 0.0;
-        const double* u_row = REAL(u_) + static_cast<int64_t>(row_col) * m;
-        double dot_u = 0.0;
-        double dot_gu = 0.0;
-        for (int row = 0; row < m; ++row) {
-          dot_u += u_row[row] * u_col[row];
-          dot_gu += u_row[row] * gu_col[row];
-        }
-        gram_u_small[row_col + static_cast<int64_t>(col) * rank] = dot_u;
-        gram_v_small[row_col + static_cast<int64_t>(col) * rank] =
-          dot_gu * inv_row * inv_col;
-      }
-    }
+  for (int col = 0; col < rank; ++col) {
+    REAL(scale_)[col] = scale_value;
   }
-  REAL(orth_)[0] = max_orthogonality_loss_gram(gram_u_small.data(), rank);
-  REAL(orth_)[1] = max_orthogonality_loss_gram(gram_v_small.data(), rank);
+  // Certify in original coordinates: both residuals from A itself and the
+  // orthogonality of the returned U and V (never inferred from the Gram).
+  csc_two_sided_svd_certificate(
+    Ai, Ap, Ax, m, n, rank, REAL(d_), REAL(u_), REAL(v_),
+    nullptr, atu_form.data(), scale_value, tol,
+    REAL(left_), REAL(right_), REAL(combined_), REAL(backward_),
+    LOGICAL(converged_), REAL(orth_), REAL(orth_) + 1
+  );
   SEXP orth_names_ = PROTECT(allocVector(STRSXP, 2));
   SET_STRING_ELT(orth_names_, 0, mkChar("U"));
   SET_STRING_ELT(orth_names_, 1, mkChar("V"));
   setAttrib(orth_, R_NamesSymbol, orth_names_);
-
-  std::vector<double> atu_check(static_cast<size_t>(n), 0.0);
-  if (used_implicit_lanczos) {
-    for (int scol = 0; scol < rank; ++scol) {
-      const double sigma = REAL(d_)[scol];
-      const double* gu_col = nullptr;
-      csc_forward_apply_vec(
-        Ai, Ap, Ax, m, n,
-        REAL(v_) + static_cast<int64_t>(scol) * n,
-        gu.data()
-      );
-      csc_transpose_apply_vec(
-        Ai, Ap, Ax, m, n,
-        REAL(u_) + static_cast<int64_t>(scol) * m,
-        atu_check.data()
-      );
-      gu_col = gu.data();
-      long double left_sum = 0.0L;
-      long double right_sum = 0.0L;
-      for (int row = 0; row < m; ++row) {
-        const double residual =
-          gu_col[row] - sigma * REAL(u_)[row + static_cast<int64_t>(scol) * m];
-        left_sum += static_cast<long double>(residual) * residual;
-      }
-      for (int row = 0; row < n; ++row) {
-        const double residual = atu_check[static_cast<size_t>(row)] -
-          sigma * REAL(v_)[row + static_cast<int64_t>(scol) * n];
-        right_sum += static_cast<long double>(residual) * residual;
-      }
-      const double left = sqrt(static_cast<double>(left_sum));
-      const double right = sqrt(static_cast<double>(right_sum));
-      REAL(left_)[scol] = left;
-      REAL(right_)[scol] = right;
-      REAL(combined_)[scol] = sqrt(left * left + right * right);
-      REAL(scale_)[scol] = scale_value;
-      REAL(backward_)[scol] = REAL(combined_)[scol] / scale_value;
-      LOGICAL(converged_)[scol] = (REAL(backward_)[scol] <= tol) ? TRUE : FALSE;
-    }
-  }
   stage_diagnostics_seconds = native_timer_elapsed(stage_timer);
 
   SEXP diagnostics_ = PROTECT(allocVector(VECSXP, 7));
@@ -1198,6 +1264,7 @@ static SEXP eigencore_csc_right_gram_svd_impl(
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
     error("invalid CSC inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_gram_svd");
   const int m = INTEGER(dim_)[0];
   const int n = INTEGER(dim_)[1];
   int rank = asInteger(rank_);
@@ -1273,21 +1340,8 @@ static SEXP eigencore_csc_right_gram_svd_impl(
         row_vals[static_cast<size_t>(pos)] = Ax[jj];
       }
     }
-    for (int row = 0; row < m; ++row) {
-      const int start = row_ptr[static_cast<size_t>(row)];
-      const int end = row_ptr[static_cast<size_t>(row + 1)];
-      for (int aa = start; aa < end; ++aa) {
-        const int col_a = row_cols[static_cast<size_t>(aa)];
-        const double x_a = row_vals[static_cast<size_t>(aa)];
-        gram[col_a + static_cast<int64_t>(col_a) * n] += x_a * x_a;
-        for (int bb = aa + 1; bb < end; ++bb) {
-          const int col_b = row_cols[static_cast<size_t>(bb)];
-          const double update = x_a * row_vals[static_cast<size_t>(bb)];
-          gram[col_a + static_cast<int64_t>(col_b) * n] += update;
-          gram[col_b + static_cast<int64_t>(col_a) * n] += update;
-        }
-      }
-    }
+    accumulate_sparse_gram_upper(n, m, row_ptr.data(), row_cols.data(),
+                                 row_vals.data(), gram.data());
     stage_gram_seconds += native_timer_elapsed(stage_timer);
 
     stage_timer = native_timer_now();
@@ -1342,21 +1396,22 @@ static SEXP eigencore_csc_right_gram_svd_impl(
                               values_work[static_cast<size_t>(col)] : 0.0);
     REAL(d_)[col] = sigma;
   }
-  for (int acol = 0; acol < n; ++acol) {
-    for (int jj = Ap[acol]; jj < Ap[acol + 1]; ++jj) {
-      const int row = Ai[jj];
-      const double val = Ax[jj];
-      for (int scol = 0; scol < rank; ++scol) {
-        REAL(u_)[row + static_cast<int64_t>(scol) * m] +=
-          val * REAL(v_)[acol + static_cast<int64_t>(scol) * n];
-      }
-    }
+  // A V is formed once from A and the final V: it yields U = A V diag(1/d)
+  // and is the exact forward product for the left certificate residual.
+  std::vector<double> av_form(static_cast<size_t>(m) * static_cast<size_t>(rank), 0.0);
+  {
+    CSCOperator form_impl = {m, n, Ai, Ap, Ax};
+    eigencore_csc_apply(&form_impl, EIGENCORE_TRANSPOSE_NONE, rank, REAL(v_), n,
+                        1.0, 0.0, av_form.data(), m, nullptr);
   }
   for (int scol = 0; scol < rank; ++scol) {
     const double sigma = REAL(d_)[scol];
-    const double inv_sigma = sigma > 100.0 * DBL_EPSILON ? 1.0 / sigma : 0.0;
+    const double inv_sigma =
+      sigma > 100.0 * DBL_EPSILON * scale_value ? 1.0 / sigma : 0.0;
+    const double* av_col = av_form.data() + static_cast<int64_t>(scol) * m;
+    double* u_col = REAL(u_) + static_cast<int64_t>(scol) * m;
     for (int row = 0; row < m; ++row) {
-      REAL(u_)[row + static_cast<int64_t>(scol) * m] *= inv_sigma;
+      u_col[row] = av_col[row] * inv_sigma;
     }
   }
   stage_vector_form_seconds += native_timer_elapsed(stage_timer);
@@ -1369,97 +1424,25 @@ static SEXP eigencore_csc_right_gram_svd_impl(
   SEXP converged_ = PROTECT(allocVector(LGLSXP, rank));
   SEXP scale_ = PROTECT(allocVector(REALSXP, rank));
   SEXP orth_ = PROTECT(allocVector(REALSXP, 2));
-
-  const char trans = 'T';
-  const char notrans = 'N';
-  const double one = 1.0;
-  const double zero = 0.0;
-  std::vector<double> gram_v_small(static_cast<size_t>(rank) * rank, 0.0);
-  std::vector<double> gram_u_small(static_cast<size_t>(rank) * rank, 0.0);
-  std::vector<double> gv_block;
-  if (used_implicit_lanczos) {
-    small_column_crossprod_gram(REAL(u_), m, rank, gram_u_small.data());
-    small_column_crossprod_gram(REAL(v_), n, rank, gram_v_small.data());
-  } else {
-    gv_block.assign(static_cast<size_t>(n) * static_cast<size_t>(rank), 0.0);
-    F77_CALL(dgemm)(&trans, &notrans, &rank, &rank, &n,
-                    &one, REAL(v_), &n, REAL(v_), &n,
-                    &zero, gram_v_small.data(), &rank FCONE FCONE);
-    F77_CALL(dgemm)(&notrans, &notrans, &n, &rank, &n,
-                    &one, gram.data(), &n, REAL(v_), &n,
-                    &zero, gv_block.data(), &n FCONE FCONE);
-    for (int col = 0; col < rank; ++col) {
-      const double sigma_col = REAL(d_)[col];
-      const double inv_col = sigma_col > 100.0 * DBL_EPSILON ? 1.0 / sigma_col : 0.0;
-      const double* gv_col = gv_block.data() + static_cast<int64_t>(col) * n;
-      for (int row_col = 0; row_col < rank; ++row_col) {
-        const double sigma_row = REAL(d_)[row_col];
-        const double inv_row = sigma_row > 100.0 * DBL_EPSILON ? 1.0 / sigma_row : 0.0;
-        const double* v_row = REAL(v_) + static_cast<int64_t>(row_col) * n;
-        long double dot = 0.0L;
-        for (int row = 0; row < n; ++row) {
-          dot += static_cast<long double>(v_row[row]) * gv_col[row];
-        }
-        gram_u_small[row_col + static_cast<int64_t>(col) * rank] =
-          static_cast<double>(dot) * inv_row * inv_col;
-      }
-    }
+  for (int col = 0; col < rank; ++col) {
+    REAL(scale_)[col] = scale_value;
   }
-  REAL(orth_)[0] = max_orthogonality_loss_gram(gram_u_small.data(), rank);
-  REAL(orth_)[1] = max_orthogonality_loss_gram(gram_v_small.data(), rank);
+  // Certify in original coordinates: both residuals from A itself and the
+  // orthogonality of the returned U and V (never inferred from the Gram).
+  csc_two_sided_svd_certificate(
+    Ai, Ap, Ax, m, n, rank, REAL(d_), REAL(u_), REAL(v_),
+    av_form.data(), nullptr, scale_value, tol,
+    REAL(left_), REAL(right_), REAL(combined_), REAL(backward_),
+    LOGICAL(converged_), REAL(orth_), REAL(orth_) + 1
+  );
   SEXP orth_names_ = PROTECT(allocVector(STRSXP, 2));
   SET_STRING_ELT(orth_names_, 0, mkChar("U"));
   SET_STRING_ELT(orth_names_, 1, mkChar("V"));
   setAttrib(orth_, R_NamesSymbol, orth_names_);
-
-  if (used_implicit_lanczos) {
-    std::vector<double> atu_check(static_cast<size_t>(n), 0.0);
-    for (int scol = 0; scol < rank; ++scol) {
-      const double sigma = REAL(d_)[scol];
-      const double* v_col = REAL(v_) + static_cast<int64_t>(scol) * n;
-      const double* u_col = REAL(u_) + static_cast<int64_t>(scol) * m;
-      csc_transpose_apply_vec(Ai, Ap, Ax, m, n, u_col, atu_check.data());
-      long double right_sum = 0.0L;
-      for (int row = 0; row < n; ++row) {
-        const double residual = atu_check[static_cast<size_t>(row)] -
-          sigma * v_col[row];
-        right_sum += static_cast<long double>(residual) * residual;
-      }
-      const double left = 0.0;
-      const double right = sqrt(static_cast<double>(right_sum));
-      REAL(left_)[scol] = left;
-      REAL(right_)[scol] = right;
-      REAL(combined_)[scol] = sqrt(left * left + right * right);
-      REAL(scale_)[scol] = scale_value;
-      REAL(backward_)[scol] = REAL(combined_)[scol] / scale_value;
-      LOGICAL(converged_)[scol] = (REAL(backward_)[scol] <= tol) ? TRUE : FALSE;
-    }
-  } else {
-    for (int scol = 0; scol < rank; ++scol) {
-      const double sigma = REAL(d_)[scol];
-      const double lambda = sigma * sigma;
-      long double right_sum = 0.0L;
-      const double inv_sigma = sigma > 100.0 * DBL_EPSILON ? 1.0 / sigma : 0.0;
-      const double* gv_col = gv_block.data() + static_cast<int64_t>(scol) * n;
-      const double* v_col = REAL(v_) + static_cast<int64_t>(scol) * n;
-      for (int row = 0; row < n; ++row) {
-        const double residual = (gv_col[row] - lambda * v_col[row]) * inv_sigma;
-        right_sum += static_cast<long double>(residual) * residual;
-      }
-      const double left = 0.0;
-      const double right = sqrt(static_cast<double>(right_sum));
-      REAL(left_)[scol] = left;
-      REAL(right_)[scol] = right;
-      REAL(combined_)[scol] = right;
-      REAL(scale_)[scol] = scale_value;
-      REAL(backward_)[scol] = REAL(combined_)[scol] / scale_value;
-      LOGICAL(converged_)[scol] = (REAL(backward_)[scol] <= tol) ? TRUE : FALSE;
-    }
-  }
   if (used_implicit_lanczos) {
     double max_backward = 0.0;
     for (int scol = 0; scol < rank; ++scol) {
-      if (REAL(backward_)[scol] > max_backward || scol == 0) {
+      if (ISNAN(REAL(backward_)[scol]) || REAL(backward_)[scol] > max_backward || scol == 0) {
         max_backward = REAL(backward_)[scol];
       }
     }
@@ -1476,7 +1459,7 @@ static SEXP eigencore_csc_right_gram_svd_impl(
       }
     }
     const double orth_tol = std::max(tol, sqrt(DBL_EPSILON));
-    if (REAL(orth_)[0] > orth_tol || REAL(orth_)[1] > orth_tol) {
+    if (!(REAL(orth_)[0] <= orth_tol) || !(REAL(orth_)[1] <= orth_tol)) {
       certificate_passed = FALSE;
     }
     if (!certificate_passed) {
@@ -1592,10 +1575,16 @@ static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
   SEXP implicit_iter_ = VECTOR_ELT(native_, 8);
   SEXP gram_krylov_iter_ = VECTOR_ELT(native_, 9);
 
-  double max_d = 1.0;
+  // Scale-invariant cutoff: relative to the largest computed singular value
+  // (an absolute floor of 1 would classify every value of a small-scale
+  // matrix as numerically zero). An all-zero spectrum falls back to 1.
+  double max_d = 0.0;
   for (int i = 0; i < rank; ++i) {
     const double di = REAL(d_)[i];
     if (R_finite(di) && di > max_d) max_d = di;
+  }
+  if (!(max_d > 0.0)) {
+    max_d = 1.0;
   }
   const double zero_tol = std::max(
     std::max(100.0 * DBL_EPSILON * max_d, sqrt(DBL_EPSILON) * max_d),
@@ -1618,14 +1607,14 @@ static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
   double max_backward = 0.0;
   double max_residual = 0.0;
   for (int i = 0; i < rank; ++i) {
-    if (REAL(backward_)[i] > max_backward) max_backward = REAL(backward_)[i];
-    if (REAL(combined_)[i] > max_residual) max_residual = REAL(combined_)[i];
+    if (ISNAN(REAL(backward_)[i]) || REAL(backward_)[i] > max_backward) max_backward = REAL(backward_)[i];
+    if (ISNAN(REAL(combined_)[i]) || REAL(combined_)[i] > max_residual) max_residual = REAL(combined_)[i];
   }
   double max_orth = NA_REAL;
   if (LENGTH(orth_) > 0) {
     max_orth = REAL(orth_)[0];
     for (int i = 1; i < LENGTH(orth_); ++i) {
-      if (REAL(orth_)[i] > max_orth) max_orth = REAL(orth_)[i];
+      if (ISNAN(REAL(orth_)[i]) || REAL(orth_)[i] > max_orth) max_orth = REAL(orth_)[i];
     }
   }
   const double orth_tol = std::max(tol, sqrt(DBL_EPSILON));
@@ -1767,7 +1756,7 @@ static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
   SET_VECTOR_ELT(restart_, 13, stage_);
   SET_VECTOR_ELT(restart_, 14, ScalarLogical(FALSE));
   SET_VECTOR_ELT(restart_, 15, ScalarReal(zero_tol));
-  SET_VECTOR_ELT(restart_, 16, ScalarLogical(TRUE));
+  SET_VECTOR_ELT(restart_, 16, ScalarLogical(FALSE));
   SET_VECTOR_ELT(restart_, 17, ScalarLogical(TRUE));
   SET_VECTOR_ELT(restart_, 18, ScalarLogical(FALSE));
   SET_VECTOR_ELT(restart_, 19, ScalarLogical(FALSE));

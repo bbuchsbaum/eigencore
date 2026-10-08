@@ -119,51 +119,22 @@ shifted_tridiagonal_preconditioner <- function(A, shift = 0) {
   upper <- numeric(max(n - 1L, 0L))
   if (inherits(A, "diagonalMatrix")) {
     diag <- as.numeric(Matrix::diag(A))
-  } else if (inherits(A, "CsparseMatrix")) {
-    i_slot <- methods::slot(A, "i") + 1L
-    p_slot <- methods::slot(A, "p")
-    x_slot <- methods::slot(A, "x")
-    for (j in seq_len(n)) {
-      start <- p_slot[[j]] + 1L
-      end <- p_slot[[j + 1L]]
-      if (start > end) {
-        next
-      }
-      for (pos in start:end) {
-        row <- i_slot[[pos]]
-        value <- x_slot[[pos]]
-        if (abs(row - j) > 1L) {
-          stop("A must be tridiagonal.", call. = FALSE)
-        }
-        if (row == j) {
-          diag[j] <- diag[j] + value
-        } else if (row == j + 1L) {
-          lower[j] <- lower[j] + value
-        } else if (row == j - 1L) {
-          upper[j - 1L] <- upper[j - 1L] + value
-        }
-      }
-    }
   } else {
-    trip <- as.data.frame(Matrix::summary(A))
-    if (!all(c("i", "j", "x") %in% names(trip))) {
+    # Symmetric/triangular storage keeps one triangle; expand to general CSC
+    # (which also sums any duplicate triplets) before reading the bands.
+    A <- methods::as(methods::as(A, "generalMatrix"), "CsparseMatrix")
+    i_slot <- methods::slot(A, "i") + 1L
+    j_slot <- rep.int(seq_len(n), diff(methods::slot(A, "p")))
+    x_slot <- as.numeric(methods::slot(A, "x"))
+    if (any(abs(i_slot - j_slot) > 1L)) {
       stop("A must be tridiagonal.", call. = FALSE)
     }
-    if (any(abs(trip$i - trip$j) > 1L)) {
-      stop("A must be tridiagonal.", call. = FALSE)
-    }
-    for (idx in seq_len(nrow(trip))) {
-      i <- trip$i[idx]
-      j <- trip$j[idx]
-      x <- trip$x[idx]
-      if (i == j) {
-        diag[i] <- x
-      } else if (i == j + 1L) {
-        lower[j] <- x
-      } else if (j == i + 1L) {
-        upper[i] <- x
-      }
-    }
+    on_diag <- i_slot == j_slot
+    diag[j_slot[on_diag]] <- x_slot[on_diag]
+    below <- i_slot == j_slot + 1L
+    lower[j_slot[below]] <- x_slot[below]
+    above <- i_slot == j_slot - 1L
+    upper[i_slot[above]] <- x_slot[above]
   }
   if (n > 1L && !isTRUE(all.equal(lower, upper, tolerance = 1e-12))) {
     stop("A must be symmetric tridiagonal.", call. = FALSE)

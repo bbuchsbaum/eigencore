@@ -331,7 +331,7 @@ test_that("smallest tall sparse CSC SVD uses native Gram production boundary", {
   expect_equal(fit$restart$kind, "gram_svd_special_case")
   expect_equal(fit$restart$gram_side, "right")
   expect_equal(fit$restart$native_gram_kernel, "materialized_right_gram")
-  expect_equal(fit$restart$native_gram_eigensolver, "lapack_dsyev_full")
+  expect_equal(fit$restart$native_gram_eigensolver, "lapack_dsyevr_full")
   expect_true(fit$restart$materialized_gram)
   expect_certificate_clean(fit)
 })

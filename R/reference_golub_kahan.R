@@ -1819,7 +1819,8 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
       as.numeric(tol),
       PACKAGE = "eigencore"
     )
-    zero_tol <- gram_svd_zero_tolerance(native$d, tol)
+    zero_tol <- gram_svd_zero_tolerance(native$d, tol,
+                                          norm_A = sqrt(sum(methods::slot(A, "x")^2)))
     cert <- if (any(native$d <= zero_tol)) {
       certify_svd_operator(op, native$d, native$u, native$v, tol = tol)
     } else {
@@ -1885,7 +1886,7 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
         stage_seconds = native$stage_seconds,
         zero_singular_completion = any(native$d <= zero_tol),
         zero_singular_threshold = zero_tol,
-        certificate_reuses_gram_sides = !any(native$d <= zero_tol),
+        certificate_reuses_gram_sides = FALSE,
         certified_in_original_coordinates = TRUE
       )
     ))
@@ -1920,7 +1921,8 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
         as.numeric(tol),
         PACKAGE = "eigencore"
       )
-      zero_tol <- gram_svd_zero_tolerance(native$d, tol)
+      zero_tol <- gram_svd_zero_tolerance(native$d, tol,
+                                          norm_A = sqrt(sum(methods::slot(A, "x")^2)))
       if (!any(native$d <= zero_tol)) {
         cert <- new_certificate(
           tol = tol,
@@ -1983,7 +1985,7 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
             stage_seconds = native$stage_seconds,
             zero_singular_completion = FALSE,
             zero_singular_threshold = zero_tol,
-            certificate_reuses_gram_sides = TRUE,
+            certificate_reuses_gram_sides = FALSE,
             certified_in_original_coordinates = TRUE
           )
         ))
@@ -1994,9 +1996,7 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     d <- sqrt(pmax(small$values, 0))
     v_full <- small$vectors
     u_full <- as.matrix(A %*% v_full)
-    av_full <- u_full
-    atu_full <- sweep(v_full, 2L, d, `*`)
-    zero_tol <- gram_svd_zero_tolerance(d, tol)
+    zero_tol <- gram_svd_zero_tolerance(d, tol, norm_A = sqrt(sum(diag(gram))))
     nz <- d > zero_tol
     d[!nz] <- 0
     if (any(nz)) {
@@ -2015,8 +2015,6 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
         needed = sum(!nz),
         tol = zero_tol
       )
-      av_full[, !nz] <- 0
-      atu_full[, !nz] <- 0
     }
   } else {
     gram <- as.matrix(tcrossprod(A))
@@ -2024,9 +2022,7 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     d <- sqrt(pmax(small$values, 0))
     u_full <- small$vectors
     v_full <- as.matrix(crossprod(A, u_full))
-    atu_full <- v_full
-    av_full <- sweep(u_full, 2L, d, `*`)
-    zero_tol <- gram_svd_zero_tolerance(d, tol)
+    zero_tol <- gram_svd_zero_tolerance(d, tol, norm_A = sqrt(sum(diag(gram))))
     nz <- d > zero_tol
     d[!nz] <- 0
     if (any(nz)) {
@@ -2045,18 +2041,15 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
         needed = sum(!nz),
         tol = zero_tol
       )
-      av_full[, !nz] <- 0
-      atu_full[, !nz] <- 0
     }
   }
 
-  cert <- if (any(!nz)) {
-    certify_svd_operator(op, d, u_full, v_full, tol = tol)
-  } else {
-    certify_svd_operator_cached_sides(
-      op, d, u_full, v_full, av_full, atu_full, tol = tol
-    )
-  }
+  # Certify in original coordinates with fresh applies on BOTH sides. One
+  # factor was formed from the other (u = A v / d or v = A^T u / d), so that
+  # side's residual is roundoff by construction, but the opposite residual is
+  # the Gram eigen-residual divided by d and must be measured against A, not
+  # assumed to be zero (C13).
+  cert <- certify_svd_operator(op, d, u_full, v_full, tol = tol)
   u <- u_full
   v <- v_full
   if (vectors == "left") {
@@ -2090,7 +2083,7 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
       materialized_gram = TRUE,
       zero_singular_completion = any(!nz),
       zero_singular_threshold = zero_tol,
-      certificate_reuses_gram_sides = !any(!nz),
+      certificate_reuses_gram_sides = FALSE,
       certified_in_original_coordinates = TRUE
     )
   )
@@ -2119,13 +2112,18 @@ gram_svd_eigen_slice <- function(gram, rank, target) {
   list(
     values = eig$values[idx],
     vectors = eig$vectors[, idx, drop = FALSE],
-    eigensolver = "lapack_dsyev_full"
+    eigensolver = paste0("lapack_", eig$driver %||% "dsyevr", "_full")
   )
 }
 
 #' @keywords internal
-gram_svd_zero_tolerance <- function(d, tol) {
-  scale <- max(1, d, na.rm = TRUE)
+gram_svd_zero_tolerance <- function(d, tol, norm_A = NULL) {
+  # Scale-invariant: relative to ||A|| when known (needed for smallest
+  # targets, whose d holds only the small end), else to the largest value.
+  scale <- max(c(norm_A, d, 0), na.rm = TRUE)
+  if (!is.finite(scale)) {
+    scale <- 0
+  }
   # Gram eigenvectors for numerically null singular values are unstable. A
   # slightly conservative cutoff lets the zero-triplet completion build clean
   # nullspace bases instead of certifying arbitrary near-null Ritz vectors.

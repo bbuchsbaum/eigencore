@@ -58,9 +58,26 @@ eig_full <- function(A, B = NULL, structure = NULL, vectors = TRUE,
     B <- eig_full_as_complex_matrix(B)
   }
 
+  auto_structure <- is.null(structure)
   structure <- eig_full_resolve_structure(A, B, structure, tol = sqrt(.Machine$double.eps))
   if (is.null(B)) {
     return(eig_full_standard(A, structure = structure, vectors = vectors, tol = tol))
+  }
+  if (auto_structure && identical(structure$kind, "hermitian")) {
+    # Symmetry alone does not make the pencil Hermitian-definite: an
+    # indefinite or singular B fails the Cholesky reduction, and the pencil
+    # is then solved by QZ like any other general pencil.
+    fit <- tryCatch(
+      eig_full_generalized(A, B, structure = structure, vectors = vectors,
+                           tol = tol),
+      error = function(e) {
+        if (grepl("potrf", conditionMessage(e), fixed = TRUE)) NULL else stop(e)
+      }
+    )
+    if (!is.null(fit)) {
+      return(fit)
+    }
+    structure <- general()
   }
   eig_full_generalized(A, B, structure = structure, vectors = vectors, tol = tol)
 }
@@ -70,10 +87,12 @@ eig_full_standard <- function(A, structure, vectors, tol) {
   n <- nrow(A)
   hermitian_path <- identical(structure$kind, "hermitian")
   if (hermitian_path) {
+    # vectors = FALSE runs the values-only LAPACK path (jobz = 'N'); the
+    # certificate is then the uncertified empty certificate, as before.
     eig <- if (is.complex(A)) {
-      native_dense_complex_hermitian_eigen(A)
+      native_dense_complex_hermitian_eigen(A, vectors = vectors)
     } else {
-      native_dense_symmetric_eigen(A)
+      native_dense_symmetric_eigen(A, vectors = vectors)
     }
     method <- if (is.complex(A)) {
       native_dense_complex_hermitian_label()
@@ -166,8 +185,8 @@ eig_full_generalized <- function(A, B, structure, vectors, tol) {
   # conditioning diagnostics. R's bundled LAPACK subset has no ZGGEVX, so
   # complex pencils use ZGGEV with input one-norms for the same
   # classification policy and no conditioning diagnostics.
-  norm_A <- eig$abnrm %||% norm(A, type = "1")
-  norm_B <- eig$bbnrm %||% norm(B, type = "1")
+  norm_A <- eig$abnrm %||% matrix_norm_one(A)
+  norm_B <- eig$bbnrm %||% matrix_norm_one(B)
   pencil <- generalized_pencil_values(eig$alpha, eig$beta,
                                       norm_A = norm_A, norm_B = norm_B)
   vecs <- eig$vectors
@@ -296,6 +315,9 @@ eig_full_certificate <- function(A, B, values, vecs, vectors, tol, general) {
 #' @keywords internal
 eig_full_dense_input <- function(x, name, allow_dense_fallback) {
   if (is.matrix(x)) {
+    if (!all(is.finite(x))) {
+      stop(name, " contains NA, NaN, or Inf entries.", call. = FALSE)
+    }
     return(x)
   }
   stop(

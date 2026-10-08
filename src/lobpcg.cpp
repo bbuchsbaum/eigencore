@@ -51,193 +51,423 @@ static int selected_ritz_indices(const double* values,
   return count;
 }
 
-static int trl_orthogonalise(const double* V_locked, int n_locked,
-                             const double* V_active, int m_active,
-                             double* z, double* tmp, int n,
-                             int passes = 2) {
+// ---------------------------------------------------------------------------
+// Block B-orthonormalisation and projection helpers (BLAS-3, double precision).
+//
+// Conventions: blocks are column-major n x m with leading dimension n. For the
+// standard problem (no metric B) every "B-image" pointer is nullptr and the
+// Euclidean inner product is used; for the generalized problem B-images are
+// carried alongside the blocks and updated by the same linear combinations, so
+// B is applied to each new block exactly once.
+// ---------------------------------------------------------------------------
+
+// Columns whose Euclidean norm shrinks below this fraction of their norm
+// before projection are treated as numerically inside the span of the
+// projected-out bases and dropped. The test is relative, so it is invariant
+// to scaling of A, B or the block.
+static const double kLobpcgDropRelative = 1e-12;
+// SVQB fallback keeps Gram eigenvalues above this fraction of the largest one
+// (singular values above ~3e-7 of the largest column direction).
+static const double kLobpcgSvqbRelative = 1e-13;
+// Cholesky-QR is used only when the scaled Gram factor is this well
+// conditioned (1-norm reciprocal condition estimate of R); CholQR2 is stable
+// for cond(V) well below eps^{-1/2}.
+static const double kLobpcgCholRcond = 1e-6;
+// Explicitly recompute A X and B X (and re-B-orthonormalise / re-project X)
+// at least this often; in between they are updated by the Rayleigh-Ritz
+// coefficients.
+static const int kLobpcgRefreshInterval = 16;
+
+static inline double lobpcg_nrm2(const double* x, int n) {
+  const int inc = 1;
+  return F77_CALL(dnrm2)(&n, x, &inc);
+}
+
+static inline double lobpcg_dot(const double* x, const double* y, int n) {
+  const int inc = 1;
+  return F77_CALL(ddot)(&n, x, &inc, y, &inc);
+}
+
+static inline double* lobpcg_col(double* base, int n, int col) {
+  return base + static_cast<int64_t>(col) * n;
+}
+
+static inline const double* lobpcg_col(const double* base, int n, int col) {
+  return base + static_cast<int64_t>(col) * n;
+}
+
+static inline void lobpcg_copy_col(double* dst, const double* src, int n) {
+  if (dst != src) {
+    std::memmove(dst, src, sizeof(double) * static_cast<size_t>(n));
+  }
+}
+
+struct LobpcgOperator {
+  void* impl;
+  EigencoreApplyFn apply;
+  EigencoreWorkspace* workspace;
+
+  int run(int cols, const double* X, int n, double* Y) const {
+    if (cols <= 0) {
+      return 0;
+    }
+    return apply(impl, EIGENCORE_TRANSPOSE_NONE, cols, X, n,
+                 1.0, 0.0, Y, n, workspace);
+  }
+};
+
+struct LobpcgScratch {
+  std::vector<double> gram;
+  std::vector<double> gram_work;
+  std::vector<double> evals;
+  std::vector<double> coeff;
+  std::vector<double> block;
+  std::vector<double> norms;
+  std::vector<int> iwork;
+
+  void reserve_gram(int m) {
+    const size_t mm = static_cast<size_t>(m) * static_cast<size_t>(m);
+    if (gram.size() < mm) gram.resize(mm);
+    if (evals.size() < static_cast<size_t>(m)) evals.resize(static_cast<size_t>(m));
+    if (norms.size() < static_cast<size_t>(m)) norms.resize(static_cast<size_t>(m));
+    if (iwork.size() < static_cast<size_t>(m)) iwork.resize(static_cast<size_t>(m));
+    const size_t lw = static_cast<size_t>(m > 0 ? 3 * m + 64 * m : 1);
+    if (gram_work.size() < lw) gram_work.resize(lw);
+  }
+  void reserve_block(int n, int m) {
+    const size_t sz = static_cast<size_t>(n) * static_cast<size_t>(m > 0 ? m : 1);
+    if (block.size() < sz) block.resize(sz);
+  }
+  void reserve_coeff(int rows, int cols) {
+    const size_t sz = static_cast<size_t>(rows > 0 ? rows : 1) *
+                      static_cast<size_t>(cols > 0 ? cols : 1);
+    if (coeff.size() < sz) coeff.resize(sz);
+  }
+};
+
+// V <- V - U (BU' V); BV <- BV - BU (BU' V) when BV is supplied. BU is the
+// B-image of the B-orthonormal basis U (U itself for the standard problem),
+// so no operator application is needed.
+static void lobpcg_project_out(const double* U, const double* BU, int u_cols,
+                               int n, int m, double* V, double* BV,
+                               LobpcgScratch& scratch) {
+  if (u_cols <= 0 || m <= 0) {
+    return;
+  }
   const char trans_T = 'T';
   const char trans_N = 'N';
   const double one = 1.0;
   const double zero = 0.0;
   const double minus_one = -1.0;
-  int incx = 1;
-  for (int pass = 0; pass < passes; ++pass) {
-    if (n_locked > 0) {
-      F77_CALL(dgemv)(&trans_T, &n, &n_locked, &one,
-                      V_locked, &n, z, &incx,
-                      &zero, tmp, &incx FCONE);
-      F77_CALL(dgemv)(&trans_N, &n, &n_locked, &minus_one,
-                      V_locked, &n, tmp, &incx,
-                      &one, z, &incx FCONE);
+  scratch.reserve_coeff(u_cols, m);
+  double* coeff = scratch.coeff.data();
+  F77_CALL(dgemm)(&trans_T, &trans_N, &u_cols, &m, &n,
+                  &one, BU, &n, V, &n,
+                  &zero, coeff, &u_cols FCONE FCONE);
+  F77_CALL(dgemm)(&trans_N, &trans_N, &n, &m, &u_cols,
+                  &minus_one, U, &n, coeff, &u_cols,
+                  &one, V, &n FCONE FCONE);
+  if (BV != nullptr) {
+    F77_CALL(dgemm)(&trans_N, &trans_N, &n, &m, &u_cols,
+                    &minus_one, BU, &n, coeff, &u_cols,
+                    &one, BV, &n FCONE FCONE);
+  }
+}
+
+// G = V' (B V) (m x m), symmetrised.
+static void lobpcg_gram(const double* V, const double* BV, int n, int m,
+                        double* G) {
+  const char trans_T = 'T';
+  const char trans_N = 'N';
+  const double one = 1.0;
+  const double zero = 0.0;
+  if (BV == nullptr) {
+    const char uplo = 'U';
+    F77_CALL(dsyrk)(&uplo, &trans_T, &m, &n, &one, V, &n, &zero, G, &m
+                    FCONE FCONE);
+    for (int j = 0; j < m; ++j) {
+      for (int i = j + 1; i < m; ++i) {
+        G[i + static_cast<int64_t>(j) * m] = G[j + static_cast<int64_t>(i) * m];
+      }
     }
-    if (m_active > 0) {
-      F77_CALL(dgemv)(&trans_T, &n, &m_active, &one,
-                      V_active, &n, z, &incx,
-                      &zero, tmp, &incx FCONE);
-      F77_CALL(dgemv)(&trans_N, &n, &m_active, &minus_one,
-                      V_active, &n, tmp, &incx,
-                      &one, z, &incx FCONE);
+    return;
+  }
+  F77_CALL(dgemm)(&trans_T, &trans_N, &m, &m, &n,
+                  &one, V, &n, BV, &n,
+                  &zero, G, &m FCONE FCONE);
+  for (int j = 0; j < m; ++j) {
+    for (int i = j + 1; i < m; ++i) {
+      const double avg = 0.5 * (G[i + static_cast<int64_t>(j) * m] +
+                                G[j + static_cast<int64_t>(i) * m]);
+      G[i + static_cast<int64_t>(j) * m] = avg;
+      G[j + static_cast<int64_t>(i) * m] = avg;
     }
   }
-  return 0;
 }
 
-static double trl_norm2(const double* x, int n) {
-  long double sum = 0.0L;
-  for (int i = 0; i < n; ++i) {
-    sum += static_cast<long double>(x[i]) * x[i];
+// One B-orthonormalisation pass of the m columns of V (and B V): Cholesky QR
+// of the diagonally scaled Gram matrix when it is well conditioned, otherwise
+// SVQB (eigendecomposition of the scaled Gram matrix) which drops numerically
+// dependent directions. The surviving r columns are left at the front of V
+// and BV. Returns r >= 0, or a negative status.
+static int lobpcg_cholqr_pass(double* V, double* BV, int n, int m,
+                              LobpcgScratch& scratch) {
+  if (m <= 0) {
+    return 0;
   }
-  return sqrt(static_cast<double>(sum));
-}
-
-static int trl_dsyev_query(int m_max) {
-  char jobz = 'V';
-  char uplo = 'U';
-  int info = 0;
-  int lwork_query = -1;
-  double work_query = 0.0;
-  double fake = 0.0;
-  double fake_w = 0.0;
-  int m = m_max;
-  F77_CALL(dsyev)(&jobz, &uplo, &m, &fake, &m, &fake_w,
-                  &work_query, &lwork_query, &info FCONE FCONE);
-  if (info != 0) {
-    return 3 * m_max;
+  scratch.reserve_gram(m);
+  double* G = scratch.gram.data();
+  double* d = scratch.norms.data();
+  lobpcg_gram(V, BV, n, m, G);
+  bool positive_diag = true;
+  for (int j = 0; j < m; ++j) {
+    const double gjj = G[j + static_cast<int64_t>(j) * m];
+    if (!R_FINITE(gjj)) {
+      return -10;
+    }
+    if (gjj > 0.0) {
+      d[j] = sqrt(gjj);
+    } else {
+      d[j] = 1.0;
+      positive_diag = false;
+    }
   }
-  return static_cast<int>(work_query);
-}
+  for (int j = 0; j < m; ++j) {
+    for (int i = 0; i < m; ++i) {
+      G[i + static_cast<int64_t>(j) * m] /= d[i] * d[j];
+    }
+  }
 
-static int lobpcg_orthonormalize(const double* S, int n, int cols, double tol,
-                                 double* Q, double* tmp) {
-  int rank = 0;
-  for (int col = 0; col < cols; ++col) {
-    double* q_col = Q + static_cast<int64_t>(rank) * n;
-    std::memcpy(q_col, S + static_cast<int64_t>(col) * n,
-                sizeof(double) * static_cast<size_t>(n));
-    trl_orthogonalise(nullptr, 0, Q, rank, q_col, tmp, n);
-    const double q_norm = trl_norm2(q_col, n);
-    if (q_norm <= tol) {
+  if (positive_diag) {
+    std::vector<double> Rf(G, G + static_cast<size_t>(m) * m);
+    const char uplo = 'U';
+    int info = 0;
+    F77_CALL(dpotrf)(&uplo, &m, Rf.data(), &m, &info FCONE);
+    if (info == 0) {
+      const char norm1 = '1';
+      const char diag_n = 'N';
+      double rcond = 0.0;
+      scratch.reserve_gram(m);
+      F77_CALL(dtrcon)(&norm1, &uplo, &diag_n, &m, Rf.data(), &m, &rcond,
+                       scratch.gram_work.data(), scratch.iwork.data(), &info
+                       FCONE FCONE FCONE);
+      if (info == 0 && rcond >= kLobpcgCholRcond) {
+        // V <- V D^{-1} R^{-1}, and the same for B V.
+        for (int j = 0; j < m; ++j) {
+          const double inv = 1.0 / d[j];
+          double* v = lobpcg_col(V, n, j);
+          for (int row = 0; row < n; ++row) v[row] *= inv;
+          if (BV != nullptr) {
+            double* bv = lobpcg_col(BV, n, j);
+            for (int row = 0; row < n; ++row) bv[row] *= inv;
+          }
+        }
+        const char side = 'R';
+        const char trans_N = 'N';
+        const double one = 1.0;
+        F77_CALL(dtrsm)(&side, &uplo, &trans_N, &diag_n, &n, &m, &one,
+                        Rf.data(), &m, V, &n FCONE FCONE FCONE FCONE);
+        if (BV != nullptr) {
+          F77_CALL(dtrsm)(&side, &uplo, &trans_N, &diag_n, &n, &m, &one,
+                          Rf.data(), &m, BV, &n FCONE FCONE FCONE FCONE);
+        }
+        return m;
+      }
+    }
+  }
+
+  // SVQB fallback: G_scaled = U diag(lambda) U'.
+  {
+    const char jobz = 'V';
+    const char uplo = 'U';
+    int info = 0;
+    int lwork = -1;
+    double work_query = 0.0;
+    F77_CALL(dsyev)(&jobz, &uplo, &m, G, &m, scratch.evals.data(),
+                    &work_query, &lwork, &info FCONE FCONE);
+    lwork = info == 0 && work_query > 0.0 ? static_cast<int>(work_query) : 3 * m;
+    if (scratch.gram_work.size() < static_cast<size_t>(lwork)) {
+      scratch.gram_work.resize(static_cast<size_t>(lwork));
+    }
+    F77_CALL(dsyev)(&jobz, &uplo, &m, G, &m, scratch.evals.data(),
+                    scratch.gram_work.data(), &lwork, &info FCONE FCONE);
+    if (info != 0) {
+      return -3;
+    }
+  }
+  const double* lambda = scratch.evals.data();
+  const double lambda_max = lambda[m - 1];
+  if (!(lambda_max > 0.0) || !R_FINITE(lambda_max)) {
+    return 0;
+  }
+  // Columns of T = D^{-1} U_keep diag(lambda_keep)^{-1/2}, largest first,
+  // written over the leading columns of G (eigenvectors are processed in
+  // descending order so no column is overwritten before it is read).
+  int r = 0;
+  for (int idx = m - 1; idx >= 0; --idx) {
+    if (lambda[idx] > kLobpcgSvqbRelative * lambda_max) {
+      ++r;
+    }
+  }
+  std::vector<double> T(static_cast<size_t>(m) * (r > 0 ? r : 1), 0.0);
+  int out = 0;
+  for (int idx = m - 1; idx >= 0 && out < r; --idx) {
+    if (!(lambda[idx] > kLobpcgSvqbRelative * lambda_max)) {
       continue;
     }
-    const double inv = 1.0 / q_norm;
-    for (int row = 0; row < n; ++row) {
-      q_col[row] *= inv;
+    const double s = 1.0 / sqrt(lambda[idx]);
+    for (int i = 0; i < m; ++i) {
+      T[i + static_cast<size_t>(out) * m] =
+        G[i + static_cast<int64_t>(idx) * m] * s / d[i];
     }
-    ++rank;
+    ++out;
   }
-  return rank;
+  if (r == 0) {
+    return 0;
+  }
+  const char trans_N = 'N';
+  const double one = 1.0;
+  const double zero = 0.0;
+  scratch.reserve_block(n, r);
+  double* tmp = scratch.block.data();
+  F77_CALL(dgemm)(&trans_N, &trans_N, &n, &r, &m, &one, V, &n, T.data(), &m,
+                  &zero, tmp, &n FCONE FCONE);
+  std::memcpy(V, tmp, sizeof(double) * static_cast<size_t>(n) * r);
+  if (BV != nullptr) {
+    F77_CALL(dgemm)(&trans_N, &trans_N, &n, &r, &m, &one, BV, &n, T.data(), &m,
+                    &zero, tmp, &n FCONE FCONE);
+    std::memcpy(BV, tmp, sizeof(double) * static_cast<size_t>(n) * r);
+  }
+  return r;
 }
 
-static int lobpcg_b_orthonormalize_apply(void* b_impl,
-                                         EigencoreApplyFn b_apply,
-                                         const double* S,
-                                         int n,
-                                         int cols,
-                                         double tol,
-                                         double* Q,
-                                         double* BQ,
-                                         double* coeff,
-                                         double* bq_col,
-                                         EigencoreWorkspace* workspace) {
-  int rank = 0;
-  for (int col = 0; col < cols; ++col) {
-    double* q_col = Q + static_cast<int64_t>(rank) * n;
-    std::memcpy(q_col, S + static_cast<int64_t>(col) * n,
-                sizeof(double) * static_cast<size_t>(n));
-    int status = b_apply(b_impl, EIGENCORE_TRANSPOSE_NONE, 1, q_col, n,
-                         1.0, 0.0, bq_col, n, workspace);
+// B-orthonormalise the m columns of V against the B-orthonormal constraint
+// basis (Y, BY) and the current block (X, BX), then among themselves. The
+// projection is two-pass block CGS in the B inner product; the block is
+// re-projected after the first normalisation and normalised again (CholQR2),
+// so columns that came out of an ill-conditioned normalisation cannot carry
+// constraint components back in. B is applied to the block exactly once.
+// For the standard problem pass metric == nullptr and BV/BY/BX == nullptr.
+static int lobpcg_b_orthonormalize_block(const LobpcgOperator* metric,
+                                         int n, int m,
+                                         double* V, double* BV,
+                                         const double* Y, const double* BY,
+                                         int y_cols,
+                                         const double* X, const double* BX,
+                                         int x_cols,
+                                         LobpcgScratch& scratch) {
+  if (m <= 0) {
+    return 0;
+  }
+  const double* BYp = BY != nullptr ? BY : Y;
+  const double* BXp = BX != nullptr ? BX : X;
+  scratch.reserve_gram(m);
+  std::vector<double> before(static_cast<size_t>(m), 0.0);
+  for (int j = 0; j < m; ++j) {
+    before[static_cast<size_t>(j)] = lobpcg_nrm2(lobpcg_col(V, n, j), n);
+    if (!R_FINITE(before[static_cast<size_t>(j)])) {
+      return -10;
+    }
+  }
+  for (int pass = 0; pass < 2; ++pass) {
+    lobpcg_project_out(Y, BYp, y_cols, n, m, V, nullptr, scratch);
+    lobpcg_project_out(X, BXp, x_cols, n, m, V, nullptr, scratch);
+  }
+  int kept = 0;
+  for (int j = 0; j < m; ++j) {
+    const double after = lobpcg_nrm2(lobpcg_col(V, n, j), n);
+    if (before[static_cast<size_t>(j)] > 0.0 &&
+        after > kLobpcgDropRelative * before[static_cast<size_t>(j)]) {
+      if (kept != j) {
+        lobpcg_copy_col(lobpcg_col(V, n, kept), lobpcg_col(V, n, j), n);
+      }
+      ++kept;
+    }
+  }
+  if (kept == 0) {
+    return 0;
+  }
+  if (metric != nullptr) {
+    const int status = metric->run(kept, V, n, BV);
     if (status != 0) {
       return status;
     }
-
-    for (int pass = 0; pass < 2; ++pass) {
-      for (int prev = 0; prev < rank; ++prev) {
-        const double* q_prev = Q + static_cast<int64_t>(prev) * n;
-        long double dot = 0.0L;
-        for (int row = 0; row < n; ++row) {
-          dot += static_cast<long double>(q_prev[row]) * bq_col[row];
-        }
-        coeff[prev] = static_cast<double>(dot);
-      }
-      for (int prev = 0; prev < rank; ++prev) {
-        const double c = coeff[prev];
-        if (c == 0.0) {
-          continue;
-        }
-        const double* q_prev = Q + static_cast<int64_t>(prev) * n;
-        const double* bq_prev = BQ + static_cast<int64_t>(prev) * n;
-        for (int row = 0; row < n; ++row) {
-          q_col[row] -= c * q_prev[row];
-          bq_col[row] -= c * bq_prev[row];
-        }
-      }
-    }
-
-    long double norm_sq = 0.0L;
-    for (int row = 0; row < n; ++row) {
-      norm_sq += static_cast<long double>(q_col[row]) * bq_col[row];
-    }
-    if (norm_sq <= 0.0L) {
-      continue;
-    }
-    const double q_norm = sqrt(static_cast<double>(norm_sq));
-    if (q_norm <= tol) {
-      continue;
-    }
-    const double inv = 1.0 / q_norm;
-    double* bq_dst = BQ + static_cast<int64_t>(rank) * n;
-    for (int row = 0; row < n; ++row) {
-      q_col[row] *= inv;
-      bq_dst[row] = bq_col[row] * inv;
-    }
-    ++rank;
   }
-  return rank;
+  int r = lobpcg_cholqr_pass(V, metric != nullptr ? BV : nullptr, n, kept, scratch);
+  if (r <= 0) {
+    return r;
+  }
+  // Re-project after normalisation, then normalise again.
+  lobpcg_project_out(Y, BYp, y_cols, n, r, V,
+                     metric != nullptr ? BV : nullptr, scratch);
+  lobpcg_project_out(X, BXp, x_cols, n, r, V,
+                     metric != nullptr ? BV : nullptr, scratch);
+  r = lobpcg_cholqr_pass(V, metric != nullptr ? BV : nullptr, n, r, scratch);
+  return r;
 }
 
-static int lobpcg_apply_tridiagonal_preconditioner(
-    const double* lower,
-    const double* diag,
-    const double* upper,
-    int n,
-    int cols,
-    const double* R,
-    double* W,
-    double* cprime,
-    double* dprime) {
-  if (n < 1) {
-    return 0;
-  }
-  if (fabs(diag[0]) <= DBL_EPSILON) {
-    return -5;
-  }
-  dprime[0] = diag[0];
-  if (n > 1) {
-    cprime[0] = upper[0] / dprime[0];
-  }
-  for (int i = 1; i < n; ++i) {
-    dprime[i] = diag[i] - lower[i - 1] * cprime[i - 1];
-    if (fabs(dprime[i]) <= DBL_EPSILON) {
+// Shifted tridiagonal preconditioner: LU with partial pivoting (dgttrf),
+// factored once per solve and applied with dgttrs.
+struct LobpcgTridiagonalFactor {
+  int n = 0;
+  std::vector<double> dl;
+  std::vector<double> d;
+  std::vector<double> du;
+  std::vector<double> du2;
+  std::vector<int> ipiv;
+
+  int factor(const double* lower, const double* diag, const double* upper,
+             int n_) {
+    n = n_;
+    if (n < 1 || diag == nullptr) {
       return -5;
     }
-    if (i < n - 1) {
-      cprime[i] = upper[i] / dprime[i];
+    const size_t off = static_cast<size_t>(n > 1 ? n - 1 : 1);
+    dl.assign(off, 0.0);
+    du.assign(off, 0.0);
+    du2.assign(static_cast<size_t>(n > 2 ? n - 2 : 1), 0.0);
+    d.assign(diag, diag + n);
+    ipiv.assign(static_cast<size_t>(n), 0);
+    double scale = 0.0;
+    for (int i = 0; i < n; ++i) {
+      if (!R_FINITE(d[static_cast<size_t>(i)])) return -5;
+      scale = fmax(scale, fabs(d[static_cast<size_t>(i)]));
     }
+    for (int i = 0; i + 1 < n; ++i) {
+      dl[static_cast<size_t>(i)] = lower != nullptr ? lower[i] : 0.0;
+      du[static_cast<size_t>(i)] = upper != nullptr ? upper[i] : 0.0;
+      if (!R_FINITE(dl[static_cast<size_t>(i)]) || !R_FINITE(du[static_cast<size_t>(i)])) {
+        return -5;
+      }
+      scale = fmax(scale, fmax(fabs(dl[static_cast<size_t>(i)]),
+                               fabs(du[static_cast<size_t>(i)])));
+    }
+    int info = 0;
+    F77_CALL(dgttrf)(&n, dl.data(), d.data(), du.data(), du2.data(),
+                     ipiv.data(), &info);
+    if (info != 0) {
+      return -5;
+    }
+    // Reject numerically singular factors relative to the matrix scale.
+    for (int i = 0; i < n; ++i) {
+      if (fabs(d[static_cast<size_t>(i)]) <= DBL_EPSILON * scale) {
+        return -5;
+      }
+    }
+    return 0;
   }
 
-  for (int col = 0; col < cols; ++col) {
-    const double* rhs = R + static_cast<int64_t>(col) * n;
-    double* out = W + static_cast<int64_t>(col) * n;
-    out[0] = rhs[0] / dprime[0];
-    for (int i = 1; i < n; ++i) {
-      out[i] = (rhs[i] - lower[i - 1] * out[i - 1]) / dprime[i];
+  int solve(double* B, int nrhs) {
+    if (nrhs <= 0) {
+      return 0;
     }
-    for (int i = n - 2; i >= 0; --i) {
-      out[i] -= cprime[i] * out[i + 1];
-    }
+    const char trans = 'N';
+    int info = 0;
+    F77_CALL(dgttrs)(&trans, &n, &nrhs, dl.data(), d.data(), du.data(),
+                     du2.data(), ipiv.data(), B, &n, &info FCONE);
+    return info == 0 ? 0 : -5;
   }
-  return 0;
-}
+};
 
 static int extract_shifted_symmetric_tridiagonal_from_csc(
     const int* i,
@@ -284,44 +514,6 @@ static int extract_shifted_symmetric_tridiagonal_from_csc(
       return -7;
     }
   }
-  return 0;
-}
-
-static int lobpcg_project_constraints_apply(void* b_impl,
-                                            EigencoreApplyFn b_apply,
-                                            const double* Qc,
-                                            int constraint_rank,
-                                            int n,
-                                            int cols,
-                                            double* X,
-                                            double* coeff,
-                                            double* BX_work,
-                                            EigencoreWorkspace* workspace) {
-  if (constraint_rank <= 0 || cols <= 0) {
-    return 0;
-  }
-  const char trans_T = 'T';
-  const char trans_N = 'N';
-  const double one = 1.0;
-  const double zero = 0.0;
-  const double minus_one = -1.0;
-  const double* metric_X = X;
-  if (b_apply != nullptr) {
-    const int status = b_apply(b_impl, EIGENCORE_TRANSPOSE_NONE, cols, X, n,
-                               1.0, 0.0, BX_work, n, workspace);
-    if (status != 0) {
-      return status;
-    }
-    metric_X = BX_work;
-  }
-  F77_CALL(dgemm)(&trans_T, &trans_N, &constraint_rank, &cols, &n,
-                  &one, const_cast<double*>(Qc), &n,
-                  const_cast<double*>(metric_X), &n,
-                  &zero, coeff, &constraint_rank FCONE FCONE);
-  F77_CALL(dgemm)(&trans_N, &trans_N, &n, &cols, &constraint_rank,
-                  &minus_one, const_cast<double*>(Qc), &n,
-                  coeff, &constraint_rank,
-                  &one, X, &n FCONE FCONE);
   return 0;
 }
 
@@ -409,6 +601,35 @@ static SEXP lobpcg_pack_result(int n, int k, const double* X,
   return out_;
 }
 
+// Symmetric eigensolve of an m x m matrix H in place (eigenvectors overwrite
+// H, ascending eigenvalues in w).
+static int lobpcg_dsyev(double* H, int m, double* w, std::vector<double>& work) {
+  const char jobz = 'V';
+  const char uplo = 'U';
+  int info = 0;
+  int lwork = -1;
+  double work_query = 0.0;
+  F77_CALL(dsyev)(&jobz, &uplo, &m, H, &m, w, &work_query, &lwork, &info
+                  FCONE FCONE);
+  lwork = info == 0 && work_query > 0.0 ? static_cast<int>(work_query) : 3 * m;
+  if (lwork < 1) lwork = 1;
+  if (work.size() < static_cast<size_t>(lwork)) {
+    work.resize(static_cast<size_t>(lwork));
+  }
+  F77_CALL(dsyev)(&jobz, &uplo, &m, H, &m, w, work.data(), &lwork, &info
+                  FCONE FCONE);
+  return info == 0 ? 0 : -3;
+}
+
+// LOBPCG (Knyazev 2001) in the orthogonal-basis form of Hetmaniuk & Lehoucq
+// (2006): the Rayleigh-Ritz basis is [X Z] with X the current B-orthonormal
+// Ritz block and Z a B-orthonormal basis of the active preconditioned
+// residuals W and search directions P, B-orthogonalised against X and the
+// constraints. The new search direction is the Z-part of the selected Ritz
+// vectors, P = Z * Y_z, with A P and B P formed by the same coefficients, so P
+// is consistent with the sign and rotation of the new Ritz vectors (C19).
+// Converged pairs are soft-locked: their residuals and directions leave the
+// trial basis while the pairs stay in the Rayleigh-Ritz block.
 static int native_lobpcg_run(void* impl,
                              EigencoreApplyFn apply,
                              void* b_impl,
@@ -436,267 +657,353 @@ static int native_lobpcg_run(void* impl,
                              int* preconditioner_calls_out,
                              int* q_rank_final_out,
                              int* constraints_rank_out) {
-  const int max_trial_cols = 3 * k;
-  const int tmp_cols = constraint_cols > max_trial_cols ? constraint_cols : max_trial_cols;
-  const size_t nk = static_cast<size_t>(n) * static_cast<size_t>(k);
-  const size_t nt = static_cast<size_t>(n) * static_cast<size_t>(max_trial_cols);
-  double* X = static_cast<double*>(std::calloc(nk, sizeof(double)));
-  double* Xnext = static_cast<double*>(std::calloc(nk, sizeof(double)));
-  double* P = static_cast<double*>(std::calloc(nk, sizeof(double)));
-  double* AX = static_cast<double*>(std::calloc(nk, sizeof(double)));
-  double* BX = static_cast<double*>(std::calloc(nk, sizeof(double)));
-  double* BXnext = static_cast<double*>(std::calloc(nk, sizeof(double)));
-  double* R = static_cast<double*>(std::calloc(nk, sizeof(double)));
-  double* W = static_cast<double*>(std::calloc(nk, sizeof(double)));
-  double* S = static_cast<double*>(std::calloc(nt, sizeof(double)));
-  double* Q = static_cast<double*>(std::calloc(nt, sizeof(double)));
-  double* AQ = static_cast<double*>(std::calloc(nt, sizeof(double)));
-  double* BQ = static_cast<double*>(std::calloc(nt, sizeof(double)));
-  double* H = static_cast<double*>(std::calloc(static_cast<size_t>(max_trial_cols) * max_trial_cols, sizeof(double)));
-  double* selected_vectors = static_cast<double*>(std::calloc(static_cast<size_t>(max_trial_cols) * k, sizeof(double)));
-  double* theta = static_cast<double*>(std::calloc(static_cast<size_t>(max_trial_cols), sizeof(double)));
-  double* tmp = static_cast<double*>(std::calloc(static_cast<size_t>(tmp_cols), sizeof(double)));
-  int* selected = static_cast<int*>(std::calloc(static_cast<size_t>(max_trial_cols), sizeof(int)));
-  double* cprime = static_cast<double*>(std::calloc(static_cast<size_t>(n > 1 ? n - 1 : 1), sizeof(double)));
-  double* dprime = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
-  const int dsyev_lwork_query = trl_dsyev_query(max_trial_cols);
-  int dsyev_lwork = dsyev_lwork_query > 0 ? dsyev_lwork_query : 3 * max_trial_cols;
-  double* dsyev_work = static_cast<double*>(std::calloc(static_cast<size_t>(dsyev_lwork), sizeof(double)));
-  if (X == nullptr || Xnext == nullptr || P == nullptr || AX == nullptr ||
-      BX == nullptr || BXnext == nullptr || R == nullptr || W == nullptr ||
-      S == nullptr || Q == nullptr || AQ == nullptr || BQ == nullptr ||
-      H == nullptr || selected_vectors == nullptr ||
-      theta == nullptr || tmp == nullptr || selected == nullptr ||
-      cprime == nullptr || dprime == nullptr || dsyev_work == nullptr) {
-    std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
-    std::free(BX); std::free(BXnext); std::free(W); std::free(S);
-    std::free(Q); std::free(AQ); std::free(BQ); std::free(H);
-    std::free(selected_vectors); std::free(theta); std::free(tmp);
-    std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
-    return -2;
-  }
-  auto cleanup = [&]() {
-    std::free(X); std::free(Xnext); std::free(P); std::free(AX); std::free(R);
-    std::free(BX); std::free(BXnext); std::free(W); std::free(S);
-    std::free(Q); std::free(AQ); std::free(BQ); std::free(H);
-    std::free(selected_vectors); std::free(theta); std::free(tmp);
-    std::free(selected); std::free(cprime); std::free(dprime); std::free(dsyev_work);
-  };
-
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
   const bool generalized = b_apply != nullptr;
-  int constraint_rank = 0;
-  *constraints_rank_out = 0;
-  std::vector<double> constraint_q;
-  std::vector<double> constraint_bq;
-  std::vector<double> constraint_bscratch;
-  std::vector<double> constraint_coeff;
-  std::vector<double> constraint_bx;
-  if (constraint_cols > 0) {
-    constraint_q.assign(static_cast<size_t>(n) * constraint_cols, 0.0);
-    std::memcpy(constraint_q.data(), constraints,
-                sizeof(double) * static_cast<size_t>(n) * constraint_cols);
-    constraint_coeff.assign(static_cast<size_t>(constraint_cols) * max_trial_cols, 0.0);
-    if (generalized) {
-      constraint_bq.assign(static_cast<size_t>(n) * constraint_cols, 0.0);
-      constraint_bscratch.assign(static_cast<size_t>(n), 0.0);
-      constraint_bx.assign(static_cast<size_t>(n) * max_trial_cols, 0.0);
-      constraint_rank = lobpcg_b_orthonormalize_apply(
-        b_impl, b_apply, constraint_q.data(), n, constraint_cols,
-        100.0 * DBL_EPSILON, constraint_q.data(), constraint_bq.data(), tmp,
-        constraint_bscratch.data(), &workspace);
-    } else {
-      constraint_rank = lobpcg_orthonormalize(
-        constraint_q.data(), n, constraint_cols, 100.0 * DBL_EPSILON,
-        constraint_q.data(), tmp);
-    }
-    if (constraint_rank < 0) {
-      cleanup();
-      return constraint_rank;
-    }
-    if (constraint_rank + k > n) {
-      cleanup();
-      return -9;
-    }
-    *constraints_rank_out = constraint_rank;
-  }
-  std::memcpy(S, start, sizeof(double) * nk);
-  if (constraint_rank > 0) {
-    const int status = lobpcg_project_constraints_apply(
-      b_impl, b_apply, constraint_q.data(), constraint_rank, n, k, S,
-      constraint_coeff.data(),
-      generalized ? constraint_bx.data() : nullptr,
-      &workspace);
-    if (status != 0) {
-      cleanup();
-      return status;
-    }
-  }
-  int q_rank = generalized
-    ? lobpcg_b_orthonormalize_apply(b_impl, b_apply, S, n, k,
-                                    100.0 * DBL_EPSILON, X, BX, tmp,
-                                    BQ, &workspace)
-    : lobpcg_orthonormalize(S, n, k, 100.0 * DBL_EPSILON, X, tmp);
-  if (q_rank < k) {
-    cleanup();
-    return -4;
-  }
-  if (!generalized) {
-    std::memcpy(BX, X, sizeof(double) * nk);
-  }
+  const LobpcgOperator A_op = {impl, apply, &workspace};
+  const LobpcgOperator B_op = {b_impl, b_apply, &workspace};
+  const LobpcgOperator* metric = generalized ? &B_op : nullptr;
 
   const char trans_T = 'T';
   const char trans_N = 'N';
   const double one = 1.0;
   const double zero = 0.0;
-  int have_p = 0;
+
   *iterations_out = 0;
   *matvecs_out = 0;
   *preconditioner_calls_out = 0;
   *q_rank_final_out = k;
+  *constraints_rank_out = 0;
 
-  for (int iter = 0; iter < maxit; ++iter) {
-    *iterations_out = iter + 1;
-    int status = apply(impl, EIGENCORE_TRANSPOSE_NONE, k, X, n,
-                       1.0, 0.0, AX, n, &workspace);
+  const size_t nk = static_cast<size_t>(n) * static_cast<size_t>(k);
+  const size_t n2k = 2 * nk;
+  LobpcgScratch scratch;
+
+  LobpcgTridiagonalFactor preconditioner;
+  if (use_tridiagonal_preconditioner) {
+    const int status = preconditioner.factor(lower, diag, upper, n);
     if (status != 0) {
-      cleanup();
       return status;
     }
+  }
+
+  // Constraint basis: B-orthonormalised once; B Y recomputed explicitly so
+  // the B-inner-product projections use an accurate image.
+  std::vector<double> Y;
+  std::vector<double> BY;
+  int constraint_rank = 0;
+  if (constraint_cols > 0) {
+    Y.assign(constraints, constraints + static_cast<size_t>(n) * constraint_cols);
+    if (generalized) {
+      BY.assign(static_cast<size_t>(n) * constraint_cols, 0.0);
+    }
+    constraint_rank = lobpcg_b_orthonormalize_block(
+      metric, n, constraint_cols, Y.data(),
+      generalized ? BY.data() : nullptr,
+      nullptr, nullptr, 0, nullptr, nullptr, 0, scratch);
+    if (constraint_rank < 0) {
+      return constraint_rank;
+    }
+    if (constraint_rank + k > n) {
+      return -9;
+    }
+    if (generalized && constraint_rank > 0) {
+      const int status = B_op.run(constraint_rank, Y.data(), n, BY.data());
+      if (status != 0) {
+        return status;
+      }
+    }
+    *constraints_rank_out = constraint_rank;
+  }
+  const double* Yp = constraint_rank > 0 ? Y.data() : nullptr;
+  const double* BYp = constraint_rank > 0 ? (generalized ? BY.data() : Y.data()) : nullptr;
+
+  std::vector<double> X(start, start + nk);
+  std::vector<double> AX(nk, 0.0);
+  std::vector<double> BXs(generalized ? nk : 0, 0.0);
+  std::vector<double> P(nk, 0.0);
+  std::vector<double> R(nk, 0.0);
+  std::vector<double> V(n2k, 0.0);
+  std::vector<double> AV(n2k, 0.0);
+  std::vector<double> BVs(generalized ? n2k : 0, 0.0);
+  std::vector<double> Xt(nk, 0.0);
+  std::vector<double> H(static_cast<size_t>(9) * k * k, 0.0);
+  std::vector<double> theta(static_cast<size_t>(3) * k, 0.0);
+  std::vector<double> Ysel(static_cast<size_t>(3) * k * k, 0.0);
+  std::vector<double> eig_work;
+  std::vector<int> selected(static_cast<size_t>(3) * k, 0);
+  std::vector<int> active(static_cast<size_t>(k), 0);
+  std::vector<double> rel(static_cast<size_t>(k), 0.0);
+
+  // Lower bounds on ||A||_2 and ||B||_2 from every block the operators are
+  // applied to (max_j ||A v_j|| / ||v_j||). They never exceed the Frobenius
+  // norms the certificate uses, so the native stopping rule is never looser
+  // than the certificate, and they scale with A and B.
+  double norm_A_lb = 0.0;
+  double norm_B_lb = generalized ? 0.0 : 1.0;
+  auto update_norm_bounds = [&](const double* Vb, const double* AVb,
+                                const double* BVb, int cols) {
+    for (int j = 0; j < cols; ++j) {
+      const double vn = lobpcg_nrm2(lobpcg_col(Vb, n, j), n);
+      if (!(vn > 0.0)) continue;
+      const double an = lobpcg_nrm2(lobpcg_col(AVb, n, j), n) / vn;
+      if (R_FINITE(an) && an > norm_A_lb) norm_A_lb = an;
+      if (BVb != nullptr) {
+        const double bn = lobpcg_nrm2(lobpcg_col(BVb, n, j), n) / vn;
+        if (R_FINITE(bn) && bn > norm_B_lb) norm_B_lb = bn;
+      }
+    }
+  };
+
+  // In-place B = B * U for an n x k block and k x k matrix U.
+  auto right_multiply = [&](double* Bk, const double* U) {
+    F77_CALL(dgemm)(&trans_N, &trans_N, &n, &k, &k, &one, Bk, &n,
+                    const_cast<double*>(U), &k, &zero, Xt.data(), &n
+                    FCONE FCONE);
+    std::memcpy(Bk, Xt.data(), sizeof(double) * nk);
+  };
+
+  // Rayleigh-Ritz on X alone: restores Ritz ordering after an explicit
+  // refresh (X, AX, BX rotated by the same k x k orthogonal matrix).
+  auto rayleigh_ritz_x = [&]() -> int {
+    F77_CALL(dgemm)(&trans_T, &trans_N, &k, &k, &n, &one, X.data(), &n,
+                    AX.data(), &n, &zero, H.data(), &k FCONE FCONE);
+    for (int j = 0; j < k; ++j) {
+      for (int i = j + 1; i < k; ++i) {
+        const double avg = 0.5 * (H[i + static_cast<size_t>(j) * k] +
+                                  H[j + static_cast<size_t>(i) * k]);
+        H[i + static_cast<size_t>(j) * k] = avg;
+        H[j + static_cast<size_t>(i) * k] = avg;
+      }
+    }
+    const int status = lobpcg_dsyev(H.data(), k, theta.data(), eig_work);
+    if (status != 0) return status;
+    selected_ritz_indices(theta.data(), k, k, target_kind, selected.data());
+    for (int col = 0; col < k; ++col) {
+      std::memcpy(&Ysel[static_cast<size_t>(col) * k],
+                  &H[static_cast<size_t>(selected[static_cast<size_t>(col)]) * k],
+                  sizeof(double) * static_cast<size_t>(k));
+    }
+    right_multiply(X.data(), Ysel.data());
+    right_multiply(AX.data(), Ysel.data());
+    if (generalized) right_multiply(BXs.data(), Ysel.data());
+    return 0;
+  };
+
+  // Explicit refresh: re-project X against the constraints, recompute B X,
+  // B-orthonormalise X (Cholesky QR), recompute A X, Rayleigh-Ritz on X.
+  bool fresh = false;
+  int since_refresh = 0;
+  auto refresh = [&]() -> int {
+    for (int pass = 0; pass < 2; ++pass) {
+      lobpcg_project_out(Yp, BYp, constraint_rank, n, k, X.data(), nullptr, scratch);
+    }
+    if (generalized) {
+      const int status = B_op.run(k, X.data(), n, BXs.data());
+      if (status != 0) return status;
+    }
+    const int r = lobpcg_cholqr_pass(X.data(), generalized ? BXs.data() : nullptr,
+                                     n, k, scratch);
+    if (r < 0) return r;
+    if (r < k) return -4;
+    const int status = A_op.run(k, X.data(), n, AX.data());
+    if (status != 0) return status;
     ++(*matvecs_out);
+    update_norm_bounds(X.data(), AX.data(), generalized ? BXs.data() : nullptr, k);
+    fresh = true;
+    since_refresh = 0;
+    return rayleigh_ritz_x();
+  };
+
+  // Initial block: B-orthonormal basis of the (constraint-projected) start.
+  {
+    const int r = lobpcg_b_orthonormalize_block(
+      metric, n, k, X.data(), generalized ? BXs.data() : nullptr,
+      Yp, BYp, constraint_rank, nullptr, nullptr, 0, scratch);
+    if (r < 0) return r;
+    if (r < k) return -4;
+    const int status = A_op.run(k, X.data(), n, AX.data());
+    if (status != 0) return status;
+    ++(*matvecs_out);
+    update_norm_bounds(X.data(), AX.data(), generalized ? BXs.data() : nullptr, k);
+    const int rr = rayleigh_ritz_x();
+    if (rr != 0) return rr;
+    fresh = true;
+  }
+
+  int have_p = 0;
+  bool stalled = false;
+  for (int iter = 0; iter < maxit; ++iter) {
+    *iterations_out = iter + 1;
+    if (!fresh && since_refresh >= kLobpcgRefreshInterval) {
+      const int status = refresh();
+      if (status != 0) return status;
+    }
 
     int nconv = 0;
     double max_relative = 0.0;
-    for (int col = 0; col < k; ++col) {
-      long double lambda = 0.0L;
-      for (int row = 0; row < n; ++row) {
-        lambda += static_cast<long double>(X[row + static_cast<int64_t>(col) * n]) *
-                  AX[row + static_cast<int64_t>(col) * n];
+    for (;;) {
+      const double* BXp = generalized ? BXs.data() : X.data();
+      nconv = 0;
+      max_relative = 0.0;
+      for (int col = 0; col < k; ++col) {
+        const double* x = lobpcg_col(X.data(), n, col);
+        const double* ax = lobpcg_col(AX.data(), n, col);
+        const double* bx = lobpcg_col(BXp, n, col);
+        const double xbx = lobpcg_dot(x, bx, n);
+        const double xax = lobpcg_dot(x, ax, n);
+        const double lambda = xbx > 0.0 ? xax / xbx : xax;
+        values_out[col] = lambda;
+        double* r = lobpcg_col(R.data(), n, col);
+        for (int row = 0; row < n; ++row) {
+          r[row] = ax[row] - lambda * bx[row];
+        }
+        residuals_out[col] = lobpcg_nrm2(r, n);
+        const double scale = (norm_A_lb + fabs(lambda) * norm_B_lb) * lobpcg_nrm2(x, n);
+        const double relative = scale > 0.0 ? residuals_out[col] / scale
+                                            : (residuals_out[col] > 0.0 ? R_PosInf : 0.0);
+        rel[static_cast<size_t>(col)] = relative;
+        converged_out[col] = relative <= tol ? 1 : 0;
+        if (converged_out[col]) ++nconv;
+        if (!(relative <= max_relative)) max_relative = relative;
       }
-      values_out[col] = static_cast<double>(lambda);
-      long double rn = 0.0L;
-      for (int row = 0; row < n; ++row) {
-        const double res = AX[row + static_cast<int64_t>(col) * n] -
-                           values_out[col] * BX[row + static_cast<int64_t>(col) * n];
-        R[row + static_cast<int64_t>(col) * n] = res;
-        rn += static_cast<long double>(res) * res;
+      const bool stopping = nconv >= k || iter + 1 >= maxit || stalled;
+      if (stopping && !fresh) {
+        // Never report residuals of recurrence-updated A X / B X: recompute
+        // them explicitly before the result leaves the solver.
+        const int status = refresh();
+        if (status != 0) return status;
+        continue;
       }
-      residuals_out[col] = sqrt(static_cast<double>(rn));
-      const double scale = fabs(values_out[col]) > 1.0 ? fabs(values_out[col]) : 1.0;
-      const double rel = residuals_out[col] / scale;
-      converged_out[col] = rel <= tol ? 1 : 0;
-      if (converged_out[col]) ++nconv;
-      if (rel > max_relative) max_relative = rel;
+      break;
     }
     hist_max_residual[iter] = max_relative;
     hist_nconv[iter] = nconv;
-    if (nconv >= k || iter + 1 >= maxit) {
+    if (nconv >= k || iter + 1 >= maxit || stalled) {
       break;
     }
 
-    if (use_tridiagonal_preconditioner) {
-      status = lobpcg_apply_tridiagonal_preconditioner(
-        lower, diag, upper, n, k, R, W, cprime, dprime
-      );
-      if (status != 0) {
-        cleanup();
-        return status;
-      }
-      ++(*preconditioner_calls_out);
-    } else {
-      std::memcpy(W, R, sizeof(double) * nk);
+    // Trial block [W_active, P_active].
+    int na = 0;
+    for (int col = 0; col < k; ++col) {
+      if (!converged_out[col]) active[static_cast<size_t>(na++)] = col;
     }
-
-    int trial_cols = 0;
-    std::memcpy(S + static_cast<int64_t>(trial_cols) * n, X, sizeof(double) * nk);
-    trial_cols += k;
-    std::memcpy(S + static_cast<int64_t>(trial_cols) * n, W, sizeof(double) * nk);
-    trial_cols += k;
-    if (have_p) {
-      std::memcpy(S + static_cast<int64_t>(trial_cols) * n, P, sizeof(double) * nk);
-      trial_cols += k;
+    for (int a = 0; a < na; ++a) {
+      std::memcpy(lobpcg_col(V.data(), n, a),
+                  lobpcg_col(R.data(), n, active[static_cast<size_t>(a)]),
+                  sizeof(double) * static_cast<size_t>(n));
     }
     if (constraint_rank > 0) {
-      status = lobpcg_project_constraints_apply(
-        b_impl, b_apply, constraint_q.data(), constraint_rank, n, trial_cols, S,
-        constraint_coeff.data(),
-        generalized ? constraint_bx.data() : nullptr,
-        &workspace);
-      if (status != 0) {
-        cleanup();
-        return status;
+      // Residual of the constrained problem: remove the Lagrange-multiplier
+      // part along B Y, R <- (I - B Y Y') R. Without this the metric image of
+      // the constraints leaks into W through (I - Y Y' B) when B != I and
+      // the constraints are not invariant, which stalls convergence.
+      lobpcg_project_out(BYp, Yp, constraint_rank, n, na, V.data(), nullptr, scratch);
+    }
+    if (use_tridiagonal_preconditioner) {
+      const int status = preconditioner.solve(V.data(), na);
+      if (status != 0) return status;
+      ++(*preconditioner_calls_out);
+    }
+    int m = na;
+    if (have_p) {
+      for (int a = 0; a < na; ++a) {
+        std::memcpy(lobpcg_col(V.data(), n, na + a),
+                    lobpcg_col(P.data(), n, active[static_cast<size_t>(a)]),
+                    sizeof(double) * static_cast<size_t>(n));
+      }
+      m += na;
+    }
+    const double* BXp = generalized ? BXs.data() : X.data();
+    const int r = lobpcg_b_orthonormalize_block(
+      metric, n, m, V.data(), generalized ? BVs.data() : nullptr,
+      Yp, BYp, constraint_rank, X.data(), BXp, k, scratch);
+    if (r < 0) return r;
+    if (r == 0) {
+      // No new direction survives: refresh once and stop at the next check.
+      stalled = true;
+      have_p = 0;
+      ++since_refresh;
+      fresh = false;
+      continue;
+    }
+    {
+      const int status = A_op.run(r, V.data(), n, AV.data());
+      if (status != 0) return status;
+      ++(*matvecs_out);
+    }
+    update_norm_bounds(V.data(), AV.data(), generalized ? BVs.data() : nullptr, r);
+
+    // H = [X V]' A [X V] (q x q); the basis is B-orthonormal so the Gram
+    // matrix is the identity.
+    const int q = k + r;
+    *q_rank_final_out = q;
+    {
+      std::vector<double> H11(static_cast<size_t>(k) * k);
+      std::vector<double> H12(static_cast<size_t>(k) * r);
+      std::vector<double> H22(static_cast<size_t>(r) * r);
+      F77_CALL(dgemm)(&trans_T, &trans_N, &k, &k, &n, &one, X.data(), &n,
+                      AX.data(), &n, &zero, H11.data(), &k FCONE FCONE);
+      F77_CALL(dgemm)(&trans_T, &trans_N, &k, &r, &n, &one, X.data(), &n,
+                      AV.data(), &n, &zero, H12.data(), &k FCONE FCONE);
+      F77_CALL(dgemm)(&trans_T, &trans_N, &r, &r, &n, &one, V.data(), &n,
+                      AV.data(), &n, &zero, H22.data(), &r FCONE FCONE);
+      for (int j = 0; j < q; ++j) {
+        for (int i = 0; i <= j; ++i) {
+          double h;
+          if (j < k) {
+            h = 0.5 * (H11[i + static_cast<size_t>(j) * k] + H11[j + static_cast<size_t>(i) * k]);
+          } else if (i < k) {
+            h = H12[i + static_cast<size_t>(j - k) * k];
+          } else {
+            const int ii = i - k;
+            const int jj = j - k;
+            h = 0.5 * (H22[ii + static_cast<size_t>(jj) * r] + H22[jj + static_cast<size_t>(ii) * r]);
+          }
+          H[i + static_cast<size_t>(j) * q] = h;
+          H[j + static_cast<size_t>(i) * q] = h;
+        }
       }
     }
-    std::memset(Q, 0, sizeof(double) * nt);
-    q_rank = generalized
-      ? lobpcg_b_orthonormalize_apply(b_impl, b_apply, S, n, trial_cols,
-                                      100.0 * DBL_EPSILON, Q, BQ, tmp,
-                                      BXnext, &workspace)
-      : lobpcg_orthonormalize(S, n, trial_cols, 100.0 * DBL_EPSILON, Q, tmp);
-    if (q_rank < k) {
-      cleanup();
-      return -4;
+    {
+      const int status = lobpcg_dsyev(H.data(), q, theta.data(), eig_work);
+      if (status != 0) return status;
     }
-    *q_rank_final_out = q_rank;
-
-    status = apply(impl, EIGENCORE_TRANSPOSE_NONE, q_rank, Q, n,
-                   1.0, 0.0, AQ, n, &workspace);
-    if (status != 0) {
-      cleanup();
-      return status;
-    }
-    ++(*matvecs_out);
-
-    F77_CALL(dgemm)(&trans_T, &trans_N, &q_rank, &q_rank, &n,
-                    &one, Q, &n, AQ, &n,
-                    &zero, H, &q_rank FCONE FCONE);
-    for (int i = 0; i < q_rank; ++i) {
-      for (int j = i + 1; j < q_rank; ++j) {
-        const double avg = 0.5 * (H[i + j * q_rank] + H[j + i * q_rank]);
-        H[i + j * q_rank] = avg;
-        H[j + i * q_rank] = avg;
-      }
-    }
-    char jobz = 'V';
-    char uplo = 'U';
-    int info = 0;
-    int lwork = dsyev_lwork;
-    F77_CALL(dsyev)(&jobz, &uplo, &q_rank, H, &q_rank, theta,
-                    dsyev_work, &lwork, &info FCONE FCONE);
-    if (info != 0) {
-      cleanup();
-      return -3;
-    }
-    selected_ritz_indices(theta, q_rank, k, target_kind, selected);
+    selected_ritz_indices(theta.data(), q, k, target_kind, selected.data());
     for (int col = 0; col < k; ++col) {
-      const int idx = selected[col];
-      for (int row = 0; row < q_rank; ++row) {
-        selected_vectors[row + static_cast<int64_t>(col) * q_rank] =
-          H[row + static_cast<int64_t>(idx) * q_rank];
-      }
+      std::memcpy(&Ysel[static_cast<size_t>(col) * q],
+                  &H[static_cast<size_t>(selected[static_cast<size_t>(col)]) * q],
+                  sizeof(double) * static_cast<size_t>(q));
     }
-    F77_CALL(dgemm)(&trans_N, &trans_N, &n, &k, &q_rank,
-                    &one, Q, &n, selected_vectors, &q_rank,
-                    &zero, Xnext, &n FCONE FCONE);
+    const double* Yx = Ysel.data();
+    const double* Yz = Ysel.data() + k;
+
+    // P = V Y_z; X <- X Y_x + P, and A X, B X by the same coefficients
+    // (A X_next = [A X, A V] y, so A is not re-applied to X). A P and B P are
+    // not kept: P re-enters through the trial block, whose B image is formed
+    // once there and whose A image is applied explicitly.
+    auto advance = [&](double* Xb, const double* Vb, double* Pb) {
+      F77_CALL(dgemm)(&trans_N, &trans_N, &n, &k, &r, &one,
+                      const_cast<double*>(Vb), &n, const_cast<double*>(Yz), &q,
+                      &zero, Xt.data(), &n FCONE FCONE);
+      if (Pb != nullptr) {
+        std::memcpy(Pb, Xt.data(), sizeof(double) * nk);
+      }
+      F77_CALL(dgemm)(&trans_N, &trans_N, &n, &k, &k, &one,
+                      Xb, &n, const_cast<double*>(Yx), &q,
+                      &one, Xt.data(), &n FCONE FCONE);
+      std::memcpy(Xb, Xt.data(), sizeof(double) * nk);
+    };
+    advance(X.data(), V.data(), P.data());
+    advance(AX.data(), AV.data(), nullptr);
     if (generalized) {
-      F77_CALL(dgemm)(&trans_N, &trans_N, &n, &k, &q_rank,
-                      &one, BQ, &n, selected_vectors, &q_rank,
-                      &zero, BXnext, &n FCONE FCONE);
-    }
-    for (size_t pos = 0; pos < nk; ++pos) {
-      P[pos] = Xnext[pos] - X[pos];
-      X[pos] = Xnext[pos];
-      if (generalized) {
-        BX[pos] = BXnext[pos];
-      } else {
-        BX[pos] = Xnext[pos];
-      }
+      advance(BXs.data(), BVs.data(), nullptr);
     }
     have_p = 1;
+    fresh = false;
+    ++since_refresh;
   }
 
-  std::memcpy(X_out, X, sizeof(double) * nk);
-  cleanup();
+  std::memcpy(X_out, X.data(), sizeof(double) * nk);
   return 0;
 }
 

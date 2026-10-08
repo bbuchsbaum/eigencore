@@ -1,3 +1,51 @@
+# eigencore (development version)
+
+## Correctness fixes
+
+* `center(rows = TRUE, columns = TRUE)` now double centers correctly. Row
+  means were taken from the uncentered matrix, so the grand mean was
+  subtracted twice on the dense, callback, and native CSC paths.
+* Column-centered `dgCMatrix` operators carry their exact Frobenius norm, so
+  their SVD certificates can pass instead of always reporting an estimate.
+* Complex Frobenius norms no longer drop imaginary parts, and sparse sources
+  are no longer densified to compute a certificate norm.
+* Complex Hermitian eigenproblems and Hermitian-definite pencils use the
+  `zheev`-based kernels, so repeated eigenvalues keep an orthonormal
+  (B-orthonormal) eigenbasis.
+* `eig_full(A, B)` with a symmetric but indefinite or singular `B` falls back
+  to QZ instead of failing in `dpotrf` (unless `structure = hermitian()` is
+  requested explicitly).
+* The Gram SVD zero threshold is relative to the matrix scale instead of
+  `max(1, d)`, so tiny-norm matrices no longer return zero singular values.
+* NA, NaN, and Inf matrix inputs are rejected when the operator is built.
+* `k`/`rank` are validated once (whole number in `1..n`), eigenproblems
+  require a square operator, and `both_ends(k_low, k_high)` must match `k`.
+* `seed =` in `eig_partial()`/`svd_partial()` restores the global random
+  stream on exit.
+* `shifted_tridiagonal_preconditioner()` accepts symmetric storage and reads
+  the bands without an R-level loop.
+* Native kernels use 64-bit offsets for basis and certificate indexing, so
+  problems with more than 2^31 basis or vector entries no longer overflow.
+* Block Lanczos and block Golub-Kahan always run two Cholesky-QR passes
+  (previously only for n < 64), keeping new blocks orthonormal when the
+  residual block is ill-conditioned.
+* Scalar Lanczos and Golub-Kahan stop with a clear error on non-finite
+  values; NaN no longer passes the native symmetry and positive-diagonal
+  checks, and is no longer hidden in maximum backward-error summaries.
+* The native Gram SVD start vector is no longer an exact alternating sign
+  pattern (orthogonal to the constant vector), and its zero threshold is
+  scale invariant.
+
+## RSpectra compatibility
+
+* `eigs()`, `eigs_sym()` and `svds()` follow the RSpectra signatures:
+  `sigma` (nearest eigenvalues), function inputs (`n`/`args`,
+  `Atrans`/`dim`), `eigs_sym(lower =)` reading one triangle, default
+  `which = "LM"` for `eigs_sym()`, decreasing value order from `eigs_sym()`,
+  and `opts$tol`, `ncv`, `retvec`, `initvec`, `center`, `scale`. Unused or
+  unknown `opts` entries and unknown `which` codes are reported instead of
+  being ignored, `nu`/`nv` are honoured, and non-convergence warns.
+
 # eigencore 1.3.0 (2026-08-25)
 
 ## Certified positive-semidefinite geometry
@@ -142,6 +190,16 @@
 
 ## Performance
 
+* Operator identities and workflow tokens use a native 128-bit structural
+  hash over the data buffers instead of hashing `serialize()` output, about
+  10x faster (dense 1500 x 1500 source: 0.047 s -> 0.005 s; 4000 x 4000:
+  0.54 s -> 0.04 s). Equal values hash equal (`-0`/`0`, NaN payloads),
+  attributes count regardless of order, and digests are the same across
+  sessions and platforms. **Identity format change:** built-in operator
+  identities, plan tokens and restart-state tokens all change value. Plans
+  and restart states now record `serialization$hash_format`; ones saved by an
+  earlier version are rejected with code `identity_format_changed` and a
+  message asking to re-plan, rather than a generic identity mismatch.
 * Sparse tridiagonal shift-invert now parses and validates the three matrix
   bands once per solve and reuses that immutable representation for planning,
   shift perturbation, factorization, and certification. The native kernel

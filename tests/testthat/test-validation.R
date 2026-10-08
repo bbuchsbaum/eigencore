@@ -234,7 +234,7 @@ test_that("complex matrix-free operators certify exactly with explicit norm meta
     dtype = "complex",
     structure = general(),
     name = "complex_matrix_free_exact_norm",
-    metadata = list(frobenius_norm = norm(A, type = "F"))
+    metadata = list(frobenius_norm = sqrt(sum(Mod(A)^2)))
   )
 
   eig <- eigen(A)
@@ -506,7 +506,7 @@ test_that("matrix-free Golub-Kahan values match base SVD oracle through explicit
       if (!is.null(Y) && beta != 0) out <- out + beta * Y
       out
     },
-    metadata = list(frobenius_norm = norm(A, type = "F"))
+    metadata = list(frobenius_norm = sqrt(sum(Mod(A)^2)))
   )
   fit <- svd_partial(op, rank = 2, method = golub_kahan(max_subspace = 3), seed = 42)
   oracle <- svd(A, nu = 2, nv = 2)

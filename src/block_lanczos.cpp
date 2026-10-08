@@ -134,21 +134,30 @@ static int trl_orthogonalise(const double* V_locked, int n_locked,
 }
 
 static double trl_norm2(const double* x, int n) {
-  long double sum = 0.0L;
-  for (int i = 0; i < n; ++i) {
-    sum += static_cast<long double>(x[i]) * x[i];
-  }
-  return sqrt(static_cast<double>(sum));
+  return ec_norm2(x, n);
 }
 
 // Frobenius norm of a dense n x cols block stored contiguously (ld == n).
 static double block_frobenius_norm(const double* X, int n, int cols) {
-  long double sum = 0.0L;
-  const int64_t total = static_cast<int64_t>(n) * cols;
-  for (int64_t i = 0; i < total; ++i) {
-    sum += static_cast<long double>(X[i]) * X[i];
+  if (cols == 1) {
+    return ec_norm2(X, n);
   }
-  return sqrt(static_cast<double>(sum));
+  double scale = 0.0;
+  double ssq = 1.0;
+  for (int col = 0; col < cols; ++col) {
+    const double c = ec_norm2(X + static_cast<int64_t>(col) * n, n);
+    if (c > 0.0) {
+      if (scale < c) {
+        ssq = 1.0 + ssq * (scale / c) * (scale / c);
+        scale = c;
+      } else {
+        ssq += (c / scale) * (c / scale);
+      }
+    } else if (ISNAN(c)) {
+      return c;
+    }
+  }
+  return scale * sqrt(ssq);
 }
 
 static int trl_dsyev_query(int m_max) {
@@ -214,6 +223,87 @@ static int symmetric_eigen_inplace(double* A, int n, double* values,
   return info == 0 ? 0 : -3;
 }
 
+// Selected eigenpairs of the m x m symmetric projected matrix A (upper
+// triangle referenced, ld m; destroyed; T/ldt is the source it was copied
+// from, used to restart the solve) (P5). The algebraic targets only need
+// the `count` eigenvectors at one end of the spectrum, so dsyevr runs with an
+// index range instead of a full dsyev/dsyevd; magnitude targets need both ends
+// and compute every pair (dsyevr, MRRR). Indices keep their meaning as
+// positions in the ascending spectrum: theta[idx] is set for every selected
+// idx (other entries are NaN and never read), selected[0..count) is the
+// target ordering, and column p of S_selected (ld m) holds the eigenvector of
+// selected[p].
+static int projected_eigen_selected(const double* T, int ldt,
+                                    double* A, int m, int count,
+                                    int target_kind, double* theta,
+                                    int* selected, double* S_selected,
+                                    double* Z, double* w, int* isuppz,
+                                    double* work, int lwork,
+                                    int* iwork, int liwork) {
+  if (m <= 0) {
+    return 0;
+  }
+  if (count > m) {
+    count = m;
+  }
+  if (count < 1) {
+    count = 1;
+  }
+  char jobz = 'V';
+  char uplo = 'U';
+  char range = 'A';
+  int il = 1;
+  int iu = m;
+  if (target_kind == 1 && count < m) {
+    range = 'I';
+    il = m - count + 1;
+  } else if (target_kind == 2 && count < m) {
+    range = 'I';
+    iu = count;
+  }
+  const double vl = 0.0;
+  const double vu = 0.0;
+  const double abstol = 0.0;
+  int found = 0;
+  int info = 0;
+  F77_CALL(dsyevr)(&jobz, &range, &uplo, &m, A, &m, &vl, &vu, &il, &iu,
+                   &abstol, &found, w, Z, &m, isuppz, work, &lwork,
+                   iwork, &liwork, &info FCONE FCONE FCONE);
+  if (info == 0 && range == 'I' && found != iu - il + 1) {
+    // Bisection can return extra eigenvalues tied at a range boundary; the
+    // index mapping is then ambiguous, so solve for the whole spectrum.
+    for (int col = 0; col < m; ++col) {
+      for (int row = 0; row <= col; ++row) {
+        A[row + static_cast<int64_t>(col) * m] = T[row + static_cast<int64_t>(col) * ldt];
+      }
+    }
+    range = 'A';
+    il = 1;
+    iu = m;
+    found = 0;
+    F77_CALL(dsyevr)(&jobz, &range, &uplo, &m, A, &m, &vl, &vu, &il, &iu,
+                     &abstol, &found, w, Z, &m, isuppz, work, &lwork,
+                     iwork, &liwork, &info FCONE FCONE FCONE);
+  }
+  if (info != 0 || found != iu - il + 1) {
+    return -3;
+  }
+  for (int i = 0; i < m; ++i) {
+    theta[i] = R_NaN;
+  }
+  for (int i = 0; i < found; ++i) {
+    theta[il - 1 + i] = w[i];
+  }
+  selected_sorted_ritz_indices(theta, m, count, target_kind, selected);
+  for (int p = 0; p < count; ++p) {
+    const int zcol = selected[p] - (il - 1);
+    std::memcpy(S_selected + static_cast<int64_t>(p) * m,
+                Z + static_cast<int64_t>(zcol) * m,
+                sizeof(double) * static_cast<size_t>(m));
+  }
+  return 0;
+}
+
 static void symmetrize_packed_square(double* A, int n) {
   for (int i = 0; i < n; ++i) {
     for (int j = i + 1; j < n; ++j) {
@@ -235,6 +325,8 @@ static double standard_eigen_lock_scale(double norm_a, double theta,
   return (scale > DBL_EPSILON) ? scale : DBL_EPSILON;
 }
 
+// Ritz/locked vectors are unit vectors, so the norm thresholds below are
+// relative (|v| is compared against 1, independent of the operator scale).
 static int vector_is_independent_from_locked(const double* V_locked,
                                              int n_locked,
                                              const double* v,
@@ -244,29 +336,38 @@ static int vector_is_independent_from_locked(const double* V_locked,
   if (vnorm <= DBL_EPSILON) {
     return 0;
   }
+  if (n_locked <= 0) {
+    return 1;
+  }
+  std::vector<double> dots(static_cast<size_t>(n_locked), 0.0);
+  const char trans_T = 'T';
+  const double one = 1.0;
+  const double zero = 0.0;
+  int inc = 1;
+  F77_CALL(dgemv)(&trans_T, &n, &n_locked, &one, V_locked, &n, v, &inc,
+                  &zero, dots.data(), &inc FCONE);
   for (int col = 0; col < n_locked; ++col) {
-    long double dot = 0.0L;
-    long double locked_ss = 0.0L;
-    const double* locked = V_locked + static_cast<int64_t>(col) * n;
-    for (int row = 0; row < n; ++row) {
-      dot += static_cast<long double>(locked[row]) * v[row];
-      locked_ss += static_cast<long double>(locked[row]) * locked[row];
-    }
-    const double locked_norm = sqrt(static_cast<double>(locked_ss));
+    const double locked_norm =
+      trl_norm2(V_locked + static_cast<int64_t>(col) * n, n);
     if (locked_norm <= DBL_EPSILON) {
       continue;
     }
-    if (fabs(static_cast<double>(dot)) > dot_tol * locked_norm * vnorm) {
+    if (fabs(dots[static_cast<size_t>(col)]) > dot_tol * locked_norm * vnorm) {
       return 0;
     }
   }
   return 1;
 }
 
+// Orthogonalise z against the locked and active bases and append it when it
+// survives. Breakdown is judged relative to ref_norm (the scale z had before
+// orthogonalisation, or an operator-norm estimate for residual directions), so
+// the decision is invariant under scaling of the operator (C16).
 static int block_accept_work_vector(const double* V_locked, int n_locked,
                                     double* V_active, int* m_active,
                                     int m_max, double* z, double* tmp,
-                                    int n, int* ortho_passes) {
+                                    int n, int* ortho_passes,
+                                    double ref_norm = 1.0) {
   if (*m_active >= m_max) {
     return 0;
   }
@@ -276,7 +377,10 @@ static int block_accept_work_vector(const double* V_locked, int n_locked,
     *ortho_passes += passes_done;
   }
   const double nz = trl_norm2(z, n);
-  if (nz <= 100.0 * DBL_EPSILON) {
+  if (!(ref_norm > 0.0) || !R_FINITE(ref_norm)) {
+    ref_norm = 1.0;
+  }
+  if (!(nz > 100.0 * DBL_EPSILON * ref_norm)) {
     return 0;
   }
   const double inv_nz = 1.0 / nz;
@@ -350,7 +454,9 @@ static int block_accept_columns_blas3(const double* X, int ldx, int x_cols,
                                       int block_capacity, double* coeff,
                                       double* tmp, int n, int max_accept,
                                       int* ortho_passes,
-                                      bool reorthogonalize_active = true) {
+                                      bool reorthogonalize_active = true,
+                                      double ref_norm = -1.0,
+                                      bool reorthogonalize_locked = true) {
   if (max_accept < 0) {
     max_accept = 0;
   }
@@ -376,10 +482,29 @@ static int block_accept_columns_blas3(const double* X, int ldx, int x_cols,
     }
   }
 
+  // Breakdown thresholds are relative (C16): without a caller-supplied scale
+  // the reference is the largest column norm of the block before
+  // orthogonalisation, so a block scaled by 1e-12 behaves like one at scale 1.
+  if (!(ref_norm > 0.0) || !R_FINITE(ref_norm)) {
+    ref_norm = 0.0;
+    for (int col = 0; col < cols; ++col) {
+      const double c = trl_norm2(Z_block + static_cast<int64_t>(col) * n, n);
+      if (c > ref_norm) {
+        ref_norm = c;
+      }
+    }
+    if (!(ref_norm > 0.0) || !R_FINITE(ref_norm)) {
+      ref_norm = 1.0;
+    }
+  }
+  const double breakdown_tol = 100.0 * DBL_EPSILON * ref_norm;
+  // R_ii of the Cholesky factor scales like the column norms, i.e. like
+  // ref_norm; the Gram diagonal (before dpotrf) like ref_norm^2.
   const double* active_basis = reorthogonalize_active ? V_active : nullptr;
   const int active_cols = reorthogonalize_active ? *m_active : 0;
   const int reorth_passes_done = block_reorthogonalise_against(
-    V_locked, n_locked, active_basis, active_cols,
+    reorthogonalize_locked ? V_locked : nullptr,
+    reorthogonalize_locked ? n_locked : 0, active_basis, active_cols,
     Z_block, n, cols, coeff, 2
   );
   if (ortho_passes != nullptr) {
@@ -402,31 +527,30 @@ static int block_accept_columns_blas3(const double* X, int ldx, int x_cols,
     F77_CALL(dpotrf)(&uplo, &cols, coeff, &cols, &info FCONE);
     bool chol_ok = (info == 0);
     for (int col = 0; chol_ok && col < cols; ++col) {
-      if (coeff[col + static_cast<int64_t>(col) * cols] <= 100.0 * DBL_EPSILON) {
+      if (!(coeff[col + static_cast<int64_t>(col) * cols] > breakdown_tol)) {
         chol_ok = false;
       }
     }
     if (chol_ok) {
       F77_CALL(dtrsm)(&right, &uplo, &trans_N, &diag, &n, &cols, &one,
                       coeff, &cols, Z_block, &n FCONE FCONE FCONE FCONE);
-      if (n < 64) {
-        F77_CALL(dgemm)(&trans_T, &trans_N, &cols, &cols, &n,
-                        &one, Z_block, &n, Z_block, &n,
-                        &zero, coeff, &cols FCONE FCONE);
-        symmetrize_packed_square(coeff, cols);
-        F77_CALL(dpotrf)(&uplo, &cols, coeff, &cols, &info FCONE);
-        chol_ok = (info == 0);
-        for (int col = 0; chol_ok && col < cols; ++col) {
-          if (coeff[col + static_cast<int64_t>(col) * cols] <= 100.0 * DBL_EPSILON) {
-            chol_ok = false;
-          }
+      // Second CholQR pass (CholQR2): a single pass loses orthogonality
+      // like cond(Z)^2 * eps, so always repeat it regardless of n.
+      F77_CALL(dgemm)(&trans_T, &trans_N, &cols, &cols, &n,
+                      &one, Z_block, &n, Z_block, &n,
+                      &zero, coeff, &cols FCONE FCONE);
+      symmetrize_packed_square(coeff, cols);
+      F77_CALL(dpotrf)(&uplo, &cols, coeff, &cols, &info FCONE);
+      // Second pass: Z_block is now (nearly) orthonormal, so R_ii ~ 1.
+      chol_ok = (info == 0);
+      for (int col = 0; chol_ok && col < cols; ++col) {
+        if (!(coeff[col + static_cast<int64_t>(col) * cols] > 100.0 * DBL_EPSILON)) {
+          chol_ok = false;
         }
       }
       if (chol_ok) {
-        if (n < 64) {
-          F77_CALL(dtrsm)(&right, &uplo, &trans_N, &diag, &n, &cols, &one,
-                          coeff, &cols, Z_block, &n FCONE FCONE FCONE FCONE);
-        }
+        F77_CALL(dtrsm)(&right, &uplo, &trans_N, &diag, &n, &cols, &one,
+                        coeff, &cols, Z_block, &n FCONE FCONE FCONE FCONE);
         for (int col = 0; col < cols && *m_active < m_max; ++col) {
           std::memcpy(V_active + static_cast<int64_t>(*m_active) * n,
                       Z_block + static_cast<int64_t>(col) * n,
@@ -448,7 +572,7 @@ static int block_accept_columns_blas3(const double* X, int ldx, int x_cols,
                         accepted, z_col, tmp, n);
     }
     const double nz = trl_norm2(z_col, n);
-    if (nz <= 100.0 * DBL_EPSILON) {
+    if (!(nz > breakdown_tol)) {
       continue;
     }
     const double inv_nz = 1.0 / nz;
@@ -529,33 +653,6 @@ static void subtract_projected_range(const double* V_active,
                   V_active + static_cast<int64_t>(range_start) * n, &n,
                   coeff, &range_cols,
                   &one, W, &n FCONE FCONE);
-}
-
-static void form_structured_projected_block_residual(const double* V_active,
-                                                     const double* AV_active,
-                                                     const double* T_proj,
-                                                     int ldt,
-                                                     int n,
-                                                     int current_start,
-                                                     int current_cols,
-                                                     int previous_start,
-                                                     int previous_cols,
-                                                     double* W,
-                                                     double* coeff) {
-  if (current_cols <= 0) {
-    return;
-  }
-  for (int col = 0; col < current_cols; ++col) {
-    std::memcpy(W + static_cast<int64_t>(col) * n,
-                AV_active + static_cast<int64_t>(current_start + col) * n,
-                sizeof(double) * static_cast<size_t>(n));
-  }
-  subtract_projected_range(V_active, T_proj, ldt, n,
-                           previous_start, previous_cols,
-                           current_start, current_cols, W, coeff);
-  subtract_projected_range(V_active, T_proj, ldt, n,
-                           current_start, current_cols,
-                           current_start, current_cols, W, coeff);
 }
 
 static void projection_update_self_block(double* T_proj, int ldt,
@@ -701,6 +798,9 @@ struct ThickRestartBuffers {
   int     dsyev_lwork;
   int*    dsyevd_iwork;
   int     dsyevd_liwork;
+  double* Z_eig;       // m_max x m_max: selected projected eigenvectors (dsyevr)
+  double* w_eig;       // m_max: projected eigenvalues (dsyevr)
+  int*    isuppz;      // 2 * m_max (dsyevr)
   int     selected_capacity;
 };
 
@@ -722,6 +822,9 @@ static void trl_buffers_free(ThickRestartBuffers* b) {
   std::free(b->is_locked);
   std::free(b->dsyev_work);
   std::free(b->dsyevd_iwork);
+  std::free(b->Z_eig);
+  std::free(b->w_eig);
+  std::free(b->isuppz);
 }
 
 static int trl_buffers_alloc(ThickRestartBuffers* b, int n, int k_target,
@@ -762,6 +865,9 @@ static int trl_buffers_alloc(ThickRestartBuffers* b, int n, int k_target,
   if (b->dsyevd_liwork < 1) b->dsyevd_liwork = 1;
   b->dsyev_work = static_cast<double*>(std::malloc(static_cast<size_t>(b->dsyev_lwork) * sizeof(double)));
   b->dsyevd_iwork = static_cast<int*>(std::malloc(static_cast<size_t>(b->dsyevd_liwork) * sizeof(int)));
+  b->Z_eig = static_cast<double*>(std::malloc((mm > 0 ? mm : 1) * sizeof(double)));
+  b->w_eig = static_cast<double*>(std::malloc(static_cast<size_t>(m_max > 0 ? m_max : 1) * sizeof(double)));
+  b->isuppz = static_cast<int*>(std::malloc(static_cast<size_t>(2 * (m_max > 0 ? m_max : 1)) * sizeof(int)));
   if (b->V_active == nullptr || b->AV_active == nullptr ||
       b->T_proj == nullptr || b->S_eig == nullptr ||
       b->S_selected == nullptr ||
@@ -769,7 +875,8 @@ static int trl_buffers_alloc(ThickRestartBuffers* b, int n, int k_target,
       b->Z_block == nullptr || b->coeff_block == nullptr ||
       b->z == nullptr || b->tmp == nullptr || b->ritz_res == nullptr ||
       b->selected == nullptr || b->is_locked == nullptr ||
-      b->dsyev_work == nullptr || b->dsyevd_iwork == nullptr) {
+      b->dsyev_work == nullptr || b->dsyevd_iwork == nullptr ||
+      b->Z_eig == nullptr || b->w_eig == nullptr || b->isuppz == nullptr) {
     trl_buffers_free(b);
     return -1;
   }
@@ -873,17 +980,8 @@ static int final_polish_block_ritz(void* impl,
   for (int col = 0; col < k_target; ++col) {
     const double* vec = V_out + static_cast<int64_t>(col) * n;
     const double* av = buf->B_av + static_cast<int64_t>(col) * n;
-    long double theta_sum = 0.0L;
-    for (int row = 0; row < n; ++row) {
-      theta_sum += static_cast<long double>(vec[row]) * av[row];
-    }
-    const double theta = static_cast<double>(theta_sum);
-    long double ss = 0.0L;
-    for (int row = 0; row < n; ++row) {
-      const double diff = av[row] - theta * vec[row];
-      ss += static_cast<long double>(diff) * diff;
-    }
-    const double res = sqrt(static_cast<double>(ss));
+    const double theta = ec_dot(vec, av, n);
+    const double res = ec_residual_norm(av, vec, theta, n);
     lambda_out[col] = theta;
     residuals_out[col] = res;
     const double scale = standard_eigen_lock_scale(norm_a, theta, vec, n);
@@ -927,35 +1025,20 @@ static int final_polish_block_ritz(void* impl,
   std::memcpy(buf->AV_active, buf->B_av,
               sizeof(double) * static_cast<size_t>(n) *
                 static_cast<size_t>(k_target));
-  if (k_target <= 32) {
-    combine_basis_columns_small(V_out, n, k_target,
-                                buf->S_selected, k_target,
-                                k_target, buf->B_v);
-    combine_basis_columns_small(buf->AV_active, n, k_target,
-                                buf->S_selected, k_target,
-                                k_target, buf->B_av);
-  } else {
-    F77_CALL(dgemm)(&trans_N, &trans_N, &n, &k_target, &k_target,
-                    &one, V_out, &n, buf->S_selected, &k_target,
-                    &zero, buf->B_v, &n FCONE FCONE);
-    F77_CALL(dgemm)(&trans_N, &trans_N, &n, &k_target, &k_target,
-                    &one, buf->AV_active, &n, buf->S_selected, &k_target,
-                    &zero, buf->B_av, &n FCONE FCONE);
-  }
+  combine_basis_columns(V_out, n, k_target, buf->S_selected, k_target,
+                        k_target, buf->B_v);
+  combine_basis_columns(buf->AV_active, n, k_target, buf->S_selected,
+                        k_target, k_target, buf->B_av);
 
   int n_converged = 0;
   for (int col = 0; col < k_target; ++col) {
     const int idx = buf->selected[col];
     const double theta = buf->theta[idx];
-    long double ss = 0.0L;
-    double* residual = buf->B_av + static_cast<int64_t>(col) * n;
-    double* vec = buf->B_v + static_cast<int64_t>(col) * n;
-    for (int row = 0; row < n; ++row) {
-      residual[row] -= theta * vec[row];
-      ss += static_cast<long double>(residual[row]) * residual[row];
-      V_out[row + static_cast<int64_t>(col) * n] = vec[row];
-    }
-    const double res = sqrt(static_cast<double>(ss));
+    const double* residual = buf->B_av + static_cast<int64_t>(col) * n;
+    const double* vec = buf->B_v + static_cast<int64_t>(col) * n;
+    const double res = ec_residual_norm(residual, vec, theta, n);
+    std::memcpy(V_out + static_cast<int64_t>(col) * n, vec,
+                sizeof(double) * static_cast<size_t>(n));
     lambda_out[col] = theta;
     residuals_out[col] = res;
     const double scale = standard_eigen_lock_scale(norm_a, theta, vec, n);
@@ -1089,9 +1172,12 @@ static int native_block_lanczos_run(
     int accepted = 0;
     for (int col = 0; col < source_cols && m_active < m_max; ++col) {
       double* z_col = Z + static_cast<int64_t>(col) * n;
+      // Breakdown relative to the vector's own scale before orthogonalisation
+      // (C16): A*v for a matrix scaled by 1e-12 is not a breakdown.
+      const double pre_nz = trl_norm2(z_col, n);
       trl_orthogonalise(nullptr, 0, V, m_active, z_col, tmp, n);
       const double nz = trl_norm2(z_col, n);
-      if (nz <= 100.0 * DBL_EPSILON) {
+      if (!(nz > 100.0 * DBL_EPSILON * pre_nz)) {
         continue;
       }
       const double inv_nz = 1.0 / nz;
@@ -1189,16 +1275,21 @@ static int native_block_lanczos_run(
   F77_CALL(dgemm)(&trans_N, &trans_N, &n, &k_target, &m_active,
                   &one, AV, &n, S_selected, &m_active,
                   &zero, B_av, &n FCONE FCONE);
+  // Convergence relative to an operator-norm estimate (C16): ||T|| = max
+  // |theta| over the whole projected spectrum, never an absolute floor of 1.
+  double norm_est = 0.0;
+  for (int i = 0; i < m_active; ++i) {
+    if (fabs(theta[i]) > norm_est) {
+      norm_est = fabs(theta[i]);
+    }
+  }
   int nconv = 0;
   for (int col = 0; col < k_target; ++col) {
-    long double s = 0.0L;
-    for (int row = 0; row < n; ++row) {
-      const double diff = B_av[row + static_cast<int64_t>(col) * n] -
-                          lambda_out[col] * B_v[row + static_cast<int64_t>(col) * n];
-      s += static_cast<long double>(diff) * diff;
-    }
-    residuals_out[col] = sqrt(static_cast<double>(s));
-    const double scale_i = (fabs(lambda_out[col]) > 1.0) ? fabs(lambda_out[col]) : 1.0;
+    residuals_out[col] = ec_residual_norm(B_av + static_cast<int64_t>(col) * n,
+                                          B_v + static_cast<int64_t>(col) * n,
+                                          lambda_out[col], n);
+    const double scale_i = (fabs(lambda_out[col]) > norm_est) ?
+      fabs(lambda_out[col]) : norm_est;
     converged_out[col] = residuals_out[col] <= tol * scale_i ? 1 : 0;
     if (converged_out[col]) ++nconv;
     std::memcpy(V_out + static_cast<int64_t>(col) * n,
@@ -1236,6 +1327,155 @@ struct BlockLanczosBestSnapshot {
       candidate_converged(static_cast<size_t>(k_target), 0) {}
 };
 
+// Write the symmetric pair T(row, col) = T(col, row) = value.
+static inline void projection_set_pair(double* T_proj, int ldt, int row, int col,
+                                       double value) {
+  T_proj[row + static_cast<int64_t>(col) * ldt] = value;
+  T_proj[col + static_cast<int64_t>(row) * ldt] = value;
+}
+
+// Lanczos residual of the most recent block with the projected column built in
+// the same sweep (P2/P4). On entry AV_active holds A * V_last. On exit W holds
+//   W = A V_last - V_active H - V_locked (V_locked' W),
+// orthogonal to the locked and active bases, and T_proj holds the last block's
+// column H = V_active' A V_last (and its mirror row).
+//
+// When the column is not yet known (the normal case) the local Lanczos
+// coefficients -- the coupling to the previous block and the self block -- are
+// formed explicitly and subtracted (the three-term recurrence); the remaining
+// entries of H fall out of one classical Gram-Schmidt pass of the recurrence
+// residual against the whole basis, which is also the full reorthogonalisation
+// (H = local + V'W_local exactly when V is orthonormal). A DGKS second pass
+// runs only when the first cancelled a large fraction of the residual norm.
+// Previously the column was a separate dense V'AV projection per step on top
+// of the reorthogonalisation; folding it in saves one n x m pass per step.
+//
+// When the column is already explicit (mid-sweep checkpoint, or the explicit
+// restart fallback), W = A V_last - V_active H is formed directly and
+// reorthogonalised with the usual DGKS scheme; H is left untouched.
+//
+// Returns the number of full projection passes performed.
+static int block_lanczos_projected_residual(const double* V_locked, int n_locked,
+                                            ThickRestartBuffers* buf, int n,
+                                            int m_max, int m_active,
+                                            int prev_start, int prev_cols,
+                                            int last_start, int last_cols,
+                                            bool last_column_known,
+                                            double* W) {
+  const char trans_T = 'T';
+  const char trans_N = 'N';
+  const double one = 1.0;
+  const double zero = 0.0;
+  const double minus_one = -1.0;
+  double* T = buf->T_proj;
+  const int ldt = m_max;
+  double* coeff = buf->coeff_block;
+  const int b = last_cols;
+  for (int col = 0; col < b; ++col) {
+    std::memcpy(W + static_cast<int64_t>(col) * n,
+                buf->AV_active + static_cast<int64_t>(last_start + col) * n,
+                sizeof(double) * static_cast<size_t>(n));
+  }
+
+  if (last_column_known) {
+    subtract_projected_range(buf->V_active, T, ldt, n, 0, m_active,
+                             last_start, b, W, coeff);
+    return block_reorthogonalise_against(V_locked, n_locked, buf->V_active,
+                                         m_active, W, n, b, coeff, 2);
+  }
+
+  // Local coefficients: coupling to the previous block and the self block.
+  const double* V_last = buf->V_active + static_cast<int64_t>(last_start) * n;
+  const double* AV_last = buf->AV_active + static_cast<int64_t>(last_start) * n;
+  double* scratch = buf->S_eig;  // free during expansion; m_max x m_max
+  if (prev_cols > 0) {
+    F77_CALL(dgemm)(&trans_T, &trans_N, &prev_cols, &b, &n, &one,
+                    buf->V_active + static_cast<int64_t>(prev_start) * n, &n,
+                    AV_last, &n, &zero, scratch, &prev_cols FCONE FCONE);
+    for (int col = 0; col < b; ++col) {
+      for (int row = 0; row < prev_cols; ++row) {
+        projection_set_pair(T, ldt, prev_start + row, last_start + col,
+                            scratch[row + static_cast<int64_t>(col) * prev_cols]);
+      }
+    }
+  }
+  F77_CALL(dgemm)(&trans_T, &trans_N, &b, &b, &n, &one, V_last, &n,
+                  AV_last, &n, &zero, scratch, &b FCONE FCONE);
+  symmetrize_packed_square(scratch, b);
+  for (int col = 0; col < b; ++col) {
+    for (int row = 0; row < b; ++row) {
+      T[(last_start + row) + static_cast<int64_t>(last_start + col) * ldt] =
+        scratch[row + static_cast<int64_t>(col) * b];
+    }
+  }
+  subtract_projected_range(buf->V_active, T, ldt, n, prev_start, prev_cols,
+                           last_start, b, W, coeff);
+  subtract_projected_range(buf->V_active, T, ldt, n, last_start, b,
+                           last_start, b, W, coeff);
+
+  // CGS pass(es) against [locked | active]; active coefficients complete H.
+  double pre_norm = block_frobenius_norm(W, n, b);
+  int passes_done = 0;
+  for (int pass = 0; pass < 2; ++pass) {
+    if (n_locked > 0) {
+      F77_CALL(dgemm)(&trans_T, &trans_N, &n_locked, &b, &n, &one,
+                      V_locked, &n, W, &n, &zero, coeff, &n_locked FCONE FCONE);
+      F77_CALL(dgemm)(&trans_N, &trans_N, &n, &b, &n_locked, &minus_one,
+                      V_locked, &n, coeff, &n_locked, &one, W, &n FCONE FCONE);
+    }
+    if (m_active > 0) {
+      F77_CALL(dgemm)(&trans_T, &trans_N, &m_active, &b, &n, &one,
+                      buf->V_active, &n, W, &n, &zero, coeff, &m_active FCONE FCONE);
+      F77_CALL(dgemm)(&trans_N, &trans_N, &n, &b, &m_active, &minus_one,
+                      buf->V_active, &n, coeff, &m_active, &one, W, &n FCONE FCONE);
+      for (int col = 0; col < b; ++col) {
+        const int abs_col = last_start + col;
+        for (int row = 0; row < m_active; ++row) {
+          const double c = coeff[row + static_cast<int64_t>(col) * m_active];
+          if (row >= last_start && row < last_start + b) {
+            // Self block: accumulate on the upper entry only, symmetrised below.
+            T[row + static_cast<int64_t>(abs_col) * ldt] += c;
+          } else {
+            const double value = T[row + static_cast<int64_t>(abs_col) * ldt] + c;
+            projection_set_pair(T, ldt, row, abs_col, value);
+          }
+        }
+      }
+    }
+    ++passes_done;
+    if (pass + 1 >= 2) {
+      break;
+    }
+    const double post_norm = block_frobenius_norm(W, n, b);
+    if (post_norm >= kDgksEta * pre_norm) {
+      break;
+    }
+    pre_norm = post_norm;
+  }
+  for (int col = 0; col < b; ++col) {
+    for (int row = col + 1; row < b; ++row) {
+      const int r = last_start + row;
+      const int c = last_start + col;
+      const double avg = 0.5 * (T[r + static_cast<int64_t>(c) * ldt] +
+                                T[c + static_cast<int64_t>(r) * ldt]);
+      projection_set_pair(T, ldt, r, c, avg);
+    }
+  }
+  return passes_done;
+}
+
+// Largest column norm of the n x cols block X (ld == n).
+static double block_max_column_norm(const double* X, int n, int cols) {
+  double out = 0.0;
+  for (int col = 0; col < cols; ++col) {
+    const double c = trl_norm2(X + static_cast<int64_t>(col) * n, n);
+    if (c > out) {
+      out = c;
+    }
+  }
+  return out;
+}
+
 static int block_lanczos_expand_basis_to_budget(
     void* impl,
     EigencoreApplyFn apply,
@@ -1245,6 +1485,7 @@ static int block_lanczos_expand_basis_to_budget(
     int block_size,
     const double* V_locked,
     int n_locked,
+    double norm_scale,
     ThickRestartBuffers* buf,
     EigencoreWorkspace* workspace,
     NativeBlockStageSeconds* stages,
@@ -1253,6 +1494,7 @@ static int block_lanczos_expand_basis_to_budget(
     int* previous_block_cols,
     int* last_block_start,
     int* last_block_cols,
+    bool* last_column_known,
     int* iterations_out,
     int* matvecs_out,
     int* operator_columns_out,
@@ -1263,13 +1505,24 @@ static int block_lanczos_expand_basis_to_budget(
   // same sweep. Legacy behaviour is m_stop == m_max (a single full sweep).
   while (*m_active < m_stop && *last_block_cols > 0) {
     auto timer = native_timer_now();
-    form_structured_projected_block_residual(
-      buf->V_active, buf->AV_active, buf->T_proj, m_max, n,
-      *last_block_start, *last_block_cols,
+    const double av_norm = block_max_column_norm(
+      buf->AV_active + static_cast<int64_t>(*last_block_start) * n, n,
+      *last_block_cols);
+    // Breakdown is judged against the operator scale (C16): the norm estimate
+    // when known, and at least |A v| for the current block.
+    double ref_norm = (norm_scale > av_norm) ? norm_scale : av_norm;
+    if (!(ref_norm > 0.0) || !R_FINITE(ref_norm)) {
+      ref_norm = 1.0;
+    }
+    const int residual_passes = block_lanczos_projected_residual(
+      V_locked, n_locked, buf, n, m_max, *m_active,
       *previous_block_start, *previous_block_cols,
-      buf->Z_block, buf->coeff_block
-    );
-    stages->recurrence += native_timer_elapsed(timer);
+      *last_block_start, *last_block_cols, *last_column_known, buf->Z_block);
+    *last_column_known = true;
+    if (ortho_passes_out != nullptr) {
+      *ortho_passes_out += residual_passes;
+    }
+    stages->reorthogonalization += native_timer_elapsed(timer);
 
     const int accepted_start = *m_active;
     timer = native_timer_now();
@@ -1278,7 +1531,7 @@ static int block_lanczos_expand_basis_to_budget(
       buf->V_active, m_active, m_max, buf->Z_block, block_size,
       buf->coeff_block, buf->tmp, n,
       block_size, ortho_passes_out,
-      true
+      false, ref_norm, false
     );
     stages->reorthogonalization += native_timer_elapsed(timer);
     if (accepted == 0) {
@@ -1297,7 +1550,7 @@ static int block_lanczos_expand_basis_to_budget(
         timer = native_timer_now();
         continuation_accepted += block_accept_work_vector(
           V_locked, n_locked, buf->V_active, m_active, m_max,
-          buf->z, buf->tmp, n, ortho_passes_out
+          buf->z, buf->tmp, n, ortho_passes_out, 1.0
         );
         stages->reorthogonalization += native_timer_elapsed(timer);
       }
@@ -1315,21 +1568,12 @@ static int block_lanczos_expand_basis_to_budget(
       if (rc != 0) {
         return rc;
       }
-
-      timer = native_timer_now();
-      projection_update_appended_block(buf->T_proj, m_max, buf->V_active,
-                                       buf->AV_active, n, continuation_start,
-                                       continuation_accepted, buf->S_eig);
-      {
-        const double elapsed = native_timer_elapsed(timer);
-        stages->projected_solve += elapsed;
-        stages->projection_update += elapsed;
-      }
       ++(*iterations_out);
       *previous_block_start = *last_block_start;
       *previous_block_cols = *last_block_cols;
       *last_block_start = continuation_start;
       *last_block_cols = continuation_accepted;
+      *last_column_known = false;
       continue;
     }
 
@@ -1341,21 +1585,25 @@ static int block_lanczos_expand_basis_to_budget(
     if (rc != 0) {
       return rc;
     }
-
-    timer = native_timer_now();
-    projection_update_appended_block(buf->T_proj, m_max, buf->V_active,
-                                     buf->AV_active, n, accepted_start,
-                                     accepted, buf->S_eig);
-    {
-      const double elapsed = native_timer_elapsed(timer);
-      stages->projected_solve += elapsed;
-      stages->projection_update += elapsed;
-    }
     ++(*iterations_out);
     *previous_block_start = *last_block_start;
     *previous_block_cols = *last_block_cols;
     *last_block_start = accepted_start;
     *last_block_cols = accepted;
+    *last_column_known = false;
+  }
+
+  // The Rayleigh-Ritz step needs the newest block's projected column; it is
+  // only formed by the next expansion step, so build it explicitly here.
+  if (!*last_column_known && *last_block_cols > 0) {
+    auto timer = native_timer_now();
+    projection_update_appended_block(buf->T_proj, m_max, buf->V_active,
+                                     buf->AV_active, n, *last_block_start,
+                                     *last_block_cols, buf->S_eig);
+    *last_column_known = true;
+    const double elapsed = native_timer_elapsed(timer);
+    stages->projected_solve += elapsed;
+    stages->projection_update += elapsed;
   }
   return 0;
 }
@@ -1455,6 +1703,22 @@ static void block_lanczos_maybe_capture_best_snapshot(
   best->filled = 1;
 }
 
+// Thick restart (Krylov-Schur style). The kept Ritz vectors Y = V S and their
+// images A Y are already available from the Rayleigh-Ritz step (B_v, B_av), so
+// they are copied straight into the new basis and the kept block of the
+// projected matrix is diag(theta) (P2). Only the continuation tail -- the
+// residual direction -- is applied to the operator; its coupling column
+// Y' A t = (A Y)' t is formed by the next expansion step. This replaces
+// re-orthogonalising every kept vector one at a time, re-applying A to all of
+// them and recomputing the full V'AV.
+//
+// The reuse is only taken when the kept vectors are orthonormal and orthogonal
+// to the locked set to working accuracy (they are by construction: V_active is
+// orthonormal and deflated against the locked vectors, and S is orthonormal);
+// a cheap Gram check guards it, and any deviation falls back to the explicit
+// re-orthogonalise-and-apply path.
+static const double kRestartReuseOrthTol = 1e-12;
+
 static int block_lanczos_restart_with_continuation_tail(
     void* impl,
     EigencoreApplyFn apply,
@@ -1465,6 +1729,7 @@ static int block_lanczos_restart_with_continuation_tail(
     int restart_idx,
     int selected_count,
     int n_locked,
+    double norm_scale,
     ThickRestartBuffers* buf,
     EigencoreWorkspace* workspace,
     NativeBlockStageSeconds* stages,
@@ -1473,6 +1738,7 @@ static int block_lanczos_restart_with_continuation_tail(
     int* previous_block_cols,
     int* last_block_start,
     int* last_block_cols,
+    bool* last_column_known,
     double* V_out,
     int* matvecs_out,
     int* operator_columns_out,
@@ -1495,43 +1761,89 @@ static int block_lanczos_restart_with_continuation_tail(
   if (k_keep > keep_room) {
     k_keep = keep_room;
   }
-  int unlocked_count = 0;
-  for (int p = 0; p < selected_count; ++p) {
+  std::vector<int> keep;
+  keep.reserve(static_cast<size_t>(k_keep > 0 ? k_keep : 0));
+  for (int p = 0; p < selected_count && static_cast<int>(keep.size()) < k_keep; ++p) {
     if (!buf->is_locked[p]) {
-      ++unlocked_count;
+      keep.push_back(p);
     }
   }
-  if (k_keep > unlocked_count) {
-    k_keep = unlocked_count;
-  }
+  const int kk = static_cast<int>(keep.size());
+  const double scale = (norm_scale > 0.0 && R_FINITE(norm_scale)) ? norm_scale : 1.0;
 
   std::memset(buf->T_proj, 0,
               sizeof(double) * static_cast<size_t>(m_max) *
                 static_cast<size_t>(m_max));
   *m_active = 0;
-  int n_picked = 0;
-  for (int p = 0; p < selected_count && n_picked < k_keep && *m_active < m_max; ++p) {
-    if (buf->is_locked[p]) {
-      continue;
-    }
-    std::memcpy(buf->z,
+
+  for (int i = 0; i < kk; ++i) {
+    const int p = keep[static_cast<size_t>(i)];
+    std::memcpy(buf->V_active + static_cast<int64_t>(i) * n,
                 buf->B_v + static_cast<int64_t>(p) * n,
                 sizeof(double) * static_cast<size_t>(n));
-    stages->restart += native_timer_elapsed(timer);
-    timer = native_timer_now();
-    const int accepted = block_accept_work_vector(
-      V_out, n_locked, buf->V_active, m_active, m_max,
-      buf->z, buf->tmp, n, ortho_passes_out
-    );
-    stages->reorthogonalization += native_timer_elapsed(timer);
-    timer = native_timer_now();
-    n_picked += accepted;
+    std::memcpy(buf->AV_active + static_cast<int64_t>(i) * n,
+                buf->B_av + static_cast<int64_t>(p) * n,
+                sizeof(double) * static_cast<size_t>(n));
+  }
+  bool reuse = true;
+  if (kk > 0) {
+    const char trans_T = 'T';
+    const char trans_N = 'N';
+    const double one = 1.0;
+    const double zero = 0.0;
+    double deviation = 0.0;
+    F77_CALL(dgemm)(&trans_T, &trans_N, &kk, &kk, &n, &one,
+                    buf->V_active, &n, buf->V_active, &n,
+                    &zero, buf->S_eig, &kk FCONE FCONE);
+    for (int col = 0; col < kk; ++col) {
+      for (int row = 0; row < kk; ++row) {
+        const double expected = (row == col) ? 1.0 : 0.0;
+        const double d = fabs(buf->S_eig[row + static_cast<int64_t>(col) * kk] - expected);
+        if (!(d <= deviation)) {
+          deviation = d;
+        }
+      }
+    }
+    if (n_locked > 0) {
+      F77_CALL(dgemm)(&trans_T, &trans_N, &n_locked, &kk, &n, &one,
+                      V_out, &n, buf->V_active, &n,
+                      &zero, buf->S_eig, &n_locked FCONE FCONE);
+      const int64_t total = static_cast<int64_t>(n_locked) * kk;
+      for (int64_t i = 0; i < total; ++i) {
+        const double d = fabs(buf->S_eig[i]);
+        if (!(d <= deviation)) {
+          deviation = d;
+        }
+      }
+    }
+    reuse = (deviation <= kRestartReuseOrthTol);
+  }
+
+  if (reuse) {
+    *m_active = kk;
+    for (int i = 0; i < kk; ++i) {
+      const int p = keep[static_cast<size_t>(i)];
+      buf->T_proj[i + static_cast<int64_t>(i) * m_max] =
+        buf->theta[buf->selected[p]];
+    }
+  } else {
+    for (int i = 0; i < kk && *m_active < m_max; ++i) {
+      const int p = keep[static_cast<size_t>(i)];
+      std::memcpy(buf->z, buf->B_v + static_cast<int64_t>(p) * n,
+                  sizeof(double) * static_cast<size_t>(n));
+      stages->restart += native_timer_elapsed(timer);
+      timer = native_timer_now();
+      block_accept_work_vector(V_out, n_locked, buf->V_active, m_active, m_max,
+                               buf->z, buf->tmp, n, ortho_passes_out, 1.0);
+      stages->reorthogonalization += native_timer_elapsed(timer);
+      timer = native_timer_now();
+    }
   }
 
   const int tail_start = *m_active;
   int tail_accepted = 0;
   for (int p = 0; p < selected_count && tail_accepted < block_size && *m_active < m_max; ++p) {
-    if (buf->is_locked[p] || buf->ritz_res[p] <= 100.0 * DBL_EPSILON) {
+    if (buf->is_locked[p] || !(buf->ritz_res[p] > 100.0 * DBL_EPSILON * scale)) {
       continue;
     }
     const int idx = buf->selected[p];
@@ -1539,11 +1851,12 @@ static int block_lanczos_restart_with_continuation_tail(
       buf->z[row] = buf->B_av[static_cast<int64_t>(p) * n + row] -
         buf->theta[idx] * buf->B_v[static_cast<int64_t>(p) * n + row];
     }
+    const double z_norm = trl_norm2(buf->z, n);
     stages->restart += native_timer_elapsed(timer);
     timer = native_timer_now();
     tail_accepted += block_accept_work_vector(
       V_out, n_locked, buf->V_active, m_active, m_max,
-      buf->z, buf->tmp, n, ortho_passes_out
+      buf->z, buf->tmp, n, ortho_passes_out, z_norm
     );
     stages->reorthogonalization += native_timer_elapsed(timer);
     timer = native_timer_now();
@@ -1556,7 +1869,7 @@ static int block_lanczos_restart_with_continuation_tail(
     timer = native_timer_now();
     tail_accepted += block_accept_work_vector(
       V_out, n_locked, buf->V_active, m_active, m_max,
-      buf->z, buf->tmp, n, ortho_passes_out
+      buf->z, buf->tmp, n, ortho_passes_out, 1.0
     );
     stages->reorthogonalization += native_timer_elapsed(timer);
     timer = native_timer_now();
@@ -1567,7 +1880,8 @@ static int block_lanczos_restart_with_continuation_tail(
   }
 
   timer = native_timer_now();
-  int rc = apply_active_block(impl, apply, n, 0, *m_active,
+  const int apply_start = reuse ? tail_start : 0;
+  int rc = apply_active_block(impl, apply, n, apply_start, *m_active - apply_start,
                               buf->V_active, buf->AV_active, workspace,
                               matvecs_out, operator_columns_out);
   stages->apply += native_timer_elapsed(timer);
@@ -1575,11 +1889,14 @@ static int block_lanczos_restart_with_continuation_tail(
     return rc;
   }
 
-  timer = native_timer_now();
-  projection_update_self_block(buf->T_proj, m_max, buf->V_active,
-                               buf->AV_active, n, 0, *m_active,
-                               buf->S_eig);
-  {
+  if (reuse) {
+    *last_column_known = false;
+  } else {
+    timer = native_timer_now();
+    projection_update_self_block(buf->T_proj, m_max, buf->V_active,
+                                 buf->AV_active, n, 0, *m_active,
+                                 buf->S_eig);
+    *last_column_known = true;
     const double elapsed = native_timer_elapsed(timer);
     stages->projected_solve += elapsed;
     stages->projection_update += elapsed;
@@ -1707,17 +2024,12 @@ static int block_lanczos_finalize_return(
 // complement in block_lanczos_window_complement_clean.
 static void block_lanczos_project_out(double* v, int n, const double* D,
                                       int d_cols, int passes) {
+  int inc = 1;
   for (int pass = 0; pass < passes; ++pass) {
     for (int c = 0; c < d_cols; ++c) {
       const double* d = D + static_cast<int64_t>(c) * n;
-      long double dot = 0.0L;
-      for (int r = 0; r < n; ++r) {
-        dot += static_cast<long double>(d[r]) * v[r];
-      }
-      const double dotd = static_cast<double>(dot);
-      for (int r = 0; r < n; ++r) {
-        v[r] -= dotd * d[r];
-      }
+      const double dotd = -ec_dot(d, v, n);
+      F77_CALL(daxpy)(&n, &dotd, d, &inc, v, &inc);
     }
   }
 }
@@ -1726,8 +2038,9 @@ static void block_lanczos_project_out(double* v, int n, const double* D,
 static bool block_lanczos_complement_intruder(int target_kind, double d_min,
                                               double d_max, double window_edge,
                                               double norm_a, double tol) {
+  // Relative to the operator scale (C16): no absolute floor.
   const double scale = std::fmax(std::fmax(std::fabs(window_edge), std::fabs(d_max)),
-                                 std::fmax(std::fabs(d_min), std::fmax(norm_a, 1.0)));
+                                 std::fmax(std::fabs(d_min), norm_a));
   const double margin = std::fmax(1e-6, 10.0 * tol) * scale;
   if (target_kind == 1) {                     // largest algebraic
     return d_max > window_edge + margin;
@@ -1839,9 +2152,7 @@ static int block_lanczos_window_complement_clean(
       const int idx = ((probe_seed + 1) * 17 + attempt * 31) % n;
       q[idx < 0 ? -idx : idx] = 1.0;
       block_lanczos_project_out(q.data(), n, P.data(), p_cols, 2);
-      long double s = 0.0L;
-      for (int r = 0; r < n; ++r) s += static_cast<long double>(q[r]) * q[r];
-      seed_norm = std::sqrt(static_cast<double>(s));
+      seed_norm = trl_norm2(q.data(), n);
       if (seed_norm > 1e-8) {
         ++attempt;
         got_seed = true;
@@ -1881,19 +2192,15 @@ static int block_lanczos_window_complement_clean(
         const double* qprev = P.data() + static_cast<int64_t>(p_cols + j - 1) * n;
         for (int r = 0; r < n; ++r) Aq[r] -= b * qprev[r];
       }
-      long double adot = 0.0L;
-      for (int r = 0; r < n; ++r) adot += static_cast<long double>(q[r]) * Aq[r];
-      alpha[j] = static_cast<double>(adot);
+      alpha[j] = ec_dot(q.data(), Aq.data(), n);
       for (int r = 0; r < n; ++r) Aq[r] -= alpha[j] * q[r];
       // Full reorthogonalization against everything explored (deflation basis
       // plus all segment vectors, including this segment so far).
       block_lanczos_project_out(Aq.data(), n, P.data(), p_cols + j + 1, 2);
-      long double bs = 0.0L;
-      for (int r = 0; r < n; ++r) bs += static_cast<long double>(Aq[r]) * Aq[r];
-      const double bn = std::sqrt(static_cast<double>(bs));
+      const double bn = trl_norm2(Aq.data(), n);
       seg_len = j + 1;
       beta[j] = bn;
-      if (bn <= 1e-12 * std::fmax(1.0, norm_a)) {
+      if (bn <= 1e-12 * ((norm_a > 0.0) ? norm_a : 1.0)) {
         seg_broke = true;
         break;
       }
@@ -2042,14 +2349,12 @@ static int native_block_thick_restart_lanczos_run(
     trl_buffers_free(&buf);
     return rc;
   }
-  timer = native_timer_now();
-  projection_update_self_block(buf.T_proj, m_max, buf.V_active, buf.AV_active,
-                               n, 0, last_block_cols, buf.coeff_block);
-  {
-    const double elapsed = native_timer_elapsed(timer);
-    stages->projected_solve += elapsed;
-    stages->projection_update += elapsed;
-  }
+  // The start block's projected column is formed by the first expansion step
+  // (or explicitly when the sweep ends before one runs).
+  bool last_column_known = false;
+  // Operator-norm scale for relative breakdown/convergence decisions (C16):
+  // the caller's estimate when available, raised by every Rayleigh quotient.
+  double norm_scale = (R_FINITE(norm_a) && norm_a > 0.0) ? norm_a : 0.0;
 
   const char trans_N = 'N';
   const double one = 1.0;
@@ -2091,9 +2396,10 @@ static int native_block_thick_restart_lanczos_run(
         static_cast<int>(target) : m_max;
     }
     rc = block_lanczos_expand_basis_to_budget(
-      impl, apply, n, m_max, m_stop, block_size, V_out, n_locked, &buf,
-      &workspace, stages, &m_active, &previous_block_start,
-      &previous_block_cols, &last_block_start, &last_block_cols, iterations_out,
+      impl, apply, n, m_max, m_stop, block_size, V_out, n_locked, norm_scale,
+      &buf, &workspace, stages, &m_active, &previous_block_start,
+      &previous_block_cols, &last_block_start, &last_block_cols,
+      &last_column_known, iterations_out,
       matvecs_out, operator_columns_out, ortho_passes_out
     );
     if (rc != 0) {
@@ -2141,13 +2447,23 @@ static int native_block_thick_restart_lanczos_run(
       stages->projected_solve += elapsed;
       stages->projection_copy += elapsed;
     }
-    timer = native_timer_now();
-    rc = symmetric_eigen_inplace(buf.S_eig, m_active, buf.theta,
-                                 buf.dsyev_work, buf.dsyev_lwork,
-                                 buf.dsyevd_iwork, buf.dsyevd_liwork);
-    if (rc == 0) {
-      selected_sorted_ritz_indices(buf.theta, m_active, selected_count, target_kind, buf.selected);
+    // Running operator-norm scale: ||A|| >= max |T_ij| for the orthonormal
+    // projection T = V'AV.
+    for (int col = 0; col < m_active; ++col) {
+      for (int row = 0; row <= col; ++row) {
+        const double t = fabs(buf.S_eig[row + static_cast<int64_t>(col) * m_active]);
+        if (t > norm_scale && R_FINITE(t)) {
+          norm_scale = t;
+        }
+      }
     }
+    timer = native_timer_now();
+    rc = projected_eigen_selected(buf.T_proj, m_max, buf.S_eig, m_active,
+                                  selected_count,
+                                  target_kind, buf.theta, buf.selected,
+                                  buf.S_selected, buf.Z_eig, buf.w_eig,
+                                  buf.isuppz, buf.dsyev_work, buf.dsyev_lwork,
+                                  buf.dsyevd_iwork, buf.dsyevd_liwork);
     {
       const double elapsed = native_timer_elapsed(timer);
       stages->projected_solve += elapsed;
@@ -2161,25 +2477,15 @@ static int native_block_thick_restart_lanczos_run(
 
     timer = native_timer_now();
     for (int p = 0; p < selected_count; ++p) {
-      const int idx = buf.selected[p];
-      std::memcpy(buf.S_selected + static_cast<int64_t>(p) * m_active,
-                  buf.S_eig + static_cast<int64_t>(idx) * m_active,
-                  sizeof(double) * static_cast<size_t>(m_active));
       buf.ritz_res[p] = R_PosInf;
       buf.is_locked[p] = 0;
     }
     stages->selected_vector_copy += native_timer_elapsed(timer);
 
     timer = native_timer_now();
-    if (selected_count <= 32) {
-      combine_basis_columns_small(buf.V_active, n, m_active,
-                                  buf.S_selected, m_active,
-                                  selected_count, buf.B_v);
-    } else {
-      F77_CALL(dgemm)(&trans_N, &trans_N, &n, &selected_count, &m_active,
-                      &one, buf.V_active, &n, buf.S_selected, &m_active,
-                      &zero, buf.B_v, &n FCONE FCONE);
-    }
+    combine_basis_columns(buf.V_active, n, m_active,
+                          buf.S_selected, m_active,
+                          selected_count, buf.B_v);
     {
       const double elapsed = native_timer_elapsed(timer);
       stages->ritz_residual += elapsed;
@@ -2225,14 +2531,9 @@ static int native_block_thick_restart_lanczos_run(
     timer = native_timer_now();
     for (int p = 0; p < selected_count; ++p) {
       const int idx = buf.selected[p];
-      long double s = 0.0L;
-      const double* av = buf.B_av + static_cast<int64_t>(p) * n;
-      const double* vec = buf.B_v + static_cast<int64_t>(p) * n;
-      for (int row = 0; row < n; ++row) {
-        const double diff = av[row] - buf.theta[idx] * vec[row];
-        s += static_cast<long double>(diff) * diff;
-      }
-      buf.ritz_res[p] = sqrt(static_cast<double>(s));
+      buf.ritz_res[p] = ec_residual_norm(buf.B_av + static_cast<int64_t>(p) * n,
+                                         buf.B_v + static_cast<int64_t>(p) * n,
+                                         buf.theta[idx], n);
     }
     {
       const double elapsed = native_timer_elapsed(timer);
@@ -2252,13 +2553,13 @@ static int native_block_thick_restart_lanczos_run(
       for (int p = 0; p < wanted_selected; ++p) {
         const int idx = buf.selected[p];
         const double scale_i = standard_eigen_lock_scale(
-          norm_a, buf.theta[idx], buf.B_v + static_cast<int64_t>(p) * n, n
+          norm_scale, buf.theta[idx], buf.B_v + static_cast<int64_t>(p) * n, n
         );
         const double backward_error = buf.ritz_res[p] / scale_i;
-        if (buf.ritz_res[p] > max_residual) {
+        if (ISNAN(buf.ritz_res[p]) || buf.ritz_res[p] > max_residual) {
           max_residual = buf.ritz_res[p];
         }
-        if (backward_error > max_backward_error) {
+        if (ISNAN(backward_error) || backward_error > max_backward_error) {
           max_backward_error = backward_error;
         }
         if (buf.ritz_res[p] <= tol * scale_i) {
@@ -2289,7 +2590,7 @@ static int native_block_thick_restart_lanczos_run(
       for (int p = 0; p < wanted && p < selected_count; ++p) {
         const int idx = buf.selected[p];
         const double scale_i = standard_eigen_lock_scale(
-          norm_a, buf.theta[idx], buf.B_v + static_cast<int64_t>(p) * n, n
+          norm_scale, buf.theta[idx], buf.B_v + static_cast<int64_t>(p) * n, n
         );
         if (buf.ritz_res[p] <= tol * scale_i) {
           if (!vector_is_independent_from_locked(
@@ -2324,7 +2625,7 @@ static int native_block_thick_restart_lanczos_run(
       for (int p = 0; window_ready && p < wanted; ++p) {
         const int idx = buf.selected[p];
         const double scale_i = standard_eigen_lock_scale(
-          norm_a, buf.theta[idx], buf.B_v + static_cast<int64_t>(p) * n, n
+          norm_scale, buf.theta[idx], buf.B_v + static_cast<int64_t>(p) * n, n
         );
         if (buf.ritz_res[p] > tol * scale_i ||
             !vector_is_independent_from_locked(
@@ -2338,7 +2639,7 @@ static int native_block_thick_restart_lanczos_run(
         for (int p = 0; p + 1 < probe; ++p) {
           const double hi = buf.theta[buf.selected[p]];
           const double lo = buf.theta[buf.selected[p + 1]];
-          const double scale = fmax(fmax(fabs(hi), fabs(lo)), fmax(norm_a, 1.0));
+          const double scale = fmax(fmax(fabs(hi), fabs(lo)), norm_scale);
           if (fabs(hi - lo) <= set_tol * scale) {
             window_ready = false;
             break;
@@ -2362,7 +2663,7 @@ static int native_block_thick_restart_lanczos_run(
         for (int p = 0; same_as_last && p < wanted; ++p) {
           const double cur = buf.theta[buf.selected[p]];
           const double ref = last_defer_window[static_cast<size_t>(p)];
-          const double scale = fmax(fmax(fabs(cur), fabs(ref)), fmax(norm_a, 1.0));
+          const double scale = fmax(fmax(fabs(cur), fabs(ref)), norm_scale);
           if (fabs(cur - ref) > set_tol * scale) {
             same_as_last = false;
           }
@@ -2373,7 +2674,7 @@ static int native_block_thick_restart_lanczos_run(
           int status = 0;
           const int clean = block_lanczos_window_complement_clean(
             impl, apply, n, target_kind, V_out, n_locked, buf.B_v, wanted,
-            window_edge, norm_a, tol, complement_steps, probe_count, &workspace,
+            window_edge, norm_scale, tol, complement_steps, probe_count, &workspace,
             matvecs_out, operator_columns_out, &status);
           ++probe_count;
           timer = native_timer_now();
@@ -2412,7 +2713,7 @@ static int native_block_thick_restart_lanczos_run(
     stages->locking += native_timer_elapsed(timer);
 
     block_lanczos_maybe_capture_best_snapshot(
-      n, k_target, selected_count, n_locked, norm_a, tol, &buf,
+      n, k_target, selected_count, n_locked, norm_scale, tol, &buf,
       V_out, lambda_out, residuals_out, &best
     );
 
@@ -2435,8 +2736,9 @@ static int native_block_thick_restart_lanczos_run(
       // restart_idx / max_restarts accounting matches the legacy semantics.
       rc = block_lanczos_restart_with_continuation_tail(
         impl, apply, n, k_target, m_max, block_size, restart_idx, selected_count,
-        n_locked, &buf, &workspace, stages, &m_active, &previous_block_start,
-        &previous_block_cols, &last_block_start, &last_block_cols, V_out,
+        n_locked, norm_scale, &buf, &workspace, stages, &m_active,
+        &previous_block_start, &previous_block_cols, &last_block_start,
+        &last_block_cols, &last_column_known, V_out,
         matvecs_out, operator_columns_out, restarts_out, ortho_passes_out
       );
       if (rc == 1) {
@@ -2455,7 +2757,7 @@ static int native_block_thick_restart_lanczos_run(
   }
 
   rc = block_lanczos_finalize_return(
-    impl, apply, n, k_target, target_kind, tol, norm_a, selected_count_final,
+    impl, apply, n, k_target, target_kind, tol, norm_scale, selected_count_final,
     have_last_rr, &buf, &workspace, stages, best, V_out, lambda_out,
     residuals_out, converged_out, &n_locked, matvecs_out,
     operator_columns_out, certification_operator_columns_out

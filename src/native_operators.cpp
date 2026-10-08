@@ -13,6 +13,59 @@
 #include "eigencore_common.h"
 #include "native_operators.h"
 
+// CSC structure validation for every native entry point that dereferences
+// borrowed dgCMatrix slots. A dgCMatrix whose slots were edited after
+// construction (or a hand-built list) would otherwise index out of bounds.
+// Checks: dim is two non-negative ints, i/p integer and x double, length(p) ==
+// n + 1, p[0] == 0, p non-decreasing, p[n] == length(x) == length(i), and
+// 0 <= i < m. Pass R_NilValue for i_ to skip the row-index checks (callers
+// that never read i). Signals an R error naming `context` on failure.
+extern "C" void eigencore_validate_csc_structure(SEXP i_, SEXP p_, SEXP x_,
+                                                 SEXP dim_, const char* context) {
+  if (!isInteger(dim_) || XLENGTH(dim_) != 2) {
+    error("invalid CSC structure (%s): Dim must be an integer vector of length 2", context);
+  }
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  if (m == NA_INTEGER || n == NA_INTEGER || m < 0 || n < 0) {
+    error("invalid CSC structure (%s): negative or missing dimensions", context);
+  }
+  if (!isInteger(p_) || !isReal(x_) || (i_ != R_NilValue && !isInteger(i_))) {
+    error("invalid CSC structure (%s): i and p must be integer and x double", context);
+  }
+  if (XLENGTH(p_) != static_cast<R_xlen_t>(n) + 1) {
+    error("invalid CSC structure (%s): length(p) must equal ncol + 1", context);
+  }
+  const int* p = INTEGER(p_);
+  if (p[0] != 0) {
+    error("invalid CSC structure (%s): p[1] must be 0", context);
+  }
+  for (int col = 0; col < n; ++col) {
+    if (p[col + 1] == NA_INTEGER || p[col + 1] < p[col]) {
+      error("invalid CSC structure (%s): column pointers must be non-decreasing", context);
+    }
+  }
+  const R_xlen_t nnz = static_cast<R_xlen_t>(p[n]);
+  if (nnz != XLENGTH(x_)) {
+    error("invalid CSC structure (%s): p[ncol + 1] must equal length(x)", context);
+  }
+  if (i_ == R_NilValue) {
+    return;
+  }
+  if (XLENGTH(i_) != nnz) {
+    error("invalid CSC structure (%s): length(i) must equal length(x)", context);
+  }
+  const int* idx = INTEGER(i_);
+  // Unsigned comparison folds the i < 0 (including NA) and i >= m tests.
+  const unsigned int bound = static_cast<unsigned int>(m);
+  unsigned int bad = 0;
+  for (R_xlen_t pos = 0; pos < nnz; ++pos) {
+    bad |= (static_cast<unsigned int>(idx[pos]) >= bound) ? 1u : 0u;
+  }
+  if (bad) {
+    error("invalid CSC structure (%s): row indices must lie in [0, nrow)", context);
+  }
+}
 
 static SEXP native_operator_workspace_counters(EigencoreWorkspace* workspace) {
   SEXP out = PROTECT(allocVector(INTSXP, 2));
@@ -97,6 +150,16 @@ extern "C" int eigencore_dense_apply(void* impl,
   const int ldc = static_cast<int>(ldy);
   double beta_blas = beta;
 
+  if (block_cols_i == 1) {
+    // Single-vector Krylov steps: dgemv avoids dgemm's packing and
+    // threading overhead, which dominates for one column.
+    const int rows = static_cast<int>(dense->rows);
+    const int cols = static_cast<int>(dense->cols);
+    const int inc = 1;
+    F77_CALL(dgemv)(&transa, &rows, &cols, &alpha, dense->values, &lda,
+                    const_cast<double*>(X), &inc, &beta_blas, Y, &inc FCONE);
+    return 0;
+  }
   F77_CALL(dgemm)(&transa, &transb, &out_rows, &block_cols_i, &inner,
                   &alpha, dense->values, &lda, const_cast<double*>(X), &ldb,
                   &beta_blas, Y, &ldc FCONE FCONE);
@@ -987,9 +1050,9 @@ struct DenseRandomizedCertificate {
   bool passed = false;
 };
 
-static double dense_randomized_frobenius_norm(const double* A, int len) {
+static double dense_randomized_frobenius_norm(const double* A, int64_t len) {
   double sum = 0.0;
-  for (int pos = 0; pos < len; ++pos) {
+  for (int64_t pos = 0; pos < len; ++pos) {
     sum += A[pos] * A[pos];
   }
   return std::sqrt(sum);
@@ -1050,7 +1113,7 @@ static DenseRandomizedCertificate dense_randomized_certificate(
   cert.combined.assign(static_cast<size_t>(rank), 0.0);
   cert.backward.assign(static_cast<size_t>(rank), 0.0);
   cert.converged.assign(static_cast<size_t>(rank), 0);
-  cert.scale = dense_randomized_frobenius_norm(A, m * n);
+  cert.scale = dense_randomized_frobenius_norm(A, static_cast<int64_t>(m) * n);
   if (cert.scale < 2.2204460492503131e-16) {
     cert.scale = 2.2204460492503131e-16;
   }
@@ -1622,6 +1685,7 @@ extern "C" SEXP eigencore_csc_randomized_svd_controller(
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
     error("invalid CSC randomized controller inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_randomized_svd_controller");
   if (!isString(normalizer_) || LENGTH(normalizer_) < 1 ||
       std::strcmp(CHAR(STRING_ELT(normalizer_, 0)), "qr") != 0) {
     error("native CSC randomized controller currently supports only QR normalization");
@@ -1788,6 +1852,7 @@ extern "C" SEXP eigencore_csc_block_apply(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
       !isReal(X_) || !isReal(Y_)) {
     error("invalid CSC block apply inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_block_apply");
 
   SEXP dimX = getAttrib(X_, R_DimSymbol);
   SEXP dimY = getAttrib(Y_, R_DimSymbol);
@@ -1849,6 +1914,7 @@ extern "C" SEXP eigencore_csc_randomized_apply(SEXP i_, SEXP p_, SEXP x_,
       !isReal(X_) || !isLogical(transpose_)) {
     error("invalid CSC randomized apply inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_randomized_apply");
   SEXP dimX = getAttrib(X_, R_DimSymbol);
   if (dimX == R_NilValue) {
     error("X must be a matrix");
@@ -1895,6 +1961,7 @@ extern "C" SEXP eigencore_csc_randomized_sketch(SEXP i_, SEXP p_, SEXP x_,
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
     error("invalid CSC randomized sketch inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_randomized_sketch");
 
   const int m = INTEGER(dim_)[0];
   const int n = INTEGER(dim_)[1];
@@ -1937,6 +2004,7 @@ extern "C" SEXP eigencore_csc_randomized_project_transposed(
       !isReal(Q_)) {
     error("invalid CSC randomized projection inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_randomized_project_transposed");
   SEXP dimQ = getAttrib(Q_, R_DimSymbol);
   if (dimQ == R_NilValue) {
     error("Q must be a matrix");
@@ -1989,6 +2057,7 @@ extern "C" SEXP eigencore_csc_column_moments(SEXP p_, SEXP x_, SEXP dim_) {
       LENGTH(dim_) != 2) {
     error("invalid CSC column-moment inputs");
   }
+  eigencore_validate_csc_structure(R_NilValue, p_, x_, dim_, "csc_column_moments");
   const int n = INTEGER(dim_)[1];
   const int m = INTEGER(dim_)[0];
   if (m < 0 || n < 0 || LENGTH(p_) != n + 1 || INTEGER(p_)[0] != 0 ||
@@ -2069,6 +2138,7 @@ extern "C" SEXP eigencore_csc_centered_block_apply(
       !isReal(X_) || !isReal(Y_) || !isLogical(transpose_)) {
     error("invalid centered CSC block apply inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_centered_block_apply");
 
   SEXP dimX = getAttrib(X_, R_DimSymbol);
   SEXP dimY = getAttrib(Y_, R_DimSymbol);
@@ -2190,6 +2260,7 @@ extern "C" SEXP eigencore_csc_centered_scaled_block_apply(
       !isLogical(transpose_)) {
     error("invalid centered-scaled CSC block apply inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_centered_scaled_block_apply");
   SEXP dimX = getAttrib(X_, R_DimSymbol);
   SEXP dimY = getAttrib(Y_, R_DimSymbol);
   if (dimX == R_NilValue || dimY == R_NilValue) {

@@ -235,7 +235,7 @@ test_that("matrix-free centering requires explicit means and matches centered al
   op <- matrix_free_test_operator(A)
   row_means <- rowMeans(A)
   col_means <- colMeans(A)
-  centered <- sweep(sweep(A, 2L, col_means, `-`), 1L, row_means, `-`)
+  centered <- sweep(sweep(A, 2L, col_means, `-`), 1L, row_means - mean(A), `-`)
   X <- matrix(seq(-1, 1, length.out = 8), nrow = 4)
   Y <- matrix(seq(0.5, -0.5, length.out = 6), nrow = 3)
   Z <- matrix(seq(-2, 2, length.out = 6), nrow = 3)
@@ -273,7 +273,7 @@ test_that("sparse centering uses native low-rank correction without densifying",
 
   op <- center(A, rows = TRUE, columns = TRUE)
   expected <- sweep(sweep(as.matrix(A), 2L, Matrix::colMeans(A), `-`),
-                    1L, Matrix::rowMeans(A), `-`)
+                    1L, Matrix::rowMeans(A) - mean(as.matrix(A)), `-`)
 
   expect_true(op$metadata$native)
   expect_equal(op$metadata$fused, "center")
@@ -285,6 +285,8 @@ test_that("sparse centering uses native low-rank correction without densifying",
   expect_false(eigencore:::has_native_kernel(op))
 
   expect_equal(op$apply(X), expected %*% X)
+  expect_equal(rowMeans(expected), rep(0, 7))
+  expect_equal(colMeans(expected), rep(0, 5))
   expect_equal(op$apply(X, alpha = 1.5, beta = -0.25, Y = Y),
                1.5 * expected %*% X - 0.25 * Y)
   expect_equal(op$apply_adjoint(Z), t(expected) %*% Z)

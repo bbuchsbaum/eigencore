@@ -11,6 +11,9 @@
 #include "native_operators.h"
 #include "block_golub_kahan_basis.h"
 
+extern "C" void eigencore_validate_csc_structure(SEXP i_, SEXP p_, SEXP x_,
+                                                 SEXP dim_, const char* context);
+
 static int trl_orthogonalise(const double* V_locked, int n_locked,
                              const double* V_active, int m_active,
                              double* z, double* tmp, int n,
@@ -179,24 +182,22 @@ static int block_accept_columns_blas3(const double* X, int ldx, int x_cols,
     if (chol_ok) {
       F77_CALL(dtrsm)(&right, &uplo, &trans_N, &diag, &n, &cols, &one,
                       coeff, &cols, Z_block, &n FCONE FCONE FCONE FCONE);
-      if (n < 64) {
-        F77_CALL(dgemm)(&trans_T, &trans_N, &cols, &cols, &n,
-                        &one, Z_block, &n, Z_block, &n,
-                        &zero, coeff, &cols FCONE FCONE);
-        symmetrize_packed_square(coeff, cols);
-        F77_CALL(dpotrf)(&uplo, &cols, coeff, &cols, &info FCONE);
-        chol_ok = (info == 0);
-        for (int col = 0; chol_ok && col < cols; ++col) {
-          if (coeff[col + static_cast<int64_t>(col) * cols] <= 100.0 * DBL_EPSILON) {
-            chol_ok = false;
-          }
+      // Second CholQR pass (CholQR2): a single pass loses orthogonality
+      // like cond(Z)^2 * eps, so always repeat it regardless of n.
+      F77_CALL(dgemm)(&trans_T, &trans_N, &cols, &cols, &n,
+                      &one, Z_block, &n, Z_block, &n,
+                      &zero, coeff, &cols FCONE FCONE);
+      symmetrize_packed_square(coeff, cols);
+      F77_CALL(dpotrf)(&uplo, &cols, coeff, &cols, &info FCONE);
+      chol_ok = (info == 0);
+      for (int col = 0; chol_ok && col < cols; ++col) {
+        if (coeff[col + static_cast<int64_t>(col) * cols] <= 100.0 * DBL_EPSILON) {
+          chol_ok = false;
         }
       }
       if (chol_ok) {
-        if (n < 64) {
-          F77_CALL(dtrsm)(&right, &uplo, &trans_N, &diag, &n, &cols, &one,
-                          coeff, &cols, Z_block, &n FCONE FCONE FCONE FCONE);
-        }
+        F77_CALL(dtrsm)(&right, &uplo, &trans_N, &diag, &n, &cols, &one,
+                        coeff, &cols, Z_block, &n FCONE FCONE FCONE FCONE);
         for (int col = 0; col < cols && *m_active < m_max; ++col) {
           std::memcpy(V_active + static_cast<int64_t>(*m_active) * n,
                       Z_block + static_cast<int64_t>(col) * n,
@@ -674,6 +675,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_basis(SEXP i_, SEXP p_,
       !isInteger(dim_) || !isReal(start_)) {
     error("invalid CSC block Golub-Kahan basis inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "block_golub_kahan_csc_basis");
   SEXP dimS = getAttrib(start_, R_DimSymbol);
   if (dimS == R_NilValue || LENGTH(dim_) != 2) {
     error("start must be a matrix and dim must have length 2");
@@ -724,6 +726,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_basis_cached(SEXP i_, SEXP p_,
       !isInteger(dim_) || !isReal(start_) || !isReal(start_av_)) {
     error("invalid cached CSC block Golub-Kahan basis inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "block_golub_kahan_csc_basis_cached");
   SEXP dimS = getAttrib(start_, R_DimSymbol);
   SEXP dimAV = getAttrib(start_av_, R_DimSymbol);
   if (dimS == R_NilValue || dimAV == R_NilValue || LENGTH(dim_) != 2) {
