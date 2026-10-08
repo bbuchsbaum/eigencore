@@ -11,6 +11,9 @@
 #include "native_operators.h"
 #include "block_golub_kahan_basis.h"
 
+extern "C" void eigencore_validate_csc_structure(SEXP i_, SEXP p_, SEXP x_,
+                                                 SEXP dim_, const char* context);
+
 static int trl_orthogonalise(const double* V_locked, int n_locked,
                              const double* V_active, int m_active,
                              double* z, double* tmp, int n,
@@ -672,6 +675,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_basis(SEXP i_, SEXP p_,
       !isInteger(dim_) || !isReal(start_)) {
     error("invalid CSC block Golub-Kahan basis inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "block_golub_kahan_csc_basis");
   SEXP dimS = getAttrib(start_, R_DimSymbol);
   if (dimS == R_NilValue || LENGTH(dim_) != 2) {
     error("start must be a matrix and dim must have length 2");
@@ -722,6 +726,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_basis_cached(SEXP i_, SEXP p_,
       !isInteger(dim_) || !isReal(start_) || !isReal(start_av_)) {
     error("invalid cached CSC block Golub-Kahan basis inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "block_golub_kahan_csc_basis_cached");
   SEXP dimS = getAttrib(start_, R_DimSymbol);
   SEXP dimAV = getAttrib(start_av_, R_DimSymbol);
   if (dimS == R_NilValue || dimAV == R_NilValue || LENGTH(dim_) != 2) {
