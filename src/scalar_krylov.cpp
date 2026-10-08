@@ -772,13 +772,11 @@ int native_golub_kahan_run(void* impl,
       return EIGENCORE_STATUS_NONFINITE;
     }
     if (alpha[j] <= 100.0 * DBL_EPSILON) {
-      // Alpha breakdown: no new left vector was formed, so do not report
-      // this step (its U column would be zero). A breakdown on the very
-      // first step (A v = 0) keeps the single zero step so callers always
-      // see at least one Golub-Kahan column.
-      if (j > 0) {
-        *iterations = j;
-      }
+      // Alpha breakdown deliberately keeps step j (iterations = j + 1) with
+      // a zero U column: dropping it would discard the beta[j-1] coupling to
+      // v_j, and the Ritz values of the truncated square bidiagonal are then
+      // no longer exact. The zero column pairs with a zero singular value
+      // and is completed downstream.
       break;
     }
     for (int row = 0; row < m; ++row) {

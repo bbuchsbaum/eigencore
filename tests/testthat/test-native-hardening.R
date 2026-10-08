@@ -43,18 +43,14 @@ test_that("native scalar Lanczos and Golub-Kahan reject non-finite input", {
   )
 })
 
-test_that("native Golub-Kahan alpha breakdown does not report a zero left vector", {
-  set.seed(12)
-  # Rank-2 matrix: a start vector with a null-space component makes the
-  # third left vector vanish (alpha breakdown) after two full steps.
-  A <- matrix(rnorm(30 * 2), 30, 2) %*% matrix(rnorm(2 * 20), 2, 20)
-  out <- .Call("eigencore_golub_kahan_dense", A, 6L, rnorm(20), 1L, 0L, 1e-8,
-               FALSE, PACKAGE = "eigencore")
-  expect_equal(out$iterations, 2L)
-  expect_equal(ncol(out$U), out$iterations)
-  expect_equal(unname(sqrt(colSums(out$U^2))), rep(1, out$iterations),
-               tolerance = 1e-10)
-  expect_true(all(out$alpha > 0))
+test_that("native Golub-Kahan alpha breakdown keeps exact Ritz values", {
+  set.seed(2)
+  U <- Matrix::rsparsematrix(120, 2, density = 0.2)
+  V <- Matrix::rsparsematrix(2, 30, density = 0.2)
+  M <- U %*% Matrix::Diagonal(x = c(1, 1e-6)) %*% V
+  fit <- svd_partial(M, rank = 2, target = largest(), tol = 1e-10)
+  expect_equal(fit$d, svd(as.matrix(M))$d[1:2], tolerance = 1e-8)
+  expect_true(fit$certificate$passed)
 })
 
 test_that("dense symmetry check treats non-finite entries as not symmetric", {
