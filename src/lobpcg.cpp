@@ -833,6 +833,7 @@ static int native_lobpcg_run(void* impl,
   int have_p = 0;
   bool stalled = false;
   for (int iter = 0; iter < maxit; ++iter) {
+    eigencore_check_interrupt();
     *iterations_out = iter + 1;
     if (!fresh && since_refresh >= kLobpcgRefreshInterval) {
       const int status = refresh();
@@ -1055,6 +1056,7 @@ extern "C" SEXP eigencore_lobpcg_dense(SEXP A_, SEXP k_, SEXP maxit_,
                                        SEXP target_kind_, SEXP tol_,
                                        SEXP start_, SEXP lower_, SEXP diag_,
                                        SEXP upper_, SEXP constraints_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
   }
@@ -1086,6 +1088,7 @@ extern "C" SEXP eigencore_lobpcg_dense(SEXP A_, SEXP k_, SEXP maxit_,
     LENGTH(diag_) ? REAL(diag_) : nullptr,
     LENGTH(upper_) ? REAL(upper_) : nullptr,
     constraints, constraint_cols, "dense");
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_lobpcg_dense_dense_b(SEXP A_, SEXP B_, SEXP k_,
@@ -1094,6 +1097,7 @@ extern "C" SEXP eigencore_lobpcg_dense_dense_b(SEXP A_, SEXP B_, SEXP k_,
                                                SEXP lower_, SEXP diag_,
                                                SEXP upper_,
                                                SEXP constraints_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(B_) || !isReal(start_)) {
     error("A, B, and start must be double");
   }
@@ -1128,6 +1132,7 @@ extern "C" SEXP eigencore_lobpcg_dense_dense_b(SEXP A_, SEXP B_, SEXP k_,
     LENGTH(diag_) ? REAL(diag_) : nullptr,
     LENGTH(upper_) ? REAL(upper_) : nullptr,
     constraints, constraint_cols, "dense generalized");
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_lobpcg_dense_diagonal_b(SEXP A_, SEXP bdiag_,
@@ -1138,6 +1143,7 @@ extern "C" SEXP eigencore_lobpcg_dense_diagonal_b(SEXP A_, SEXP bdiag_,
                                                   SEXP lower_, SEXP diag_,
                                                   SEXP upper_,
                                                   SEXP constraints_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(bdiag_) || !isReal(start_)) {
     error("A, B diagonal, and start must be double");
   }
@@ -1172,6 +1178,7 @@ extern "C" SEXP eigencore_lobpcg_dense_diagonal_b(SEXP A_, SEXP bdiag_,
     LENGTH(diag_) ? REAL(diag_) : nullptr,
     LENGTH(upper_) ? REAL(upper_) : nullptr,
     constraints, constraint_cols, "dense/diagonal generalized");
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_lobpcg_dense_csc_b(SEXP A_, SEXP bi_, SEXP bp_,
@@ -1181,10 +1188,12 @@ extern "C" SEXP eigencore_lobpcg_dense_csc_b(SEXP A_, SEXP bi_, SEXP bp_,
                                              SEXP lower_, SEXP diag_,
                                              SEXP upper_,
                                              SEXP constraints_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isInteger(bi_) || !isInteger(bp_) ||
       !isReal(bx_) || !isInteger(bdim_) || !isReal(start_)) {
     error("invalid dense/CSC generalized LOBPCG inputs");
   }
+  eigencore_validate_csc_structure(bi_, bp_, bx_, bdim_, "LOBPCG B");
   SEXP dimA = getAttrib(A_, R_DimSymbol);
   SEXP dimS = getAttrib(start_, R_DimSymbol);
   if (dimA == R_NilValue || dimS == R_NilValue || LENGTH(bdim_) != 2) {
@@ -1217,6 +1226,7 @@ extern "C" SEXP eigencore_lobpcg_dense_csc_b(SEXP A_, SEXP bi_, SEXP bp_,
     LENGTH(diag_) ? REAL(diag_) : nullptr,
     LENGTH(upper_) ? REAL(upper_) : nullptr,
     constraints, constraint_cols, "dense/CSC generalized");
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_lobpcg_csc_diagonal_b(SEXP ai_, SEXP ap_, SEXP ax_,
@@ -1228,10 +1238,12 @@ extern "C" SEXP eigencore_lobpcg_csc_diagonal_b(SEXP ai_, SEXP ap_, SEXP ax_,
                                                 SEXP lower_, SEXP diag_,
                                                 SEXP upper_,
                                                 SEXP constraints_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(ai_) || !isInteger(ap_) || !isReal(ax_) ||
       !isInteger(adim_) || !isReal(bdiag_) || !isReal(start_)) {
     error("invalid CSC/diagonal generalized LOBPCG inputs");
   }
+  eigencore_validate_csc_structure(ai_, ap_, ax_, adim_, "LOBPCG A");
   SEXP dimS = getAttrib(start_, R_DimSymbol);
   if (dimS == R_NilValue || LENGTH(adim_) != 2) {
     error("start must be a matrix and A dim must have length 2");
@@ -1264,6 +1276,7 @@ extern "C" SEXP eigencore_lobpcg_csc_diagonal_b(SEXP ai_, SEXP ap_, SEXP ax_,
     LENGTH(diag_) ? REAL(diag_) : nullptr,
     LENGTH(upper_) ? REAL(upper_) : nullptr,
     constraints, constraint_cols, "CSC/diagonal generalized");
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_lobpcg_csc_csc_b(SEXP ai_, SEXP ap_, SEXP ax_,
@@ -1274,11 +1287,14 @@ extern "C" SEXP eigencore_lobpcg_csc_csc_b(SEXP ai_, SEXP ap_, SEXP ax_,
                                            SEXP lower_, SEXP diag_,
                                            SEXP upper_,
                                            SEXP constraints_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(ai_) || !isInteger(ap_) || !isReal(ax_) ||
       !isInteger(adim_) || !isInteger(bi_) || !isInteger(bp_) ||
       !isReal(bx_) || !isInteger(bdim_) || !isReal(start_)) {
     error("invalid CSC/CSC generalized LOBPCG inputs");
   }
+  eigencore_validate_csc_structure(ai_, ap_, ax_, adim_, "LOBPCG A");
+  eigencore_validate_csc_structure(bi_, bp_, bx_, bdim_, "LOBPCG B");
   SEXP dimS = getAttrib(start_, R_DimSymbol);
   if (dimS == R_NilValue || LENGTH(adim_) != 2 || LENGTH(bdim_) != 2) {
     error("start must be a matrix and A/B dims must have length 2");
@@ -1312,6 +1328,7 @@ extern "C" SEXP eigencore_lobpcg_csc_csc_b(SEXP ai_, SEXP ap_, SEXP ax_,
     LENGTH(diag_) ? REAL(diag_) : nullptr,
     LENGTH(upper_) ? REAL(upper_) : nullptr,
     constraints, constraint_cols, "CSC/CSC generalized");
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_lobpcg_diagonal_diagonal_b(SEXP adiag_, SEXP aunit_,
@@ -1323,6 +1340,7 @@ extern "C" SEXP eigencore_lobpcg_diagonal_diagonal_b(SEXP adiag_, SEXP aunit_,
                                                      SEXP lower_, SEXP diag_,
                                                      SEXP upper_,
                                                      SEXP constraints_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(adiag_) || !isInteger(adim_) || !isReal(bdiag_) ||
       !isReal(start_)) {
     error("invalid diagonal/diagonal generalized LOBPCG inputs");
@@ -1358,6 +1376,7 @@ extern "C" SEXP eigencore_lobpcg_diagonal_diagonal_b(SEXP adiag_, SEXP aunit_,
     LENGTH(diag_) ? REAL(diag_) : nullptr,
     LENGTH(upper_) ? REAL(upper_) : nullptr,
     constraints, constraint_cols, "diagonal/diagonal generalized");
+  EIGENCORE_ENTRY_END
 }
 
 static SEXP lobpcg_run_matrix_free_b(void* impl,
@@ -1402,6 +1421,7 @@ extern "C" SEXP eigencore_lobpcg_dense_operator_b(SEXP A_, SEXP B_apply_,
                                                   SEXP lower_, SEXP diag_,
                                                   SEXP upper_,
                                                   SEXP constraints_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
   }
@@ -1423,6 +1443,7 @@ extern "C" SEXP eigencore_lobpcg_dense_operator_b(SEXP A_, SEXP B_apply_,
   return lobpcg_run_matrix_free_b(
     &impl, eigencore_dense_apply, n, k, maxit, target_kind, tol, REAL(start_),
     B_apply_, lower_, diag_, upper_, constraints_, "dense");
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_lobpcg_csc_operator_b(SEXP ai_, SEXP ap_, SEXP ax_,
@@ -1433,10 +1454,12 @@ extern "C" SEXP eigencore_lobpcg_csc_operator_b(SEXP ai_, SEXP ap_, SEXP ax_,
                                                 SEXP lower_, SEXP diag_,
                                                 SEXP upper_,
                                                 SEXP constraints_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(ai_) || !isInteger(ap_) || !isReal(ax_) ||
       !isInteger(adim_) || !isReal(start_)) {
     error("invalid CSC/matrix-free generalized LOBPCG inputs");
   }
+  eigencore_validate_csc_structure(ai_, ap_, ax_, adim_, "LOBPCG A");
   SEXP dimS = getAttrib(start_, R_DimSymbol);
   if (dimS == R_NilValue || LENGTH(adim_) != 2) {
     error("start must be a matrix and A dim must have length 2");
@@ -1456,6 +1479,7 @@ extern "C" SEXP eigencore_lobpcg_csc_operator_b(SEXP ai_, SEXP ap_, SEXP ax_,
   return lobpcg_run_matrix_free_b(
     &impl, eigencore_csc_apply, n, k, maxit, target_kind, tol, REAL(start_),
     B_apply_, lower_, diag_, upper_, constraints_, "CSC");
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_lobpcg_diagonal_operator_b(SEXP adiag_,
@@ -1471,6 +1495,7 @@ extern "C" SEXP eigencore_lobpcg_diagonal_operator_b(SEXP adiag_,
                                                      SEXP diag_,
                                                      SEXP upper_,
                                                      SEXP constraints_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(adiag_) || !isInteger(adim_) || !isReal(start_)) {
     error("invalid diagonal/matrix-free generalized LOBPCG inputs");
   }
@@ -1493,6 +1518,7 @@ extern "C" SEXP eigencore_lobpcg_diagonal_operator_b(SEXP adiag_,
   return lobpcg_run_matrix_free_b(
     &impl, eigencore_diagonal_apply, n, k, maxit, target_kind, tol, REAL(start_),
     B_apply_, lower_, diag_, upper_, constraints_, "diagonal");
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_lobpcg_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
@@ -1500,10 +1526,12 @@ extern "C" SEXP eigencore_lobpcg_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                      SEXP tol_, SEXP start_, SEXP lower_,
                                      SEXP diag_, SEXP upper_,
                                      SEXP constraints_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(start_)) {
     error("invalid CSC LOBPCG inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "LOBPCG");
   SEXP dimS = getAttrib(start_, R_DimSymbol);
   if (dimS == R_NilValue) {
     error("start must be a matrix");
@@ -1531,15 +1559,18 @@ extern "C" SEXP eigencore_lobpcg_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
     LENGTH(diag_) ? REAL(diag_) : nullptr,
     LENGTH(upper_) ? REAL(upper_) : nullptr,
     constraints, constraint_cols, "CSC");
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_lobpcg_csc_shifted_tridiagonal(
     SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP k_, SEXP maxit_,
     SEXP target_kind_, SEXP tol_, SEXP start_, SEXP shift_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(start_)) {
     error("invalid CSC shifted-tridiagonal LOBPCG inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "shifted-tridiagonal LOBPCG");
   SEXP dimS = getAttrib(start_, R_DimSymbol);
   if (dimS == R_NilValue) {
     error("start must be a matrix");
@@ -1581,4 +1612,5 @@ extern "C" SEXP eigencore_lobpcg_csc_shifted_tridiagonal(
     n, k, maxit, target_kind, tol, REAL(start_),
     lower.data(), diag.data(), upper.data(),
     nullptr, 0, "CSC shifted-tridiagonal");
+  EIGENCORE_ENTRY_END
 }

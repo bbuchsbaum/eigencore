@@ -6,11 +6,13 @@
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
 #include "eigencore_lapack_compat.h"
+#include "eigencore_common.h"
 #include "golub_kahan_ritz.h"
 
 extern "C" SEXP eigencore_bidiagonal_svd(SEXP alpha_, SEXP beta_);
 
 extern "C" SEXP eigencore_rayleigh_ritz_symmetric(SEXP A_, SEXP Q_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(Q_)) {
     error("A and Q must be double matrices");
   }
@@ -100,6 +102,7 @@ extern "C" SEXP eigencore_rayleigh_ritz_symmetric(SEXP A_, SEXP Q_) {
 
   UNPROTECT(8);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 static bool ritz_value_better_projection(double candidate,
@@ -324,6 +327,7 @@ SEXP eigencore_block_golub_kahan_ritz_from_ptr(const double* V,
 extern "C" SEXP eigencore_block_golub_kahan_ritz(SEXP V_, SEXP AV_,
                                                  SEXP rank_, SEXP target_kind_,
                                                  SEXP active_p_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(V_) || !isReal(AV_)) {
     error("V and AV must be double matrices");
   }
@@ -344,6 +348,7 @@ extern "C" SEXP eigencore_block_golub_kahan_ritz(SEXP V_, SEXP AV_,
     REAL(V_), n, REAL(AV_), m, p,
     asInteger(rank_), asInteger(target_kind_)
   );
+  EIGENCORE_ENTRY_END
 }
 
 SEXP eigencore_golub_kahan_ritz_from_ptr(const double* U,
@@ -370,7 +375,11 @@ SEXP eigencore_golub_kahan_ritz_from_ptr(const double* U,
   std::memcpy(REAL(alpha_active_), alpha, sizeof(double) * static_cast<size_t>(p));
   std::memcpy(REAL(beta_active_), beta, sizeof(double) * static_cast<size_t>(p));
 
-  SEXP bd_ = PROTECT(eigencore_bidiagonal_svd(alpha_active_, beta_active_));
+  // Nested .Call entry point: its R error (a longjmp) is converted back into a
+  // C++ exception so callers' C++ objects are destroyed (C10).
+  SEXP bd_ = PROTECT(eigencore_unwind_protect([&]() {
+    return eigencore_bidiagonal_svd(alpha_active_, beta_active_);
+  }));
   SEXP d_all_ = VECTOR_ELT(bd_, 0);
   SEXP u_small_ = VECTOR_ELT(bd_, 1);
   SEXP v_small_ = VECTOR_ELT(bd_, 2);
@@ -424,6 +433,7 @@ SEXP eigencore_golub_kahan_ritz_from_ptr(const double* U,
 extern "C" SEXP eigencore_golub_kahan_ritz(SEXP U_, SEXP V_, SEXP alpha_,
                                            SEXP beta_, SEXP rank_,
                                            SEXP target_kind_, SEXP active_p_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(U_) || !isReal(V_) || !isReal(alpha_) || !isReal(beta_)) {
     error("U, V, alpha, and beta must be double");
   }
@@ -447,4 +457,5 @@ extern "C" SEXP eigencore_golub_kahan_ritz(SEXP U_, SEXP V_, SEXP alpha_,
     REAL(U_), REAL(V_), m, n, p, REAL(alpha_), REAL(beta_),
     asInteger(rank_), asInteger(target_kind_)
   );
+  EIGENCORE_ENTRY_END
 }

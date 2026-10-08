@@ -762,6 +762,7 @@ extern "C" int eigencore_r_operator_apply(void* impl,
 extern "C" SEXP eigencore_dense_block_apply(SEXP A_, SEXP X_, SEXP alpha_,
                                             SEXP beta_, SEXP Y_,
                                             SEXP transpose_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(X_) || !isReal(Y_)) {
     error("A, X, and Y must be double matrices");
   }
@@ -816,11 +817,13 @@ extern "C" SEXP eigencore_dense_block_apply(SEXP A_, SEXP X_, SEXP alpha_,
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_complex_block_apply(SEXP A_, SEXP X_, SEXP alpha_,
                                                     SEXP beta_, SEXP Y_,
                                                     SEXP adjoint_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isComplex(A_) || !isComplex(X_) || !isComplex(Y_)) {
     error("A, X, and Y must be complex matrices");
   }
@@ -872,10 +875,12 @@ extern "C" SEXP eigencore_dense_complex_block_apply(SEXP A_, SEXP X_, SEXP alpha
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_randomized_apply(SEXP A_, SEXP X_,
                                                  SEXP transpose_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(X_) || !isLogical(transpose_)) {
     error("invalid dense randomized apply inputs");
   }
@@ -916,9 +921,11 @@ extern "C" SEXP eigencore_dense_randomized_apply(SEXP A_, SEXP X_,
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_randomized_sketch(SEXP A_, SEXP cols_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
     error("invalid dense randomized sketch inputs");
   }
@@ -962,10 +969,12 @@ extern "C" SEXP eigencore_dense_randomized_sketch(SEXP A_, SEXP cols_) {
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_randomized_project_transposed(SEXP A_,
                                                               SEXP Q_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(Q_)) {
     error("invalid dense randomized projection inputs");
   }
@@ -995,6 +1004,7 @@ extern "C" SEXP eigencore_dense_randomized_project_transposed(SEXP A_,
   setAttrib(out_, install("transposed"), transposed_);
   UNPROTECT(2);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 static void dense_randomized_thin_qr(std::vector<double>& X, int rows, int cols) {
@@ -1513,6 +1523,7 @@ static SEXP dense_randomized_certificate_pack(const DenseRandomizedCertificate& 
 extern "C" SEXP eigencore_dense_randomized_svd_controller(
     SEXP A_, SEXP rank_, SEXP oversample_, SEXP n_iter_, SEXP normalizer_,
     SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
     error("A must be a double matrix");
   }
@@ -1595,6 +1606,7 @@ extern "C" SEXP eigencore_dense_randomized_svd_controller(
   if (n_iter > 0 && !candidate.certificate.passed) {
     std::vector<double> Z(static_cast<size_t>(n) * static_cast<size_t>(q_cols), 0.0);
     for (int iter = 0; iter < n_iter; ++iter) {
+      eigencore_check_interrupt();
       t0 = native_timer_now();
       F77_CALL(dgemm)(&trans, &notrans, &n, &q_cols, &m,
                       &one, const_cast<double*>(A), &m, Q.data(), &m,
@@ -1677,11 +1689,13 @@ extern "C" SEXP eigencore_dense_randomized_svd_controller(
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(9);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_randomized_svd_controller(
     SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP rank_, SEXP oversample_,
     SEXP n_iter_, SEXP normalizer_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
     error("invalid CSC randomized controller inputs");
   }
@@ -1759,6 +1773,7 @@ extern "C" SEXP eigencore_csc_randomized_svd_controller(
   if (n_iter > 0 && !candidate.certificate.passed) {
     std::vector<double> Z(static_cast<size_t>(n) * static_cast<size_t>(q_cols), 0.0);
     for (int iter = 0; iter < n_iter; ++iter) {
+      eigencore_check_interrupt();
       t0 = native_timer_now();
       csc_randomized_apply_block(
         impl, EIGENCORE_TRANSPOSE_ADJOINT, q_cols, Q.data(), m, Z.data(), n,
@@ -1843,11 +1858,13 @@ extern "C" SEXP eigencore_csc_randomized_svd_controller(
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(9);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_block_apply(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                           SEXP X_, SEXP alpha_, SEXP beta_,
                                           SEXP Y_, SEXP transpose_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(X_) || !isReal(Y_)) {
     error("invalid CSC block apply inputs");
@@ -1905,11 +1922,13 @@ extern "C" SEXP eigencore_csc_block_apply(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_randomized_apply(SEXP i_, SEXP p_, SEXP x_,
                                                SEXP dim_, SEXP X_,
                                                SEXP transpose_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(X_) || !isLogical(transpose_)) {
     error("invalid CSC randomized apply inputs");
@@ -1954,10 +1973,12 @@ extern "C" SEXP eigencore_csc_randomized_apply(SEXP i_, SEXP p_, SEXP x_,
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_randomized_sketch(SEXP i_, SEXP p_, SEXP x_,
                                                 SEXP dim_, SEXP cols_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
     error("invalid CSC randomized sketch inputs");
   }
@@ -1996,10 +2017,12 @@ extern "C" SEXP eigencore_csc_randomized_sketch(SEXP i_, SEXP p_, SEXP x_,
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_randomized_project_transposed(
     SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP Q_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(Q_)) {
     error("invalid CSC randomized projection inputs");
@@ -2050,9 +2073,11 @@ extern "C" SEXP eigencore_csc_randomized_project_transposed(
   setAttrib(out_, install("transposed"), transposed_);
   UNPROTECT(2);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_column_moments(SEXP p_, SEXP x_, SEXP dim_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       LENGTH(dim_) != 2) {
     error("invalid CSC column-moment inputs");
@@ -2126,12 +2151,14 @@ extern "C" SEXP eigencore_csc_column_moments(SEXP p_, SEXP x_, SEXP dim_) {
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(6);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_centered_block_apply(
     SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP row_means_, SEXP col_means_,
     SEXP rows_, SEXP columns_, SEXP X_, SEXP alpha_, SEXP beta_, SEXP Y_,
     SEXP transpose_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(row_means_) || !isReal(col_means_) ||
       !isLogical(rows_) || !isLogical(columns_) ||
@@ -2249,11 +2276,13 @@ extern "C" SEXP eigencore_csc_centered_block_apply(
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_centered_scaled_block_apply(
     SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP col_means_, SEXP weights_,
     SEXP X_, SEXP alpha_, SEXP beta_, SEXP Y_, SEXP transpose_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(col_means_) || !isReal(weights_) || !isReal(X_) ||
       !isReal(alpha_) || !isReal(beta_) || !isReal(Y_) ||
@@ -2304,11 +2333,13 @@ extern "C" SEXP eigencore_csc_centered_scaled_block_apply(
   }
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_diagonal_block_apply(SEXP x_, SEXP dim_, SEXP unit_,
                                                SEXP X_, SEXP alpha_, SEXP beta_,
                                                SEXP Y_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(x_) || !isInteger(dim_) || !isLogical(unit_) ||
       !isReal(X_) || !isReal(Y_)) {
     error("invalid diagonal block apply inputs");
@@ -2347,10 +2378,12 @@ extern "C" SEXP eigencore_diagonal_block_apply(SEXP x_, SEXP dim_, SEXP unit_,
   }
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_native_apply_noalloc_check(SEXP kind_, SEXP A_,
                                                      SEXP X_, SEXP Y_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isString(kind_) || LENGTH(kind_) != 1 || !isReal(X_) || !isReal(Y_)) {
     error("invalid native no-allocation check inputs");
   }
@@ -2412,9 +2445,11 @@ extern "C" SEXP eigencore_native_apply_noalloc_check(SEXP kind_, SEXP A_,
     eigencore_apply_status_error("native no-allocation check apply", status);
   }
   return native_operator_workspace_counters(&workspace);
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_apply_int_guard_check(void) {
+  EIGENCORE_ENTRY_BEGIN
   double scalar = 0.0;
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
 
@@ -2449,9 +2484,11 @@ extern "C" SEXP eigencore_dense_apply_int_guard_check(void) {
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(2);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_col_norms(SEXP X_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(X_)) {
     error("X must be a double matrix");
   }
@@ -2477,4 +2514,5 @@ extern "C" SEXP eigencore_col_norms(SEXP X_) {
   }
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }

@@ -105,6 +105,11 @@ struct LanczosConvergenceScratch {
   int capacity = 0;
   int kcap = 0;
 
+  LanczosConvergenceScratch() = default;
+  LanczosConvergenceScratch(const LanczosConvergenceScratch&) = delete;
+  LanczosConvergenceScratch& operator=(const LanczosConvergenceScratch&) = delete;
+  ~LanczosConvergenceScratch() { release(); }
+
   int ensure(int needed, int k_needed) {
     if (needed <= capacity && k_needed <= kcap) {
       return 0;
@@ -308,6 +313,11 @@ struct GolubKahanProjectedScratch {
   int* selected = nullptr;     // capacity ints
   int capacity = 0;
 
+  GolubKahanProjectedScratch() = default;
+  GolubKahanProjectedScratch(const GolubKahanProjectedScratch&) = delete;
+  GolubKahanProjectedScratch& operator=(const GolubKahanProjectedScratch&) = delete;
+  ~GolubKahanProjectedScratch() { release(); }
+
   int ensure(int needed) {
     if (needed <= capacity) {
       return 0;
@@ -443,24 +453,16 @@ static int native_lanczos_run(void* impl,
                               double* history_max_residual,
                               int* iterations,
                               int* matvecs) {
-  double* q = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
-  double* q_prev = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
-  double* z = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
-  double* coeff = static_cast<double*>(std::calloc(static_cast<size_t>(maxit), sizeof(double)));
-  if (q == nullptr || q_prev == nullptr || z == nullptr || coeff == nullptr) {
-    std::free(q);
-    std::free(q_prev);
-    std::free(z);
-    std::free(coeff);
-    return -2;
-  }
-
+  std::vector<double> q_storage(eigencore_buffer_size(static_cast<size_t>(n)));
+  double* q = q_storage.data();
+  std::vector<double> q_prev_storage(eigencore_buffer_size(static_cast<size_t>(n)));
+  double* q_prev = q_prev_storage.data();
+  std::vector<double> z_storage(eigencore_buffer_size(static_cast<size_t>(n)));
+  double* z = z_storage.data();
+  std::vector<double> coeff_storage(eigencore_buffer_size(static_cast<size_t>(maxit)));
+  double* coeff = coeff_storage.data();
   double q_norm = ec_norm2(start, n);
   if (!R_FINITE(q_norm)) {
-    std::free(q);
-    std::free(q_prev);
-    std::free(z);
-    std::free(coeff);
     return EIGENCORE_STATUS_NONFINITE;
   }
   if (q_norm == 0.0) {
@@ -478,16 +480,13 @@ static int native_lanczos_run(void* impl,
   // Size the convergence scratch for the full sweep once so the
   // per-iteration estimate never reallocates.
   if (convergence_scratch.ensure(maxit, (k < maxit) ? k : maxit) != 0) {
-    std::free(q);
-    std::free(q_prev);
-    std::free(z);
-    std::free(coeff);
     return -2;
   }
   // Running operator-norm estimate max(|alpha_i|, beta_i) for the relative
   // breakdown test (C16).
   double norm_est = 0.0;
   for (int j = 0; j < maxit; ++j) {
+    eigencore_check_interrupt();
     *iterations = j + 1;
     std::memcpy(Q + static_cast<R_xlen_t>(j) * n, q, sizeof(double) * static_cast<size_t>(n));
     std::memset(z, 0, sizeof(double) * static_cast<size_t>(n));
@@ -496,10 +495,6 @@ static int native_lanczos_run(void* impl,
                              1.0, 0.0, z, n, &workspace);
     if (status != 0) {
       convergence_scratch.release();
-      std::free(q);
-      std::free(q_prev);
-      std::free(z);
-      std::free(coeff);
       return status;
     }
     ++(*matvecs);
@@ -514,10 +509,6 @@ static int native_lanczos_run(void* impl,
     alpha[j] = ec_dot(q, z, n);
     if (!R_FINITE(alpha[j])) {
       convergence_scratch.release();
-      std::free(q);
-      std::free(q_prev);
-      std::free(z);
-      std::free(coeff);
       return EIGENCORE_STATUS_NONFINITE;
     }
     for (int row = 0; row < n; ++row) {
@@ -558,10 +549,6 @@ static int native_lanczos_run(void* impl,
     beta[j] = ec_norm2(z, n);
     if (!R_FINITE(beta[j])) {
       convergence_scratch.release();
-      std::free(q);
-      std::free(q_prev);
-      std::free(z);
-      std::free(coeff);
       return EIGENCORE_STATUS_NONFINITE;
     }
     history_nconv[j] = 0;
@@ -575,10 +562,6 @@ static int native_lanczos_run(void* impl,
       );
       if (conv_status != 0) {
         convergence_scratch.release();
-        std::free(q);
-        std::free(q_prev);
-        std::free(z);
-        std::free(coeff);
         return conv_status;
       }
       history_nconv[j] = nconv;
@@ -604,10 +587,6 @@ static int native_lanczos_run(void* impl,
   }
 
   convergence_scratch.release();
-  std::free(q);
-  std::free(q_prev);
-  std::free(z);
-  std::free(coeff);
   return 0;
 }
 
@@ -639,42 +618,21 @@ int native_golub_kahan_run(void* impl,
                                   int* reorthogonalization_passes,
                                   int reorthogonalize_u,
                                   int reorthogonalize_v) {
-  double* v = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
-  double* z = static_cast<double*>(std::calloc(static_cast<size_t>(n), sizeof(double)));
-  double* u = static_cast<double*>(std::calloc(static_cast<size_t>(m), sizeof(double)));
-  double* u_prev = static_cast<double*>(std::calloc(static_cast<size_t>(m), sizeof(double)));
-  double* coeff = use_blas_reorthogonalization
-    ? static_cast<double*>(std::calloc(static_cast<size_t>(maxit), sizeof(double)))
-    : nullptr;
-  if (v == nullptr || z == nullptr || u == nullptr || u_prev == nullptr || coeff == nullptr) {
-    if (!use_blas_reorthogonalization && v != nullptr && z != nullptr &&
-        u != nullptr && u_prev != nullptr) {
-      // coeff is intentionally unused on the scalar sparse path.
-    } else {
-      std::free(v);
-      std::free(z);
-      std::free(u);
-      std::free(u_prev);
-      std::free(coeff);
-      return -2;
-    }
-  }
-  if (v == nullptr || z == nullptr || u == nullptr || u_prev == nullptr) {
-    std::free(v);
-    std::free(z);
-    std::free(u);
-    std::free(u_prev);
-    std::free(coeff);
-    return -2;
-  }
+  std::vector<double> v_storage(eigencore_buffer_size(static_cast<size_t>(n)));
+  double* v = v_storage.data();
+  std::vector<double> z_storage(eigencore_buffer_size(static_cast<size_t>(n)));
+  double* z = z_storage.data();
+  std::vector<double> u_storage(eigencore_buffer_size(static_cast<size_t>(m)));
+  double* u = u_storage.data();
+  std::vector<double> u_prev_storage(eigencore_buffer_size(static_cast<size_t>(m)));
+  double* u_prev = u_prev_storage.data();
+  // coeff is intentionally unused (null) on the scalar sparse path.
+  std::vector<double> coeff_storage(
+    use_blas_reorthogonalization ? eigencore_buffer_size(maxit) : 0);
+  double* coeff = use_blas_reorthogonalization ? coeff_storage.data() : nullptr;
 
   double v_norm = gk_norm2(start, n);
   if (!R_FINITE(v_norm)) {
-    std::free(v);
-    std::free(z);
-    std::free(u);
-    std::free(u_prev);
-    std::free(coeff);
     return EIGENCORE_STATUS_NONFINITE;
   }
   if (v_norm == 0.0) {
@@ -702,11 +660,6 @@ int native_golub_kahan_run(void* impl,
   // Size the projected-stop scratch for the full sweep once so repeated
   // convergence checks never reallocate.
   if (enable_projected_stop && projected_scratch.ensure(maxit) != 0) {
-    std::free(v);
-    std::free(z);
-    std::free(u);
-    std::free(u_prev);
-    std::free(coeff);
     return -2;
   }
   const int check_interval = (2 * k > 10) ? 2 * k : 10;
@@ -716,6 +669,7 @@ int native_golub_kahan_run(void* impl,
   double norm_est = 0.0;
 
   for (int j = 0; j < maxit; ++j) {
+    eigencore_check_interrupt();
     *iterations = j + 1;
     std::memcpy(V + static_cast<R_xlen_t>(j) * n, v, sizeof(double) * static_cast<size_t>(n));
     std::memset(u, 0, sizeof(double) * static_cast<size_t>(m));
@@ -726,11 +680,6 @@ int native_golub_kahan_run(void* impl,
     *stage_apply_seconds += native_timer_elapsed(stage_timer);
     if (status != 0) {
       projected_scratch.release();
-      std::free(v);
-      std::free(z);
-      std::free(u);
-      std::free(u_prev);
-      std::free(coeff);
       return status;
     }
     ++(*matvecs);
@@ -794,11 +743,6 @@ int native_golub_kahan_run(void* impl,
     alpha[j] = gk_norm2(u, m);
     if (!R_FINITE(alpha[j])) {
       projected_scratch.release();
-      std::free(v);
-      std::free(z);
-      std::free(u);
-      std::free(u_prev);
-      std::free(coeff);
       return EIGENCORE_STATUS_NONFINITE;
     }
     if (alpha[j] > norm_est) {
@@ -825,11 +769,6 @@ int native_golub_kahan_run(void* impl,
     *stage_apply_seconds += native_timer_elapsed(stage_timer);
     if (status != 0) {
       projected_scratch.release();
-      std::free(v);
-      std::free(z);
-      std::free(u);
-      std::free(u_prev);
-      std::free(coeff);
       return status;
     }
     ++(*matvecs);
@@ -887,11 +826,6 @@ int native_golub_kahan_run(void* impl,
     *stage_recurrence_seconds += native_timer_elapsed(stage_timer);
     if (!R_FINITE(beta[j])) {
       projected_scratch.release();
-      std::free(v);
-      std::free(z);
-      std::free(u);
-      std::free(u_prev);
-      std::free(coeff);
       return EIGENCORE_STATUS_NONFINITE;
     }
     const int remaining_iterations = maxit - (j + 1);
@@ -909,11 +843,6 @@ int native_golub_kahan_run(void* impl,
       ++(*projected_checks);
       if (conv_status != 0) {
         projected_scratch.release();
-        std::free(v);
-        std::free(z);
-        std::free(u);
-        std::free(u_prev);
-        std::free(coeff);
         return conv_status;
       }
       *projected_nconv = nconv;
@@ -940,11 +869,6 @@ int native_golub_kahan_run(void* impl,
   }
 
   projected_scratch.release();
-  std::free(v);
-  std::free(z);
-  std::free(u);
-  std::free(u_prev);
-  std::free(coeff);
   return 0;
 }
 
@@ -1292,6 +1216,7 @@ static int tridiagonal_selected_eigenpairs(const double* alpha,
 
 extern "C" SEXP eigencore_lanczos_dense(SEXP A_, SEXP maxit_, SEXP start_,
                                         SEXP k_, SEXP target_kind_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
   }
@@ -1360,12 +1285,14 @@ extern "C" SEXP eigencore_lanczos_dense(SEXP A_, SEXP maxit_, SEXP start_,
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(7);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_shift_invert_lanczos_dense(SEXP A_, SEXP sigma_,
                                                      SEXP maxit_, SEXP start_,
                                                      SEXP k_, SEXP target_kind_,
                                                      SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
   }
@@ -1479,11 +1406,13 @@ extern "C" SEXP eigencore_shift_invert_lanczos_dense(SEXP A_, SEXP sigma_,
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(9);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal(
     SEXP lower_, SEXP diag_, SEXP upper_, SEXP maxit_, SEXP start_,
     SEXP k_, SEXP target_kind_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(lower_) || !isReal(diag_) || !isReal(upper_) || !isReal(start_)) {
     error("lower, diag, upper, and start must be double");
   }
@@ -1621,11 +1550,13 @@ extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal(
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(10);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal_generalized(
     SEXP lower_, SEXP diag_, SEXP upper_, SEXP sqrt_metric_, SEXP maxit_,
     SEXP start_, SEXP k_, SEXP target_kind_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(lower_) || !isReal(diag_) || !isReal(upper_) ||
       !isReal(sqrt_metric_) || !isReal(start_)) {
     error("lower, diag, upper, sqrt_metric, and start must be double");
@@ -1740,11 +1671,13 @@ extern "C" SEXP eigencore_shift_invert_lanczos_tridiagonal_generalized(
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(9);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_shift_invert_lanczos_dense_generalized(
     SEXP A_, SEXP B_, SEXP sigma_, SEXP maxit_, SEXP start_,
     SEXP k_, SEXP target_kind_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(B_) || !isReal(start_)) {
     error("A, B, and start must be double");
   }
@@ -1881,15 +1814,18 @@ extern "C" SEXP eigencore_shift_invert_lanczos_dense_generalized(
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(10);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_lanczos_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                       SEXP maxit_, SEXP start_, SEXP k_,
                                       SEXP target_kind_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(start_)) {
     error("invalid CSC Lanczos inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "Lanczos");
   const int n = INTEGER(dim_)[0];
   if (INTEGER(dim_)[1] != n || LENGTH(start_) != n) {
     error("non-conformable CSC Lanczos inputs");
@@ -1951,11 +1887,13 @@ extern "C" SEXP eigencore_lanczos_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(7);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
                                             SEXP rank_, SEXP target_kind_,
                                             SEXP tol_, SEXP projected_stop_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
   }
@@ -2081,16 +2019,19 @@ extern "C" SEXP eigencore_golub_kahan_dense(SEXP A_, SEXP maxit_, SEXP start_,
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(6);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                           SEXP maxit_, SEXP start_,
                                           SEXP rank_, SEXP target_kind_,
                                           SEXP tol_, SEXP projected_stop_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(start_)) {
     error("invalid CSC Golub-Kahan inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "Golub-Kahan");
   const int m = INTEGER(dim_)[0];
   const int n = INTEGER(dim_)[1];
   if (LENGTH(start_) != n) {
@@ -2208,17 +2149,20 @@ extern "C" SEXP eigencore_golub_kahan_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(6);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_golub_kahan_centered_scaled_csc(
     SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP col_means_, SEXP col_weights_,
     SEXP maxit_, SEXP start_, SEXP rank_, SEXP target_kind_, SEXP tol_,
     SEXP projected_stop_, SEXP reorthogonalize_u_, SEXP reorthogonalize_v_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       LENGTH(dim_) != 2 || !isReal(col_means_) || !isReal(col_weights_) ||
       !isReal(start_)) {
     error("invalid centered-scaled CSC Golub-Kahan inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "centered-scaled Golub-Kahan");
   const int m = INTEGER(dim_)[0];
   const int n = INTEGER(dim_)[1];
   if (m < 1 || n < 1 || LENGTH(p_) != n + 1 || LENGTH(col_means_) != n ||
@@ -2335,12 +2279,14 @@ extern "C" SEXP eigencore_golub_kahan_centered_scaled_csc(
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(6);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_golub_kahan_r_operator(
     SEXP dim_, SEXP apply_, SEXP apply_adjoint_, SEXP maxit_, SEXP start_,
     SEXP rank_, SEXP target_kind_, SEXP tol_, SEXP projected_stop_,
     SEXP reorthogonalize_u_, SEXP reorthogonalize_v_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(dim_) || LENGTH(dim_) != 2 || TYPEOF(apply_) != CLOSXP ||
       TYPEOF(apply_adjoint_) != CLOSXP || !isReal(start_)) {
     error("invalid matrix-free Golub-Kahan inputs");
@@ -2457,4 +2403,5 @@ extern "C" SEXP eigencore_golub_kahan_r_operator(
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(6);
   return out_;
+  EIGENCORE_ENTRY_END
 }
