@@ -183,8 +183,8 @@ eig_full_generalized <- function(A, B, structure, vectors, tol) {
   # conditioning diagnostics. R's bundled LAPACK subset has no ZGGEVX, so
   # complex pencils use ZGGEV with input one-norms for the same
   # classification policy and no conditioning diagnostics.
-  norm_A <- eig$abnrm %||% norm(A, type = "1")
-  norm_B <- eig$bbnrm %||% norm(B, type = "1")
+  norm_A <- eig$abnrm %||% matrix_norm_one(A)
+  norm_B <- eig$bbnrm %||% matrix_norm_one(B)
   pencil <- generalized_pencil_values(eig$alpha, eig$beta,
                                       norm_A = norm_A, norm_B = norm_B)
   vecs <- eig$vectors

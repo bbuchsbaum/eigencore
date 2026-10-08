@@ -55,8 +55,8 @@ generalized_schur <- function(A, B, sort = NULL, vectors = TRUE, ...) {
     native_dense_generalized_schur(A, B, vectors, sort_key$code)
   }
   generalized_schur_result(raw, vectors = vectors, sort_key = sort_key,
-                           norm_A = norm(A, type = "1"),
-                           norm_B = norm(B, type = "1"))
+                           norm_A = matrix_norm_one(A),
+                           norm_B = matrix_norm_one(B))
 }
 
 #' @keywords internal

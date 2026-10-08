@@ -1017,6 +1017,16 @@ matrix_norm <- function(x) {
 }
 
 #' @keywords internal
+matrix_norm_one <- function(x) {
+  # base::norm() drops imaginary parts of complex matrices.
+  x <- as.matrix(x)
+  if (!length(x)) {
+    return(0)
+  }
+  max(colSums(Mod(x)))
+}
+
+#' @keywords internal
 max_residual_value <- function(x) {
   if (is.list(x)) {
     vals <- unlist(x, use.names = FALSE)
