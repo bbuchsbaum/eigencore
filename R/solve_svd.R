@@ -190,7 +190,8 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
       as.numeric(tol),
       PACKAGE = "eigencore"
     )
-    zero_tol <- gram_svd_zero_tolerance(native$d, tol)
+    zero_tol <- gram_svd_zero_tolerance(native$d, tol,
+                                      norm_A = sqrt(sum(methods::slot(A, "x")^2)))
     if (any(native$d <= zero_tol)) {
       return(solve_svd_gram(
         list(A = op, target = target),
@@ -299,7 +300,8 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
     as.numeric(tol),
     PACKAGE = "eigencore"
   )
-  zero_tol <- gram_svd_zero_tolerance(native$d, tol)
+  zero_tol <- gram_svd_zero_tolerance(native$d, tol,
+                                      norm_A = sqrt(sum(methods::slot(A, "x")^2)))
   if (any(native$d <= zero_tol)) {
     return(solve_svd_gram(
       list(A = op, target = target),

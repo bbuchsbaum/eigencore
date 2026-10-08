@@ -34,3 +34,9 @@ An \code{eigencore_operator} representing the centered linear map.
 \description{
 Center an operator by rows or columns.
 }
+\details{
+\code{row_means} and \code{col_means} are means of the uncentered \code{A}. When
+both \code{rows} and \code{columns} are \code{TRUE} the result is double centered: the
+grand mean is added back so every row and column of the result has mean
+zero.
+}

@@ -1002,7 +1002,18 @@ native_builtin_svd_certificate_cached_av <- function(Aop, d, u, v, Av, tol = 1e-
 
 #' @keywords internal
 matrix_norm <- function(x) {
-  norm(x, type = "F")
+  # base::norm() drops imaginary parts, so complex inputs use Mod().
+  if (inherits(x, "sparseMatrix")) {
+    x <- methods::as(x, "generalMatrix")
+    if (methods::.hasSlot(x, "x")) {
+      return(sqrt(sum(Mod(x@x)^2)))
+    }
+    return(sqrt(sum(Mod(as.matrix(x))^2)))
+  }
+  if (is.complex(x)) {
+    return(sqrt(sum(Mod(x)^2)))
+  }
+  norm(as.matrix(x), type = "F")
 }
 
 #' @keywords internal
@@ -1043,7 +1054,7 @@ operator_norm_for_certificate_info <- function(op) {
   src <- source_or_null(op)
   if (!is.null(src)) {
     return(list(
-      value = matrix_norm(as.matrix(src)),
+      value = matrix_norm(src),
       norm_bound_type = "frobenius_exact",
       scale_is_estimate = FALSE
     ))

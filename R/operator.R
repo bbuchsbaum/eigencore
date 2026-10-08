@@ -116,6 +116,7 @@ as_operator.eigencore_operator <- function(x, ...) {
 
 #' @export
 as_operator.matrix <- function(x, ...) {
+  stop_if_nonfinite_input(x)
   if (is.complex(x)) {
     return(complex_dense_matrix_as_operator(x))
   }
@@ -144,6 +145,7 @@ as_operator.matrix <- function(x, ...) {
 #' @export
 as_operator.default <- function(x, ...) {
   stop_if_complex_matrix_input(x)
+  stop_if_nonfinite_input(x)
   if (inherits(x, "ddiMatrix")) {
     return(diagonal_matrix_as_operator(x))
   }
@@ -157,6 +159,21 @@ as_operator.default <- function(x, ...) {
     return(matrix_as_operator(x))
   }
   stop("Cannot convert object of class ", paste(class(x), collapse = "/"), " to an eigencore operator.", call. = FALSE)
+}
+
+#' @keywords internal
+stop_if_nonfinite_input <- function(x) {
+  values <- if (inherits(x, "Matrix")) {
+    if (methods::.hasSlot(x, "x")) methods::slot(x, "x") else NULL
+  } else if (is.numeric(x) || is.complex(x)) {
+    x
+  } else {
+    NULL
+  }
+  if (!is.null(values) && !all(is.finite(values))) {
+    stop("Matrix input contains NA, NaN, or Inf entries.", call. = FALSE)
+  }
+  invisible(TRUE)
 }
 
 #' @keywords internal

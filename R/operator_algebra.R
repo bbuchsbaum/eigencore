@@ -254,6 +254,10 @@ scale_cols <- function(A, weights, name = NULL) {
 #' @param col_means Optional column means. Required for matrix-free column
 #'   centering when they cannot be derived without densifying.
 #' @param name Optional label for the centered operator.
+#' @details `row_means` and `col_means` are means of the uncentered `A`. When
+#'   both `rows` and `columns` are `TRUE` the result is double centered: the
+#'   grand mean is added back so every row and column of the result has mean
+#'   zero.
 #' @return An `eigencore_operator` representing the centered linear map.
 center <- function(A, rows = FALSE, columns = TRUE, row_means = NULL,
                    col_means = NULL, name = NULL) {
@@ -293,6 +297,12 @@ center <- function(A, rows = FALSE, columns = TRUE, row_means = NULL,
   }
   if (isTRUE(rows) && length(row_means) != A$dim[1L]) {
     stop("row_means length must equal operator row dimension.", call. = FALSE)
+  }
+
+  if (isTRUE(rows) && isTRUE(columns)) {
+    # Double centering is A - 1 c' - r 1' + g 1 1' with g the grand mean.
+    # Folding g into the row means keeps every apply path rank-2.
+    row_means <- row_means - mean(col_means)
   }
 
   centered_source <- source
@@ -760,6 +770,11 @@ native_centered_sparse_operator_or_null <- function(A, rows, columns,
   }
   row_means <- if (isTRUE(rows)) as.numeric(row_means) else numeric()
   col_means <- if (isTRUE(columns)) as.numeric(col_means) else numeric()
+  frobenius_norm <- if (isTRUE(columns) && !isTRUE(rows)) {
+    centered_csc_frobenius_norm(A, matrix, col_means)
+  } else {
+    NULL
+  }
   linear_operator(
     dim = A$dim,
     apply = function(X, alpha = 1, beta = 0, Y = NULL) {
@@ -794,12 +809,31 @@ native_centered_sparse_operator_or_null <- function(A, rows, columns,
       native = TRUE,
       storage = "centered_dgCMatrix",
       low_rank_correction = TRUE,
+      frobenius_norm = frobenius_norm,
       column_sums = A$metadata$column_sums,
       column_sum_squares = A$metadata$column_sum_squares,
       column_means = A$metadata$column_means,
       column_centered_sum_squares = A$metadata$column_centered_sum_squares
     )
   )
+}
+
+#' @keywords internal
+centered_csc_frobenius_norm <- function(A, matrix, col_means) {
+  base_means <- A$metadata$column_means %||% NULL
+  base_centered_sum_squares <-
+    A$metadata$column_centered_sum_squares %||% NULL
+  if (is.null(base_means) || is.null(base_centered_sum_squares)) {
+    moments <- csc_column_moments(matrix)
+    base_means <- moments$mean
+    base_centered_sum_squares <- moments$centered_sum_squares
+  }
+  sum_squares <- pmax(
+    base_centered_sum_squares + nrow(matrix) * (base_means - col_means)^2,
+    0
+  )
+  out <- sqrt(sum(sum_squares))
+  if (is.finite(out)) out else NULL
 }
 
 #' @keywords internal

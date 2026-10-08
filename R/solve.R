@@ -8,7 +8,8 @@
 #' @param tol Convergence and certification tolerance.
 #' @param maxit Optional iteration limit.
 #' @param vectors Whether to compute vectors.
-#' @param seed Optional random seed for stochastic solver components.
+#' @param seed Optional random seed for stochastic solver components. The
+#'   global random number stream is restored on exit.
 #' @param certify Whether to compute certification diagnostics.
 #' @param allow_dense_fallback Dense fallback policy.
 #' @param initial_subspace Optional numeric matrix of starting directions
@@ -53,6 +54,8 @@ eig_partial <- function(A, k, target = largest(), B = NULL, method = auto(),
                         initial_subspace = NULL) {
   allow_dense_fallback <- match.arg(allow_dense_fallback)
   if (!is.null(seed)) {
+    seed_state <- saved_random_seed()
+    on.exit(restore_random_seed(seed_state), add = TRUE)
     set.seed(seed)
   }
   P <- eigen_problem(A, metric = B, target = target,
@@ -70,7 +73,8 @@ eig_partial <- function(A, k, target = largest(), B = NULL, method = auto(),
 #' @param method Solver method descriptor.
 #' @param tol Convergence and certification tolerance.
 #' @param vectors Which singular-vector sides to compute.
-#' @param seed Optional random seed for stochastic solver components.
+#' @param seed Optional random seed for stochastic solver components. The
+#'   global random number stream is restored on exit.
 #' @param certify Whether to compute certification diagnostics.
 #' @param allow_dense_fallback Dense fallback policy.
 #' @return An `eigencore_svd_result` containing singular values, optional left
@@ -88,6 +92,10 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
                         allow_dense_fallback = c("auto", "never", "always")) {
   vectors <- match.arg(vectors)
   allow_dense_fallback <- match.arg(allow_dense_fallback)
+  dims <- if (inherits(A, "eigencore_operator")) A$dim else dim(A)
+  if (length(dims) == 2L) {
+    rank <- validate_solution_count(rank, min(dims), "rank")
+  }
   fast_started <- proc.time()[["elapsed"]]
   fast <- try_svd_partial_native_gram_fastpath(
     A = A,
@@ -105,6 +113,8 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
     return(fast)
   }
   if (!is.null(seed)) {
+    seed_state <- saved_random_seed()
+    on.exit(restore_random_seed(seed_state), add = TRUE)
     set.seed(seed)
   }
   P <- svd_problem(A, target = target)
@@ -455,36 +465,12 @@ native_dense_generalized_pencil_eigen <- function(A, B) {
 
 #' @keywords internal
 native_dense_complex_generalized_hpd_eigen <- function(A, B) {
-  A <- as.matrix(A)
-  B <- as.matrix(B)
-  eig <- native_dense_complex_generalized_pencil_eigen(A, B)
-  beta_scale <- pmax(Mod(eig$alpha), Mod(eig$beta), 1)
-  finite <- Mod(eig$beta) > sqrt(.Machine$double.eps) * beta_scale
-  if (!all(finite)) {
-    stop("complex Hermitian-definite pencil produced non-finite eigenvalues.",
-         call. = FALSE)
-  }
-
-  values <- eig$alpha / eig$beta
-  imaginary_scale <- sqrt(.Machine$double.eps) * pmax(Mod(values), 1)
-  if (any(abs(Im(values)) > imaginary_scale)) {
-    stop("complex Hermitian-definite pencil produced non-real eigenvalues.",
-         call. = FALSE)
-  }
-
-  vectors <- eig$vectors
-  for (j in seq_len(ncol(vectors))) {
-    metric_norm <- drop(Conj(vectors[, j]) %*% B %*% vectors[, j])
-    if (!is.finite(Re(metric_norm)) ||
-        Re(metric_norm) <= sqrt(.Machine$double.eps)) {
-      stop("complex Hermitian-definite eigenvector has invalid B-norm.",
-           call. = FALSE)
-    }
-    vectors[, j] <- vectors[, j] / sqrt(Re(metric_norm))
-  }
-
-  ord <- order(Re(values))
-  list(values = Re(values[ord]), vectors = vectors[, ord, drop = FALSE])
+  # Cholesky reduction + zheev yields B-orthonormal vectors even for repeated
+  # eigenvalues; zggev vectors are only B-normalized column by column.
+  .Call("eigencore_dense_complex_generalized_hpd_eigen",
+        eig_full_as_complex_matrix(as.matrix(A)),
+        eig_full_as_complex_matrix(as.matrix(B)),
+        PACKAGE = "eigencore")
 }
 
 #' @keywords internal
@@ -952,25 +938,11 @@ native_dense_symmetric_eigen_selected <- function(A, k, target) {
 
 #' @keywords internal
 native_dense_complex_hermitian_eigen <- function(A) {
-  eig <- native_dense_complex_general_eigen(as.matrix(A))
-  values <- eig$values
-  imaginary_scale <- sqrt(.Machine$double.eps) * pmax(Mod(values), 1)
-  if (any(abs(Im(values)) > imaginary_scale)) {
-    stop("complex Hermitian matrix produced non-real eigenvalues.",
-         call. = FALSE)
-  }
-
-  vectors <- eig$vectors
-  for (j in seq_len(ncol(vectors))) {
-    norm_j <- sqrt(sum(Mod(vectors[, j])^2))
-    if (!is.finite(norm_j) || norm_j <= sqrt(.Machine$double.eps)) {
-      stop("complex Hermitian eigenvector has invalid norm.", call. = FALSE)
-    }
-    vectors[, j] <- vectors[, j] / norm_j
-  }
-
-  ord <- order(Re(values))
-  list(values = Re(values[ord]), vectors = vectors[, ord, drop = FALSE])
+  # zheev returns ascending real values and unitary vectors, so repeated
+  # eigenvalues keep an orthonormal eigenbasis (zgeev does not).
+  .Call("eigencore_dense_complex_hermitian_eigen",
+        eig_full_as_complex_matrix(as.matrix(A)),
+        PACKAGE = "eigencore")
 }
 
 #' @keywords internal
@@ -1375,4 +1347,21 @@ should_use_native_implicit_gram_svd <- function(problem, method, rank = NULL) {
   # Beyond half the reduced dimension the Lanczos subspace approaches the
   # full space; the explicit paths are the honest choice there.
   rank >= 1L && rank <= 0.5 * reduced
+}
+
+#' @keywords internal
+saved_random_seed <- function() {
+  get0(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+}
+
+#' @keywords internal
+restore_random_seed <- function(seed_state) {
+  if (is.null(seed_state)) {
+    if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+      rm(".Random.seed", envir = .GlobalEnv)
+    }
+  } else {
+    assign(".Random.seed", seed_state, envir = .GlobalEnv)
+  }
+  invisible(NULL)
 }

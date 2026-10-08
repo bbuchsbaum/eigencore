@@ -4,19 +4,36 @@
 \alias{eigs}
 \title{RSpectra-compatible eigen shim.}
 \usage{
-eigs(A, k, which = "LM", opts = list(), ...)
+eigs(
+  A,
+  k,
+  which = "LM",
+  sigma = NULL,
+  opts = list(),
+  ...,
+  n = NULL,
+  args = NULL
+)
 }
 \arguments{
-\item{A}{Matrix or eigencore operator.}
+\item{A}{Matrix, eigencore operator, or a function \code{f(x, args)} returning
+\code{A \%*\% x} (then \code{n} is required).}
 
 \item{k}{Number of eigenpairs to compute.}
 
 \item{which}{RSpectra-style target selector.}
 
-\item{opts}{Compatibility options list; currently accepted for API
-compatibility and not interpreted directly.}
+\item{sigma}{Optional shift; eigenvalues nearest \code{sigma} are returned.}
+
+\item{opts}{RSpectra options list. \code{tol}, \code{ncv} (Krylov subspace size) and
+\code{retvec} are honoured; \code{maxitr} is accepted but eigencore controls
+restarts itself, and other keys raise a warning.}
 
 \item{...}{Additional arguments passed to \code{\link[=eig_partial]{eig_partial()}}.}
+
+\item{n}{Dimension of the operator when \code{A} is a function.}
+
+\item{args}{Extra argument passed to a function \code{A}.}
 }
 \value{
 A list compatible with \code{RSpectra::eigs()}, including \code{values},
@@ -24,7 +41,11 @@ A list compatible with \code{RSpectra::eigs()}, including \code{values},
 and left/right vector fields when available.
 }
 \description{
-RSpectra-compatible eigen shim.
+Mirrors \code{RSpectra::eigs()}. \code{which} uses ARPACK codes (\code{"LM"}, \code{"SM"},
+\code{"LR"}, \code{"SR"}, \code{"LI"}, \code{"SI"}). Unlike ARPACK, \code{"LI"}/\code{"SI"} rank by the
+signed imaginary part (see \code{\link[=largest_imaginary]{largest_imaginary()}}), not by its magnitude. A
+non-\code{NULL} \code{sigma} with \code{which = "LM"} requests the eigenvalues nearest
+\code{sigma}.
 }
 \examples{
 A <- diag(c(5, 4, 3, 2, 1))

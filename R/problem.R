@@ -132,6 +132,18 @@ plan_solver.eigencore_eigen_problem <- function(
     certify = TRUE,
     allow_dense_fallback = c("auto", "never", "always"),
     initial_subspace = NULL, ...) {
+  if (problem$A$dim[1L] != problem$A$dim[2L]) {
+    stop("Eigenproblems require a square operator.", call. = FALSE)
+  }
+  k <- validate_solution_count(k, problem$A$dim[1L], "k")
+  if (inherits(problem$target, "eigencore_target") &&
+      identical(problem$target$kind, "both_ends")) {
+    ends <- problem$target$value$k_low + problem$target$value$k_high
+    if (!identical(as.integer(ends), k)) {
+      stop("both_ends(k_low, k_high) requires k = k_low + k_high (", ends,
+           "), got k = ", k, ".", call. = FALSE)
+    }
+  }
   method_descriptor <- method
   planner_policy <- planner_policy_snapshot()
   allow_dense_fallback <- match.arg(allow_dense_fallback)
@@ -619,6 +631,7 @@ plan_solver.eigencore_svd_problem <- function(
     problem, rank, method = auto(), tol = 1e-8,
     vectors = c("both", "left", "right", "none"), certify = TRUE,
     allow_dense_fallback = c("auto", "never", "always"), ...) {
+  rank <- validate_solution_count(rank, min(problem$A$dim), "rank")
   method_descriptor <- method
   planner_policy <- planner_policy_snapshot()
   vectors <- match.arg(vectors)
@@ -1428,4 +1441,17 @@ print.eigencore_plan <- function(x, ...) {
   }
   cat("  fallback:", x$fallback, "\n")
   invisible(x)
+}
+
+#' @keywords internal
+validate_solution_count <- function(k, limit, name) {
+  if (!is.numeric(k) || length(k) != 1L || is.na(k) || k != round(k)) {
+    stop(name, " must be a single whole number.", call. = FALSE)
+  }
+  k <- as.integer(k)
+  if (k < 1L || k > limit) {
+    stop(name, " must be between 1 and ", limit, ", got ", k, ".",
+         call. = FALSE)
+  }
+  k
 }

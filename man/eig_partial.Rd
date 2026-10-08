@@ -36,7 +36,8 @@ eig_partial(
 
 \item{vectors}{Whether to compute vectors.}
 
-\item{seed}{Optional random seed for stochastic solver components.}
+\item{seed}{Optional random seed for stochastic solver components. The
+global random number stream is restored on exit.}
 
 \item{certify}{Whether to compute certification diagnostics.}
 

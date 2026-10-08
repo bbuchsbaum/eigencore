@@ -94,13 +94,15 @@ fit$certificate
 #>   orthogonality required: TRUE
 ```
 
-When the check cannot be made exact, the certificate says so. For a
-**column-centered** sparse matrix the only cheap norm bound is a
-stochastic estimate, so eigencore returns the singular values but sets
-`passed = FALSE` and tells you why:
+When the check cannot be made exact, the certificate says so. A
+column-centered sparse matrix still certifies exactly (its norm follows from
+the column moments), but for a **double-centered** sparse matrix the only
+cheap norm bound is a stochastic estimate, so eigencore returns the singular
+values but sets `passed = FALSE` and tells you why:
 
 ``` r
-cen <- svd_partial(center(A, columns = TRUE), rank = 5, target = largest())
+cen <- svd_partial(center(A, rows = TRUE, columns = TRUE), rank = 5,
+                    target = largest())
 
 cen$certificate$passed
 #> [1] FALSE

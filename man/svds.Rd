@@ -4,21 +4,41 @@
 \alias{svds}
 \title{RSpectra-compatible SVD shim.}
 \usage{
-svds(A, k, nu = k, nv = k, opts = list(), ...)
+svds(
+  A,
+  k,
+  nu = k,
+  nv = k,
+  opts = list(),
+  ...,
+  Atrans = NULL,
+  dim = NULL,
+  args = NULL
+)
 }
 \arguments{
-\item{A}{Matrix or eigencore operator.}
+\item{A}{Matrix, eigencore operator, or a function \code{f(x, args)} returning
+\code{A \%*\% x} (then \code{Atrans} and \code{dim} are required).}
 
 \item{k}{Number of singular values to compute.}
 
-\item{nu}{Number of left singular vectors requested.}
+\item{nu}{Number of left singular vectors returned.}
 
-\item{nv}{Number of right singular vectors requested.}
+\item{nv}{Number of right singular vectors returned.}
 
-\item{opts}{Compatibility options list; currently accepted for API
-compatibility and not interpreted directly.}
+\item{opts}{RSpectra options list. \code{tol}, \code{center} and \code{scale} are
+honoured (\code{center}/\code{scale} are applied as operators, without densifying);
+\code{ncv} and \code{maxitr} are accepted but eigencore controls the subspace
+itself, and other keys raise a warning.}
 
 \item{...}{Additional arguments passed to \code{\link[=svd_partial]{svd_partial()}}.}
+
+\item{Atrans}{Function \code{f(x, args)} returning \code{t(A) \%*\% x} when \code{A} is a
+function.}
+
+\item{dim}{Dimensions of \code{A} when \code{A} is a function.}
+
+\item{args}{Extra argument passed to function inputs.}
 }
 \value{
 A list compatible with \code{RSpectra::svds()}, including \code{d}, optional

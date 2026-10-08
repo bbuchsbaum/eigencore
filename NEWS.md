@@ -1,3 +1,40 @@
+# eigencore (development version)
+
+## Correctness fixes
+
+* `center(rows = TRUE, columns = TRUE)` now double centers correctly. Row
+  means were taken from the uncentered matrix, so the grand mean was
+  subtracted twice on the dense, callback, and native CSC paths.
+* Column-centered `dgCMatrix` operators carry their exact Frobenius norm, so
+  their SVD certificates can pass instead of always reporting an estimate.
+* Complex Frobenius norms no longer drop imaginary parts, and sparse sources
+  are no longer densified to compute a certificate norm.
+* Complex Hermitian eigenproblems and Hermitian-definite pencils use the
+  `zheev`-based kernels, so repeated eigenvalues keep an orthonormal
+  (B-orthonormal) eigenbasis.
+* `eig_full(A, B)` with a symmetric but indefinite or singular `B` falls back
+  to QZ instead of failing in `dpotrf` (unless `structure = hermitian()` is
+  requested explicitly).
+* The Gram SVD zero threshold is relative to the matrix scale instead of
+  `max(1, d)`, so tiny-norm matrices no longer return zero singular values.
+* NA, NaN, and Inf matrix inputs are rejected when the operator is built.
+* `k`/`rank` are validated once (whole number in `1..n`), eigenproblems
+  require a square operator, and `both_ends(k_low, k_high)` must match `k`.
+* `seed =` in `eig_partial()`/`svd_partial()` restores the global random
+  stream on exit.
+* `shifted_tridiagonal_preconditioner()` accepts symmetric storage and reads
+  the bands without an R-level loop.
+
+## RSpectra compatibility
+
+* `eigs()`, `eigs_sym()` and `svds()` follow the RSpectra signatures:
+  `sigma` (nearest eigenvalues), function inputs (`n`/`args`,
+  `Atrans`/`dim`), `eigs_sym(lower =)` reading one triangle, default
+  `which = "LM"` for `eigs_sym()`, decreasing value order from `eigs_sym()`,
+  and `opts$tol`, `ncv`, `retvec`, `initvec`, `center`, `scale`. Unused or
+  unknown `opts` entries and unknown `which` codes are reported instead of
+  being ignored, `nu`/`nv` are honoured, and non-convergence warns.
+
 # eigencore 1.3.0 (2026-08-25)
 
 ## Certified positive-semidefinite geometry

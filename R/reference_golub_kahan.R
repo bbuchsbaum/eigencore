@@ -1819,7 +1819,8 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
       as.numeric(tol),
       PACKAGE = "eigencore"
     )
-    zero_tol <- gram_svd_zero_tolerance(native$d, tol)
+    zero_tol <- gram_svd_zero_tolerance(native$d, tol,
+                                          norm_A = sqrt(sum(methods::slot(A, "x")^2)))
     cert <- if (any(native$d <= zero_tol)) {
       certify_svd_operator(op, native$d, native$u, native$v, tol = tol)
     } else {
@@ -1920,7 +1921,8 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
         as.numeric(tol),
         PACKAGE = "eigencore"
       )
-      zero_tol <- gram_svd_zero_tolerance(native$d, tol)
+      zero_tol <- gram_svd_zero_tolerance(native$d, tol,
+                                          norm_A = sqrt(sum(methods::slot(A, "x")^2)))
       if (!any(native$d <= zero_tol)) {
         cert <- new_certificate(
           tol = tol,
@@ -1996,7 +1998,7 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     u_full <- as.matrix(A %*% v_full)
     av_full <- u_full
     atu_full <- sweep(v_full, 2L, d, `*`)
-    zero_tol <- gram_svd_zero_tolerance(d, tol)
+    zero_tol <- gram_svd_zero_tolerance(d, tol, norm_A = sqrt(sum(diag(gram))))
     nz <- d > zero_tol
     d[!nz] <- 0
     if (any(nz)) {
@@ -2026,7 +2028,7 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     v_full <- as.matrix(crossprod(A, u_full))
     atu_full <- v_full
     av_full <- sweep(u_full, 2L, d, `*`)
-    zero_tol <- gram_svd_zero_tolerance(d, tol)
+    zero_tol <- gram_svd_zero_tolerance(d, tol, norm_A = sqrt(sum(diag(gram))))
     nz <- d > zero_tol
     d[!nz] <- 0
     if (any(nz)) {
@@ -2124,8 +2126,13 @@ gram_svd_eigen_slice <- function(gram, rank, target) {
 }
 
 #' @keywords internal
-gram_svd_zero_tolerance <- function(d, tol) {
-  scale <- max(1, d, na.rm = TRUE)
+gram_svd_zero_tolerance <- function(d, tol, norm_A = NULL) {
+  # Scale-invariant: relative to ||A|| when known (needed for smallest
+  # targets, whose d holds only the small end), else to the largest value.
+  scale <- max(c(norm_A, d, 0), na.rm = TRUE)
+  if (!is.finite(scale)) {
+    scale <- 0
+  }
   # Gram eigenvectors for numerically null singular values are unstable. A
   # slightly conservative cutoff lets the zero-triplet completion build clean
   # nullspace bases instead of certifying arbitrary near-null Ritz vectors.
