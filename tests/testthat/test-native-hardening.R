@@ -85,13 +85,6 @@ test_that("sparse Gram SVD fast path is scale invariant", {
 })
 
 test_that("dense svd_partial recovers top singular values of a tiny-scale matrix", {
-  # The C-side Gram zero tolerance is scale invariant; the dense path also
-  # depends on the R-side gram_svd_zero_tolerance(), so only run this once
-  # that helper no longer floors its scale at 1.
-  skip_if(
-    eigencore:::gram_svd_zero_tolerance(5e-10, 1e-8) >= 5e-10,
-    "R-side gram_svd_zero_tolerance() still uses an absolute scale floor"
-  )
   d <- 10^seq(0, -3, length.out = 60) * 5
   A <- known_svd_matrix(3000, 60, d)
   fit <- svd_partial(A * 1e-10, rank = 3)

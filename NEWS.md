@@ -24,6 +24,17 @@
   stream on exit.
 * `shifted_tridiagonal_preconditioner()` accepts symmetric storage and reads
   the bands without an R-level loop.
+* Native kernels use 64-bit offsets for basis and certificate indexing, so
+  problems with more than 2^31 basis or vector entries no longer overflow.
+* Block Lanczos and block Golub-Kahan always run two Cholesky-QR passes
+  (previously only for n < 64), keeping new blocks orthonormal when the
+  residual block is ill-conditioned.
+* Scalar Lanczos and Golub-Kahan stop with a clear error on non-finite
+  values; NaN no longer passes the native symmetry and positive-diagonal
+  checks, and is no longer hidden in maximum backward-error summaries.
+* The native Gram SVD start vector is no longer an exact alternating sign
+  pattern (orthogonal to the constant vector), and its zero threshold is
+  scale invariant.
 
 ## RSpectra compatibility
 
