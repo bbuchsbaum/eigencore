@@ -123,23 +123,40 @@ arnoldi_left_eigen_contract <- function(op, values, right_vectors, target,
   }
 
   k <- length(values)
-  left_solver <- if (native_arnoldi_available(adjoint_op) ||
-      native_matrix_free_arnoldi_available(adjoint_op)) {
-    native_arnoldi_general
-  } else {
-    reference_arnoldi_general
-  }
+  native_left <- native_arnoldi_available(adjoint_op) ||
+    native_matrix_free_arnoldi_available(adjoint_op)
   left_iter <- tryCatch(
-    left_solver(
-      adjoint_op,
-      k = k,
-      target = adjoint_arnoldi_target(target),
-      tol = tol,
-      maxit = maxit,
-      max_restarts = max_restarts,
-      vectors = TRUE,
-      extraction = extraction
-    ),
+    if (native_left) {
+      # The right solve already fixed which eigenvalues are wanted, so the
+      # adjoint Krylov-Schur ranks Ritz values by distance to them instead of
+      # re-deciding which ones are extremal (on clustered spectra the two
+      # independent solves could otherwise settle on different sets).
+      native_arnoldi_general(
+        adjoint_op,
+        k = k,
+        target = adjoint_arnoldi_target(target),
+        tol = tol,
+        maxit = maxit,
+        max_restarts = max_restarts,
+        vectors = TRUE,
+        extraction = extraction,
+        target_values = if (identical(op$dtype, "complex")) Conj(values) else values,
+        # Biorthogonality error scales like (left residual) / (eigenvalue
+        # gap), so converge the adjoint Ritz pairs two digits beyond `tol`.
+        krylov_schur_tol = max(tol * 1e-2, 100 * .Machine$double.eps)
+      )
+    } else {
+      reference_arnoldi_general(
+        adjoint_op,
+        k = k,
+        target = adjoint_arnoldi_target(target),
+        tol = tol,
+        maxit = maxit,
+        max_restarts = max_restarts,
+        vectors = TRUE,
+        extraction = extraction
+      )
+    },
     error = function(e) e
   )
   if (inherits(left_iter, "error")) {
@@ -165,7 +182,7 @@ arnoldi_left_eigen_contract <- function(op, values, right_vectors, target,
 
   left_vectors <- normalize_left_eigenvectors(matched$vectors, right_vectors)
   cert <- certify_left_eigen_operator(
-    op,
+    arnoldi_certificate_operator(op),
     values,
     left_vectors,
     right_vectors = right_vectors,
@@ -195,10 +212,102 @@ arnoldi_left_eigen_contract <- function(op, values, right_vectors, target,
 }
 
 #' @keywords internal
-native_arnoldi_available <- function(op) {
+#' Resolve the native kernel an Arnoldi run can use for `op`: a dense double
+#' source, a dgCMatrix, or the materialized transpose carried by the adjoint
+#' of a dgCMatrix operator (so the left-eigenvector solve on A^T stays native
+#' instead of falling back to the R-level reference Arnoldi).
+native_arnoldi_kernel <- function(op) {
   op <- as_operator(op)
-  identical(native_kernel_kind(op), "dense") ||
-    identical(native_kernel_kind(op), "csc")
+  kind <- native_kernel_kind(op)
+  if (identical(kind, "dense")) {
+    return(list(kind = "dense", matrix = source_or_null(op)))
+  }
+  if (identical(kind, "csc")) {
+    return(list(kind = "csc", matrix = op$metadata$matrix, transpose = NULL))
+  }
+  if (identical(op$metadata$storage %||% NULL, "adjoint:dgCMatrix") &&
+      identical(op$dtype, "double") &&
+      inherits(op$metadata$matrix, "dgCMatrix")) {
+    parent_matrix <- op$metadata$parent$metadata$matrix %||% NULL
+    return(list(
+      kind = "csc",
+      matrix = op$metadata$matrix,
+      transpose = if (inherits(parent_matrix, "dgCMatrix")) parent_matrix else NULL
+    ))
+  }
+  NULL
+}
+
+#' @keywords internal
+#' CSC storage of the transpose of the kernel's operator. The Krylov-Schur
+#' kernel applies A x as (A^T)^T x, a row gather that is faster than the
+#' scatter form of a forward CSC product; the adjoint of a dgCMatrix operator
+#' already carries its parent, so only the forward case pays one transpose.
+native_arnoldi_kernel_transpose <- function(kernel) {
+  tr <- kernel$transpose %||% NULL
+  if (inherits(tr, "dgCMatrix")) {
+    return(tr)
+  }
+  methods::as(Matrix::t(kernel$matrix), "CsparseMatrix")
+}
+
+#' @keywords internal
+native_arnoldi_available <- function(op) {
+  !is.null(native_arnoldi_kernel(op))
+}
+
+#' @keywords internal
+#' Certificates for complex Ritz pairs of a real sparse operator must not
+#' densify the source matrix (`as.matrix(source) %*% vectors`). This view of
+#' `op` drops the materialized matrix and applies the original operator to the
+#' real and imaginary parts as one real block, so the residuals are still
+#' computed against the original operator with real matvecs. Norm metadata is
+#' kept, so the certificate scale is unchanged.
+arnoldi_certificate_operator <- function(op) {
+  op <- as_operator(op)
+  if (!is.null(source_or_null(op)) || is.null(op$metadata$matrix) ||
+      !identical(op$dtype, "double")) {
+    return(op)
+  }
+  split_complex <- function(f) {
+    force(f)
+    function(X, alpha = 1, beta = 0, Y = NULL) {
+      if (!is.complex(X)) {
+        return(f(X, alpha = alpha, beta = beta, Y = Y))
+      }
+      X <- as.matrix(X)
+      p <- ncol(X)
+      out <- as.matrix(f(cbind(Re(X), Im(X))))
+      res <- matrix(
+        complex(
+          real = out[, seq_len(p), drop = FALSE],
+          imaginary = out[, p + seq_len(p), drop = FALSE]
+        ),
+        nrow(out),
+        p
+      )
+      res <- alpha * res
+      if (!is.null(Y) && beta != 0) {
+        res <- res + beta * Y
+      }
+      res
+    }
+  }
+  view <- op
+  view$apply <- split_complex(op$apply)
+  if (!is.null(op$apply_adjoint)) {
+    view$apply_adjoint <- split_complex(op$apply_adjoint)
+  }
+  # The adjoint of a dgCMatrix operator carries the materialized transpose but
+  # no norm metadata; its exact Frobenius norm is the same as the parent's, so
+  # record it instead of letting the certificate fall back to a stochastic
+  # estimate (which withholds `passed`).
+  matrix <- op$metadata$matrix
+  if (is.null(view$metadata$frobenius_norm) && inherits(matrix, "dgCMatrix")) {
+    view$metadata$frobenius_norm <- sqrt(sum(methods::slot(matrix, "x")^2))
+  }
+  view$metadata$matrix <- NULL
+  view
 }
 
 #' @keywords internal
@@ -240,21 +349,58 @@ sparse_general_pencil_default_max_subspace <- function(n, k) {
 }
 
 #' @keywords internal
+#' Krylov-Schur subspace size (the ARPACK/RSpectra `ncv` default for the
+#' nonsymmetric problem): max(2k + 1, 20), capped at n. Dense inputs use the
+#' same restarted subspace instead of an n-dimensional basis.
+native_krylov_schur_default_ncv <- function(n, k) {
+  n <- as.integer(n)
+  k <- as.integer(k)
+  min(n, max(2L * k + 1L, 20L))
+}
+
+#' @keywords internal
+#' Cap on Krylov-Schur outer iterations (restarts) per attempt.
+native_krylov_schur_default_maxit <- function() {
+  1000L
+}
+
+#' @keywords internal
+arnoldi_target_code <- function(target) {
+  kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
+  code <- switch(
+    kind,
+    largest = 0L,
+    largest_real = 0L,
+    smallest = 1L,
+    smallest_real = 1L,
+    largest_magnitude = 2L,
+    largest_imaginary = 3L,
+    smallest_imaginary = 4L,
+    smallest_magnitude = 5L,
+    NA_integer_
+  )
+  if (is.na(code)) {
+    stop("native Krylov-Schur Arnoldi does not support target '", kind, "'.",
+         call. = FALSE)
+  }
+  code
+}
+
+#' @keywords internal
 native_arnoldi_cycle <- function(op, start, m) {
   op <- as_operator(op)
-  kind <- native_kernel_kind(op)
-  if (identical(kind, "dense")) {
-    source <- source_or_null(op)
+  kernel <- native_arnoldi_kernel(op)
+  if (identical(kernel$kind, "dense")) {
     return(.Call(
       "eigencore_arnoldi_dense_cycle",
-      source,
+      kernel$matrix,
       as.numeric(start),
       as.integer(m),
       PACKAGE = "eigencore"
     ))
   }
-  if (identical(kind, "csc")) {
-    source <- op$metadata$matrix
+  if (identical(kernel$kind, "csc")) {
+    source <- kernel$matrix
     return(.Call(
       "eigencore_arnoldi_csc_cycle",
       methods::slot(source, "i"),
@@ -280,12 +426,102 @@ native_arnoldi_cycle <- function(op, start, m) {
 }
 
 #' @keywords internal
+#' Native real Krylov-Schur restarted Arnoldi (src/arnoldi.cpp). Returns a
+#' cycle-like list whose V (n x (p+1)) and H = [T_p; b^T] ((p+1) x p) satisfy
+#' A V[, 1:p] = V H, so the projected and refined Ritz extractions apply
+#' unchanged to the converged Krylov-Schur decomposition.
+native_krylov_schur <- function(op, start, k, m, target, tol,
+                                maxit = native_krylov_schur_default_maxit(),
+                                target_values = NULL) {
+  op <- as_operator(op)
+  kernel <- native_arnoldi_kernel(op)
+  code <- arnoldi_target_code(target)
+  tol <- as.numeric(tol)
+  # target_values (internal): rank Ritz values by distance to this set
+  # instead of by `target` (used by the adjoint solve for left vectors).
+  target_values <- if (length(target_values)) as.complex(target_values) else NULL
+  if (identical(kernel$kind, "dense")) {
+    return(.Call(
+      "eigencore_arnoldi_ks_dense",
+      kernel$matrix,
+      as.numeric(start),
+      as.integer(k),
+      as.integer(m),
+      code,
+      target_values,
+      tol,
+      as.integer(maxit),
+      PACKAGE = "eigencore"
+    ))
+  }
+  if (identical(kernel$kind, "csc")) {
+    source <- native_arnoldi_kernel_transpose(kernel)
+    if (!inherits(source, "dgCMatrix")) {
+      stop("native Krylov-Schur Arnoldi requires a dgCMatrix transpose.", call. = FALSE)
+    }
+    return(.Call(
+      "eigencore_arnoldi_ks_csc",
+      methods::slot(source, "i"),
+      methods::slot(source, "p"),
+      methods::slot(source, "x"),
+      methods::slot(source, "Dim"),
+      TRUE,
+      as.numeric(start),
+      as.integer(k),
+      as.integer(m),
+      code,
+      target_values,
+      tol,
+      as.integer(maxit),
+      PACKAGE = "eigencore"
+    ))
+  }
+  if (native_matrix_free_arnoldi_available(op)) {
+    return(.Call(
+      "eigencore_arnoldi_ks_r_operator",
+      as.integer(op$dim),
+      op$apply,
+      as.numeric(start),
+      as.integer(k),
+      as.integer(m),
+      code,
+      target_values,
+      tol,
+      as.integer(maxit),
+      PACKAGE = "eigencore"
+    ))
+  }
+  stop("native Arnoldi requires a dense double, dgCMatrix, or real matrix-free operator.", call. = FALSE)
+}
+
+#' @keywords internal
 native_arnoldi_projected_ritz <- function(cycle) {
   .Call(
     "eigencore_arnoldi_ritz",
     cycle$V,
     cycle$H,
     as.integer(cycle$iterations),
+    PACKAGE = "eigencore"
+  )
+}
+
+#' @keywords internal
+native_arnoldi_ritz_coefficients <- function(cycle) {
+  .Call(
+    "eigencore_arnoldi_ritz_coefficients",
+    cycle$H,
+    as.integer(cycle$iterations),
+    PACKAGE = "eigencore"
+  )
+}
+
+#' @keywords internal
+native_arnoldi_ritz_vectors <- function(cycle, coefficients) {
+  .Call(
+    "eigencore_arnoldi_ritz_vectors",
+    cycle$V,
+    as.integer(cycle$iterations),
+    as.matrix(coefficients) + 0i,
     PACKAGE = "eigencore"
   )
 }
@@ -303,16 +539,38 @@ native_arnoldi_refined_ritz_vectors <- function(cycle, values) {
 }
 
 #' @keywords internal
+#' Start vector for the next certification attempt: the real part of the sum
+#' of the current wanted Ritz vectors, so the new Krylov space contains all of
+#' them; random when that is degenerate.
+arnoldi_next_start <- function(vectors, n) {
+  start <- if (!is.null(vectors) && length(vectors)) {
+    Re(rowSums(as.matrix(vectors))) + Im(rowSums(as.matrix(vectors)))
+  } else {
+    numeric()
+  }
+  norm <- if (length(start) == n && all(is.finite(start))) sqrt(sum(start^2)) else 0
+  if (!is.finite(norm) || norm <= 0) {
+    start <- stats::rnorm(n)
+    norm <- sqrt(sum(start^2))
+  }
+  start / norm
+}
+
+#' @keywords internal
 native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
                                    maxit = NULL, max_restarts = 0L,
                                    vectors = TRUE,
-                                   extraction = "projected_ritz") {
+                                   extraction = "projected_ritz",
+                                   krylov_schur_maxit = native_krylov_schur_default_maxit(),
+                                   target_values = NULL,
+                                   krylov_schur_tol = tol) {
   op <- as_operator(op)
   extraction <- match.arg(extraction, c("projected_ritz", "refined_ritz"))
   if (op$dim[[1L]] != op$dim[[2L]]) {
     stop("native Arnoldi requires a square operator.", call. = FALSE)
   }
-  matrix_free_native <- native_matrix_free_arnoldi_available(op)
+  matrix_free_native <- !native_arnoldi_available(op) &&
+    native_matrix_free_arnoldi_available(op)
   if (!native_arnoldi_available(op) && !matrix_free_native) {
     stop("native Arnoldi requires a dense double, dgCMatrix, or real matrix-free operator.", call. = FALSE)
   }
@@ -328,12 +586,18 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
   }
   n <- op$dim[[1L]]
   k <- as.integer(k)
-  m <- as.integer(maxit %||% native_arnoldi_default_max_subspace(n, k))
-  m <- min(n, max(k + 1L, m))
+  if (length(k) != 1L || is.na(k) || k < 1L || k > n) {
+    stop("k must be between 1 and the operator dimension.", call. = FALSE)
+  }
+  m <- as.integer(maxit %||% native_krylov_schur_default_ncv(n, k))
+  # Krylov-Schur needs room for at least one new direction beyond the wanted
+  # block (plus a possible conjugate partner) unless the space is all of R^n.
+  m <- min(n, max(k + 2L, m))
   max_restarts <- as.integer(max_restarts %||% 0L)
   if (max_restarts < 0L) {
     stop("max_restarts must be non-negative.", call. = FALSE)
   }
+  krylov_schur_maxit <- as.integer(krylov_schur_maxit)
 
   start <- stats::rnorm(n)
   start <- start / sqrt(sum(start^2))
@@ -343,31 +607,48 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
   history <- vector("list", max_restarts + 1L)
   total_matvecs <- 0L
   total_iterations <- 0L
+  total_ks_restarts <- 0L
+  ks_stage_seconds <- c(apply = 0, orthogonalization = 0,
+                        projected_schur = 0, restart = 0)
   total_reorthogonalization_passes <- 0L
   native_workspace_bytes <- 0L
   total_cycle_seconds <- 0
   total_ritz_extraction_seconds <- 0
+  m_initial <- m
 
   for (attempt in seq_len(max_restarts + 1L)) {
     cycle_start <- proc.time()[["elapsed"]]
-    cycle <- native_arnoldi_cycle(op, start, m)
+    cycle <- native_krylov_schur(
+      op, start, k = k, m = m, target = target, tol = krylov_schur_tol,
+      maxit = krylov_schur_maxit, target_values = target_values
+    )
     cycle_seconds <- proc.time()[["elapsed"]] - cycle_start
     total_cycle_seconds <- total_cycle_seconds + cycle_seconds
     total_matvecs <- total_matvecs + cycle$matvecs
-    total_iterations <- total_iterations + cycle$iterations
+    total_iterations <- total_iterations + cycle$krylov_schur_restarts + 1L
+    total_ks_restarts <- total_ks_restarts + cycle$krylov_schur_restarts
+    if (length(cycle$stage_seconds)) {
+      ks_stage_seconds <- ks_stage_seconds +
+        unname(cycle$stage_seconds[names(ks_stage_seconds)])
+    }
     total_reorthogonalization_passes <- total_reorthogonalization_passes +
       cycle$reorthogonalization_passes
     native_workspace_bytes <- native_workspace_bytes + cycle$native_workspace_bytes
     ritz_start <- proc.time()[["elapsed"]]
-    ritz <- native_arnoldi_ritz(op, cycle, k, target, tol, extraction = extraction)
+    ritz <- native_arnoldi_ritz(op, cycle, k, target, tol, extraction = extraction,
+                                target_values = target_values)
     ritz_seconds <- proc.time()[["elapsed"]] - ritz_start
     total_ritz_extraction_seconds <- total_ritz_extraction_seconds + ritz_seconds
     history[[attempt]] <- data.frame(
       attempt = attempt,
       extraction = ritz$extraction,
       max_subspace = m,
-      iterations = cycle$iterations,
+      iterations = cycle$krylov_schur_restarts + 1L,
       matvecs = cycle$matvecs,
+      krylov_schur_restarts = cycle$krylov_schur_restarts,
+      krylov_schur_nconv = cycle$nconv,
+      krylov_schur_converged = isTRUE(cycle$converged),
+      retained_subspace = cycle$iterations,
       cycle_seconds = cycle_seconds,
       ritz_extraction_seconds = ritz_seconds,
       certificate_passed = isTRUE(ritz$certificate$passed),
@@ -390,11 +671,17 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
     if (isTRUE(ritz$certificate$passed)) {
       break
     }
-    start <- Re(ritz$vectors[, 1L])
-    if (!all(is.finite(start)) || sum(start^2) <= 100 * .Machine$double.eps) {
-      start <- stats::rnorm(n)
+    # Every residual already meets the tolerance, so `passed` was withheld for
+    # a reason a larger subspace cannot fix (e.g. a stochastic norm estimate
+    # for a matrix-free operator).
+    converged_flags <- ritz$certificate$converged %||% logical()
+    if (length(converged_flags) >= k && all(converged_flags)) {
+      break
     }
-    start <- start / sqrt(sum(start^2))
+    # Certification failed: retry from the current wanted Ritz vectors with a
+    # larger Krylov-Schur subspace.
+    start <- arnoldi_next_start(ritz$vectors, n)
+    m <- min(n, max(m + k, 2L * m))
   }
 
   kept_history <- history[seq_along(Filter(Negate(is.null), history))]
@@ -418,10 +705,13 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
       extraction = extraction,
       refined_extraction_native = identical(extraction, "refined_ritz"),
       refined_residual_estimates = best$refined_residual_estimates %||% numeric(),
-      krylov_schur = FALSE,
-      krylov_schur_status = "not implemented; V2 tranche promotes native refined Ritz extraction only",
+      krylov_schur = TRUE,
+      krylov_schur_status = native_krylov_schur_status(),
+      krylov_schur_restarts = total_ks_restarts,
+      krylov_schur_stage_seconds = ks_stage_seconds,
+      krylov_schur_maxit = krylov_schur_maxit,
       v2_issue = "bd-01KTF6H41S9XDN286TR3V184P4",
-      max_subspace = m,
+      max_subspace = m_initial,
       max_restarts = max_restarts,
       restart_count = nrow(attempt_history) - 1L,
       attempted_subspaces = attempt_history$max_subspace,
@@ -436,6 +726,14 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
         ritz_extraction = total_ritz_extraction_seconds
       )
     )
+  )
+}
+
+#' @keywords internal
+native_krylov_schur_status <- function() {
+  paste(
+    "native real Krylov-Schur restart (dgees + dtrsen reordering, CGS2",
+    "orthogonalization, conjugate pairs kept together)"
   )
 }
 
@@ -556,9 +854,12 @@ reference_arnoldi_cycle <- function(op, start, m) {
   V[, 1L] <- start / sqrt(sum(Mod(start)^2))
   iterations <- 0L
   matvecs <- 0L
+  # Running ||A v_j|| scale so the breakdown test is relative (scale-invariant).
+  scale <- 0
   for (j in seq_len(m)) {
     w <- apply_operator(op, matrix(V[, j], n, 1L))[, 1L]
     matvecs <- matvecs + 1L
+    scale <- max(scale, sqrt(sum(Mod(w)^2)))
     for (i in seq_len(j)) {
       H[i, j] <- sum(Conj(V[, i]) * w)
       w <- w - H[i, j] * V[, i]
@@ -569,9 +870,10 @@ reference_arnoldi_cycle <- function(op, start, m) {
       w <- w - corr * V[, i]
     }
     beta <- sqrt(sum(Mod(w)^2))
-    H[j + 1L, j] <- beta
+    breakdown <- is.finite(beta) && beta <= 100 * .Machine$double.eps * scale
+    H[j + 1L, j] <- if (breakdown) 0 else beta
     iterations <- j
-    if (!is.finite(beta) || beta <= 100 * .Machine$double.eps || j == m) {
+    if (!is.finite(beta) || breakdown || j == m) {
       break
     }
     V[, j + 1L] <- w / beta
@@ -610,20 +912,51 @@ reference_arnoldi_ritz <- function(op, cycle, k, target, tol) {
   eig <- eigen(Hm)
   arnoldi_ritz_from_eigen(
     op, eig$values, eig$vectors, cycle$V, m, k, target, tol,
-    vectors_are_ritz = FALSE
+    vectors_are_ritz = FALSE,
+    value_scale = arnoldi_projected_scale(cycle$H)
   )
 }
 
 #' @keywords internal
+#' Ordering of Ritz values: by `target`, or by distance to `target_values`
+#' when the caller already knows which eigenvalues it wants (adjoint solve).
+arnoldi_order_indices <- function(values, target, target_values = NULL) {
+  if (!length(target_values)) {
+    return(order_indices(values, target))
+  }
+  distance <- vapply(
+    values,
+    function(v) min(Mod(v - target_values)),
+    numeric(1)
+  )
+  order(distance)
+}
+
+#' @keywords internal
+arnoldi_projected_scale <- function(H) {
+  H <- as.matrix(H)
+  if (!length(H)) {
+    return(0)
+  }
+  value <- sqrt(sum(Mod(H)^2))
+  if (is.finite(value)) value else 0
+}
+
+#' @keywords internal
+#' Projected (or refined) Ritz pairs for the k wanted values of a native
+#' Arnoldi/Krylov-Schur decomposition. Only the selected Ritz vectors are
+#' formed (one dgemm against V), never all m of them.
 native_arnoldi_ritz <- function(op, cycle, k, target, tol,
-                                extraction = c("projected_ritz", "refined_ritz")) {
+                                extraction = c("projected_ritz", "refined_ritz"),
+                                target_values = NULL) {
   extraction <- match.arg(extraction)
   m <- cycle$iterations
-  eig <- native_arnoldi_projected_ritz(cycle)
+  eig <- native_arnoldi_ritz_coefficients(cycle)
+  idx <- arnoldi_order_indices(eig$values, target, target_values)
+  idx <- idx[seq_len(min(k, length(idx)))]
+  values <- eig$values[idx]
+  value_scale <- arnoldi_projected_scale(cycle$H)
   if (identical(extraction, "refined_ritz")) {
-    idx <- order_indices(eig$values, target)
-    idx <- idx[seq_len(min(k, length(idx)))]
-    values <- eig$values[idx]
     refined <- native_arnoldi_refined_ritz_vectors(cycle, values)
     return(arnoldi_ritz_from_eigen(
       op,
@@ -637,14 +970,63 @@ native_arnoldi_ritz <- function(op, cycle, k, target, tol,
       vectors_are_ritz = TRUE,
       vectors_override = refined$vectors,
       extraction = "refined_ritz",
-      refined_residual_estimates = refined$refined_residual_estimates
+      refined_residual_estimates = refined$refined_residual_estimates,
+      value_scale = value_scale
     ))
   }
-  arnoldi_ritz_from_eigen(
-    op, eig$values, eig$vectors, cycle$V, m, k, target, tol,
-    vectors_are_ritz = TRUE,
-    extraction = "projected_ritz"
+  vectors <- native_arnoldi_ritz_vectors(
+    cycle,
+    eig$coefficients[, idx, drop = FALSE]
   )
+  arnoldi_ritz_from_eigen(
+    op, values, NULL, cycle$V, m, k, target, tol,
+    vectors_are_ritz = TRUE,
+    vectors_override = vectors,
+    extraction = "projected_ritz",
+    value_scale = value_scale
+  )
+}
+
+#' @keywords internal
+#' Relative realness test for Ritz values of a real operator: an imaginary
+#' part is treated as rounding when |Im(lambda)| <= 100 * eps * max(|lambda|,
+#' scale), with `scale` the projected-matrix norm. LAPACK returns exact zeros
+#' for real eigenvalues of a real matrix, so genuine conjugate pairs (however
+#' close to the real axis) stay complex.
+arnoldi_real_values <- function(values, scale = 0) {
+  if (!is.complex(values)) {
+    return(rep(TRUE, length(values)))
+  }
+  if (!length(values)) {
+    return(logical())
+  }
+  scale <- max(c(scale, Mod(values)), na.rm = TRUE)
+  abs(Im(values)) <= 100 * .Machine$double.eps * pmax(Mod(values), scale)
+}
+
+#' @keywords internal
+#' Real representative of complex vectors attached to real eigenvalues of a
+#' real operator: rotate each column so its largest entry is real and
+#' positive, then keep the real part. For a real eigenvalue the real part of an
+#' eigenvector is itself an eigenvector, so this only removes the arbitrary
+#' complex phase LAPACK (e.g. zgesvd in refined extraction) may attach.
+arnoldi_realify_vectors <- function(vectors) {
+  vectors <- as.matrix(vectors)
+  if (!is.complex(vectors)) {
+    return(vectors)
+  }
+  out <- matrix(0, nrow(vectors), ncol(vectors))
+  for (j in seq_len(ncol(vectors))) {
+    v <- vectors[, j]
+    pivot <- v[[which.max(Mod(v))]]
+    if (Mod(pivot) > 0) {
+      v <- v * (Conj(pivot) / Mod(pivot))
+    }
+    r <- Re(v)
+    nr <- sqrt(sum(r^2))
+    out[, j] <- if (is.finite(nr) && nr > 0) r / nr else r
+  }
+  out
 }
 
 #' @keywords internal
@@ -652,13 +1034,18 @@ arnoldi_ritz_from_eigen <- function(op, eigenvalues, eigenvectors, V, m, k, targ
                                     vectors_are_ritz,
                                     vectors_override = NULL,
                                     extraction = "projected_ritz",
-                                    refined_residual_estimates = NULL) {
+                                    refined_residual_estimates = NULL,
+                                    value_scale = NULL) {
   eig <- list(values = eigenvalues, vectors = eigenvectors)
   idx <- order_indices(eig$values, target)
   idx <- idx[seq_len(min(k, length(idx)))]
   values <- eig$values[idx]
   if (!is.null(vectors_override)) {
-    vectors <- vectors_override[, seq_along(idx), drop = FALSE]
+    # vectors_override columns follow `eigenvalues`, so reorder them together.
+    vectors <- vectors_override[, idx, drop = FALSE]
+    if (length(refined_residual_estimates) == length(eigenvalues)) {
+      refined_residual_estimates <- refined_residual_estimates[idx]
+    }
   } else if (isTRUE(vectors_are_ritz)) {
     vectors <- eig$vectors[, idx, drop = FALSE]
   } else {
@@ -668,14 +1055,16 @@ arnoldi_ritz_from_eigen <- function(op, eigenvalues, eigenvectors, V, m, k, targ
   norms <- sqrt(colSums(Mod(vectors)^2))
   vectors <- sweep(vectors, 2L, pmax(norms, .Machine$double.eps), `/`)
 
-  if (max(abs(Im(values))) <= sqrt(tol) &&
-      max(abs(Im(vectors))) <= sqrt(tol)) {
+  if (length(values) &&
+      all(arnoldi_real_values(values, value_scale %||% 0))) {
     values <- Re(values)
-    vectors <- Re(vectors)
+    vectors <- arnoldi_realify_vectors(vectors)
   }
 
   cert <- tryCatch(
-    certify_general_eigen_operator(op, values, vectors, tol = tol),
+    certify_general_eigen_operator(
+      arnoldi_certificate_operator(op), values, vectors, tol = tol
+    ),
     error = function(e) {
       empty_certificate(
         tol,
