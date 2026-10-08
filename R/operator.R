@@ -602,7 +602,17 @@ is_square_symmetric <- function(x, tol = sqrt(.Machine$double.eps)) {
     return(FALSE)
   }
   if (inherits(x, "Matrix")) {
-    return(isTRUE(Matrix::isSymmetric(x, tol = tol)))
+    if (inherits(x, "symmetricMatrix")) {
+      return(TRUE)
+    }
+    # Matrix::isSymmetric(tol =) is absolute; scale it by the largest entry
+    # so a rescaled nonsymmetric matrix is never classified as symmetric.
+    values <- if (methods::.hasSlot(x, "x")) methods::slot(x, "x") else NULL
+    scale <- if (length(values)) max(abs(values)) else 1
+    if (!is.finite(scale)) {
+      return(FALSE)
+    }
+    return(isTRUE(Matrix::isSymmetric(x, tol = tol * scale)))
   }
   if (is.matrix(x) && is.double(x)) {
     return(isTRUE(.Call("eigencore_dense_is_symmetric", x, as.numeric(tol), PACKAGE = "eigencore")))

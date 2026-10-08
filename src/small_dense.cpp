@@ -1020,7 +1020,9 @@ extern "C" SEXP eigencore_dense_is_symmetric(SEXP A_, SEXP tol_) {
   }
   const double tol = asReal(tol_);
   const double* A = REAL(A_);
-  double scale = 1.0;
+  // Relative to the largest entry (no floor at 1) so a rescaled
+  // nonsymmetric matrix is never classified as symmetric.
+  double scale = 0.0;
   for (int64_t i = 0; i < static_cast<int64_t>(n) * n; ++i) {
     // Non-finite entries cannot certify symmetry.
     if (!R_FINITE(A[i])) {

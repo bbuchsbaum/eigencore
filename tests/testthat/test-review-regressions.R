@@ -180,3 +180,19 @@ test_that("tridiagonal preconditioner accepts symmetric storage", {
   expect_equal(unclass(p_base(R)), expected, ignore_attr = TRUE)
   expect_equal(unclass(p_sym(R)), expected, ignore_attr = TRUE)
 })
+
+test_that("rescaled nonsymmetric matrices are not classified as symmetric", {
+  set.seed(309)
+  A <- matrix(rnorm(400), 20)
+  ref <- eigen(A, only.values = TRUE)$values
+  for (s in c(1, 1e-9, 1e-12)) {
+    B <- A * s
+    S <- methods::as(Matrix::Matrix(B, sparse = TRUE), "generalMatrix")
+    expect_identical(as_operator(B)$structure$kind, "general")
+    expect_identical(as_operator(S)$structure$kind, "general")
+    fit <- eig_partial(B, k = 2, target = largest_magnitude())
+    expect_equal(sort(Mod(fit$values)) / s, sort(Mod(ref))[19:20],
+                 tolerance = 1e-8)
+  }
+  expect_identical(as_operator(diag(3) * 1e-300)$structure$kind, "hermitian")
+})
