@@ -149,10 +149,10 @@ test_that("structured grid planner negatives route away from separable prototype
     )$method,
     grid_label
   ))
-  expect_false(identical(
-    plan_solver(eigen_problem(op, target = smallest()), k = 10L)$method,
-    grid_label
-  ))
+  expect_error(
+    plan_solver(eigen_problem(op, target = smallest()), k = 10L),
+    "between 1 and 9"
+  )
   expect_false(identical(
     plan_solver(
       eigen_problem(op, target = smallest()),
