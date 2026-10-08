@@ -985,8 +985,8 @@ test_that("known limitations document complex ABI certificate contract", {
     "`V^* V`",
     "`A v - sigma u`",
     "`A^* u - sigma v`",
-    "Explicit dense complex sources use exact Frobenius scales",
-    "`norm_bound_type = \"frobenius_metadata\"`",
+    "Scales are 2-norm values that are exact or lower bounds",
+    "`norm_bound_type = \"two_norm_exact\"`",
     "`scale_is_estimate = FALSE`",
     "Complex matrix-free solver operators fail with actionable future-scope messages"
   )

@@ -4,6 +4,26 @@
 #' @param ... Reserved for future methods.
 #' @return The `eigencore_certificate` object stored on `x`, or `NULL` if the
 #'   result does not carry a certificate field.
+#' @details
+#' Backward errors use the standard normwise 2-norm definition:
+#' `||A x - lambda B x|| / ((||A||_2 + |lambda| ||B||_2) ||x||)` for eigenpairs
+#' and `sqrt(||A v - sigma u||^2 + ||A^H u - sigma v||^2) / ||A||_2` for
+#' singular triplets. The norms in the denominator are exact or LOWER bounds
+#' (never estimates), so the reported backward error is never smaller than the
+#' true one and `passed` is sound. Fields describing the scale:
+#' \describe{
+#'   \item{`norm_bound_type`}{`"two_norm_exact"` or `"two_norm_lower_bound"`
+#'     (eigen certificates report `A+B` parts; `B = I` is
+#'     `"identity_exact"`).}
+#'   \item{`norm_source`}{Where each value came from: `"diagonal"`,
+#'     `"full_spectrum"`, `"metadata"` (an operator's `metadata$two_norm`),
+#'     `"column_norms"`, `"applied_vectors"` (`||A x|| / ||x||` for the
+#'     certified vectors), `"ritz"` (residual-corrected Ritz values),
+#'     `"frobenius_rank_bound"`, or `"lanczos"` (a short deterministic
+#'     Krylov estimate run only when it could change the verdict).}
+#'   \item{`norm_values`}{The values used, named `A` (and `B`).}
+#'   \item{`scale_is_estimate`}{Always `FALSE` for built-in certificates.}
+#' }
 #' @examples
 #' fit <- eig_partial(diag(c(3, 2, 1)), k = 1, target = largest())
 #' cert <- certificate(fit)
@@ -199,7 +219,8 @@ backward_error <- function(x, ...) {
 
 #' @keywords internal
 certify_eigen <- function(A, values, vectors, B = NULL, tol = 1e-8,
-                          require_orthogonality = TRUE) {
+                          require_orthogonality = TRUE,
+                          full_spectrum = NULL) {
   if (is.complex(A) || is.complex(values) || is.complex(vectors) ||
       (!is.null(B) && is.complex(B))) {
     return(certify_dense_eigen_r_residual(
@@ -209,18 +230,61 @@ certify_eigen <- function(A, values, vectors, B = NULL, tol = 1e-8,
       B = B,
       tol = tol,
       require_orthogonality = require_orthogonality,
-      norm_bound_type = "frobenius_exact"
+      full_spectrum = full_spectrum
     ))
   }
   diag <- native_dense_eigen_certificate(A, values, vectors, B = B, tol = tol)
+  norm <- eigen_two_norm_backward(
+    A, values, diag$residuals, diag$vector_norms, tol,
+    B = B,
+    free_A = list(
+      applied_bound(diag$norm_A_applied_bound),
+      full_spectrum_bound(full_spectrum, B)
+    ),
+    free_B = list(applied_bound(diag$norm_B_applied_bound)),
+    structural_A = native_column_bound(diag$norm_A_column_bound),
+    structural_B = if (!is.null(B)) native_column_bound(diag$norm_B_column_bound)
+  )
+  eigen_certificate_from_norms(
+    norm, tol, diag$residuals, diag$orthogonality,
+    require_orthogonality = require_orthogonality
+  )
+}
+
+# All eigenvalues of a Hermitian A (B = NULL) give ||A||_2 = max |lambda|
+# exactly (up to rounding).
+#' @keywords internal
+full_spectrum_bound <- function(full_spectrum, B = NULL) {
+  if (is.null(full_spectrum) || !is.null(B) || !length(full_spectrum) ||
+      !all(is.finite(Mod(full_spectrum)))) {
+    return(NULL)
+  }
+  cert_norm_bound(max(Mod(full_spectrum)), exact = TRUE,
+                  source = "full_spectrum")
+}
+
+#' @keywords internal
+eigen_certificate_from_norms <- function(norm, tol, residuals, orthogonality,
+                                         converged = NULL,
+                                         notes = character(),
+                                         certificate_type = "residual_backward_error",
+                                         require_orthogonality = TRUE) {
+  if (is.null(converged)) {
+    converged <- is.finite(norm$backward) & norm$backward <= tol
+  }
   new_certificate(
     tol = tol,
-    residuals = diag$residuals,
-    backward_error = diag$backward_error,
-    orthogonality = diag$orthogonality,
-    converged = diag$converged,
-    scale = diag$scale,
-    norm_bound_type = "frobenius_exact",
+    residuals = residuals,
+    backward_error = norm$backward,
+    orthogonality = orthogonality,
+    converged = converged,
+    scale = norm$scale,
+    notes = notes,
+    certificate_type = certificate_type,
+    norm_bound_type = norm$norm_bound_type,
+    norm_source = norm$norm_source,
+    norm_values = norm$norms,
+    frobenius_norm = norm$frobenius_norm,
     require_orthogonality = require_orthogonality
   )
 }
@@ -229,7 +293,7 @@ certify_eigen <- function(A, values, vectors, B = NULL, tol = 1e-8,
 certify_dense_eigen_r_residual <- function(A, values, vectors, B = NULL,
                                            tol = 1e-8,
                                            require_orthogonality = TRUE,
-                                           norm_bound_type = "frobenius_exact") {
+                                           full_spectrum = NULL) {
   A <- as.matrix(A)
   vectors <- as.matrix(vectors)
   values <- as.vector(values)
@@ -237,23 +301,26 @@ certify_dense_eigen_r_residual <- function(A, values, vectors, B = NULL,
   if (ncol(vectors) != k) {
     stop("values and vectors must have compatible dimensions.", call. = FALSE)
   }
+  Av <- A %*% vectors
   Bv <- if (is.null(B)) vectors else as.matrix(B) %*% vectors
-  residual_matrix <- A %*% vectors - sweep(Bv, 2L, values, `*`)
+  residual_matrix <- Av - sweep(Bv, 2L, values, `*`)
   residuals <- col_norms(residual_matrix)
-  norm_A <- matrix_norm(A)
-  norm_B <- if (is.null(B)) 1 else matrix_norm(B)
-  scale <- eigen_backward_scale(norm_A, norm_B, values, vectors)
-  backward <- residuals / pmax(scale, .Machine$double.eps)
+  vec_norms <- col_norms(vectors)
+  norm <- eigen_two_norm_backward(
+    A, values, residuals, vec_norms, tol,
+    B = B,
+    free_A = list(
+      bound_from_ratios(col_norms(Av), vec_norms, "applied_vectors"),
+      full_spectrum_bound(full_spectrum, B)
+    ),
+    free_B = if (!is.null(B)) {
+      list(bound_from_ratios(col_norms(Bv), vec_norms, "applied_vectors"))
+    }
+  )
   gram <- if (is.null(B)) certificate_gram(vectors) else certificate_gram(vectors, Bv)
   orth <- max(abs(gram - diag(k)))
-  new_certificate(
-    tol = tol,
-    residuals = residuals,
-    backward_error = backward,
-    orthogonality = orth,
-    converged = backward <= tol,
-    scale = scale,
-    norm_bound_type = norm_bound_type,
+  eigen_certificate_from_norms(
+    norm, tol, residuals, orth,
     require_orthogonality = require_orthogonality
   )
 }
@@ -265,14 +332,17 @@ certify_eigen_operator <- function(Aop, values, vectors, Bop = NULL, tol = 1e-8)
   native <- native_builtin_eigen_certificate(Aop, values, vectors, Bop = Bop, tol = tol)
   if (!is.null(native)) {
     diag <- native$diagnostics
-    return(new_certificate(
-      tol = tol,
-      residuals = diag$residuals,
-      backward_error = diag$backward_error,
-      orthogonality = diag$orthogonality,
-      converged = diag$converged,
-      scale = diag$scale,
-      norm_bound_type = native$norm_bound_type
+    norm <- eigen_two_norm_backward(
+      Aop, values, diag$residuals,
+      diag$vector_norms %||% col_norms(vectors), tol,
+      B = Bop,
+      free_A = list(applied_bound(diag$norm_A_applied_bound)),
+      free_B = list(applied_bound(diag$norm_B_applied_bound)),
+      structural_A = native_column_bound(diag$norm_A_column_bound),
+      structural_B = native_column_bound(diag$norm_B_column_bound)
+    )
+    return(eigen_certificate_from_norms(
+      norm, tol, diag$residuals, diag$orthogonality
     ))
   }
 
@@ -281,31 +351,18 @@ certify_eigen_operator <- function(Aop, values, vectors, Bop = NULL, tol = 1e-8)
   Bv <- if (is.null(Bop)) vectors else apply_operator(Bop, vectors)
   residual_matrix <- Av - sweep(Bv, 2L, values, `*`)
   residuals <- col_norms(residual_matrix)
-  norm_A <- operator_norm_for_certificate_info(Aop)
-  norm_B <- if (is.null(Bop)) {
-    list(value = 1, norm_bound_type = "identity_exact", scale_is_estimate = FALSE)
-  } else {
-    operator_norm_for_certificate_info(Bop)
-  }
-  scale <- eigen_backward_scale(
-    norm_A$value,
-    norm_B$value,
-    values,
-    vectors
+  vec_norms <- col_norms(vectors)
+  norm <- eigen_two_norm_backward(
+    Aop, values, residuals, vec_norms, tol,
+    B = Bop,
+    free_A = list(bound_from_ratios(col_norms(Av), vec_norms, "applied_vectors")),
+    free_B = if (!is.null(Bop)) {
+      list(bound_from_ratios(col_norms(Bv), vec_norms, "applied_vectors"))
+    }
   )
-  backward <- residuals / pmax(scale, .Machine$double.eps)
   gram <- if (is.null(Bop)) certificate_gram(vectors) else certificate_gram(vectors, Bv)
   orth <- max(abs(gram - diag(k)))
-  new_certificate(
-    tol = tol,
-    residuals = residuals,
-    backward_error = backward,
-    orthogonality = orth,
-    converged = backward <= tol,
-    scale = scale,
-    norm_bound_type = paste(c(norm_A$norm_bound_type, norm_B$norm_bound_type), collapse = "+"),
-    scale_is_estimate = isTRUE(norm_A$scale_is_estimate) || isTRUE(norm_B$scale_is_estimate)
-  )
+  eigen_certificate_from_norms(norm, tol, residuals, orth)
 }
 
 #' @keywords internal
@@ -317,23 +374,47 @@ certify_dense_general_eigen <- function(A, values, vectors, tol = 1e-8) {
   if (ncol(vectors) != k) {
     stop("values and vectors must have compatible dimensions.", call. = FALSE)
   }
-  residual_matrix <- A %*% vectors - sweep(vectors, 2L, values, `*`)
+  Av <- A %*% vectors
+  residual_matrix <- Av - sweep(vectors, 2L, values, `*`)
   residuals <- col_norms(residual_matrix)
-  scale <- eigen_backward_scale(matrix_norm(A), 1, values, vectors)
-  backward <- residuals / pmax(scale, .Machine$double.eps)
+  vec_norms <- col_norms(vectors)
+  norm <- eigen_two_norm_backward(
+    A, values, residuals, vec_norms, tol,
+    free_A = list(bound_from_ratios(col_norms(Av), vec_norms, "applied_vectors"))
+  )
   gram <- certificate_gram(vectors)
   orth <- max(abs(gram - diag(k)))
-  new_certificate(
-    tol = tol,
-    residuals = residuals,
-    backward_error = backward,
-    orthogonality = orth,
-    converged = backward <= tol,
-    scale = scale,
+  eigen_certificate_from_norms(
+    norm, tol, residuals, orth,
     notes = "right residual certificate for dense general eigenpairs; eigenvector orthogonality is not required",
     certificate_type = "right_residual_backward_error",
-    norm_bound_type = "frobenius_exact",
     require_orthogonality = FALSE
+  )
+}
+
+# Apply a real operator (or its adjoint) to a possibly complex block as two
+# real applies, so sparse or matrix-free sources are never densified for
+# complex eigenvectors (C39). Complex-typed operators get the block as is.
+#' @keywords internal
+apply_operator_split_complex <- function(op, X, adjoint = FALSE) {
+  f <- if (isTRUE(adjoint)) apply_adjoint_operator else apply_operator
+  if (!is.complex(X) || !identical(op$dtype %||% "double", "double")) {
+    return(as.matrix(f(op, X)))
+  }
+  X <- as.matrix(X)
+  p <- ncol(X)
+  out <- as.matrix(f(op, cbind(Re(X), Im(X))))
+  if (is.complex(out)) {
+    return(out[, seq_len(p), drop = FALSE] +
+             1i * out[, p + seq_len(p), drop = FALSE])
+  }
+  matrix(
+    complex(
+      real = out[, seq_len(p), drop = FALSE],
+      imaginary = out[, p + seq_len(p), drop = FALSE]
+    ),
+    nrow(out),
+    p
   )
 }
 
@@ -343,30 +424,20 @@ certify_general_eigen_operator <- function(Aop, values, vectors, tol = 1e-8) {
   on.exit(work_phase_exit(work_phase), add = TRUE)
   values <- as.vector(values)
   vectors <- as.matrix(vectors)
-  source <- source_or_null(Aop) %||% Aop$metadata$matrix %||% NULL
-  Av <- if (is.complex(vectors) && !is.null(source)) {
-    as.matrix(as.matrix(source) %*% vectors)
-  } else {
-    apply_operator(Aop, vectors)
-  }
+  Av <- apply_operator_split_complex(Aop, vectors)
   residual_matrix <- Av - sweep(vectors, 2L, values, `*`)
   residuals <- col_norms(residual_matrix)
-  norm_A <- operator_norm_for_certificate_info(Aop)
-  scale <- eigen_backward_scale(norm_A$value, 1, values, vectors)
-  backward <- residuals / pmax(scale, .Machine$double.eps)
+  vec_norms <- col_norms(vectors)
+  norm <- eigen_two_norm_backward(
+    Aop, values, residuals, vec_norms, tol,
+    free_A = list(bound_from_ratios(col_norms(Av), vec_norms, "applied_vectors"))
+  )
   gram <- certificate_gram(vectors)
   orth <- max(abs(gram - diag(length(values))))
-  new_certificate(
-    tol = tol,
-    residuals = residuals,
-    backward_error = backward,
-    orthogonality = orth,
-    converged = backward <= tol,
-    scale = scale,
+  eigen_certificate_from_norms(
+    norm, tol, residuals, orth,
     notes = "right residual certificate for general eigenpairs; eigenvector orthogonality is not required",
     certificate_type = "right_residual_backward_error",
-    norm_bound_type = norm_A$norm_bound_type,
-    scale_is_estimate = isTRUE(norm_A$scale_is_estimate),
     require_orthogonality = FALSE
   )
 }
@@ -382,18 +453,15 @@ certify_left_eigen_operator <- function(Aop, values, left_vectors,
     stop("values and left_vectors must have compatible dimensions.", call. = FALSE)
   }
 
-  adjoint_op <- adjoint(Aop)
-  source <- source_or_null(adjoint_op) %||% adjoint_op$metadata$matrix %||% NULL
-  Astar_w <- if (is.complex(left_vectors) && !is.null(source)) {
-    as.matrix(as.matrix(source) %*% left_vectors)
-  } else {
-    apply_operator(adjoint_op, left_vectors)
-  }
+  Astar_w <- apply_operator_split_complex(Aop, left_vectors, adjoint = TRUE)
   residual_matrix <- Astar_w - sweep(left_vectors, 2L, values, `*`)
   left_residuals <- col_norms(residual_matrix)
-  norm_A <- operator_norm_for_certificate_info(Aop)
-  scale <- eigen_backward_scale(norm_A$value, 1, values, left_vectors)
-  backward <- left_residuals / pmax(scale, .Machine$double.eps)
+  vec_norms <- col_norms(left_vectors)
+  # ||A^H w|| / ||w|| <= ||A^H||_2 = ||A||_2.
+  norm <- eigen_two_norm_backward(
+    Aop, values, left_residuals, vec_norms, tol,
+    free_A = list(bound_from_ratios(col_norms(Astar_w), vec_norms, "applied_vectors"))
+  )
 
   biorthogonality <- numeric()
   if (!is.null(right_vectors)) {
@@ -402,17 +470,10 @@ certify_left_eigen_operator <- function(Aop, values, left_vectors,
     biorthogonality <- max(abs(cross - diag(length(values))))
   }
 
-  new_certificate(
-    tol = tol,
-    residuals = list(left = left_residuals),
-    backward_error = backward,
-    orthogonality = biorthogonality,
-    converged = backward <= tol,
-    scale = scale,
+  eigen_certificate_from_norms(
+    norm, tol, list(left = left_residuals), biorthogonality,
     notes = "left residual and biorthogonality certificate for nonsymmetric eigenpairs",
     certificate_type = "left_residual_biorthogonal_backward_error",
-    norm_bound_type = norm_A$norm_bound_type,
-    scale_is_estimate = isTRUE(norm_A$scale_is_estimate),
     require_orthogonality = !is.null(right_vectors)
   )
 }
@@ -422,30 +483,24 @@ certify_eigen_operator_residuals <- function(Aop, values, vectors, residuals,
                                              Bop = NULL, tol = 1e-8) {
   work_phase <- work_phase_enter("certification")
   on.exit(work_phase_exit(work_phase), add = TRUE)
-  norm_A <- operator_norm_for_certificate_info(Aop)
-  norm_B <- if (is.null(Bop)) {
-    list(value = 1, norm_bound_type = "identity_exact", scale_is_estimate = FALSE)
-  } else {
-    operator_norm_for_certificate_info(Bop)
-  }
-  scale <- eigen_backward_scale(norm_A$value, norm_B$value, values, vectors)
-  backward <- residuals / pmax(scale, .Machine$double.eps)
+  vec_norms <- col_norms(vectors)
+  Bv <- NULL
   if (is.null(Bop)) {
     orth <- orthogonality_loss(vectors)
   } else {
     Bv <- apply_operator(Bop, vectors)
     orth <- max(abs(crossprod(vectors, Bv) - diag(length(values))))
   }
-  new_certificate(
-    tol = tol,
-    residuals = residuals,
-    backward_error = backward,
-    orthogonality = orth,
-    converged = backward <= tol,
-    scale = scale,
-    norm_bound_type = paste(c(norm_A$norm_bound_type, norm_B$norm_bound_type), collapse = "+"),
-    scale_is_estimate = isTRUE(norm_A$scale_is_estimate) || isTRUE(norm_B$scale_is_estimate)
+  bv_norms <- if (is.null(Bv)) vec_norms else col_norms(Bv)
+  norm <- eigen_two_norm_backward(
+    Aop, values, residuals, vec_norms, tol,
+    B = Bop,
+    free_A = list(eigen_ritz_bound(values, residuals, vec_norms, bv_norms)),
+    free_B = if (!is.null(Bop)) {
+      list(bound_from_ratios(bv_norms, vec_norms, "applied_vectors"))
+    }
   )
+  eigen_certificate_from_norms(norm, tol, residuals, orth)
 }
 
 #' @keywords internal
@@ -455,35 +510,23 @@ certify_svd <- function(A, d, u, v, tol = 1e-8) {
     d <- as.vector(d)
     u <- as.matrix(u)
     v <- as.matrix(v)
-    left_residual_matrix <- A %*% v - sweep(u, 2L, d, `*`)
-    right_residual_matrix <- Conj(t(A)) %*% u - sweep(v, 2L, d, `*`)
-    left <- col_norms(left_residual_matrix)
-    right <- col_norms(right_residual_matrix)
-    combined <- sqrt(left^2 + right^2)
-    scale <- svd_backward_scale(matrix_norm(A), d)
-    backward <- combined / scale
+    Av <- A %*% v
+    Ahu <- Conj(t(A)) %*% u
+    left <- col_norms(Av - sweep(u, 2L, d, `*`))
+    right <- col_norms(Ahu - sweep(v, 2L, d, `*`))
     orth_u <- max(abs(certificate_gram(u) - diag(length(d))))
     orth_v <- max(abs(certificate_gram(v) - diag(length(d))))
-    return(new_certificate(
-      tol = tol,
-      residuals = list(left = left, right = right, combined = combined),
-      backward_error = backward,
-      orthogonality = c(U = orth_u, V = orth_v),
-      converged = backward <= tol,
-      scale = scale,
-      norm_bound_type = "frobenius_exact"
+    applied <- max(0, c(
+      bound_from_ratios(col_norms(Av), col_norms(v), "applied_vectors")$value,
+      bound_from_ratios(col_norms(Ahu), col_norms(u), "applied_vectors")$value
+    ))
+    return(svd_certificate_from_residuals(
+      A, d, left, right, c(U = orth_u, V = orth_v), tol,
+      u = u, v = v, applied = applied
     ))
   }
   diag <- native_dense_svd_certificate(A, d, u, v, tol = tol)
-  new_certificate(
-    tol = tol,
-    residuals = list(left = diag$left, right = diag$right, combined = diag$combined),
-    backward_error = diag$backward_error,
-    orthogonality = diag$orthogonality,
-    converged = diag$converged,
-    scale = diag$scale,
-    norm_bound_type = "frobenius_exact"
-  )
+  svd_certificate_from_native_diagnostics(A, d, diag, tol, u = u, v = v)
 }
 
 #' @keywords internal
@@ -492,37 +535,29 @@ certify_svd_operator <- function(Aop, d, u, v, tol = 1e-8) {
   on.exit(work_phase_exit(work_phase), add = TRUE)
   native <- native_builtin_svd_certificate(Aop, d, u, v, tol = tol)
   if (!is.null(native)) {
-    diag <- native$diagnostics
-    return(new_certificate(
-      tol = tol,
-      residuals = list(left = diag$left, right = diag$right, combined = diag$combined),
-      backward_error = diag$backward_error,
-      orthogonality = diag$orthogonality,
-      converged = diag$converged,
-      scale = diag$scale,
-      norm_bound_type = native$norm_bound_type
+    return(svd_certificate_from_native_diagnostics(
+      Aop, d, native$diagnostics, tol, u = u, v = v
     ))
   }
 
-  left_residual_matrix <- apply_operator(Aop, v) - sweep(u, 2L, d, `*`)
-  right_residual_matrix <- apply_adjoint_operator(Aop, u) - sweep(v, 2L, d, `*`)
-  left <- col_norms(left_residual_matrix)
-  right <- col_norms(right_residual_matrix)
-  combined <- sqrt(left^2 + right^2)
-  norm_A <- operator_norm_for_certificate_info(Aop)
-  scale <- svd_backward_scale(norm_A$value, d)
-  backward <- combined / scale
+  Av <- apply_operator(Aop, v)
+  Atu <- apply_adjoint_operator(Aop, u)
+  svd_certificate_from_applied(Aop, d, u, v, Av, Atu, tol)
+}
+
+#' @keywords internal
+svd_certificate_from_applied <- function(Aop, d, u, v, Av, Atu, tol) {
+  left <- col_norms(Av - sweep(u, 2L, d, `*`))
+  right <- col_norms(Atu - sweep(v, 2L, d, `*`))
+  applied <- max(0, c(
+    bound_from_ratios(col_norms(Av), col_norms(v), "applied_vectors")$value,
+    bound_from_ratios(col_norms(Atu), col_norms(u), "applied_vectors")$value
+  ))
   orth_u <- max(abs(certificate_gram(u) - diag(length(d))))
   orth_v <- max(abs(certificate_gram(v) - diag(length(d))))
-  new_certificate(
-    tol = tol,
-    residuals = list(left = left, right = right, combined = combined),
-    backward_error = backward,
-    orthogonality = c(U = orth_u, V = orth_v),
-    converged = backward <= tol,
-    scale = scale,
-    norm_bound_type = norm_A$norm_bound_type,
-    scale_is_estimate = isTRUE(norm_A$scale_is_estimate)
+  svd_certificate_from_residuals(
+    Aop, d, left, right, c(U = orth_u, V = orth_v), tol,
+    u = u, v = v, applied = applied
   )
 }
 
@@ -561,40 +596,16 @@ certify_svd_operator_cached_av <- function(Aop, d, u, v, Av, tol = 1e-8,
   if (!isTRUE(return_residual_vectors)) {
     native <- native_builtin_svd_certificate_cached_av(Aop, d, u, v, Av, tol = tol)
     if (!is.null(native)) {
-      diag <- native$diagnostics
-      return(new_certificate(
-        tol = tol,
-        residuals = list(left = diag$left, right = diag$right, combined = diag$combined),
-        backward_error = diag$backward_error,
-        orthogonality = diag$orthogonality,
-        converged = diag$converged,
-        scale = diag$scale,
-        norm_bound_type = native$norm_bound_type
+      return(svd_certificate_from_native_diagnostics(
+        Aop, d, native$diagnostics, tol, u = u, v = v
       ))
     }
     return(certify_svd_operator(Aop, d, u, v, tol = tol))
   }
   Av <- as.matrix(Av)
-  left_residual_matrix <- Av - sweep(u, 2L, d, `*`)
-  right_residual_matrix <- apply_adjoint_operator(Aop, u) - sweep(v, 2L, d, `*`)
-  left <- col_norms(left_residual_matrix)
-  right <- col_norms(right_residual_matrix)
-  combined <- sqrt(left^2 + right^2)
-  norm_A <- operator_norm_for_certificate_info(Aop)
-  scale <- svd_backward_scale(norm_A$value, d)
-  backward <- combined / scale
-  orth_u <- max(abs(certificate_gram(u) - diag(length(d))))
-  orth_v <- max(abs(certificate_gram(v) - diag(length(d))))
-  cert <- new_certificate(
-    tol = tol,
-    residuals = list(left = left, right = right, combined = combined),
-    backward_error = backward,
-    orthogonality = c(U = orth_u, V = orth_v),
-    converged = backward <= tol,
-    scale = scale,
-    norm_bound_type = norm_A$norm_bound_type,
-    scale_is_estimate = isTRUE(norm_A$scale_is_estimate)
-  )
+  Atu <- apply_adjoint_operator(Aop, u)
+  right_residual_matrix <- Atu - sweep(v, 2L, d, `*`)
+  cert <- svd_certificate_from_applied(Aop, d, u, v, Av, Atu, tol)
   list(certificate = cert, right_residual_vectors = right_residual_matrix)
 }
 
@@ -630,26 +641,7 @@ certify_svd_operator_cached_sides <- function(Aop, d, u, v, Av, Atu,
     stop("Atu must have nrow equal to ncol(Aop) and one column per singular value.",
          call. = FALSE)
   }
-  left_residual_matrix <- Av - sweep(u, 2L, d, `*`)
-  right_residual_matrix <- Atu - sweep(v, 2L, d, `*`)
-  left <- col_norms(left_residual_matrix)
-  right <- col_norms(right_residual_matrix)
-  combined <- sqrt(left^2 + right^2)
-  norm_A <- operator_norm_for_certificate_info(Aop)
-  scale <- svd_backward_scale(norm_A$value, d)
-  backward <- combined / scale
-  orth_u <- max(abs(certificate_gram(u) - diag(length(d))))
-  orth_v <- max(abs(certificate_gram(v) - diag(length(d))))
-  new_certificate(
-    tol = tol,
-    residuals = list(left = left, right = right, combined = combined),
-    backward_error = backward,
-    orthogonality = c(U = orth_u, V = orth_v),
-    converged = backward <= tol,
-    scale = scale,
-    norm_bound_type = norm_A$norm_bound_type,
-    scale_is_estimate = isTRUE(norm_A$scale_is_estimate)
-  )
+  svd_certificate_from_applied(Aop, d, u, v, Av, Atu, tol)
 }
 
 #' @keywords internal
@@ -658,7 +650,15 @@ new_certificate <- function(tol, residuals, backward_error, orthogonality,
                             certificate_type = "residual_backward_error",
                             norm_bound_type = "unspecified",
                             scale_is_estimate = FALSE,
-                            require_orthogonality = TRUE) {
+                            require_orthogonality = TRUE,
+                            norm_source = NA_character_,
+                            norm_values = numeric(),
+                            frobenius_norm = NA_real_) {
+  # A stochastic (unbounded) scale would make the backward error neither an
+  # upper nor a lower bound, so such certificates never pass. Every built-in
+  # certificate now scales by a two-norm value that is exact or a lower bound
+  # (C12), which keeps `passed` sound; the flag remains for callers that
+  # construct certificates from their own estimates.
   if (isTRUE(scale_is_estimate)) {
     notes <- c(notes, "certificate scale uses a stochastic norm estimate; passed is withheld")
   }
@@ -677,6 +677,8 @@ new_certificate <- function(tol, residuals, backward_error, orthogonality,
     orthogonality_required = isTRUE(require_orthogonality),
     certificate_type = certificate_type,
     norm_bound_type = norm_bound_type,
+    norm_source = norm_source,
+    norm_values = norm_values,
     scale_is_estimate = isTRUE(scale_is_estimate),
     max_backward_error = if (length(backward_error)) max(backward_error) else NA_real_,
     max_residual = max_residual_value(residuals),
@@ -690,6 +692,9 @@ new_certificate <- function(tol, residuals, backward_error, orthogonality,
     orthogonality = orthogonality,
     converged = converged
   )
+  if (length(frobenius_norm) == 1L && is.finite(frobenius_norm)) {
+    cert$frobenius_norm <- frobenius_norm
+  }
   class(cert) <- "eigencore_certificate"
   cert
 }
@@ -716,6 +721,9 @@ print.eigencore_certificate <- function(x, ...) {
   cat("  tolerance:", format(x$tolerance), "\n")
   cat("  type:", x$certificate_type, "\n")
   cat("  norm bound:", x$norm_bound_type, "\n")
+  if (!is.null(x$norm_source) && !is.na(x$norm_source[[1L]])) {
+    cat("  norm source:", x$norm_source, "\n")
+  }
   cat("  scale estimated:", x$scale_is_estimate, "\n")
   cat("  max residual:", format(x$max_residual), "\n")
   cat("  max backward error:", format(x$max_backward_error), "\n")
@@ -739,9 +747,17 @@ col_norms <- function(x) {
   .Call("eigencore_col_norms", as.matrix(x), PACKAGE = "eigencore")
 }
 
+# Certificate Gram V^H W. For W = V the symmetric product uses crossprod(),
+# which R evaluates with the BLAS symmetric rank-k update (dsyrk) (C32).
 #' @keywords internal
-certificate_gram <- function(x, y = x) {
+certificate_gram <- function(x, y = NULL) {
   x <- as.matrix(x)
+  if (is.null(y)) {
+    if (is.complex(x)) {
+      return(Conj(t(x)) %*% x)
+    }
+    return(crossprod(x))
+  }
   y <- as.matrix(y)
   if (is.complex(x) || is.complex(y)) {
     return(Conj(t(x)) %*% y)
@@ -813,6 +829,9 @@ native_dense_svd_certificate_cached_av <- function(A, d, u, v, Av, tol = 1e-8) {
   )
 }
 
+# Native residual kernels for built-in storages. Each returns the residual
+# diagnostics plus the applied-vector norm bound computed in the same call;
+# the backward error is (re)assembled in R with the two-norm bounds.
 #' @keywords internal
 native_builtin_eigen_certificate <- function(Aop, values, vectors, Bop = NULL, tol = 1e-8) {
   storage <- Aop$metadata$storage %||% NULL
@@ -823,16 +842,14 @@ native_builtin_eigen_certificate <- function(Aop, values, vectors, Bop = NULL, t
         is.matrix(B_source) && is.double(B_source)) {
       return(list(
         diagnostics = native_dense_eigen_certificate(source, values, vectors,
-                                                    B = B_source, tol = tol),
-        norm_bound_type = "frobenius_exact+frobenius_exact"
+                                                    B = B_source, tol = tol)
       ))
     }
     return(NULL)
   }
   if (is.matrix(source) && is.double(source)) {
     return(list(
-      diagnostics = native_dense_eigen_certificate(source, values, vectors, tol = tol),
-      norm_bound_type = "frobenius_exact+identity_exact"
+      diagnostics = native_dense_eigen_certificate(source, values, vectors, tol = tol)
     ))
   }
   if (identical(storage, "dgCMatrix")) {
@@ -846,11 +863,10 @@ native_builtin_eigen_certificate <- function(Aop, values, vectors, Bop = NULL, t
         methods::slot(A, "Dim"),
         as.numeric(values),
         as.matrix(vectors),
-        as.numeric(Aop$metadata$frobenius_norm),
+        as.numeric(two_norm_structural_bound(Aop)$value),
         as.numeric(tol),
         PACKAGE = "eigencore"
-      ),
-      norm_bound_type = "frobenius_metadata+identity_exact"
+      )
     ))
   }
   if (identical(storage, "ddiMatrix")) {
@@ -863,11 +879,10 @@ native_builtin_eigen_certificate <- function(Aop, values, vectors, Bop = NULL, t
         identical(methods::slot(A, "diag"), "U"),
         as.numeric(values),
         as.matrix(vectors),
-        as.numeric(Aop$metadata$frobenius_norm),
+        as.numeric(two_norm_structural_bound(Aop)$value),
         as.numeric(tol),
         PACKAGE = "eigencore"
-      ),
-      norm_bound_type = "frobenius_metadata+identity_exact"
+      )
     ))
   }
   NULL
@@ -875,27 +890,24 @@ native_builtin_eigen_certificate <- function(Aop, values, vectors, Bop = NULL, t
 
 #' @keywords internal
 native_tridiagonal_eigen_certificate <- function(Aop, parts, values, vectors, tol = 1e-8) {
-  norm_A <- operator_norm_for_certificate_info(Aop)
   diag <- .Call(
     "eigencore_tridiagonal_eigen_certificate",
     as.numeric(parts$diag),
     as.numeric(parts$upper),
     as.numeric(values),
     as.matrix(vectors),
-    as.numeric(norm_A$value),
+    as.numeric(two_norm_structural_bound(Aop)$value),
     as.numeric(tol),
     PACKAGE = "eigencore"
   )
-  new_certificate(
-    tol = tol,
-    residuals = diag$residuals,
-    backward_error = diag$backward_error,
-    orthogonality = diag$orthogonality,
-    converged = diag$converged,
-    scale = diag$scale,
-    norm_bound_type = paste(c(norm_A$norm_bound_type, "identity_exact"), collapse = "+"),
-    scale_is_estimate = isTRUE(norm_A$scale_is_estimate)
+  norm <- eigen_two_norm_backward(
+    Aop, values, diag$residuals, col_norms(vectors), tol,
+    free_A = list(
+      cert_norm_bound(diag$norm_A_column_bound, source = "column_norms"),
+      applied_bound(diag$norm_A_applied_bound)
+    )
   )
+  eigen_certificate_from_norms(norm, tol, diag$residuals, diag$orthogonality)
 }
 
 #' @keywords internal
@@ -904,8 +916,7 @@ native_builtin_svd_certificate <- function(Aop, d, u, v, tol = 1e-8) {
   source <- source_or_null(Aop)
   if (is.matrix(source) && is.double(source)) {
     return(list(
-      diagnostics = native_dense_svd_certificate(source, d, u, v, tol = tol),
-      norm_bound_type = "frobenius_exact"
+      diagnostics = native_dense_svd_certificate(source, d, u, v, tol = tol)
     ))
   }
   if (identical(storage, "dgCMatrix")) {
@@ -920,11 +931,10 @@ native_builtin_svd_certificate <- function(Aop, d, u, v, tol = 1e-8) {
         as.numeric(d),
         as.matrix(u),
         as.matrix(v),
-        as.numeric(Aop$metadata$frobenius_norm),
+        as.numeric(two_norm_structural_bound(Aop)$value),
         as.numeric(tol),
         PACKAGE = "eigencore"
-      ),
-      norm_bound_type = "frobenius_metadata"
+      )
     ))
   }
   if (identical(storage, "ddiMatrix")) {
@@ -938,11 +948,10 @@ native_builtin_svd_certificate <- function(Aop, d, u, v, tol = 1e-8) {
         as.numeric(d),
         as.matrix(u),
         as.matrix(v),
-        as.numeric(Aop$metadata$frobenius_norm),
+        as.numeric(two_norm_structural_bound(Aop)$value),
         as.numeric(tol),
         PACKAGE = "eigencore"
-      ),
-      norm_bound_type = "frobenius_metadata"
+      )
     ))
   }
   NULL
@@ -954,8 +963,7 @@ native_builtin_svd_certificate_cached_av <- function(Aop, d, u, v, Av, tol = 1e-
   source <- source_or_null(Aop)
   if (is.matrix(source) && is.double(source)) {
     return(list(
-      diagnostics = native_dense_svd_certificate_cached_av(source, d, u, v, Av, tol = tol),
-      norm_bound_type = "frobenius_exact"
+      diagnostics = native_dense_svd_certificate_cached_av(source, d, u, v, Av, tol = tol)
     ))
   }
   if (identical(storage, "dgCMatrix")) {
@@ -971,11 +979,10 @@ native_builtin_svd_certificate_cached_av <- function(Aop, d, u, v, Av, tol = 1e-
         as.matrix(u),
         as.matrix(v),
         as.matrix(Av),
-        as.numeric(Aop$metadata$frobenius_norm),
+        as.numeric(two_norm_structural_bound(Aop)$value),
         as.numeric(tol),
         PACKAGE = "eigencore"
-      ),
-      norm_bound_type = "frobenius_metadata"
+      )
     ))
   }
   if (identical(storage, "ddiMatrix")) {
@@ -990,11 +997,10 @@ native_builtin_svd_certificate_cached_av <- function(Aop, d, u, v, Av, tol = 1e-
         as.matrix(u),
         as.matrix(v),
         as.matrix(Av),
-        as.numeric(Aop$metadata$frobenius_norm),
+        as.numeric(two_norm_structural_bound(Aop)$value),
         as.numeric(tol),
         PACKAGE = "eigencore"
-      ),
-      norm_bound_type = "frobenius_metadata"
+      )
     ))
   }
   NULL
@@ -1052,35 +1058,26 @@ operator_norm_for_certificate <- function(op) {
   operator_norm_for_certificate_info(op)$value
 }
 
+# Pre-solve spectral-norm value for an operator: exact where cheap (identity,
+# diagonal, asserted metadata) and otherwise a structural LOWER bound (largest
+# column norm, or ||A||_F / sqrt(min(m, n))). Native kernels use it as the
+# floor of their relative convergence and breakdown scales; because it never
+# exceeds ||A||_2 those decisions are at least as strict as the certificate.
+# No operator applies and no randomness (the former Hutchinson Frobenius
+# estimate is gone, C12).
 #' @keywords internal
 operator_norm_for_certificate_info <- function(op) {
-  if (!is.null(op$metadata$frobenius_norm)) {
-    return(list(
-      value = op$metadata$frobenius_norm,
-      norm_bound_type = "frobenius_metadata",
-      scale_is_estimate = FALSE
-    ))
-  }
-  src <- source_or_null(op)
-  if (!is.null(src)) {
-    return(list(
-      value = matrix_norm(src),
-      norm_bound_type = "frobenius_exact",
-      scale_is_estimate = FALSE
-    ))
-  }
+  info <- two_norm_structural_bound(op)
   list(
-    value = operator_memoised_value(
-      op, "frobenius_hutchinson_estimate", estimate_operator_frobenius_norm(op)
-    ),
-    norm_bound_type = "frobenius_hutchinson_estimate",
-    scale_is_estimate = TRUE
+    value = info$value,
+    norm_bound_type = if (isTRUE(info$exact)) "two_norm_exact" else "two_norm_lower_bound",
+    norm_source = info$source,
+    scale_is_estimate = FALSE
   )
 }
 
-# Session-level memo for per-operator values such as the Hutchinson norm
-# estimate (P7), which otherwise costs 8 operator applies (8 factorised solves
-# for shift-invert) on every certificate. Entries are keyed by the
+# Session-level memo for per-operator values such as the structural and
+# Krylov two-norm bounds. Entries are keyed by the
 # construction token linear_operator() assigns, and reused only while the
 # operator still carries its construction-time metadata and apply closure, so
 # an operator whose fields were replaced after construction recomputes. The
@@ -1110,18 +1107,4 @@ operator_memoised_value <- function(op, key, value) {
   }
   assign(memo_key, value, envir = .eigencore_operator_memo)
   value
-}
-
-#' @keywords internal
-estimate_operator_frobenius_norm <- function(op) {
-  # Hutchinson-style Frobenius estimate used only when a matrix-free operator
-  # has no explicit norm metadata. It keeps certificate scaling consistent in
-  # form, but native solvers should pass exact or bounded operator norms.
-  probes <- min(8L, max(2L, op$dim[2L]))
-  norms <- numeric(probes)
-  for (i in seq_len(probes)) {
-    z <- matrix(sample(c(-1, 1), op$dim[2L], replace = TRUE), op$dim[2L], 1L)
-    norms[[i]] <- sum(apply_operator(op, z)^2)
-  }
-  sqrt(mean(norms))
 }

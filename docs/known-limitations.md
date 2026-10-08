@@ -55,8 +55,11 @@ materialized dense state.
 Certificates are central to the package contract and are stronger than a raw
 eigenvalue or singular-value return. Current limitations:
 
-- Stochastic norm-scale estimates must not produce an unqualified passed
-  certificate.
+- Backward errors use the normwise 2-norm definition with a denominator that
+  is exact or a lower bound on `||A||_2` (and `||B||_2`); stochastic norm
+  estimates must never enter a certificate scale (C12). A lower bound can be
+  weak for smallest targets of operators with no norm information, which
+  over-states the backward error (sound, but it can fail accurate pairs).
 - Any new V3 solver promotion still needs dense/operator certificate agreement
   tests.
 - Generalized and shift-invert certificates must continue to certify the
@@ -76,11 +79,12 @@ transpose action `A^* X = Conj(t(A)) X`.
 Complex certificates use the same residual formulas as the real paths, but
 with conjugate inner products: eigen/SVD orthogonality is computed as `V^* V`,
 and SVD residuals are the exact two-sided pair `A v - sigma u` and
-`A^* u - sigma v`. Explicit dense complex sources use exact Frobenius scales;
-complex matrix-free callbacks with explicit Frobenius norm metadata can be
-certified directly with `norm_bound_type = "frobenius_metadata"` and
-`scale_is_estimate = FALSE`. Estimated-norm complex callbacks cannot produce a
-passed certificate.
+`A^* u - sigma v`. Scales are 2-norm values that are exact or lower bounds
+(`norm_bound_type = "two_norm_exact"` or `"two_norm_lower_bound"`), with
+`scale_is_estimate = FALSE`: explicit dense complex sources use column norms
+and the certified vectors, and complex matrix-free callbacks are certified
+directly from `||A x|| / ||x||` of their vectors (plus Frobenius or
+`two_norm` metadata when supplied).
 
 ## Planner Labels
 

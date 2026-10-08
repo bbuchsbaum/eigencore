@@ -407,15 +407,8 @@ native_block_golub_kahan_retained_cycle_svd <- function(op, rank,
         op, ritz$d, ritz$u, ritz$v, ritz$Avectors, tol = tol
       ))
     }
-    new_certificate(
-      tol = tol,
-      residuals = list(left = diag$left, right = diag$right, combined = diag$combined),
-      backward_error = diag$backward_error,
-      orthogonality = diag$orthogonality,
-      converged = diag$converged,
-      scale = diag$scale,
-      norm_bound_type = norm_info$norm_bound_type,
-      scale_is_estimate = isTRUE(norm_info$scale_is_estimate)
+    svd_certificate_from_native_diagnostics(
+      op, ritz$d, diag, tol, u = ritz$u, v = ritz$v
     )
   }
 

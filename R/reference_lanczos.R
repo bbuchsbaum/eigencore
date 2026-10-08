@@ -605,14 +605,13 @@ reference_lanczos_ritz_bound_converged <- function(op, alpha, beta, k, target, t
   }
   theta <- eig$values[idx]
   bound <- abs(beta[[j]] * eig$vectors[j, idx])
-  # Same backward-error scale as certify_eigen_operator() for unit vectors;
-  # the norm (exact, metadata, or a Hutchinson estimate) is memoised per
-  # operator, so this adds no operator applies after the first call.
-  norm_A <- local({
-    work_phase <- work_phase_enter("certification")
-    on.exit(work_phase_exit(work_phase), add = TRUE)
-    operator_norm_for_certificate_info(op)$value
-  })
+  # Same backward-error form as certify_eigen_operator() for unit vectors,
+  # with a spectral-norm LOWER bound: the structural bound (no applies) or
+  # max |theta| over all Ritz values of T = Q'AQ, whichever is larger. The
+  # scale never exceeds ||A||_2 (C12); if the certificate's own bound for the
+  # returned vectors ends up smaller, it refines it before failing a pair.
+  norm_A <- max(operator_norm_for_certificate_info(op)$value,
+                max(abs(eig$values)))
   scale <- pmax(norm_A + abs(theta), .Machine$double.eps)
   all(is.finite(bound)) && all(bound / scale <= tol)
 }

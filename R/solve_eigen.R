@@ -707,7 +707,8 @@ solve_eigen_native_dense_hermitian <- function(a, k, tol, vectors, certify,
     vecs <- if (vectors) eig$vectors[, idx, drop = FALSE] else NULL
   }
   cert <- if (certify && !is.null(vecs)) {
-    certify_eigen(A, vals, vecs, tol = tol)
+    certify_eigen(A, vals, vecs, tol = tol,
+                  full_spectrum = if (!selected_range) eig$values)
   } else {
     empty_certificate(tol, note = "vectors not returned; residual certificate not computed")
   }

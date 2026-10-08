@@ -473,38 +473,15 @@ native_irlba_lbd_attach_bpro_guard_diagnostics <- function(restart, abi, native,
 }
 
 #' @keywords internal
-native_svd_certificate_from_diagnostics <- function(diagnostics, tol,
-                                                    norm_info,
+native_svd_certificate_from_diagnostics <- function(diagnostics, tol, op, d,
+                                                    u = NULL, v = NULL,
                                                     swap_sides = FALSE) {
-  if (is.null(diagnostics)) {
-    return(NULL)
-  }
-  left <- diagnostics$left
-  right <- diagnostics$right
-  orthogonality <- diagnostics$orthogonality
-  if (isTRUE(swap_sides)) {
-    left <- diagnostics$right
-    right <- diagnostics$left
-    if (length(orthogonality) >= 2L) {
-      orthogonality <- c(
-        U = unname(orthogonality[[2L]]),
-        V = unname(orthogonality[[1L]])
-      )
-    }
-  }
-  new_certificate(
-    tol = tol,
-    residuals = list(
-      left = left,
-      right = right,
-      combined = diagnostics$combined
-    ),
-    backward_error = diagnostics$backward_error,
-    orthogonality = orthogonality,
-    converged = diagnostics$converged,
-    scale = diagnostics$scale,
-    norm_bound_type = norm_info$norm_bound_type %||% "unspecified",
-    scale_is_estimate = isTRUE(norm_info$scale_is_estimate)
+  # Residuals come from the native kernel (computed from A in original
+  # coordinates); the backward error is reassembled with two-norm bounds
+  # (C12). `op` is the operator the residuals refer to (the transpose of an
+  # internally transposed problem has the same spectral norm).
+  svd_certificate_from_native_diagnostics(
+    op, d, diagnostics, tol, u = u, v = v, swap_sides = swap_sides
   )
 }
 
@@ -690,7 +667,10 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
       native_svd_certificate_from_diagnostics(
         native_diag,
         tol = tol,
-        norm_info = operator_norm_for_certificate_info(active_op)
+        op = active_op,
+        d = native$d,
+        u = native$u,
+        v = native$v
       )
     }
     if (is.null(cert)) {
@@ -1698,7 +1678,10 @@ native_golub_kahan_swap_transposed_result <- function(original_op, final, tol,
   cert <- native_svd_certificate_from_diagnostics(
     certificate_diagnostics,
     tol = tol,
-    norm_info = final$certificate,
+    op = original_op,
+    d = final$d,
+    u = u,
+    v = v,
     swap_sides = TRUE
   )
   if (is.null(cert)) {
@@ -1824,18 +1807,9 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     cert <- if (any(native$d <= zero_tol)) {
       certify_svd_operator(op, native$d, native$u, native$v, tol = tol)
     } else {
-      new_certificate(
-        tol = tol,
-        residuals = list(
-          left = native$diagnostics$left,
-          right = native$diagnostics$right,
-          combined = native$diagnostics$combined
-        ),
-        backward_error = native$diagnostics$backward_error,
-        orthogonality = native$diagnostics$orthogonality,
-        converged = native$diagnostics$converged,
-        scale = native$diagnostics$scale,
-        norm_bound_type = "frobenius_exact"
+      svd_certificate_from_native_diagnostics(
+        op, native$d, native$diagnostics, tol,
+        u = native$u, v = native$v
       )
     }
     u <- native$u
@@ -1924,18 +1898,9 @@ native_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
       zero_tol <- gram_svd_zero_tolerance(native$d, tol,
                                           norm_A = sqrt(sum(methods::slot(A, "x")^2)))
       if (!any(native$d <= zero_tol)) {
-        cert <- new_certificate(
-          tol = tol,
-          residuals = list(
-            left = native$diagnostics$left,
-            right = native$diagnostics$right,
-            combined = native$diagnostics$combined
-          ),
-          backward_error = native$diagnostics$backward_error,
-          orthogonality = native$diagnostics$orthogonality,
-          converged = native$diagnostics$converged,
-          scale = native$diagnostics$scale,
-          norm_bound_type = "frobenius_exact"
+        cert <- svd_certificate_from_native_diagnostics(
+          op, native$d, native$diagnostics, tol,
+          u = native$u, v = native$v
         )
         u <- native$u
         v <- native$v
@@ -2487,16 +2452,9 @@ reference_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
 }
 
 #' @keywords internal
-native_randomized_certificate_from_diagnostics <- function(diagnostics, tol) {
-  new_certificate(
-    tol = tol,
-    residuals = diagnostics$residuals,
-    backward_error = diagnostics$backward_error,
-    orthogonality = diagnostics$orthogonality,
-    converged = diagnostics$converged,
-    scale = diagnostics$scale,
-    norm_bound_type = "frobenius_exact"
-  )
+native_randomized_certificate_from_diagnostics <- function(diagnostics, tol,
+                                                           op, d, u, v) {
+  svd_certificate_from_native_diagnostics(op, d, diagnostics, tol, u = u, v = v)
 }
 
 #' @keywords internal
@@ -2532,11 +2490,13 @@ native_dense_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8
   )
   cert <- native_randomized_certificate_from_diagnostics(
     native$certificate_diagnostics,
-    tol = tol
+    tol = tol,
+    op = op, d = native$d, u = native$u, v = native$v
   )
   initial_cert <- native_randomized_certificate_from_diagnostics(
     native$initial_certificate_diagnostics,
-    tol = tol
+    tol = tol,
+    op = op, d = native$d, u = NULL, v = NULL
   )
 
   d <- native$d
@@ -2677,11 +2637,13 @@ native_csc_randomized_svd <- function(op, rank, target = largest(), tol = 1e-8,
   )
   cert <- native_randomized_certificate_from_diagnostics(
     native$certificate_diagnostics,
-    tol = tol
+    tol = tol,
+    op = op, d = native$d, u = native$u, v = native$v
   )
   initial_cert <- native_randomized_certificate_from_diagnostics(
     native$initial_certificate_diagnostics,
-    tol = tol
+    tol = tol,
+    op = op, d = native$d, u = NULL, v = NULL
   )
 
   d <- native$d
@@ -2842,26 +2804,20 @@ randomized_svd_core_decomposition <- function(core, rank, target = largest()) {
 #' @keywords internal
 certify_randomized_svd_projection <- function(op, apply_pair, core, small_u,
                                               d, u, v, tol = 1e-8) {
-  left_residual_matrix <- apply_pair$apply(v) - sweep(u, 2L, d, `*`)
+  Av <- apply_pair$apply(v)
+  left_residual_matrix <- Av - sweep(u, 2L, d, `*`)
   right_applied <- crossprod(core, small_u)
   right_residual_matrix <- right_applied - sweep(v, 2L, d, `*`)
   left <- col_norms(left_residual_matrix)
   right <- col_norms(right_residual_matrix)
-  combined <- sqrt(left^2 + right^2)
-  norm_A <- operator_norm_for_certificate_info(op)
-  scale <- svd_backward_scale(norm_A$value, d)
-  backward <- combined / scale
   orth_u <- max(abs(crossprod(u) - diag(length(d))))
   orth_v <- max(abs(crossprod(v) - diag(length(d))))
-  new_certificate(
-    tol = tol,
-    residuals = list(left = left, right = right, combined = combined),
-    backward_error = backward,
-    orthogonality = c(U = orth_u, V = orth_v),
-    converged = backward <= tol,
-    scale = scale,
-    norm_bound_type = norm_A$norm_bound_type,
-    scale_is_estimate = isTRUE(norm_A$scale_is_estimate)
+  # Only the forward product A v is applied here (the right side comes from
+  # the projected core), so only ||A v|| / ||v|| serves as an applied bound.
+  applied <- bound_from_ratios(col_norms(Av), col_norms(v), "applied_vectors")
+  svd_certificate_from_residuals(
+    op, d, left, right, c(U = orth_u, V = orth_v), tol,
+    applied = if (is.null(applied)) NULL else applied$value
   )
 }
 

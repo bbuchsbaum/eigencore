@@ -119,7 +119,11 @@ test_that("dgCMatrix norm metadata supports deterministic operator certificates"
   vals <- c(5, 3)
   cert <- eigencore:::certify_eigen_operator(op, vals, v)
 
-  expect_equal(cert$scale, eigencore:::eigen_backward_scale(sqrt(35), 1, vals, v))
+  # Two-norm scale (C12): the largest column norm, 5, equals ||A||_2 here.
+  expect_equal(cert$scale, eigencore:::eigen_backward_scale(5, 1, vals, v))
+  expect_identical(cert$norm_bound_type, "two_norm_lower_bound+identity_exact")
+  expect_equal(unname(cert$norm_values[["A"]]), 5)
+  expect_equal(cert$frobenius_norm, sqrt(35))
   expect_true(cert$passed)
 })
 

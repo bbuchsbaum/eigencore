@@ -395,8 +395,9 @@ test_that("fused centered-scaled CSC SVD uses a direct certified native cycle", 
   oracle_d <- svd(oracle, nu = 0, nv = 0)$d[seq_len(3L)]
 
   expect_true(fit$certificate$passed)
-  expect_identical(fit$certificate$norm_bound_type, "frobenius_metadata")
+  expect_identical(fit$certificate$norm_bound_type, "two_norm_lower_bound")
   expect_false(fit$certificate$scale_is_estimate)
+  expect_lte(fit$certificate$norm_values[["A"]], norm(oracle, "2") * (1 + 1e-12))
   expect_equal(fit$d, oracle_d, tolerance = 1e-9)
   expect_true(fit$restart$native)
   expect_false(fit$restart$matrix_free)

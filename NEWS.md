@@ -1,5 +1,34 @@
 # eigencore (development version)
 
+## Behaviour change: two-norm backward errors
+
+* Certificate backward errors now use the standard normwise 2-norm
+  definition, `||A x - lambda B x|| / ((||A||_2 + |lambda| ||B||_2) ||x||)`
+  for eigenpairs and `sqrt(||A v - s u||^2 + ||A^H u - s v||^2) / ||A||_2`
+  for singular triplets, instead of dividing by Frobenius norms (up to
+  `sqrt(rank)` times larger, so certificates were correspondingly more
+  lenient). Reported backward errors are larger than before, and results
+  whose residuals only met the Frobenius-scaled tolerance now fail.
+* The denominator is exact where cheap (diagonal matrices, a full computed
+  spectrum, `metadata$two_norm`) and otherwise a lower bound on `||A||_2`:
+  the largest column norm, `||A x|| / ||x||` of the certified vectors, or,
+  only when it could flip a failing pair, a short deterministic Lanczos
+  estimate memoised per operator (it does not use the random-number stream).
+  A lower bound over-states the backward error, so `passed` stays sound.
+* `norm_bound_type` values are now `"two_norm_exact"`,
+  `"two_norm_lower_bound"` and `"identity_exact"` (replacing
+  `frobenius_exact`, `frobenius_metadata` and
+  `frobenius_hutchinson_estimate`); new fields `norm_source` and
+  `norm_values` record where the scale came from. The stochastic Hutchinson
+  norm estimate is gone, so matrix-free operators without norm metadata now
+  certify (`scale_is_estimate` is always `FALSE` for built-in
+  certificates). Native solvers use the same lower bounds for their internal
+  convergence scales; the implicit Gram SVD kernel runs at `tol / 2` and,
+  if the exact certificate still fails, retries once at a tighter tolerance.
+* Certificates for complex eigenvectors of real sparse or matrix-free
+  operators apply the operator to real and imaginary parts instead of
+  densifying the source.
+
 ## Correctness fixes
 
 * `center(rows = TRUE, columns = TRUE)` now double centers correctly. Row

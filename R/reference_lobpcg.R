@@ -55,8 +55,9 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
   # NN-4: drive iteration termination from the same scale the certificate
   # uses (eigen_backward_scale = ||A||*||v|| + |lambda|*||B||*||v||) so
   # convergence declared here cannot disagree with cert$converged afterwards.
-  # operator_norm_for_certificate may invoke a Hutchinson estimate for
-  # matrix-free operators, so cache once outside the loop.
+  # The scale uses spectral-norm LOWER bounds (C12): the structural bound,
+  # raised by ||A x|| / ||x|| over the iterates, so it never exceeds ||A||_2
+  # (the certificate refines its own bound if this one ends up larger).
   norm_A_value <- operator_norm_for_certificate(op)
   norm_B_value <- if (is.null(Bop)) 1 else operator_norm_for_certificate(Bop)
 
@@ -68,6 +69,11 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
     values <- colSums(X * AX)
     R <- AX - sweep(BX, 2L, values, `*`)
     residual_norms <- col_norms(R)
+    x_norms <- col_norms(X)
+    norm_A_value <- max(norm_A_value, col_norms(AX) / pmax(x_norms, .Machine$double.xmin))
+    if (!is.null(Bop)) {
+      norm_B_value <- max(norm_B_value, col_norms(BX) / pmax(x_norms, .Machine$double.xmin))
+    }
     scale <- eigen_backward_scale(norm_A_value, norm_B_value, values, X)
     relative_residuals <- residual_norms / pmax(scale, .Machine$double.eps)
     history_max_relative_residual[iter] <- max(relative_residuals)

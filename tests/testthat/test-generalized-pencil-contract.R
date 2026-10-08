@@ -94,13 +94,14 @@ test_that("generalized pencil dense certificate certifies finite pairs only", {
   expect_match(paste(cert$notes, collapse = " "), "undefined generalized eigenvalues")
 })
 
-test_that("generalized pencil operator certificate withholds passed under an estimated scale", {
+test_that("generalized pencil operator certificate passes matrix-free operators with lower-bound norms", {
   diag_a <- c(2, 6, 12)
   diag_b <- c(1, 2, 3)
-  # Matrix-free diagonal operators with no norm metadata force the certificate
-  # onto the Hutchinson Frobenius estimate, so scale_is_estimate is TRUE even
-  # though the eigenpairs are exact (residuals ~ 0). This exercises the
-  # passed-withholding branch that the dense/exact pencil tests never hit.
+  # Matrix-free diagonal operators with no norm metadata used to fall back to
+  # a Hutchinson Frobenius estimate and withhold `passed`. Certificates now
+  # scale by spectral-norm LOWER bounds (here ||A x|| / ||x|| and
+  # ||B x|| / ||x|| from the certified vectors), which over-estimate the
+  # backward error, so exact eigenpairs certify (C12).
   matrix_free_diag <- function(d) {
     linear_operator(
       dim = c(length(d), length(d)),
@@ -124,7 +125,34 @@ test_that("generalized pencil operator certificate withholds passed under an est
 
   expect_true(all(cert$converged))
   expect_lt(max(cert$backward_error), 1e-10)
-  expect_true(cert$scale_is_estimate)
+  expect_false(cert$scale_is_estimate)
+  expect_true(cert$passed)
+  expect_identical(cert$norm_bound_type, "two_norm_lower_bound+two_norm_lower_bound")
+  expect_identical(cert$norm_source, "applied_vectors+applied_vectors")
+  expect_equal(unname(cert$norm_values), c(12, 3))
+
+  # A perturbed pair: the reported backward error bounds the true one.
+  V <- diag(3)
+  V[, 1] <- V[, 1] + c(0, 1e-6, 0)
+  cert_bad <- eigencore:::certify_generalized_pencil_operator(
+    matrix_free_diag(diag_a),
+    matrix_free_diag(diag_b),
+    alpha = diag_a,
+    beta = diag_b,
+    vectors = V,
+    tol = 1e-10
+  )
+  r <- sqrt(colSums((diag(diag_a) %*% V - diag(diag_b) %*% V %*% diag(diag_a / diag_b))^2))
+  truth <- r / ((12 + abs(diag_a / diag_b) * 3) * sqrt(colSums(V^2)))
+  expect_true(all(cert_bad$backward_error >= truth * (1 - 1e-12)))
+  expect_false(cert_bad$passed)
+})
+
+test_that("an explicitly estimated certificate scale still withholds passed", {
+  cert <- eigencore:::new_certificate(
+    tol = 1e-8, residuals = 0, backward_error = 0, orthogonality = 0,
+    converged = TRUE, scale = 1, scale_is_estimate = TRUE
+  )
   expect_false(cert$passed)
   expect_match(paste(cert$notes, collapse = " "), "stochastic norm estimate")
 })

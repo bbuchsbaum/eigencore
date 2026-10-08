@@ -182,8 +182,9 @@ stronger v1.2 contract than a general matrix-free composition. It is one fused
 native `(A - 1 mu^T) D` operator: block apply and adjoint honor `alpha` and
 `beta`, the native Golub-Kahan hot loop receives the CSC slots, means, and
 weights directly, and no centered matrix or R callback is introduced. A
-single sparse column-moments traversal also gives an exact Frobenius norm, so
-certificates use `frobenius_metadata` with `scale_is_estimate = FALSE`.
+single sparse column-moments traversal also gives an exact Frobenius norm
+(kept as metadata); certificates scale by a 2-norm lower bound
+(`two_norm_lower_bound`) with `scale_is_estimate = FALSE`.
 `plan$controls$fused_centered_scaled_csc` and
 `fit$restart$fused_centered_scaled_csc` identify this route; both planner and
 restart diagnostics report `callback_boundary = FALSE`.
@@ -208,11 +209,11 @@ Complex operator contract:
   block-apply metadata are allowed for base complex dense matrices, while
   complex sparse/matrix-free operator labels still require their own
   block-apply and certificate paths to preserve imaginary components;
-- explicit dense complex sources use exact Frobenius-scale certificates with
+- explicit dense complex sources use 2-norm lower-bound certificate scales with
   conjugate-transpose Gram matrices;
-- complex matrix-free certificates can pass only when they carry non-estimated
-  norm provenance, such as explicit Frobenius norm metadata; estimated scales
-  keep `passed = FALSE`.
+- complex matrix-free certificates scale by 2-norm lower bounds from their own
+  vectors (never by a stochastic estimate), so they can pass without norm
+  metadata.
 
 Smallest and interior SVD targets have an explicit policy boundary:
 
@@ -441,11 +442,12 @@ Interpretation:
 | `max_residual` | Worst raw residual over returned pairs/triplets. |
 | `max_backward_error` | Worst residual scaled by the certificate norm bound. |
 | `max_orthogonality_loss` | Worst basis orthogonality defect. |
-| `norm_bound_type` | Provenance of the scale used in backward-error checks. |
-| `scale_is_estimate` | Whether the scale was estimated rather than exact. |
+| `norm_bound_type` | Whether the 2-norm in the backward-error scale is exact or a lower bound. |
+| `norm_source` | Where that value came from (`column_norms`, `applied_vectors`, `lanczos`, ...). |
+| `scale_is_estimate` | Always `FALSE` for built-in certificates (no stochastic scales). |
 
-A stochastic or estimated scale is not the same as an exact certificate scale.
-The V2 CRAN contract requires those cases to remain explicitly labelled.
+Backward errors use the normwise 2-norm definition. A lower-bound scale makes
+the reported backward error an over-estimate, so `passed` is never optimistic.
 
 ## Method Selection Summary
 

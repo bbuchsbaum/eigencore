@@ -134,7 +134,10 @@ test_that("native block final polish preserves genuine locked prefix on exhausti
     A,
     k = 4L,
     target = smallest(),
-    method = lanczos(block = 2L, max_subspace = 20L, max_restarts = 10L),
+    # Budget chosen so the restart cycle exhausts with exactly one pair locked
+    # under the two-norm locking scale (C12: the kernel scale is a lower bound
+    # on ||A||_2, so locking is stricter than under the old Frobenius scale).
+    method = lanczos(block = 2L, max_subspace = 18L, max_restarts = 13L),
     seed = 1,
     tol = 1e-8
   )
