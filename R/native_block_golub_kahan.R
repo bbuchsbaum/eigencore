@@ -721,9 +721,20 @@ native_block_golub_kahan_cycle_svd <- function(op, rank, target = largest(),
       start = cached_start$start,
       start_av = cached_start$start_av
     )
+    # ritz$Avectors = (A V) W equals U diag(d) by construction of the
+    # projected SVD, so it must not stand in for A v in the left residual.
+    # The native built-in certificate recomputes A v itself; the R-level
+    # residual-vector path uses whatever Av it is given, so hand it a fresh
+    # product there (C13).
+    want_residual_vectors <- identical(adaptive_start, "ritz_residual")
+    cert_av <- if (want_residual_vectors) {
+      as.matrix(apply_operator(op, ritz$v))
+    } else {
+      ritz$Avectors
+    }
     cert_info <- certify_svd_operator_cached_av(
-      op, ritz$d, ritz$u, ritz$v, ritz$Avectors, tol = tol,
-      return_residual_vectors = identical(adaptive_start, "ritz_residual")
+      op, ritz$d, ritz$u, ritz$v, cert_av, tol = tol,
+      return_residual_vectors = want_residual_vectors
     )
     wrapped_cert <- cert_info[["certificate", exact = TRUE]]
     if (!is.null(wrapped_cert)) {

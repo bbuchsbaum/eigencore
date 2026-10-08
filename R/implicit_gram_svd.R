@@ -125,19 +125,20 @@ native_implicit_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
   zero_tol <- gram_svd_zero_tolerance(sigma, tol)
   inv_sigma <- ifelse(sigma > zero_tol, 1 / sigma, 0)
 
-  Av <- NULL
+  # Recover the opposite factor, then certify with fresh forward AND adjoint
+  # applies in original coordinates (certify_svd_operator); the product used
+  # to form u (or v) is not reused as a cached side of the certificate (C13).
   if (side == 0L) {
     v <- W
-    Av <- as.matrix(A %*% v)
-    u <- sweep(Av, 2L, inv_sigma, `*`)
+    u <- as.matrix(A %*% v)
+    for (j in seq_along(inv_sigma)) u[, j] <- u[, j] * inv_sigma[[j]]
   } else {
     u <- W
-    Atu <- as.matrix(Matrix::crossprod(A, u))
-    v <- sweep(Atu, 2L, inv_sigma, `*`)
-    Av <- as.matrix(A %*% v)
+    v <- as.matrix(Matrix::crossprod(A, u))
+    for (j in seq_along(inv_sigma)) v[, j] <- v[, j] * inv_sigma[[j]]
   }
 
-  cert <- certify_svd_operator_cached_av(op, sigma, u, v, Av, tol = tol)
+  cert <- certify_svd_operator(op, sigma, u, v, tol = tol)
 
   u_out <- u
   v_out <- v
