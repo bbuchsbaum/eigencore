@@ -1873,7 +1873,7 @@ tiny_gram_backend_fit <- function(gram, k, backend) {
     fit <- if (identical(backend, "lapack_dsyevd_full")) {
       eigencore:::native_dense_symmetric_eigen_dsyevd(gram)
     } else {
-      eigencore:::native_dense_symmetric_eigen(gram)
+      eigencore:::native_dense_symmetric_eigen_dsyev(gram)
     }
     idx <- order(fit$values, decreasing = TRUE)
     idx <- idx[seq_len(min(k, length(idx)))]

@@ -87,10 +87,12 @@ eig_full_standard <- function(A, structure, vectors, tol) {
   n <- nrow(A)
   hermitian_path <- identical(structure$kind, "hermitian")
   if (hermitian_path) {
+    # vectors = FALSE runs the values-only LAPACK path (jobz = 'N'); the
+    # certificate is then the uncertified empty certificate, as before.
     eig <- if (is.complex(A)) {
-      native_dense_complex_hermitian_eigen(A)
+      native_dense_complex_hermitian_eigen(A, vectors = vectors)
     } else {
-      native_dense_symmetric_eigen(A)
+      native_dense_symmetric_eigen(A, vectors = vectors)
     }
     method <- if (is.complex(A)) {
       native_dense_complex_hermitian_label()

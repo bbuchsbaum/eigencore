@@ -916,8 +916,17 @@ auto_dense_partial_lanczos <- function(problem, k = NULL) {
 }
 
 #' @keywords internal
-native_dense_symmetric_eigen <- function(A) {
-  .Call("eigencore_dense_symmetric_eigen", as.matrix(A), PACKAGE = "eigencore")
+native_dense_symmetric_eigen <- function(A, vectors = TRUE) {
+  # dsyevr (MRRR, the driver base eigen() uses), ascending values; dsyev only
+  # as an internal-failure fallback (`driver` says which ran). With
+  # vectors = FALSE only eigenvalues are computed and `vectors` is NULL.
+  .Call("eigencore_dense_symmetric_eigen", as.matrix(A), isTRUE(vectors),
+        PACKAGE = "eigencore")
+}
+
+#' @keywords internal
+native_dense_symmetric_eigen_dsyev <- function(A) {
+  .Call("eigencore_dense_symmetric_eigen_dsyev", as.matrix(A), PACKAGE = "eigencore")
 }
 
 #' @keywords internal
@@ -926,22 +935,25 @@ native_dense_symmetric_eigen_dsyevd <- function(A) {
 }
 
 #' @keywords internal
-native_dense_symmetric_eigen_selected <- function(A, k, target) {
+native_dense_symmetric_eigen_selected <- function(A, k, target, vectors = TRUE) {
   .Call(
     "eigencore_dense_symmetric_eigen_selected",
     as.matrix(A),
     as.integer(k),
     as.integer(lanczos_target_kind(target)),
+    isTRUE(vectors),
     PACKAGE = "eigencore"
   )
 }
 
 #' @keywords internal
-native_dense_complex_hermitian_eigen <- function(A) {
+native_dense_complex_hermitian_eigen <- function(A, vectors = TRUE) {
   # zheev returns ascending real values and unitary vectors, so repeated
-  # eigenvalues keep an orthonormal eigenbasis (zgeev does not).
+  # eigenvalues keep an orthonormal eigenbasis (zgeev does not). R's LAPACK
+  # header does not declare zheevr, so the MRRR driver is real-only.
   .Call("eigencore_dense_complex_hermitian_eigen",
         eig_full_as_complex_matrix(as.matrix(A)),
+        isTRUE(vectors),
         PACKAGE = "eigencore")
 }
 
@@ -961,6 +973,8 @@ should_use_native_dense_svd <- function(problem, method) {
 
 #' @keywords internal
 native_dense_svd <- function(A) {
+  # Thin SVD by dgesdd (divide and conquer, as base svd()); dgesvd only when
+  # dgesdd fails to converge. `driver` records which LAPACK routine ran.
   .Call("eigencore_dense_svd", as.matrix(A), PACKAGE = "eigencore")
 }
 

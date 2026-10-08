@@ -97,16 +97,17 @@ extern "C" SEXP eigencore_bidiagonal_svd(SEXP, SEXP);
 extern "C" SEXP eigencore_block_golub_kahan_ritz(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_ritz(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_is_symmetric(SEXP, SEXP);
-extern "C" SEXP eigencore_dense_symmetric_eigen(SEXP);
+extern "C" SEXP eigencore_dense_symmetric_eigen(SEXP, SEXP);
+extern "C" SEXP eigencore_dense_symmetric_eigen_dsyev(SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevd(SEXP);
-extern "C" SEXP eigencore_dense_complex_hermitian_eigen(SEXP);
+extern "C" SEXP eigencore_dense_complex_hermitian_eigen(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_complex_general_eigen(SEXP);
 extern "C" SEXP eigencore_dense_generalized_pencil_eigen(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_complex_generalized_hpd_eigen(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_complex_generalized_pencil_eigen(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_generalized_schur(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_complex_generalized_schur(SEXP, SEXP, SEXP, SEXP);
-extern "C" SEXP eigencore_dense_symmetric_eigen_selected(SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_dense_symmetric_eigen_selected(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevx_selected(SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_left_gram_svd(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_right_gram_svd(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -215,16 +216,17 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_block_golub_kahan_ritz", (DL_FUNC) &eigencore_block_golub_kahan_ritz, 5},
   {"eigencore_golub_kahan_ritz", (DL_FUNC) &eigencore_golub_kahan_ritz, 7},
   {"eigencore_dense_is_symmetric", (DL_FUNC) &eigencore_dense_is_symmetric, 2},
-  {"eigencore_dense_symmetric_eigen", (DL_FUNC) &eigencore_dense_symmetric_eigen, 1},
+  {"eigencore_dense_symmetric_eigen", (DL_FUNC) &eigencore_dense_symmetric_eigen, 2},
+  {"eigencore_dense_symmetric_eigen_dsyev", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyev, 1},
   {"eigencore_dense_symmetric_eigen_dsyevd", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyevd, 1},
-  {"eigencore_dense_complex_hermitian_eigen", (DL_FUNC) &eigencore_dense_complex_hermitian_eigen, 1},
+  {"eigencore_dense_complex_hermitian_eigen", (DL_FUNC) &eigencore_dense_complex_hermitian_eigen, 2},
   {"eigencore_dense_complex_general_eigen", (DL_FUNC) &eigencore_dense_complex_general_eigen, 1},
   {"eigencore_dense_generalized_pencil_eigen", (DL_FUNC) &eigencore_dense_generalized_pencil_eigen, 2},
   {"eigencore_dense_complex_generalized_hpd_eigen", (DL_FUNC) &eigencore_dense_complex_generalized_hpd_eigen, 2},
   {"eigencore_dense_complex_generalized_pencil_eigen", (DL_FUNC) &eigencore_dense_complex_generalized_pencil_eigen, 2},
   {"eigencore_dense_generalized_schur", (DL_FUNC) &eigencore_dense_generalized_schur, 4},
   {"eigencore_dense_complex_generalized_schur", (DL_FUNC) &eigencore_dense_complex_generalized_schur, 4},
-  {"eigencore_dense_symmetric_eigen_selected", (DL_FUNC) &eigencore_dense_symmetric_eigen_selected, 3},
+  {"eigencore_dense_symmetric_eigen_selected", (DL_FUNC) &eigencore_dense_symmetric_eigen_selected, 4},
   {"eigencore_dense_symmetric_eigen_dsyevx_selected", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyevx_selected, 3},
   {"eigencore_csc_left_gram_svd", (DL_FUNC) &eigencore_csc_left_gram_svd, 6},
   {"eigencore_csc_right_gram_svd", (DL_FUNC) &eigencore_csc_right_gram_svd, 6},

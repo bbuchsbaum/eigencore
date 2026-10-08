@@ -2121,7 +2121,7 @@ gram_svd_eigen_slice <- function(gram, rank, target) {
   list(
     values = eig$values[idx],
     vectors = eig$vectors[, idx, drop = FALSE],
-    eigensolver = "lapack_dsyev_full"
+    eigensolver = paste0("lapack_", eig$driver %||% "dsyevr", "_full")
   )
 }
 
