@@ -150,6 +150,16 @@ extern "C" int eigencore_dense_apply(void* impl,
   const int ldc = static_cast<int>(ldy);
   double beta_blas = beta;
 
+  if (block_cols_i == 1) {
+    // Single-vector Krylov steps: dgemv avoids dgemm's packing and
+    // threading overhead, which dominates for one column.
+    const int rows = static_cast<int>(dense->rows);
+    const int cols = static_cast<int>(dense->cols);
+    const int inc = 1;
+    F77_CALL(dgemv)(&transa, &rows, &cols, &alpha, dense->values, &lda,
+                    const_cast<double*>(X), &inc, &beta_blas, Y, &inc FCONE);
+    return 0;
+  }
   F77_CALL(dgemm)(&transa, &transb, &out_rows, &block_cols_i, &inner,
                   &alpha, dense->values, &lda, const_cast<double*>(X), &ldb,
                   &beta_blas, Y, &ldc FCONE FCONE);

@@ -290,6 +290,10 @@ compat_symmetric_from_triangle <- function(A, lower) {
     if (nrow(A) != ncol(A)) {
       stop("A must be square.", call. = FALSE)
     }
+    if (is.double(A) &&
+        isTRUE(.Call("eigencore_dense_is_symmetric", A, 0, PACKAGE = "eigencore"))) {
+      return(A)
+    }
     mirror <- Conj(t(A))
     if (isTRUE(lower)) {
       A[upper.tri(A)] <- mirror[upper.tri(A)]
