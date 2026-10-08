@@ -688,12 +688,14 @@ solve_eigen_native_dense_hermitian <- function(a, k, tol, vectors, certify,
   }
   selected_range <- !is.complex(A) && k < nrow(A) &&
     target_kind %in% c("largest", "smallest")
+  want_vectors <- isTRUE(vectors)
   eig <- if (is.complex(A)) {
-    native_dense_complex_hermitian_eigen(A)
+    native_dense_complex_hermitian_eigen(A, vectors = want_vectors)
   } else if (selected_range) {
-    native_dense_symmetric_eigen_selected(A, k, a$target)
+    native_dense_symmetric_eigen_selected(A, k, a$target,
+                                          vectors = want_vectors)
   } else {
-    native_dense_symmetric_eigen(A)
+    native_dense_symmetric_eigen(A, vectors = want_vectors)
   }
   if (selected_range) {
     vals <- eig$values
@@ -735,7 +737,7 @@ solve_eigen_native_dense_hermitian <- function(a, k, tol, vectors, certify,
         } else if (selected_range) {
           "lapack_dsyevr_selected"
         } else {
-          "lapack_dsyev_full"
+          paste0("lapack_", eig$driver %||% "dsyevr", "_full")
         },
         selected_range = selected_range,
         selected_count = if (selected_range) length(vals) else NA_integer_,
