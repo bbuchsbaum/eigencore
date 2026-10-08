@@ -58,6 +58,7 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
   certification_block_calls <- 0L
   certification_operator_columns <- 0L
   final <- NULL
+  final_iteration <- NA_integer_
   iterations <- 0L
   reorth_workspace <- basis_workspace(n, maxit, 1L)
 
@@ -80,14 +81,26 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
 
     beta[[j]] <- sqrt(sum(z^2))
     if (j >= k) {
-      final <- reference_lanczos_ritz(op, Q[, seq_len(j), drop = FALSE], alpha[seq_len(j)],
-                                      beta[seq_len(j)], k, target, tol)
-      certification_block_calls <- certification_block_calls +
-        final$certification_operator_block_calls
-      certification_operator_columns <- certification_operator_columns +
-        final$certification_operator_columns
-      if (all(final$certificate$converged)) {
-        break
+      # Convergence test from the Lanczos relation A Q_j = Q_j T_j +
+      # beta_j q_{j+1} e_j': the Ritz pair (theta_i, Q_j s_i) has residual
+      # norm beta_j |e_j' s_i| (exact up to the basis orthogonality, which
+      # reorthogonalisation maintains). It costs no operator applies; the
+      # explicit residual certificate (k applies) runs only once this
+      # bound reports convergence, and again at the end.
+      if (reference_lanczos_ritz_bound_converged(op, alpha[seq_len(j)],
+                                                 beta[seq_len(j)], k,
+                                                 target, tol)) {
+        final <- reference_lanczos_ritz(op, Q[, seq_len(j), drop = FALSE],
+                                        alpha[seq_len(j)], beta[seq_len(j)],
+                                        k, target, tol)
+        final_iteration <- j
+        certification_block_calls <- certification_block_calls +
+          final$certification_operator_block_calls
+        certification_operator_columns <- certification_operator_columns +
+          final$certification_operator_columns
+        if (all(final$certificate$converged)) {
+          break
+        }
       }
     }
     if (beta[[j]] <= max(100 * .Machine$double.eps, tol * 1e-3)) {
@@ -98,7 +111,7 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
     q <- z / beta[[j]]
   }
 
-  if (is.null(final)) {
+  if (is.null(final) || !identical(final_iteration, iterations)) {
     final <- reference_lanczos_ritz(op, Q[, seq_len(iterations), drop = FALSE],
                                     alpha[seq_len(iterations)], beta[seq_len(iterations)],
                                     k, target, tol)
@@ -535,6 +548,9 @@ lanczos_target_kind <- function(target) {
     kind,
     largest = 1L,
     smallest = 2L,
+    # Hermitian spectra are real: the real-part targets are the algebraic ones.
+    largest_real = 1L,
+    smallest_real = 2L,
     largest_magnitude = 3L,
     smallest_magnitude = 4L,
     stop(
@@ -548,7 +564,10 @@ lanczos_target_kind <- function(target) {
 #' @keywords internal
 native_lanczos_target_supported <- function(target) {
   kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
-  kind %in% c("largest", "smallest", "largest_magnitude", "smallest_magnitude")
+  kind %in% c(
+    "largest", "smallest", "largest_magnitude", "smallest_magnitude",
+    "largest_real", "smallest_real"
+  )
 }
 
 # Whether a matrix-free operator can drive the native block thick-restart
@@ -570,6 +589,32 @@ native_matrix_free_block_lanczos_available <- function(op) {
 #' @keywords internal
 native_matrix_free_block_lanczos_label <- function() {
   "native block Hermitian Lanczos (matrix-free callback, thick restart, locking)"
+}
+
+#' @keywords internal
+reference_lanczos_ritz_bound_converged <- function(op, alpha, beta, k, target, tol) {
+  j <- length(alpha)
+  if (j < k) {
+    return(FALSE)
+  }
+  eig <- native_tridiagonal_eigen(alpha, beta)
+  idx <- order_indices(eig$values, target)
+  idx <- idx[seq_len(min(k, length(idx)))]
+  if (length(idx) < k) {
+    return(FALSE)
+  }
+  theta <- eig$values[idx]
+  bound <- abs(beta[[j]] * eig$vectors[j, idx])
+  # Same backward-error scale as certify_eigen_operator() for unit vectors;
+  # the norm (exact, metadata, or a Hutchinson estimate) is memoised per
+  # operator, so this adds no operator applies after the first call.
+  norm_A <- local({
+    work_phase <- work_phase_enter("certification")
+    on.exit(work_phase_exit(work_phase), add = TRUE)
+    operator_norm_for_certificate_info(op)$value
+  })
+  scale <- pmax(norm_A + abs(theta), .Machine$double.eps)
+  all(is.finite(bound)) && all(bound / scale <= tol)
 }
 
 #' @keywords internal

@@ -29,11 +29,28 @@ eigen_problem <- function(A, metric = NULL, structure = NULL, target = largest()
     A = Aop,
     metric = Bop,
     structure = structure,
-    target = target,
+    target = canonical_hermitian_target(target, structure),
     transform = transform
   )
   class(problem) <- "eigencore_eigen_problem"
   problem
+}
+
+# Hermitian (and Hermitian-definite) problems have real spectra, so the
+# real-part targets coincide with the algebraic ones. Canonicalising lets the
+# native Lanczos routes (which accept largest/smallest) serve "LR"/"SR".
+#' @keywords internal
+canonical_hermitian_target <- function(target, structure) {
+  if (inherits(target, "eigencore_target") &&
+      identical(structure$kind %||% NULL, "hermitian")) {
+    if (identical(target$kind, "largest_real")) {
+      return(largest())
+    }
+    if (identical(target$kind, "smallest_real")) {
+      return(smallest())
+    }
+  }
+  target
 }
 
 #' @keywords internal
@@ -136,6 +153,7 @@ plan_solver.eigencore_eigen_problem <- function(
     stop("Eigenproblems require a square operator.", call. = FALSE)
   }
   k <- validate_solution_count(k, problem$A$dim[1L], "k")
+  problem$target <- canonical_hermitian_target(problem$target, problem$structure)
   if (inherits(problem$target, "eigencore_target") &&
       identical(problem$target$kind, "both_ends")) {
     ends <- problem$target$value$k_low + problem$target$value$k_high
