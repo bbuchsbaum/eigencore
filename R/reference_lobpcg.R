@@ -313,7 +313,7 @@ native_lobpcg_tridiagonal_hermitian <- function(op, k, target = smallest(),
       native = TRUE,
       n = n,
       shift = shift,
-      factorization = "tridiagonal_thomas"
+      factorization = "tridiagonal_lu_dgttrf"
     ),
     generalized = FALSE,
     orthogonalization = list(
@@ -727,10 +727,7 @@ generalized_spd_metric_known <- function(Bop) {
   source <- source_or_null(Bop)
   storage <- Bop$metadata$storage %||% NULL
   if (is.matrix(source) && is.double(source)) {
-    return(isTRUE(tryCatch({
-      chol((source + t(source)) / 2)
-      TRUE
-    }, error = function(e) FALSE)))
+    return(!is.null(generalized_spd_metric_dense_factor(source)))
   }
   if (identical(storage, "ddiMatrix")) {
     B <- Bop$metadata$matrix
@@ -745,12 +742,48 @@ generalized_spd_metric_known <- function(Bop) {
   }
   if (identical(storage, "dgCMatrix")) {
     B <- Bop$metadata$matrix
-    return(isTRUE(Matrix::isSymmetric(B)) && isTRUE(tryCatch({
-      Matrix::Cholesky(B, LDL = FALSE)
-      TRUE
-    }, error = function(e) FALSE)))
+    return(spd_metric_cache_get(B, function(B) {
+      isTRUE(Matrix::isSymmetric(B)) && isTRUE(tryCatch({
+        Matrix::Cholesky(B, LDL = FALSE)
+        TRUE
+      }, error = function(e) FALSE))
+    }, kind = "csc_spd"))
   }
   FALSE
+}
+
+# P13: one solve asks whether B is SPD from the planner, the native-support
+# check, and the solver itself; each used to Cholesky-factor a dense B again.
+# Results are memoised for the few most recent metric sources. Lookups use
+# identical(), which short-circuits on the same object and is O(n^2) at worst,
+# against the O(n^3) factorisation it replaces.
+.spd_metric_cache <- new.env(parent = emptyenv())
+
+#' @keywords internal
+spd_metric_cache_get <- function(source, compute, kind, capacity = 2L) {
+  entries <- .spd_metric_cache[[kind]] %||% list()
+  for (entry in entries) {
+    if (identical(entry$source, source)) {
+      return(entry$value)
+    }
+  }
+  value <- compute(source)
+  entries <- c(list(list(source = source, value = value)), entries)
+  if (length(entries) > capacity) {
+    entries <- entries[seq_len(capacity)]
+  }
+  assign(kind, entries, envir = .spd_metric_cache)
+  value
+}
+
+# Upper Cholesky factor of the symmetric part of a dense metric, or NULL when
+# it is not positive definite. Cached, so repeated SPD checks and solvers that
+# need the factor share one factorisation.
+#' @keywords internal
+generalized_spd_metric_dense_factor <- function(source) {
+  spd_metric_cache_get(source, function(source) {
+    tryCatch(chol((source + t(source)) / 2), error = function(e) NULL)
+  }, kind = "dense_chol")
 }
 
 #' @keywords internal
