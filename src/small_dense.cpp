@@ -9,6 +9,7 @@
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
 #include "eigencore_lapack_compat.h"
+#include "eigencore_common.h"
 
 typedef La_LGL (*eigencore_dgges_select_fn)(double*, double*, double*);
 typedef void (*eigencore_dgges_fn)(
@@ -201,6 +202,7 @@ static bool vectors_flag(SEXP flag_) {
 // plus dsterf) and returns vectors = NULL. Falls back to dsyev on an
 // internal dsyevr failure; `driver` records which one ran.
 extern "C" SEXP eigencore_dense_symmetric_eigen(SEXP A_, SEXP vectors_flag_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
     error("A must be a double matrix");
   }
@@ -246,12 +248,14 @@ extern "C" SEXP eigencore_dense_symmetric_eigen(SEXP A_, SEXP vectors_flag_) {
 
   UNPROTECT(4);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 // QR-iteration (dsyev) full symmetric eigendecomposition with vectors. Kept
 // as a benchmark/diagnostic backend next to the dsyevd variant; production
 // callers use eigencore_dense_symmetric_eigen (dsyevr).
 extern "C" SEXP eigencore_dense_symmetric_eigen_dsyev(SEXP A_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
     error("A must be a double matrix");
   }
@@ -277,9 +281,11 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_dsyev(SEXP A_) {
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(4);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevd(SEXP A_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
     error("A must be a double matrix");
   }
@@ -343,12 +349,14 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevd(SEXP A_) {
 
   UNPROTECT(4);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 // Complex Hermitian eigendecomposition via zheev: R's LAPACK interface
 // (R_ext/Lapack.h) does not declare zheevr, so the MRRR driver is not used
 // here. With vectors = FALSE it runs jobz = 'N' and returns vectors = NULL.
 extern "C" SEXP eigencore_dense_complex_hermitian_eigen(SEXP A_, SEXP vectors_flag_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isComplex(A_)) {
     error("A must be a complex matrix");
   }
@@ -403,9 +411,11 @@ extern "C" SEXP eigencore_dense_complex_hermitian_eigen(SEXP A_, SEXP vectors_fl
 
   UNPROTECT(4);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_complex_general_eigen(SEXP A_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isComplex(A_)) {
     error("A must be a complex matrix");
   }
@@ -466,6 +476,7 @@ extern "C" SEXP eigencore_dense_complex_general_eigen(SEXP A_) {
 
   UNPROTECT(5);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 // Expand LAPACK packed real eigenvector storage (conjugate pairs occupy two
@@ -503,6 +514,7 @@ static void unpack_real_pencil_vectors(const double* packed,
 }
 
 extern "C" SEXP eigencore_dense_generalized_pencil_eigen(SEXP A_, SEXP B_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(B_)) {
     error("A and B must be double matrices");
   }
@@ -632,9 +644,11 @@ extern "C" SEXP eigencore_dense_generalized_pencil_eigen(SEXP A_, SEXP B_) {
 
   UNPROTECT(13);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_complex_generalized_hpd_eigen(SEXP A_, SEXP B_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isComplex(A_) || !isComplex(B_)) {
     error("A and B must be complex matrices");
   }
@@ -719,9 +733,11 @@ extern "C" SEXP eigencore_dense_complex_generalized_hpd_eigen(SEXP A_, SEXP B_) 
 
   UNPROTECT(5);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_complex_generalized_pencil_eigen(SEXP A_, SEXP B_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isComplex(A_) || !isComplex(B_)) {
     error("A and B must be complex matrices");
   }
@@ -799,10 +815,12 @@ extern "C" SEXP eigencore_dense_complex_generalized_pencil_eigen(SEXP A_, SEXP B
 
   UNPROTECT(6);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_generalized_schur(SEXP A_, SEXP B_,
                                                    SEXP vectors_, SEXP sort_code_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(B_)) {
     error("A and B must be double matrices");
   }
@@ -907,11 +925,13 @@ extern "C" SEXP eigencore_dense_generalized_schur(SEXP A_, SEXP B_,
 
   UNPROTECT(11);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_complex_generalized_schur(SEXP A_, SEXP B_,
                                                            SEXP vectors_,
                                                            SEXP sort_code_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isComplex(A_) || !isComplex(B_)) {
     error("A and B must be complex matrices");
   }
@@ -1003,9 +1023,11 @@ extern "C" SEXP eigencore_dense_complex_generalized_schur(SEXP A_, SEXP B_,
 
   UNPROTECT(8);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_is_symmetric(SEXP A_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
     return ScalarLogical(FALSE);
   }
@@ -1044,6 +1066,7 @@ extern "C" SEXP eigencore_dense_is_symmetric(SEXP A_, SEXP tol_) {
     }
   }
   return ScalarLogical(TRUE);
+  EIGENCORE_ENTRY_END
 }
 
 // Selected dense symmetric eigenpairs via dsyevr RANGE = 'I': the k largest
@@ -1053,6 +1076,7 @@ extern "C" SEXP eigencore_dense_is_symmetric(SEXP A_, SEXP tol_) {
 extern "C" SEXP eigencore_dense_symmetric_eigen_selected(SEXP A_, SEXP k_,
                                                          SEXP target_kind_,
                                                          SEXP vectors_flag_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
     error("A must be a double matrix");
   }
@@ -1128,9 +1152,11 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_selected(SEXP A_, SEXP k_,
 
   UNPROTECT(4);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevx_selected(SEXP A_, SEXP k_, SEXP target_kind_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
     error("A must be a double matrix");
   }
@@ -1229,9 +1255,11 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevx_selected(SEXP A_, SEXP k_
 
   UNPROTECT(4);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_generalized_spd_eigen(SEXP A_, SEXP B_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(B_)) {
     error("A and B must be double matrices");
   }
@@ -1301,6 +1329,7 @@ extern "C" SEXP eigencore_dense_generalized_spd_eigen(SEXP A_, SEXP B_) {
 
   UNPROTECT(5);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 // Thin dense real SVD. Uses divide and conquer (dgesdd, jobz = 'S', what
@@ -1308,6 +1337,7 @@ extern "C" SEXP eigencore_dense_generalized_spd_eigen(SEXP A_, SEXP B_) {
 // it retries with the QR-iteration driver dgesvd on a fresh copy of A.
 // `driver` records which LAPACK routine produced the factors.
 extern "C" SEXP eigencore_dense_svd(SEXP A_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
     error("A must be a double matrix");
   }
@@ -1411,9 +1441,11 @@ extern "C" SEXP eigencore_dense_svd(SEXP A_) {
 
   UNPROTECT(5);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_complex_svd(SEXP A_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isComplex(A_)) {
     error("A must be a complex matrix");
   }
@@ -1486,9 +1518,11 @@ extern "C" SEXP eigencore_dense_complex_svd(SEXP A_) {
 
   UNPROTECT(7);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_generalized_svd(SEXP A_, SEXP B_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(B_)) {
     error("A and B must be double matrices");
   }
@@ -1581,17 +1615,21 @@ extern "C" SEXP eigencore_dense_generalized_svd(SEXP A_, SEXP B_) {
 
   UNPROTECT(11);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_complex_generalized_svd(SEXP A_, SEXP B_) {
+  EIGENCORE_ENTRY_BEGIN
   error("native complex GSVD requires a complex LAPACK GSVD driver, "
         "which this R LAPACK interface does not export");
+  EIGENCORE_ENTRY_END
 }
 
 // Full symmetric tridiagonal eigendecomposition (ascending values) via the
 // MRRR driver dstevr (RANGE = 'A'); falls back to implicit QL/QR (dstev) if
 // dstevr reports an internal failure.
 extern "C" SEXP eigencore_tridiagonal_eigen(SEXP alpha_, SEXP beta_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(alpha_) || !isReal(beta_)) {
     error("alpha and beta must be double vectors");
   }
@@ -1699,10 +1737,12 @@ extern "C" SEXP eigencore_tridiagonal_eigen(SEXP alpha_, SEXP beta_) {
 
   UNPROTECT(4);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_tridiagonal_eigen_selected(SEXP alpha_, SEXP beta_,
                                                      SEXP k_, SEXP target_kind_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(alpha_) || !isReal(beta_)) {
     error("alpha and beta must be double vectors");
   }
@@ -1828,6 +1868,7 @@ extern "C" SEXP eigencore_tridiagonal_eigen_selected(SEXP alpha_, SEXP beta_,
 
   UNPROTECT(4);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 // SVD of the n x n upper bidiagonal matrix with diagonal alpha and
@@ -1836,6 +1877,7 @@ extern "C" SEXP eigencore_tridiagonal_eigen_selected(SEXP alpha_, SEXP beta_,
 // zero-shift QR routine dbdsqr as fallback when dbdsdc fails to converge.
 // Returns d (descending), u and v (both n x n) with B = U diag(d) V^T.
 extern "C" SEXP eigencore_bidiagonal_svd(SEXP alpha_, SEXP beta_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(alpha_) || !isReal(beta_)) {
     error("alpha and beta must be double vectors");
   }
@@ -1923,6 +1965,7 @@ extern "C" SEXP eigencore_bidiagonal_svd(SEXP alpha_, SEXP beta_) {
 
   UNPROTECT(5);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 // Solve T X = B for a general tridiagonal T (subdiagonal `lower`, diagonal
@@ -1933,6 +1976,7 @@ extern "C" SEXP eigencore_bidiagonal_svd(SEXP alpha_, SEXP beta_) {
 // from dgtcon below DBL_EPSILON) is rejected.
 extern "C" SEXP eigencore_tridiagonal_solve(SEXP lower_, SEXP diag_,
                                             SEXP upper_, SEXP B_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(lower_) || !isReal(diag_) || !isReal(upper_) || !isReal(B_)) {
     error("lower, diag, upper, and B must be double");
   }
@@ -2003,4 +2047,5 @@ extern "C" SEXP eigencore_tridiagonal_solve(SEXP lower_, SEXP diag_,
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }

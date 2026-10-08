@@ -246,6 +246,7 @@ struct BlockGolubKahanFitArrays {
   double* AV = nullptr;
   double* U = nullptr;
   bool transient = false;
+  ~BlockGolubKahanFitArrays();
 };
 
 static void block_golub_kahan_fit_arrays_free(BlockGolubKahanFitArrays* arrays) {
@@ -258,6 +259,10 @@ static void block_golub_kahan_fit_arrays_free(BlockGolubKahanFitArrays* arrays) 
   arrays->AV = nullptr;
   arrays->U = nullptr;
   arrays->transient = false;
+}
+
+BlockGolubKahanFitArrays::~BlockGolubKahanFitArrays() {
+  block_golub_kahan_fit_arrays_free(this);
 }
 
 static int block_golub_kahan_fit_arrays_alloc(BlockGolubKahanFitArrays* arrays,
@@ -964,6 +969,7 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_fit(SEXP A_,
                                                       SEXP start_,
                                                       SEXP rank_,
                                                       SEXP target_kind_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double matrices");
   }
@@ -1015,6 +1021,7 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_fit(SEXP A_,
   block_golub_kahan_fit_arrays_free(&arrays);
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_block_golub_kahan_dense_fit_cached(SEXP A_,
@@ -1023,6 +1030,7 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_fit_cached(SEXP A_,
                                                              SEXP rank_,
                                                              SEXP target_kind_,
                                                              SEXP start_av_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_) || !isReal(start_av_)) {
     error("A, start, and start_av must be double matrices");
   }
@@ -1079,6 +1087,7 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_fit_cached(SEXP A_,
   block_golub_kahan_fit_arrays_free(&arrays);
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_block_golub_kahan_dense_retained_cycle(SEXP A_,
@@ -1092,6 +1101,7 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_retained_cycle(SEXP A_,
                                                                  SEXP tol_,
                                                                  SEXP use_retained_av_cache_,
                                                                  SEXP use_deflation_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(initial_start_) || !isReal(random_tails_)) {
     error("A, initial_start, and random_tails must be double matrices");
   }
@@ -1120,6 +1130,7 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_retained_cycle(SEXP A_,
     asLogical(use_retained_av_cache_) == TRUE,
     asLogical(use_deflation_) == TRUE
   );
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_block_golub_kahan_csc_fit(SEXP i_, SEXP p_,
@@ -1128,6 +1139,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit(SEXP i_, SEXP p_,
                                                     SEXP start_,
                                                     SEXP rank_,
                                                     SEXP target_kind_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) ||
       !isInteger(dim_) || !isReal(start_)) {
     error("invalid CSC block Golub-Kahan fit inputs");
@@ -1180,6 +1192,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit(SEXP i_, SEXP p_,
   block_golub_kahan_fit_arrays_free(&arrays);
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_block_golub_kahan_csc_fit_cached(SEXP i_, SEXP p_,
@@ -1189,6 +1202,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit_cached(SEXP i_, SEXP p_,
                                                            SEXP rank_,
                                                            SEXP target_kind_,
                                                            SEXP start_av_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) ||
       !isInteger(dim_) || !isReal(start_) || !isReal(start_av_)) {
     error("invalid cached CSC block Golub-Kahan fit inputs");
@@ -1246,6 +1260,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_fit_cached(SEXP i_, SEXP p_,
   block_golub_kahan_fit_arrays_free(&arrays);
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_block_golub_kahan_csc_retained_cycle(SEXP i_, SEXP p_,
@@ -1260,6 +1275,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_retained_cycle(SEXP i_, SEXP p_,
                                                                SEXP tol_,
                                                                SEXP use_retained_av_cache_,
                                                                SEXP use_deflation_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) ||
       !isInteger(dim_) || !isReal(initial_start_) || !isReal(random_tails_)) {
     error("invalid CSC retained block Golub-Kahan inputs");
@@ -1289,6 +1305,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_retained_cycle(SEXP i_, SEXP p_,
     asLogical(use_retained_av_cache_) == TRUE,
     asLogical(use_deflation_) == TRUE
   );
+  EIGENCORE_ENTRY_END
 }
 
 
@@ -1296,6 +1313,7 @@ extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start
                                                 SEXP rank_, SEXP target_kind_,
                                                 SEXP tol_, SEXP projected_stop_,
                                                 SEXP reorth_u_, SEXP reorth_v_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
   }
@@ -1411,6 +1429,7 @@ extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP A_, SEXP maxit_, SEXP start
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(3);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
@@ -1418,6 +1437,7 @@ extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP di
                                               SEXP rank_, SEXP target_kind_,
                                               SEXP tol_, SEXP projected_stop_,
                                               SEXP reorth_u_, SEXP reorth_v_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(start_)) {
     error("invalid CSC Golub-Kahan inputs");
@@ -1530,6 +1550,7 @@ extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP i_, SEXP p_, SEXP x_, SEXP di
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(3);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 static void validate_real_vector_length(SEXP x, int n, const char* name) {
@@ -2767,6 +2788,7 @@ extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP A_, SEXP initial_start_,
                                                    SEXP target_kind_,
                                                    SEXP tol_,
                                                    SEXP reorth_policy_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
     error("A must be a double matrix");
   }
@@ -2795,6 +2817,7 @@ extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP A_, SEXP initial_start_,
     asInteger(rank_), asInteger(target_kind_), asReal(tol_), norm_A,
     asInteger(reorth_policy_)
   );
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP i_, SEXP p_, SEXP x_,
@@ -2810,6 +2833,7 @@ extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP i_, SEXP p_, SEXP x_,
                                                  SEXP target_kind_,
                                                  SEXP tol_,
                                                  SEXP reorth_policy_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       LENGTH(dim_) != 2) {
     error("invalid CSC retained IRLBA/LBD inputs");
@@ -2836,4 +2860,5 @@ extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP i_, SEXP p_, SEXP x_,
     asInteger(rank_), asInteger(target_kind_), asReal(tol_), norm_A,
     asInteger(reorth_policy_)
   );
+  EIGENCORE_ENTRY_END
 }

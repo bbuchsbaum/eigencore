@@ -55,6 +55,10 @@ static inline double arnoldi_norm2(int n, const double* x) {
   return F77_CALL(dnrm2)(&n, x, &inc);
 }
 
+// C40: the CGS2 products stay hand-blocked. Under OpenBLAS, dgemv tied them
+// single-threaded (orthogonalization stage 2.5-2.6 s vs 2.5-2.9 s at n = 20000)
+// and was slower and noisier with OpenBLAS threads (2.7-4.6 s vs 2.3-2.7 s),
+// since each product is a tall-skinny matrix-vector product (n x <= m).
 static void arnoldi_gemv_t(int n, int cols, const double* __restrict__ V,
                            const double* __restrict__ w, double* __restrict__ out) {
   int c = 0;
@@ -120,41 +124,6 @@ static void arnoldi_gemv_n_sub(int n, int cols, const double* __restrict__ V,
     const double h0 = h[c];
     for (int i = 0; i < n; ++i) {
       w[i] -= v0[i] * h0;
-    }
-  }
-}
-
-// out (n x p) = V (n x m) * Q[, 1:p] (ld ldq). Row-blocked so each block of V
-// is read from memory once and reused for all p output columns (a reference
-// dgemm streams V once per output column). Used for the Krylov-Schur
-// truncation V_p <- V_m Q_p at every restart.
-static void arnoldi_combine_blocked(int n, int m, int p, const double* V,
-                                    const double* Q, int ldq, double* out) {
-  const int block = 512;
-  for (int i0 = 0; i0 < n; i0 += block) {
-    const int len = std::min(block, n - i0);
-    for (int j = 0; j < p; ++j) {
-      double* __restrict__ y = out + static_cast<int64_t>(j) * n + i0;
-      const double* q = Q + static_cast<int64_t>(j) * ldq;
-      std::fill(y, y + len, 0.0);
-      int l = 0;
-      for (; l + 4 <= m; l += 4) {
-        const double* __restrict__ v0 = V + static_cast<int64_t>(l) * n + i0;
-        const double* __restrict__ v1 = v0 + n;
-        const double* __restrict__ v2 = v1 + n;
-        const double* __restrict__ v3 = v2 + n;
-        const double q0 = q[l], q1 = q[l + 1], q2 = q[l + 2], q3 = q[l + 3];
-        for (int i = 0; i < len; ++i) {
-          y[i] += (v0[i] * q0 + v1[i] * q1) + (v2[i] * q2 + v3[i] * q3);
-        }
-      }
-      for (; l < m; ++l) {
-        const double* __restrict__ v0 = V + static_cast<int64_t>(l) * n + i0;
-        const double q0 = q[l];
-        for (int i = 0; i < len; ++i) {
-          y[i] += v0[i] * q0;
-        }
-      }
     }
   }
 }
@@ -281,6 +250,7 @@ static SEXP native_arnoldi_cycle_impl(void* impl,
   double scale = 0.0;
 
   for (int j = 0; j < m_budget; ++j) {
+    eigencore_check_interrupt();
     arnoldi_apply_column(impl, apply, n, V + static_cast<int64_t>(j) * n, w,
                          &workspace, "native Arnoldi operator apply");
     ++matvecs;
@@ -548,9 +518,10 @@ static SEXP native_krylov_schur_impl(void* impl,
   bool converged = false;
 
   for (int iter = 0; iter < max_iterations; ++iter) {
-    R_CheckUserInterrupt();
+    eigencore_check_interrupt();
     // 1. Expand A V_j = V_{j+1} S_j from size l to size m.
     for (int j = l; j < m; ++j) {
+      eigencore_check_interrupt();
       auto stage_start = native_timer_now();
       arnoldi_apply_column(impl, apply, n, V + static_cast<int64_t>(j) * n, w,
                            &workspace, "native Krylov-Schur Arnoldi operator apply");
@@ -703,7 +674,16 @@ static SEXP native_krylov_schur_impl(void* impl,
     auto restart_start = native_timer_now();
     // 5. Truncate to the leading p Schur vectors: V_p <- V_m Q_p, keep the
     //    residual vector, S_p <- [T_p; bq_p^T].
-    arnoldi_combine_blocked(n, m, p, V, Q, m, Wbuf);
+    {
+      // C40: BLAS-3 dgemm beats the former hand-blocked combine under an
+      // optimized BLAS (OpenBLAS, 20000 x 20000 sparse LM k=6: restart stage
+      // 1.3-1.6 s -> 0.45-0.8 s; n = 5000: 0.26-0.35 s -> 0.03-0.07 s).
+      const char trans_N = 'N';
+      const double one = 1.0;
+      const double zero = 0.0;
+      F77_CALL(dgemm)(&trans_N, &trans_N, &n, &p, &m, &one, V, &n, Q, &m,
+                      &zero, Wbuf, &n FCONE FCONE);
+    }
     std::memcpy(V, Wbuf, sizeof(double) * n_sz * static_cast<size_t>(p));
     std::memcpy(V + static_cast<int64_t>(p) * n, V + static_cast<int64_t>(m) * n,
                 sizeof(double) * n_sz);
@@ -777,6 +757,7 @@ static SEXP native_krylov_schur_impl(void* impl,
 extern "C" SEXP eigencore_arnoldi_refined_ritz(SEXP V_, SEXP H_,
                                                 SEXP iterations_,
                                                 SEXP values_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(V_) || !isReal(H_) || !isComplex(values_)) {
     error("native Arnoldi refined extraction requires real V/H and complex values");
   }
@@ -910,10 +891,12 @@ extern "C" SEXP eigencore_arnoldi_refined_ritz(SEXP V_, SEXP H_,
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(4);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_arnoldi_dense_cycle(SEXP A_, SEXP start_,
                                                SEXP max_subspace_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
   }
@@ -930,15 +913,18 @@ extern "C" SEXP eigencore_arnoldi_dense_cycle(SEXP A_, SEXP start_,
   return native_arnoldi_cycle_impl(
     &impl, eigencore_dense_apply, n, REAL(start_), asInteger(max_subspace_)
   );
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_arnoldi_csc_cycle(SEXP i_, SEXP p_, SEXP x_,
                                              SEXP dim_, SEXP start_,
                                              SEXP max_subspace_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       LENGTH(dim_) != 2 || !isReal(start_)) {
     error("invalid CSC Arnoldi inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "Arnoldi");
   const int nrow = INTEGER(dim_)[0];
   const int ncol = INTEGER(dim_)[1];
   if (nrow != ncol) {
@@ -951,11 +937,13 @@ extern "C" SEXP eigencore_arnoldi_csc_cycle(SEXP i_, SEXP p_, SEXP x_,
   return native_arnoldi_cycle_impl(
     &impl, eigencore_csc_apply, nrow, REAL(start_), asInteger(max_subspace_)
   );
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_arnoldi_r_operator_cycle(SEXP dim_, SEXP apply_,
                                                     SEXP start_,
                                                     SEXP max_subspace_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(dim_) || LENGTH(dim_) != 2 || TYPEOF(apply_) != CLOSXP ||
       !isReal(start_)) {
     error("invalid matrix-free Arnoldi inputs");
@@ -972,6 +960,7 @@ extern "C" SEXP eigencore_arnoldi_r_operator_cycle(SEXP dim_, SEXP apply_,
   return native_arnoldi_cycle_impl(
     &impl, eigencore_r_operator_apply, nrow, REAL(start_), asInteger(max_subspace_)
   );
+  EIGENCORE_ENTRY_END
 }
 
 static ArnoldiTarget arnoldi_target_or_error(SEXP target_, SEXP target_values_) {
@@ -995,6 +984,7 @@ extern "C" SEXP eigencore_arnoldi_ks_dense(SEXP A_, SEXP start_, SEXP k_,
                                             SEXP max_subspace_, SEXP target_,
                                             SEXP target_values_,
                                             SEXP tol_, SEXP maxit_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
   }
@@ -1013,6 +1003,7 @@ extern "C" SEXP eigencore_arnoldi_ks_dense(SEXP A_, SEXP start_, SEXP k_,
     asInteger(max_subspace_), arnoldi_target_or_error(target_, target_values_),
     asReal(tol_), asInteger(maxit_)
   );
+  EIGENCORE_ENTRY_END
 }
 
 // Applies the adjoint of a CSC matrix: when the CSC storage holds B = A^T,
@@ -1039,10 +1030,12 @@ extern "C" SEXP eigencore_arnoldi_ks_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                           SEXP max_subspace_, SEXP target_,
                                           SEXP target_values_,
                                           SEXP tol_, SEXP maxit_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       LENGTH(dim_) != 2 || !isReal(start_)) {
     error("invalid CSC Krylov-Schur Arnoldi inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "Krylov-Schur Arnoldi");
   const int nrow = INTEGER(dim_)[0];
   const int ncol = INTEGER(dim_)[1];
   if (nrow != ncol) {
@@ -1060,6 +1053,7 @@ extern "C" SEXP eigencore_arnoldi_ks_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
     asInteger(max_subspace_), arnoldi_target_or_error(target_, target_values_),
     asReal(tol_), asInteger(maxit_)
   );
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_arnoldi_ks_r_operator(SEXP dim_, SEXP apply_,
@@ -1068,6 +1062,7 @@ extern "C" SEXP eigencore_arnoldi_ks_r_operator(SEXP dim_, SEXP apply_,
                                                  SEXP target_,
                                                  SEXP target_values_,
                                                  SEXP tol_, SEXP maxit_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(dim_) || LENGTH(dim_) != 2 || TYPEOF(apply_) != CLOSXP ||
       !isReal(start_)) {
     error("invalid matrix-free Krylov-Schur Arnoldi inputs");
@@ -1086,6 +1081,7 @@ extern "C" SEXP eigencore_arnoldi_ks_r_operator(SEXP dim_, SEXP apply_,
     asInteger(max_subspace_), arnoldi_target_or_error(target_, target_values_),
     asReal(tol_), asInteger(maxit_)
   );
+  EIGENCORE_ENTRY_END
 }
 
 // Eigen-decomposition of the leading m x m block of H (leading dimension
@@ -1213,6 +1209,7 @@ static void arnoldi_check_vh(SEXP V_, SEXP H_, int m, int* n_out, int* h_rows_ou
 // Projected Ritz values and complex Ritz coefficient vectors (m x m, unit
 // norm columns) of the leading m x m block of H. Cheap: no n-length work.
 extern "C" SEXP eigencore_arnoldi_ritz_coefficients(SEXP H_, SEXP iterations_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(H_)) {
     error("native Arnoldi Ritz coefficients require a real H matrix");
   }
@@ -1249,12 +1246,14 @@ extern "C" SEXP eigencore_arnoldi_ritz_coefficients(SEXP H_, SEXP iterations_) {
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(4);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 // Ritz vectors V[, 1:m] %*% C for a complex m x c coefficient block, formed
 // with one real dgemm and normalized to unit 2-norm.
 extern "C" SEXP eigencore_arnoldi_ritz_vectors(SEXP V_, SEXP iterations_,
                                                 SEXP coefficients_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(V_) || !isComplex(coefficients_)) {
     error("native Arnoldi Ritz vectors require real V and complex coefficients");
   }
@@ -1280,9 +1279,11 @@ extern "C" SEXP eigencore_arnoldi_ritz_vectors(SEXP V_, SEXP iterations_,
     cim[i] = coeff[i].i;
   }
   return arnoldi_form_ritz_vectors(REAL(V_), n, m, cre, m, cim, m, cols);
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_arnoldi_ritz(SEXP V_, SEXP H_, SEXP iterations_) {
+  EIGENCORE_ENTRY_BEGIN
   const int m = asInteger(iterations_);
   int n = 0;
   int h_rows = 0;
@@ -1308,4 +1309,5 @@ extern "C" SEXP eigencore_arnoldi_ritz(SEXP V_, SEXP H_, SEXP iterations_) {
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(4);
   return out_;
+  EIGENCORE_ENTRY_END
 }

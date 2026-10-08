@@ -11,6 +11,13 @@ struct BlockGolubKahanBasisScratch {
   double* tmp = nullptr;
   size_t bytes = 0;
   bool transient = false;
+
+  BlockGolubKahanBasisScratch() = default;
+  BlockGolubKahanBasisScratch(const BlockGolubKahanBasisScratch&) = delete;
+  BlockGolubKahanBasisScratch& operator=(const BlockGolubKahanBasisScratch&) = delete;
+  // Releases native (malloc) buffers on every exit path, including C++
+  // exceptions; explicit block_golub_kahan_basis_scratch_free calls stay valid.
+  ~BlockGolubKahanBasisScratch();
 };
 
 void block_golub_kahan_basis_scratch_free(BlockGolubKahanBasisScratch* scratch);

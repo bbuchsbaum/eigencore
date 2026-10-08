@@ -3,6 +3,7 @@
 #include <R.h>
 #include <Rinternals.h>
 #include <R_ext/BLAS.h>
+#include "eigencore_common.h"
 #include "native_operators.h"
 #include "certificates.h"
 
@@ -84,6 +85,7 @@ static double frobenius_norm_dense_cert(const double* X, R_xlen_t len) {
 }
 
 extern "C" SEXP eigencore_orthogonality_loss(SEXP Q_, SEXP B_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(Q_)) {
     error("Q must be a double matrix");
   }
@@ -132,10 +134,12 @@ extern "C" SEXP eigencore_orthogonality_loss(SEXP Q_, SEXP B_) {
   const double loss = max_orthogonality_loss_cert(REAL(gram_), k);
   UNPROTECT(1);
   return ScalarReal(loss);
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_eigen_residuals(SEXP A_, SEXP values_,
                                                 SEXP vectors_, SEXP B_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(values_) || !isReal(vectors_)) {
     error("A, values, and vectors must be double");
   }
@@ -198,11 +202,13 @@ extern "C" SEXP eigencore_dense_eigen_residuals(SEXP A_, SEXP values_,
   }
   UNPROTECT(2);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_eigen_certificate(SEXP A_, SEXP values_,
                                                   SEXP vectors_, SEXP B_,
                                                   SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(values_) || !isReal(vectors_)) {
     error("A, values, and vectors must be double");
   }
@@ -313,10 +319,12 @@ extern "C" SEXP eigencore_dense_eigen_certificate(SEXP A_, SEXP values_,
 
   UNPROTECT(protect_count);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_svd_residuals(SEXP A_, SEXP d_,
                                               SEXP u_, SEXP v_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(d_) || !isReal(u_) || !isReal(v_)) {
     error("A, d, u, and v must be double");
   }
@@ -385,10 +393,12 @@ extern "C" SEXP eigencore_dense_svd_residuals(SEXP A_, SEXP d_,
 
   UNPROTECT(7);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_svd_certificate(SEXP A_, SEXP d_,
                                                 SEXP u_, SEXP v_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(d_) || !isReal(u_) || !isReal(v_)) {
     error("A, d, u, and v must be double");
   }
@@ -491,11 +501,13 @@ extern "C" SEXP eigencore_dense_svd_certificate(SEXP A_, SEXP d_,
 
   UNPROTECT(14);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_svd_certificate_cached_av(SEXP A_, SEXP d_,
                                                           SEXP u_, SEXP v_,
                                                           SEXP av_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(d_) || !isReal(u_) || !isReal(v_) || !isReal(av_)) {
     error("A, d, u, v, and Av must be double");
   }
@@ -510,6 +522,7 @@ extern "C" SEXP eigencore_dense_svd_certificate_cached_av(SEXP A_, SEXP d_,
   return native_operator_svd_certificate_cached_av(
     &impl, eigencore_dense_apply, m, n, norm_A, d_, u_, v_, av_, tol_
   );
+  EIGENCORE_ENTRY_END
 }
 static SEXP native_operator_eigen_certificate(void* impl,
                                               EigencoreApplyFn apply,
@@ -733,6 +746,7 @@ extern "C" SEXP eigencore_csc_eigen_certificate(SEXP i_, SEXP p_, SEXP x_,
                                                 SEXP dim_, SEXP values_,
                                                 SEXP vectors_, SEXP norm_A_,
                                                 SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(values_) || !isReal(vectors_)) {
     error("invalid CSC eigen certificate inputs");
@@ -745,12 +759,14 @@ extern "C" SEXP eigencore_csc_eigen_certificate(SEXP i_, SEXP p_, SEXP x_,
   CSCOperator impl = {n, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
   return native_operator_eigen_certificate(&impl, eigencore_csc_apply, n,
                                            asReal(norm_A_), values_, vectors_, tol_);
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_diagonal_eigen_certificate(SEXP x_, SEXP dim_,
                                                      SEXP unit_, SEXP values_,
                                                      SEXP vectors_, SEXP norm_A_,
                                                      SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(x_) || !isInteger(dim_) || !isLogical(unit_) ||
       !isReal(values_) || !isReal(vectors_)) {
     error("invalid diagonal eigen certificate inputs");
@@ -762,6 +778,7 @@ extern "C" SEXP eigencore_diagonal_eigen_certificate(SEXP x_, SEXP dim_,
   DiagonalOperator impl = {n, REAL(x_), LOGICAL(unit_)[0] == TRUE};
   return native_operator_eigen_certificate(&impl, eigencore_diagonal_apply, n,
                                            asReal(norm_A_), values_, vectors_, tol_);
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_tridiagonal_eigen_certificate(SEXP alpha_, SEXP beta_,
@@ -769,6 +786,7 @@ extern "C" SEXP eigencore_tridiagonal_eigen_certificate(SEXP alpha_, SEXP beta_,
                                                         SEXP vectors_,
                                                         SEXP norm_A_,
                                                         SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(alpha_) || !isReal(beta_) || !isReal(values_) || !isReal(vectors_)) {
     error("invalid tridiagonal eigen certificate inputs");
   }
@@ -850,12 +868,14 @@ extern "C" SEXP eigencore_tridiagonal_eigen_certificate(SEXP alpha_, SEXP beta_,
 
   UNPROTECT(7);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_svd_certificate(SEXP i_, SEXP p_, SEXP x_,
                                               SEXP dim_, SEXP d_,
                                               SEXP u_, SEXP v_,
                                               SEXP norm_A_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(d_) || !isReal(u_) || !isReal(v_)) {
     error("invalid CSC SVD certificate inputs");
@@ -866,6 +886,7 @@ extern "C" SEXP eigencore_csc_svd_certificate(SEXP i_, SEXP p_, SEXP x_,
   CSCOperator impl = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
   return native_operator_svd_certificate(&impl, eigencore_csc_apply, m, n,
                                          asReal(norm_A_), d_, u_, v_, tol_);
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_svd_certificate_cached_av(SEXP i_, SEXP p_, SEXP x_,
@@ -873,6 +894,7 @@ extern "C" SEXP eigencore_csc_svd_certificate_cached_av(SEXP i_, SEXP p_, SEXP x
                                                         SEXP u_, SEXP v_,
                                                         SEXP av_, SEXP norm_A_,
                                                         SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(d_) || !isReal(u_) || !isReal(v_) || !isReal(av_)) {
     error("invalid cached-Av CSC SVD certificate inputs");
@@ -885,12 +907,14 @@ extern "C" SEXP eigencore_csc_svd_certificate_cached_av(SEXP i_, SEXP p_, SEXP x
     &impl, eigencore_csc_apply, m, n,
     asReal(norm_A_), d_, u_, v_, av_, tol_
   );
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_diagonal_svd_certificate(SEXP x_, SEXP dim_,
                                                    SEXP unit_, SEXP d_,
                                                    SEXP u_, SEXP v_,
                                                    SEXP norm_A_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(x_) || !isInteger(dim_) || !isLogical(unit_) ||
       !isReal(d_) || !isReal(u_) || !isReal(v_)) {
     error("invalid diagonal SVD certificate inputs");
@@ -900,6 +924,7 @@ extern "C" SEXP eigencore_diagonal_svd_certificate(SEXP x_, SEXP dim_,
   DiagonalOperator impl = {m, REAL(x_), LOGICAL(unit_)[0] == TRUE};
   return native_operator_svd_certificate(&impl, eigencore_diagonal_apply, m, n,
                                          asReal(norm_A_), d_, u_, v_, tol_);
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_diagonal_svd_certificate_cached_av(SEXP x_, SEXP dim_,
@@ -908,6 +933,7 @@ extern "C" SEXP eigencore_diagonal_svd_certificate_cached_av(SEXP x_, SEXP dim_,
                                                              SEXP av_,
                                                              SEXP norm_A_,
                                                              SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(x_) || !isInteger(dim_) || !isLogical(unit_) ||
       !isReal(d_) || !isReal(u_) || !isReal(v_) || !isReal(av_)) {
     error("invalid cached-Av diagonal SVD certificate inputs");
@@ -919,4 +945,5 @@ extern "C" SEXP eigencore_diagonal_svd_certificate_cached_av(SEXP x_, SEXP dim_,
     &impl, eigencore_diagonal_apply, m, n,
     asReal(norm_A_), d_, u_, v_, av_, tol_
   );
+  EIGENCORE_ENTRY_END
 }

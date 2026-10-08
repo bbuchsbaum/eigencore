@@ -146,6 +146,7 @@ static void accumulate_sparse_gram_upper(int dim, int count, const int* ptr,
     panel_cols = 0;
   };
   for (int j = 0; j < count; ++j) {
+    if ((j & 63) == 0) eigencore_check_interrupt();
     const int start = ptr[j];
     const int end = ptr[j + 1];
     const int nnz = end - start;
@@ -382,6 +383,7 @@ static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
 
   int active = 0;
   for (int step = 0; step < max_steps; ++step) {
+    eigencore_check_interrupt();
     const double* q = Q.data() + static_cast<int64_t>(step) * m;
     csc_left_normal_apply_vec(Ai, Ap, Ax, m, n, q, z.data(), tmp_n.data());
 
@@ -543,6 +545,7 @@ static int csc_implicit_right_normal_lanczos_attempt(const int* Ai,
   int active = 0;
   double final_beta = 0.0;
   for (int step = 0; step < max_steps; ++step) {
+    eigencore_check_interrupt();
     const double* q = Q.data() + static_cast<int64_t>(step) * n;
     csc_right_normal_apply_vec(Ai, Ap, Ax, m, n, q, z.data(), tmp_m.data());
 
@@ -689,6 +692,7 @@ static int gram_krylov_left_normal_attempt(const double* gram,
   const double zero = 0.0;
   int active = 0;
   for (int step = 0; step < max_steps; ++step) {
+    eigencore_check_interrupt();
     const double* q = Q.data() + static_cast<int64_t>(step) * m;
     F77_CALL(dgemv)(&trans_N, &m, &m, &one, gram, &m, q, &inc_one,
                     &zero, z.data(), &inc_one FCONE);
@@ -839,6 +843,7 @@ static int gram_top_subspace_attempt(const double* gram,
   const double zero = 0.0;
   const int max_iter = 8;
   for (int iter = 0; iter < max_iter; ++iter) {
+    eigencore_check_interrupt();
     F77_CALL(dgemm)(&trans_N, &trans_N, &m, &subspace, &m,
                     &one, gram, &m, Q.data(), &m,
                     &zero, Z.data(), &m FCONE FCONE);
@@ -919,6 +924,7 @@ static int gram_top_subspace_attempt(const double* gram,
 
 extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
                                             SEXP dim_, SEXP rank_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
     error("invalid CSC inputs");
   }
@@ -1250,6 +1256,7 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(22);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 static SEXP eigencore_csc_right_gram_svd_impl(
@@ -1546,10 +1553,12 @@ static SEXP eigencore_csc_right_gram_svd_impl(
 
 extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
                                              SEXP dim_, SEXP rank_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   return eigencore_csc_right_gram_svd_impl(
     i_, p_, x_, dim_, rank_, tol_, TRUE,
     0.0, 0.0, 0.0, 0.0, R_PosInf, 0
   );
+  EIGENCORE_ENTRY_END
 }
 
 static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
@@ -1829,6 +1838,7 @@ static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
 extern "C" SEXP eigencore_csc_left_gram_svd_fast_result(SEXP i_, SEXP p_, SEXP x_,
                                                         SEXP dim_, SEXP rank_,
                                                         SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   SEXP native_ = PROTECT(eigencore_csc_left_gram_svd(i_, p_, x_, dim_, rank_, tol_));
   SEXP out_ = eigencore_csc_gram_svd_fast_result_from_native(
     native_,
@@ -1840,11 +1850,13 @@ extern "C" SEXP eigencore_csc_left_gram_svd_fast_result(SEXP i_, SEXP p_, SEXP x
   );
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_right_gram_svd_fast_result(SEXP i_, SEXP p_, SEXP x_,
                                                          SEXP dim_, SEXP rank_,
                                                          SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   SEXP native_ = PROTECT(eigencore_csc_right_gram_svd(i_, p_, x_, dim_, rank_, tol_));
   SEXP out_ = eigencore_csc_gram_svd_fast_result_from_native(
     native_,
@@ -1856,4 +1868,5 @@ extern "C" SEXP eigencore_csc_right_gram_svd_fast_result(SEXP i_, SEXP p_, SEXP 
   );
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }

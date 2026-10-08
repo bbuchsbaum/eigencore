@@ -825,7 +825,16 @@ static void trl_buffers_free(ThickRestartBuffers* b) {
   std::free(b->Z_eig);
   std::free(b->w_eig);
   std::free(b->isuppz);
+  std::memset(b, 0, sizeof(*b));
 }
+
+struct TrlBuffersGuard {
+  explicit TrlBuffersGuard(ThickRestartBuffers* buffers) : b(buffers) {}
+  TrlBuffersGuard(const TrlBuffersGuard&) = delete;
+  TrlBuffersGuard& operator=(const TrlBuffersGuard&) = delete;
+  ~TrlBuffersGuard() { trl_buffers_free(b); }
+  ThickRestartBuffers* b;
+};
 
 static int trl_buffers_alloc(ThickRestartBuffers* b, int n, int k_target,
                              int m_max, int block_cols) {
@@ -1130,30 +1139,32 @@ static int native_block_lanczos_run(
   const size_t nm = static_cast<size_t>(n) * static_cast<size_t>(m_max);
   const size_t nb = static_cast<size_t>(n) * static_cast<size_t>(block_size);
   const size_t mm = static_cast<size_t>(m_max) * static_cast<size_t>(m_max);
-  double* V = static_cast<double*>(std::calloc(nm, sizeof(double)));
-  double* AV = static_cast<double*>(std::calloc(nm, sizeof(double)));
-  double* Z = static_cast<double*>(std::calloc(nb, sizeof(double)));
-  double* AZ = static_cast<double*>(std::calloc(nb, sizeof(double)));
-  double* H = static_cast<double*>(std::calloc(mm, sizeof(double)));
-  double* S_selected = static_cast<double*>(std::calloc(mm, sizeof(double)));
-  double* theta = static_cast<double*>(std::calloc(static_cast<size_t>(m_max), sizeof(double)));
-  double* B_v = static_cast<double*>(std::calloc(static_cast<size_t>(n) * k_target, sizeof(double)));
-  double* B_av = static_cast<double*>(std::calloc(static_cast<size_t>(n) * k_target, sizeof(double)));
-  double* tmp = static_cast<double*>(std::calloc(static_cast<size_t>(m_max), sizeof(double)));
-  int* selected = static_cast<int*>(std::calloc(static_cast<size_t>(m_max), sizeof(int)));
+  std::vector<double> V_storage(eigencore_buffer_size(nm));
+  double* V = V_storage.data();
+  std::vector<double> AV_storage(eigencore_buffer_size(nm));
+  double* AV = AV_storage.data();
+  std::vector<double> Z_storage(eigencore_buffer_size(nb));
+  double* Z = Z_storage.data();
+  std::vector<double> AZ_storage(eigencore_buffer_size(nb));
+  double* AZ = AZ_storage.data();
+  std::vector<double> H_storage(eigencore_buffer_size(mm));
+  double* H = H_storage.data();
+  std::vector<double> S_selected_storage(eigencore_buffer_size(mm));
+  double* S_selected = S_selected_storage.data();
+  std::vector<double> theta_storage(eigencore_buffer_size(static_cast<size_t>(m_max)));
+  double* theta = theta_storage.data();
+  std::vector<double> B_v_storage(eigencore_buffer_size(static_cast<size_t>(n) * k_target));
+  double* B_v = B_v_storage.data();
+  std::vector<double> B_av_storage(eigencore_buffer_size(static_cast<size_t>(n) * k_target));
+  double* B_av = B_av_storage.data();
+  std::vector<double> tmp_storage(eigencore_buffer_size(static_cast<size_t>(m_max)));
+  double* tmp = tmp_storage.data();
+  std::vector<int> selected_storage(eigencore_buffer_size(static_cast<size_t>(m_max)));
+  int* selected = selected_storage.data();
   const int dsyev_lwork_query = trl_dsyev_query(m_max);
   int dsyev_lwork = dsyev_lwork_query > 0 ? dsyev_lwork_query : 3 * m_max;
-  double* dsyev_work = static_cast<double*>(std::calloc(static_cast<size_t>(dsyev_lwork), sizeof(double)));
-  if (V == nullptr || AV == nullptr || Z == nullptr || AZ == nullptr ||
-      H == nullptr || S_selected == nullptr || theta == nullptr ||
-      B_v == nullptr || B_av == nullptr || tmp == nullptr ||
-      selected == nullptr || dsyev_work == nullptr) {
-    std::free(V); std::free(AV); std::free(Z); std::free(AZ);
-    std::free(H); std::free(S_selected); std::free(theta);
-    std::free(B_v); std::free(B_av); std::free(tmp);
-    std::free(selected); std::free(dsyev_work);
-    return -2;
-  }
+  std::vector<double> dsyev_work_storage(eigencore_buffer_size(static_cast<size_t>(dsyev_lwork)));
+  double* dsyev_work = dsyev_work_storage.data();
 
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
   int m_active = 0;
@@ -1168,6 +1179,7 @@ static int native_block_lanczos_run(
   }
 
   while (m_active < m_max && source_cols > 0) {
+    eigencore_check_interrupt();
     int accepted_start = m_active;
     int accepted = 0;
     for (int col = 0; col < source_cols && m_active < m_max; ++col) {
@@ -1198,10 +1210,6 @@ static int native_block_lanczos_run(
                          AV + static_cast<int64_t>(accepted_start) * n, n,
                          &workspace);
     if (rc != 0) {
-      std::free(V); std::free(AV); std::free(Z); std::free(AZ);
-      std::free(H); std::free(S_selected); std::free(theta);
-      std::free(B_v); std::free(B_av); std::free(tmp);
-      std::free(selected); std::free(dsyev_work);
       return rc;
     }
     ++(*matvecs_out);
@@ -1223,10 +1231,6 @@ static int native_block_lanczos_run(
   }
 
   if (m_active < k_target) {
-    std::free(V); std::free(AV); std::free(Z); std::free(AZ);
-    std::free(H); std::free(S_selected); std::free(theta);
-    std::free(B_v); std::free(B_av); std::free(tmp);
-    std::free(selected); std::free(dsyev_work);
     return -4;
   }
 
@@ -1252,10 +1256,6 @@ static int native_block_lanczos_run(
   F77_CALL(dsyev)(&jobz, &uplo, &m_active, H, &m_active, theta,
                   dsyev_work, &lwork, &info FCONE FCONE);
   if (info != 0) {
-    std::free(V); std::free(AV); std::free(Z); std::free(AZ);
-    std::free(H); std::free(S_selected); std::free(theta);
-    std::free(B_v); std::free(B_av); std::free(tmp);
-    std::free(selected); std::free(dsyev_work);
     return -3;
   }
 
@@ -1299,10 +1299,6 @@ static int native_block_lanczos_run(
 
   *nconv_out = nconv;
   *m_active_final_out = m_active;
-  std::free(V); std::free(AV); std::free(Z); std::free(AZ);
-  std::free(H); std::free(S_selected); std::free(theta);
-  std::free(B_v); std::free(B_av); std::free(tmp);
-  std::free(selected); std::free(dsyev_work);
   return 0;
 }
 
@@ -1504,6 +1500,7 @@ static int block_lanczos_expand_basis_to_budget(
   // expands one chunk, evaluates convergence, then re-enters to continue the
   // same sweep. Legacy behaviour is m_stop == m_max (a single full sweep).
   while (*m_active < m_stop && *last_block_cols > 0) {
+    eigencore_check_interrupt();
     auto timer = native_timer_now();
     const double av_norm = block_max_column_norm(
       buf->AV_active + static_cast<int64_t>(*last_block_start) * n, n,
@@ -2143,6 +2140,7 @@ static int block_lanczos_window_complement_clean(
   int attempt = 0;
 
   while (total_steps < budget) {
+    eigencore_check_interrupt();
     // Seed the next segment: the next deterministic unit vector, projected into
     // the complement of everything explored so far.
     double seed_norm = 0.0;
@@ -2312,6 +2310,8 @@ static int native_block_thick_restart_lanczos_run(
   if (trl_buffers_alloc(&buf, n, k_target, m_max, block_size) != 0) {
     return -2;
   }
+  // Frees buf on every exit path, including C++ exceptions (C10).
+  TrlBuffersGuard buf_guard(&buf);
   BlockLanczosBestSnapshot best(n, k_target);
 
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
@@ -2346,7 +2346,6 @@ static int native_block_thick_restart_lanczos_run(
                               matvecs_out, operator_columns_out);
   stages->apply += native_timer_elapsed(timer);
   if (rc != 0) {
-    trl_buffers_free(&buf);
     return rc;
   }
   // The start block's projected column is formed by the first expansion step
@@ -2382,6 +2381,7 @@ static int native_block_thick_restart_lanczos_run(
   const int complement_steps = 8;
 
   while (true) {
+    eigencore_check_interrupt();
     // Expand the active basis by one chunk. With mid-sweep checks enabled the
     // chunk is check_stride blocks wide; otherwise the whole sweep is a single
     // chunk up to the m_max budget (legacy behaviour). The chunk target is
@@ -2403,7 +2403,6 @@ static int native_block_thick_restart_lanczos_run(
       matvecs_out, operator_columns_out, ortho_passes_out
     );
     if (rc != 0) {
-      trl_buffers_free(&buf);
       return rc;
     }
 
@@ -2470,7 +2469,6 @@ static int native_block_thick_restart_lanczos_run(
       stages->projected_eigensolve += elapsed;
     }
     if (rc != 0) {
-      trl_buffers_free(&buf);
       return rc;
     }
     have_last_rr = true;
@@ -2524,7 +2522,6 @@ static int native_block_thick_restart_lanczos_run(
       stages->ritz_operator_apply += elapsed;
     }
     if (rc != 0) {
-      trl_buffers_free(&buf);
       return rc;
     }
 
@@ -2679,7 +2676,6 @@ static int native_block_thick_restart_lanczos_run(
           ++probe_count;
           timer = native_timer_now();
           if (clean < 0) {
-            trl_buffers_free(&buf);
             return status != 0 ? status : -1;
           }
           if (clean == 1) {
@@ -2747,7 +2743,6 @@ static int native_block_thick_restart_lanczos_run(
         break;
       }
       if (rc != 0) {
-        trl_buffers_free(&buf);
         return rc;
       }
       ++restart_idx;
@@ -2763,14 +2758,12 @@ static int native_block_thick_restart_lanczos_run(
     operator_columns_out, certification_operator_columns_out
   );
   if (rc != 0) {
-    trl_buffers_free(&buf);
     return rc;
   }
   *n_locked_out = n_locked;
   *m_active_final_out = m_active;
   *operator_allocations_out = workspace.allocation_count;
   *operator_bytes_allocated_out = workspace.bytes_allocated;
-  trl_buffers_free(&buf);
   return 0;
 }
 
@@ -2943,6 +2936,7 @@ extern "C" SEXP eigencore_block_lanczos_dense(SEXP A_, SEXP k_,
                                               SEXP target_kind_,
                                               SEXP tol_,
                                               SEXP start_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
   }
@@ -2983,6 +2977,7 @@ extern "C" SEXP eigencore_block_lanczos_dense(SEXP A_, SEXP k_,
   return block_lanczos_pack_result(n, k, V.data(), lambda.data(),
                                    residuals.data(), converged.data(),
                                    nconv, iterations, matvecs, m_active);
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_block_lanczos_csc(SEXP i_, SEXP p_, SEXP x_,
@@ -2992,10 +2987,12 @@ extern "C" SEXP eigencore_block_lanczos_csc(SEXP i_, SEXP p_, SEXP x_,
                                             SEXP target_kind_,
                                             SEXP tol_,
                                             SEXP start_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(start_)) {
     error("invalid CSC block Lanczos inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "block Lanczos");
   SEXP dimS = getAttrib(start_, R_DimSymbol);
   if (dimS == R_NilValue) {
     error("start must be a matrix");
@@ -3032,6 +3029,7 @@ extern "C" SEXP eigencore_block_lanczos_csc(SEXP i_, SEXP p_, SEXP x_,
   return block_lanczos_pack_result(n, k, V.data(), lambda.data(),
                                    residuals.data(), converged.data(),
                                    nconv, iterations, matvecs, m_active);
+  EIGENCORE_ENTRY_END
 }
 
 // Shared driver for the three concrete block thick-restart Lanczos bindings
@@ -3107,6 +3105,7 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(
     SEXP A_, SEXP k_, SEXP m_max_, SEXP block_size_,
     SEXP target_kind_, SEXP tol_, SEXP max_restarts_,
     SEXP norm_a_, SEXP start_, SEXP check_stride_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
   }
@@ -3139,16 +3138,19 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(
   return block_thick_restart_lanczos_impl(
     &impl, eigencore_dense_apply, n, 0, k, m_max, block_size, target_kind,
     tol, max_restarts, norm_a, REAL(start_), check_stride);
+  EIGENCORE_ENTRY_END
 }
 extern "C" SEXP eigencore_block_thick_restart_lanczos_csc(
     SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP k_,
     SEXP m_max_, SEXP block_size_, SEXP target_kind_,
     SEXP tol_, SEXP max_restarts_, SEXP norm_a_, SEXP start_,
     SEXP check_stride_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(start_)) {
     error("invalid CSC block thick-restart Lanczos inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "block thick-restart Lanczos");
   SEXP dimS = getAttrib(start_, R_DimSymbol);
   if (dimS == R_NilValue) {
     error("start must be a matrix");
@@ -3177,12 +3179,14 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_csc(
   return block_thick_restart_lanczos_impl(
     &impl, eigencore_csc_apply, n, 1, k, m_max, block_size, target_kind,
     tol, max_restarts, norm_a, REAL(start_), check_stride);
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_block_thick_restart_lanczos_r_operator(
     SEXP dim_, SEXP apply_, SEXP k_, SEXP m_max_, SEXP block_size_,
     SEXP target_kind_, SEXP tol_, SEXP max_restarts_, SEXP norm_a_, SEXP start_,
     SEXP check_stride_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(dim_) || LENGTH(dim_) != 2 || TYPEOF(apply_) != CLOSXP ||
       !isReal(start_)) {
     error("invalid matrix-free block thick-restart Lanczos inputs");
@@ -3220,6 +3224,7 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_r_operator(
   return block_thick_restart_lanczos_impl(
     &impl, eigencore_r_operator_apply, n, 1, k, m_max, block_size, target_kind,
     tol, max_restarts, norm_a, REAL(start_), check_stride);
+  EIGENCORE_ENTRY_END
 }
 
 // Shared driver for the implicit normal-equations (Gram) thick-restart
@@ -3329,6 +3334,7 @@ extern "C" SEXP eigencore_normal_thick_restart_lanczos_dense(
     SEXP A_, SEXP side_, SEXP k_, SEXP m_max_, SEXP block_size_,
     SEXP target_kind_, SEXP tol_, SEXP max_restarts_,
     SEXP norm_a_, SEXP start_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
     error("A must be a double matrix");
   }
@@ -3344,15 +3350,18 @@ extern "C" SEXP eigencore_normal_thick_restart_lanczos_dense(
     static_cast<int>(asInteger(side_)),
     k_, m_max_, block_size_, target_kind_, tol_, max_restarts_,
     norm_a_, start_);
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_normal_thick_restart_lanczos_csc(
     SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP side_, SEXP k_,
     SEXP m_max_, SEXP block_size_, SEXP target_kind_,
     SEXP tol_, SEXP max_restarts_, SEXP norm_a_, SEXP start_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
     error("invalid CSC normal-equations Lanczos inputs");
   }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "normal-equations Lanczos");
   const int m = INTEGER(dim_)[0];
   const int n = INTEGER(dim_)[1];
   CSCOperator base = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
@@ -3361,4 +3370,5 @@ extern "C" SEXP eigencore_normal_thick_restart_lanczos_csc(
     static_cast<int>(asInteger(side_)),
     k_, m_max_, block_size_, target_kind_, tol_, max_restarts_,
     norm_a_, start_);
+  EIGENCORE_ENTRY_END
 }
