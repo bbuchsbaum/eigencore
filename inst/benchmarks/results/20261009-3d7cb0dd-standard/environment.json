@@ -1,0 +1,91 @@
+{
+  "timestamp_utc": "2026-10-09T19:28:29Z",
+  "profile": "standard",
+  "machine_id": "3d7cb0dd",
+  "r_version": "R version 4.3.3 (2024-02-29)",
+  "platform": "x86_64-pc-linux-gnu",
+  "os": "Ubuntu 24.04.5 LTS",
+  "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "cores_logical": 4,
+  "cores_physical": 4,
+  "mem_total_gb": 15.7,
+  "blas_path": "/usr/lib/x86_64-linux-gnu/openblas-pthread/libblas.so.3",
+  "lapack_path": "/usr/lib/x86_64-linux-gnu/openblas-pthread/libopenblasp-r0.3.26.so",
+  "la_library": "/usr/lib/x86_64-linux-gnu/openblas-pthread/libopenblasp-r0.3.26.so",
+  "la_version": "3.12.0",
+  "ext_blas": "/usr/lib/x86_64-linux-gnu/openblas-pthread/libblas.so.3",
+  "blas_vendor": "OpenBLAS",
+  "blas_threads_parent": {
+    "blas": 4,
+    "omp": 4,
+    "source": "RhpcBLASctl"
+  },
+  "env_threads": {
+    "OPENBLAS_NUM_THREADS": null,
+    "OMP_NUM_THREADS": null,
+    "MKL_NUM_THREADS": null
+  },
+  "profmem": true,
+  "eigencore_version": "1.3.0",
+  "eigencore_lib": "/home/user/eigencore/.claude/worktrees/agent-a2b39d6216530b1a0/.rlib/eigencore",
+  "eigencore_built": "R 4.3.3; x86_64-pc-linux-gnu; 2026-10-09 18:59:15 UTC; unix",
+  "eigencore_remote_sha": null,
+  "git_sha": "bf11055cbd",
+  "git_dirty_package_sources": false,
+  "packages": {
+    "eigencore": "1.3.0",
+    "Matrix": "1.6.5",
+    "RSpectra": "0.16.1",
+    "irlba": "2.3.5.1",
+    "PRIMME": null,
+    "RhpcBLASctl": "0.23.42",
+    "bench": "1.1.3"
+  },
+  "loadavg_start": [1.77, 1.6, 1.77],
+  "args": {
+    "lib": ".rlib",
+    "profile": "standard",
+    "threads": "1,4"
+  },
+  "workers": [
+    {
+      "threads": 1,
+      "eigencore_threads": 1,
+      "blas_threads": {
+        "blas": 1,
+        "omp": 1,
+        "source": "RhpcBLASctl"
+      },
+      "env": {
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1"
+      },
+      "methods_run": ["eigencore", "RSpectra", "irlba", "base"],
+      "methods_missing": "PRIMME",
+      "loadavg_end": [2.05, 1.84, 1.81]
+    },
+    {
+      "threads": 4,
+      "eigencore_threads": 4,
+      "blas_threads": {
+        "blas": 4,
+        "omp": 4,
+        "source": "RhpcBLASctl"
+      },
+      "env": {
+        "OPENBLAS_NUM_THREADS": "4",
+        "OMP_NUM_THREADS": "4"
+      },
+      "methods_run": ["eigencore", "RSpectra", "irlba", "base"],
+      "methods_missing": "PRIMME",
+      "loadavg_end": [7.56, 5.95, 4.01]
+    }
+  ],
+  "threads": [1, 4],
+  "reps": 5,
+  "budget_seconds": 120,
+  "tol": 1e-08,
+  "loadavg_end": [7.56, 5.95, 4.01],
+  "wall_seconds": 1069.8,
+  "run_id": "20261009-3d7cb0dd-standard"
+}

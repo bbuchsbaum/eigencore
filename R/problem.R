@@ -169,6 +169,7 @@ plan_solver.eigencore_eigen_problem <- function(
            "), got k = ", k, ".", call. = FALSE)
     }
   }
+  validate_shift_invert_target(problem, method)
   method_descriptor <- method
   planner_policy <- planner_policy_snapshot()
   allow_dense_fallback <- match.arg(allow_dense_fallback)
@@ -506,6 +507,45 @@ sparse_general_pencil_arnoldi_plan_controls <- function(problem, k, method = NUL
   controls
 }
 
+# An explicit shift_invert(sigma) computes the eigenvalues nearest sigma
+# (largest magnitude of (A - sigma B)^-1). Some routes nevertheless labelled
+# and ordered the result by the problem's target, so e.g. target = smallest()
+# returned the k eigenvalues nearest sigma as a certified "smallest" set
+# (found by the oracle sweep). Only targets that mean "nearest sigma" are
+# accepted with an explicit transform.
+#' @keywords internal
+validate_shift_invert_target <- function(problem, method) {
+  transform <- if (is_transform_method(problem$transform)) {
+    problem$transform
+  } else if (is_transform_method(method)) {
+    method
+  } else {
+    NULL
+  }
+  if (is.null(transform) || !identical(transform$kind, "shift_invert") ||
+      isTRUE(transform$perturb_on_singular)) {
+    return(invisible(TRUE))
+  }
+  sigma <- transform$sigma
+  target <- problem$target
+  kind <- if (inherits(target, "eigencore_target")) target$kind else ""
+  same_sigma <- function(a, b) {
+    length(a) == 1L && length(b) == 1L && (is.numeric(a) || is.complex(a)) &&
+      (is.numeric(b) || is.complex(b)) && is.finite(Mod(a)) &&
+      Mod(a - b) <= 1e-12 * max(1, Mod(a), Mod(b))
+  }
+  ok <- (identical(kind, "nearest") && same_sigma(target$value, sigma)) ||
+    (identical(kind, "smallest_magnitude") && length(sigma) == 1L &&
+       isTRUE(Mod(sigma) == 0))
+  if (!ok) {
+    stop("shift_invert(sigma = ", format(sigma, digits = 8),
+         ") computes the eigenvalues nearest sigma; use target = nearest(",
+         format(sigma, digits = 8), ") (got target ", target_label(target),
+         ").", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
 #' @keywords internal
 is_auto_method <- function(method) {
   inherits(method, "eigencore_method") && identical(method$kind, "auto")
@@ -722,6 +762,15 @@ plan_solver.eigencore_svd_problem <- function(
     vectors = c("both", "left", "right", "none"), certify = TRUE,
     allow_dense_fallback = c("auto", "never", "always"), ...) {
   rank <- validate_solution_count(rank, min(problem$A$dim), "rank")
+  # Eigen-only methods used to plan as "lanczos"/"lobpcg" and then fail with
+  # "Invalid eigencore plan (dispatch_unavailable): planned_method." (oracle
+  # sweep); name the supported SVD methods instead.
+  if (inherits(method, "eigencore_method") &&
+      method$kind %in% c("lanczos", "lobpcg", "shift_invert")) {
+    stop(method$kind, "() is an eigensolver method and is not supported for ",
+         "SVD problems; use auto(), golub_kahan() or randomized().",
+         call. = FALSE)
+  }
   method_descriptor <- method
   planner_policy <- planner_policy_snapshot()
   vectors <- match.arg(vectors)
