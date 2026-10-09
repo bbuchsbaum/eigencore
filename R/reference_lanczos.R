@@ -1,3 +1,26 @@
+# Thick-restart Lanczos needs k + block subspace columns. When the operator
+# dimension itself is too small (k = n, or k close to n with a block), the
+# old "max_subspace must be at least k + 1" named an argument the caller
+# never set (oracle sweep: k = n on sparse input with auto()).
+#' @keywords internal
+stop_lanczos_subspace_exhausted <- function(k, n, block, m_max) {
+  k <- as.integer(k)
+  need <- k + as.integer(block)
+  if (m_max >= n) {
+    stop("k = ", k, " needs a Krylov subspace of ", need, " columns",
+         if (block > 1L) paste0(" (k + block, block = ", block, ")"),
+         ", more than the operator dimension n = ", n, ". For (nearly) all ",
+         "eigenpairs use eig_full(), a dense matrix with method = auto(), or ",
+         "allow_dense_fallback = \"always\"",
+         if (block > 1L) "; or a smaller block", ".", call. = FALSE)
+  }
+  if (block > 1L) {
+    stop("max_subspace must be at least k + block for block thick-restart Lanczos.",
+         call. = FALSE)
+  }
+  stop("max_subspace must be at least k + 1.", call. = FALSE)
+}
+
 #' @keywords internal
 default_block_lanczos_max_subspace <- function(k, block) {
   k <- as.integer(k)
@@ -154,7 +177,7 @@ native_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
     min(n, as.integer(maxit))
   }
   if (m_max < as.integer(k) + 1L) {
-    stop("max_subspace must be at least k + 1.", call. = FALSE)
+    stop_lanczos_subspace_exhausted(k, n, 1L, m_max)
   }
   if (is.null(max_restarts)) {
     max_restarts <- 100L
@@ -239,7 +262,7 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
     min(n, as.integer(maxit))
   }
   if (m_max < as.integer(k) + block) {
-    stop("max_subspace must be at least k + block for block thick-restart Lanczos.", call. = FALSE)
+    stop_lanczos_subspace_exhausted(k, n, block, m_max)
   }
   max_restarts <- as.integer(max_restarts)
   if (length(max_restarts) != 1L || is.na(max_restarts) || max_restarts < 0L) {

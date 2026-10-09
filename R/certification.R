@@ -1047,13 +1047,13 @@ max_residual_value <- function(x) {
 
 #' @keywords internal
 eigen_backward_scale <- function(norm_A, norm_B, values, vectors) {
-  pmax((norm_A + abs(values) * norm_B) * pmax(col_norms(vectors), .Machine$double.eps),
-       .Machine$double.eps)
+  pmax((norm_A + abs(values) * norm_B) * pmax(col_norms(vectors), .Machine$double.xmin),
+       .Machine$double.xmin)
 }
 
 #' @keywords internal
 svd_backward_scale <- function(norm_A, d) {
-  rep(max(norm_A, .Machine$double.eps), length(d))
+  rep(max(norm_A, .Machine$double.xmin), length(d))
 }
 
 #' @keywords internal

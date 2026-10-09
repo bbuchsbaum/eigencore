@@ -114,13 +114,27 @@ eigs_sym <- function(A, k, which = "LM", sigma = NULL, opts = list(),
   ord <- order(values, decreasing = TRUE)
   values <- values[ord]
   vectors <- if (retvec && !is.null(vectors)) vectors[, ord, drop = FALSE]
+  # Keep the per-pair certificate fields aligned with the re-sorted values
+  # (they were left in solver order; found by the oracle sweep).
+  cert <- fit$certificate
+  if (!is.null(cert)) {
+    for (field in c("residuals", "backward_error", "converged", "scale")) {
+      x <- cert[[field]]
+      if (is.atomic(x) && length(x) == length(ord)) {
+        cert[[field]] <- x[ord]
+      }
+    }
+    if (length(cert$failed_indices) && length(cert$converged) == length(ord)) {
+      cert$failed_indices <- which(!cert$converged)
+    }
+  }
   list(
     values = values,
     vectors = vectors,
     nconv = fit$nconv,
     niter = fit$iterations,
     nops = fit$matvecs,
-    certificate = fit$certificate,
+    certificate = cert,
     diagnostics = diagnostics(fit)
   )
 }
@@ -169,15 +183,12 @@ svds <- function(A, k, nu = k, nv = k, opts = list(), ..., Atrans = NULL,
   }
   A <- compat_center_scale(A, center = opts$center %||% FALSE,
                            scale = opts$scale %||% FALSE)
-  vector_mode <- if (nu > 0 && nv > 0) {
-    "both"
-  } else if (nu > 0) {
-    "left"
-  } else if (nv > 0) {
-    "right"
-  } else {
-    "none"
-  }
+  # Like eigs()/eigs_sym() with retvec = FALSE, always solve with both sides
+  # so the result can be certified (the certificate needs U and V); nu/nv
+  # only trim what is returned. Requesting fewer vectors used to return an
+  # uncertified result with an "only 0 eigenvalue(s) converged" warning
+  # (oracle sweep), unlike RSpectra.
+  vector_mode <- "both"
   controls <- if (is.null(opts$tol)) list() else list(tol = opts$tol)
   if (!is.null(opts$ncv)) {
     controls$method <- auto(max_subspace = as.integer(opts$ncv))

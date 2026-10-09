@@ -57,12 +57,19 @@ static double max_orthogonality_loss_upper_cert(const double* gram, int k) {
 // equivalent dgemm. Pair with max_orthogonality_loss_upper_cert.
 static void gram_upper_dsyrk_cert(const double* X, int rows, int k,
                                   double* gram) {
+  // k = 0 (no vectors) is an empty Gram; LAPACK rejects ldc = 0 (DSYRK
+  // error -10, raised through xerbla), as a 0-column U/V did in the oracle
+  // sweep. rows = 0 needs lda >= 1.
+  if (k <= 0) {
+    return;
+  }
   const char uplo = 'U';
   const char trans = 'T';
   const double one = 1.0;
   const double zero = 0.0;
+  const int lda = rows > 0 ? rows : 1;
   F77_CALL(dsyrk)(&uplo, &trans, &k, &rows,
-                  &one, const_cast<double*>(X), &rows,
+                  &one, const_cast<double*>(X), &lda,
                   &zero, gram, &k FCONE FCONE);
 }
 
