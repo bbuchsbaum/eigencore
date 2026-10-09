@@ -138,9 +138,25 @@ static SEXP eigencore_unwind_protect_body(void* data) {
   return (*static_cast<F*>(data))();
 }
 
+// The jump back from R_UnwindProtect's cleanup into eigencore_unwind_protect
+// only skips R's own C frames (R_UnwindProtect and the cleanup callback), which
+// hold no C++ objects. On Windows the C runtime's setjmp/longjmp pair
+// (mingw-w64) performs an SEH unwind of the skipped frames, and that crashed
+// R; GCC's __builtin_setjmp/__builtin_longjmp only restore the stack and frame
+// pointers, which is exactly the semantics needed here.
+#if defined(_WIN32) && defined(__GNUC__)
+typedef void* eigencore_jmp_buf[5];
+#define EIGENCORE_SETJMP(buf) __builtin_setjmp(buf)
+#define EIGENCORE_LONGJMP(buf) __builtin_longjmp(buf, 1)
+#else
+typedef std::jmp_buf eigencore_jmp_buf;
+#define EIGENCORE_SETJMP(buf) setjmp(buf)
+#define EIGENCORE_LONGJMP(buf) std::longjmp(buf, 1)
+#endif
+
 static inline void eigencore_unwind_protect_cleanup(void* jmpbuf, Rboolean jump) {
   if (jump) {
-    std::longjmp(*static_cast<std::jmp_buf*>(jmpbuf), 1);
+    EIGENCORE_LONGJMP(*static_cast<eigencore_jmp_buf*>(jmpbuf));
   }
 }
 
@@ -150,8 +166,8 @@ static inline void eigencore_unwind_protect_cleanup(void* jmpbuf, Rboolean jump)
 template <typename F>
 static inline SEXP eigencore_unwind_protect(F code) {
   SEXP token = eigencore_unwind_token();
-  std::jmp_buf jmpbuf;
-  if (setjmp(jmpbuf)) {
+  eigencore_jmp_buf jmpbuf;
+  if (EIGENCORE_SETJMP(jmpbuf)) {
     throw eigencore::RUnwind{token};
   }
   return R_UnwindProtect(eigencore_unwind_protect_body<F>, &code,
