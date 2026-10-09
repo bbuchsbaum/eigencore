@@ -34,6 +34,7 @@ LinkingTo:
     Matrix
 Suggests:
     bench,
+    callr,
     knitr,
     rmarkdown,
     RSpectra,

@@ -35,6 +35,12 @@ reference_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   v <- v / v_norm
   u_prev <- numeric(m)
   beta_prev <- 0
+  # Breakdown is relative to a running lower bound on ||A||_2 (the largest
+  # ||A v|| / ||A' u|| seen): the old absolute threshold broke down at the
+  # first step on a 1e-12-scale operator and returned no triplets (oracle
+  # sweep; the empty U/V then hit a DSYRK argument error in the certificate).
+  breakdown_rel <- max(100 * .Machine$double.eps, tol * 1e-3)
+  scale_est <- 0
 
   nops <- 0L
   final <- NULL
@@ -46,21 +52,25 @@ reference_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     iterations <- j
     V[, j] <- v
 
-    u <- apply_operator(op, matrix(v, n, 1L))[, 1L] - beta_prev * u_prev
+    Av <- apply_operator(op, matrix(v, n, 1L))[, 1L]
+    scale_est <- max(scale_est, sqrt(sum(Av^2)))
+    u <- Av - beta_prev * u_prev
     nops <- nops + 1L
     if (isTRUE(reorthogonalize) && j > 1L) {
       Uprev <- U[, seq_len(j - 1L), drop = FALSE]
       u <- reorthogonalize_against(matrix(u, m, 1L), Uprev, passes = 2L, workspace = u_reorth_workspace)[, 1L]
     }
     alpha[[j]] <- sqrt(sum(u^2))
-    if (alpha[[j]] <= max(100 * .Machine$double.eps, tol * 1e-3)) {
+    if (alpha[[j]] <= breakdown_rel * scale_est) {
       iterations <- j - 1L
       break
     }
     u <- u / alpha[[j]]
     U[, j] <- u
 
-    z <- apply_adjoint_operator(op, matrix(u, m, 1L))[, 1L] - alpha[[j]] * v
+    Atu <- apply_adjoint_operator(op, matrix(u, m, 1L))[, 1L]
+    scale_est <- max(scale_est, sqrt(sum(Atu^2)))
+    z <- Atu - alpha[[j]] * v
     nops <- nops + 1L
     if (isTRUE(reorthogonalize)) {
       Vj <- V[, seq_len(j), drop = FALSE]
@@ -83,7 +93,7 @@ reference_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
         break
       }
     }
-    if (beta[[j]] <= max(100 * .Machine$double.eps, tol * 1e-3)) {
+    if (beta[[j]] <= breakdown_rel * scale_est) {
       break
     }
 
@@ -2833,7 +2843,9 @@ randomized_svd_core_decomposition <- function(core, rank, target = largest()) {
       solver <- "native_left_gram_eigen_selected"
     } else {
       eig <- native_dense_symmetric_eigen(gram)
-      idx <- order_indices(eig$values, target)
+      # Rank singular values, not their squares: nearest(sigma) on the Gram
+      # eigenvalues compared sigma with d^2 (oracle sweep).
+      idx <- order_indices(sqrt(pmax(eig$values, 0)), target)
       idx <- idx[seq_len(min(rank, length(idx)))]
       values <- pmax(eig$values[idx], 0)
       u <- eig$vectors[, idx, drop = FALSE]
@@ -2841,8 +2853,9 @@ randomized_svd_core_decomposition <- function(core, rank, target = largest()) {
     }
     d <- sqrt(values)
     v <- crossprod(core, u)
+    d_floor <- 100 * .Machine$double.eps * max(c(d, 0))
     for (col in seq_along(d)) {
-      if (d[[col]] > 100 * .Machine$double.eps) {
+      if (d[[col]] > d_floor) {
         v[, col] <- v[, col] / d[[col]]
       } else {
         v[, col] <- 0

@@ -28,7 +28,9 @@ eig_partial(
 there a supplied \code{k} is an upper bound (an error if the interval holds
 more eigenvalues).}
 
-\item{target}{Eigencore eigenvalue target descriptor.}
+\item{target}{Eigencore eigenvalue target descriptor. With
+\code{method = shift_invert(sigma)} it defaults to \code{nearest(sigma)}; other
+targets (except \code{smallest_magnitude()} with \code{sigma = 0}) are an error.}
 
 \item{B}{Optional metric matrix or operator for generalized problems.}
 

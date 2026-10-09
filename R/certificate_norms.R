@@ -471,10 +471,13 @@ eigen_two_norm_backward <- function(A, values, residuals, vec_norms, tol,
     scale <- rep(Inf, length(values))
     backward <- rep(Inf, length(values))
     if (length(idx)) {
+      # Floor only against division by zero: an `eps` floor made the
+      # backward error of operators with ||A||_2 < eps (e.g. a 1e-12-scale
+      # crossprod) an under-estimate, certifying wrong pairs.
       scale[idx] <- pmax(
         (norms[["A"]] + Mod(values[idx]) * norms[["B"]]) *
-          pmax(vec_norms[idx], .Machine$double.eps),
-        .Machine$double.eps
+          pmax(vec_norms[idx], .Machine$double.xmin),
+        .Machine$double.xmin
       )
       backward[idx] <- residuals[idx] / scale[idx]
     }
@@ -488,7 +491,7 @@ svd_two_norm_backward <- function(A, combined, tol, free = list(),
                                   structural = NULL) {
   combined <- as.numeric(combined)
   backward_fn <- function(norms) {
-    scale <- rep(max(norms[["A"]], .Machine$double.eps), length(combined))
+    scale <- rep(max(norms[["A"]], .Machine$double.xmin), length(combined))
     list(backward = combined / scale, scale = scale)
   }
   resolve_certificate_norms(
