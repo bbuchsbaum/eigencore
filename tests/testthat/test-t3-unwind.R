@@ -32,7 +32,10 @@ test_that("C10: every failure kind becomes an R condition after C++ cleanup", {
   expect_identical(unwind_selftest("live"), 0L)
 
   # The same through the remapped allocVector: R refuses an over-long vector.
-  expect_error(unwind_selftest("r_alloc_failure"), "vector is too large")
+  # The wording differs across R versions ("vector is too large" in older R,
+  # "cannot allocate vector of length ..." in R 4.6).
+  expect_error(unwind_selftest("r_alloc_failure"),
+               "vector is too large|cannot allocate vector")
   expect_identical(unwind_selftest("live"), 0L)
 
   expect_error(unwind_selftest("no-such-mode"), "unknown selftest mode")
