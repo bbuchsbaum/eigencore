@@ -250,6 +250,38 @@ Observations to follow up (not violations):
   certified and right. The reverse (RSpectra right, eigencore uncertified)
   happened in 29 cases.
 
+## After the strict `passed` change (extended level, 2026-10-09)
+
+`certificate$passed` now requires the returned set to be verified
+(`exact`, `inertia_verified`, `probed` or `repaired`), and every Hermitian,
+nonsymmetric and SVD route carries a completeness check. Extended level,
+15000 cases, 3 workers, 661 s: **0 hard violations** and **0 certified
+results with a wrong set** in every configuration (before: 165 of 12977
+certified results had a wrong set without a completeness claim). 12873 of
+14022 solved cases certify (91.8%); every remaining uncertified case either
+fails its residual certificate or reports an honest unverified status.
+
+| config | runs | certified | uncertified_pct | wrong_set_certified | median_value_err_uncert |
+|---|---|---|---|---|---|
+| gen / lanczos1 |  304 |  246 | 19.1 | 0 | 1.4e-05 |
+| svd / golub_kahan |  802 |  651 | 18.8 | 0 | 2.6e-09 |
+| svd / randomized |  611 |  501 | 18.0 | 0 | 1.9e-03 |
+| gen / lobpcg |  312 |  268 | 14.1 | 0 | 5.5e-06 |
+| herm / lobpcg |  561 |  491 | 12.5 | 0 | 5.5e-04 |
+| herm / lanczos1 |  753 |  670 | 11.0 | 0 | 2.4e-07 |
+| nonsym / auto | 1867 | 1689 |  9.5 | 0 | 3.2e-05 |
+| herm / lanczos2 |  502 |  455 |  9.4 | 0 | 3.5e-09 |
+| svd / auto | 2079 | 1895 |  8.9 | 0 | 4.0e-16 |
+| herm / lanczos3 |  289 |  266 |  8.0 | 0 | 3.2e-05 |
+| nonsym / shift_invert |  130 |  121 |  6.9 | 0 | 3.5e-02 |
+| gen / auto |  683 |  640 |  6.3 | 0 | 3.5e-06 |
+| nonsym / lanczos1 |  113 |  106 |  6.2 | 0 | 1.6e-01 |
+| gen / shift_invert |  122 |  117 |  4.1 | 0 | 4.2e-08 |
+| herm / auto | 1729 | 1669 |  3.5 | 0 | 7.2e-12 |
+| shim / shim | 2197 | 2131 |  3.0 | 0 | 5.6e-16 |
+| herm / shift_invert |  334 |  324 |  3.0 | 0 | 7.0e-09 |
+| complex / auto |  634 |  633 |  0.2 | 0 | NA |
+
 ## Workflow
 
 `.github/workflows/oracle-sweep.yaml` runs every Monday at 04:17 UTC and on
