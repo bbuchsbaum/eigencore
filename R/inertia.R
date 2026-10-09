@@ -458,6 +458,12 @@ inertia_tally_template <- function(sigma, n) {
 #' @keywords internal
 inertia_at <- function(ctx, s) {
   n <- ctx$n
+  seed <- ctx$seed_tally %||% NULL
+  if (!is.null(seed) && identical(seed$sigma, s)) {
+    # Count at the shift the solve already factored (no refactorisation).
+    ctx$seed_hits <- (ctx$seed_hits %||% 0L) + 1L
+    return(seed)
+  }
   out <- inertia_tally_template(s, n)
   eps <- .Machine$double.eps
   scale <- ctx$normA + abs(s) * ctx$normB

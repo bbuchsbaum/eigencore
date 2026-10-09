@@ -507,7 +507,8 @@ inertia_completeness_eligible <- function(problem, k) {
 
 #' @keywords internal
 apply_target_completeness <- function(result, plan, problem, k, mode,
-                                      vectors_requested, solve_seconds = NA_real_) {
+                                      vectors_requested, solve_seconds = NA_real_,
+                                      seed = NULL) {
   cert <- result$certificate
   if (is.null(cert) || !is.null(cert$target_completeness)) {
     if (!isTRUE(vectors_requested)) {
@@ -524,7 +525,8 @@ apply_target_completeness <- function(result, plan, problem, k, mode,
   gate <- NULL
   if (!identical(route, "exact") && mode %in% c("auto", "inertia") && krylov_ok &&
       inertia_completeness_eligible(problem, k)) {
-    gate <- inertia_completeness_gate(problem, mode, k, solve_seconds = solve_seconds)
+    gate <- inertia_completeness_gate(problem, mode, k, solve_seconds = solve_seconds,
+                                      seed = seed)
     if (isTRUE(gate$use)) {
       check <- inertia_completeness_run(
         problem, result$values, result$vectors, cert,

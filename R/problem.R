@@ -359,6 +359,15 @@ plan_solver.eigencore_eigen_problem <- function(
     } else {
       NULL
     },
+    if (isTRUE(auto_shift$smallest_ldl_implicit)) {
+      paste0(
+        "smallest target of a sparse matrix with positive diagonal and a cheap ",
+        "LDL' factor (predicted fill ", format(auto_shift$method$ldl_cost$lnz, digits = 3),
+        ") auto-routed through shift_invert below the spectrum (C60)"
+      )
+    } else {
+      NULL
+    },
     if (auto_shift$tridiagonal_edge_implicit) {
       paste0(
         "tridiagonal ", target_label(problem$target),
@@ -572,7 +581,80 @@ auto_shift_invert_route <- function(problem, method) {
   edge_shift$nearest_implicit <- FALSE
   edge_shift$tridiagonal_edge_implicit <- isTRUE(edge_shift$implicit)
   edge_shift$smallest_magnitude_implicit <- FALSE
+  edge_shift$smallest_ldl_implicit <- FALSE
+  if (isTRUE(edge_shift$implicit)) {
+    return(edge_shift)
+  }
+  spd_shift <- auto_smallest_ldl_shift_invert(edge_shift$problem, method)
+  if (isTRUE(spd_shift$implicit)) {
+    spd_shift$nearest_implicit <- FALSE
+    spd_shift$tridiagonal_edge_implicit <- FALSE
+    spd_shift$smallest_magnitude_implicit <- FALSE
+    spd_shift$smallest_ldl_implicit <- TRUE
+    spd_shift$sigma <- 0
+    return(spd_shift)
+  }
   edge_shift
+}
+
+#' @keywords internal
+#' C60: smallest eigenvalues of a large sparse symmetric matrix that looks
+#' positive definite (positive diagonal) and is cheap to factor route through
+#' LDL' shift-invert at sigma = 0 (or a slightly negative shift for a
+#' singular PSD matrix) instead of plain Lanczos, which converges slowly on
+#' the clustered small end of, e.g., a 2-D Laplacian. The gate is
+#' conservative: n >= getOption("eigencore.smallest_ldl_min_n", 10000), and
+#' CHOLMOD's symbolic analysis must predict a factor with at most
+#' getOption("eigencore.smallest_ldl_max_fill", 20) times the nonzeros of A
+#' and at most getOption("eigencore.smallest_ldl_max_flops", 5e10) flops, so
+#' random sparse matrices with catastrophic fill keep the Lanczos route. At
+#' solve time the factorisation must prove sigma below the spectrum (a
+#' positive definite factor, or an LDL' inertia with no negative pivot);
+#' otherwise the solve falls back to the Lanczos route.
+auto_smallest_ldl_shift_invert <- function(problem, method) {
+  no_route <- list(problem = problem, method = method, implicit = FALSE)
+  if (!is_auto_method(method) || isTRUE(method$no_ldl_route) ||
+      is_transform_method(problem$transform) ||
+      !is.null(problem$metric) ||
+      !identical(problem$structure$kind, "hermitian") ||
+      !inherits(problem$target, "eigencore_target") ||
+      !identical(problem$target$kind, "smallest") ||
+      !identical(problem$A$dtype %||% "double", "double") ||
+      isFALSE(getOption("eigencore.smallest_ldl_route", TRUE))) {
+    return(no_route)
+  }
+  A <- problem$A$metadata$matrix %||% NULL
+  n <- problem$A$dim[[1L]]
+  min_n <- as.numeric(getOption("eigencore.smallest_ldl_min_n", 10000))
+  if (!inherits(A, "CsparseMatrix") || n < min_n || !cholmod_bridge_available()) {
+    return(no_route)
+  }
+  d <- tryCatch(as.numeric(Matrix::diag(A)), error = function(e) NULL)
+  if (is.null(d) || !length(d) || any(!is.finite(d)) || any(d <= 0)) {
+    return(no_route)
+  }
+  cost <- tryCatch(
+    operator_memoised_value(problem$A, "smallest_ldl_cost", {
+      M <- methods::as(Matrix::forceSymmetric(methods::as(A, "CsparseMatrix"), uplo = "U"),
+                       "CsparseMatrix")
+      a <- .Call("eigencore_cholmod_analyze", M, PACKAGE = "eigencore")
+      list(lnz = a[["lnz"]], flops = a[["flops"]], nnz = length(methods::slot(M, "x")))
+    }),
+    error = function(e) NULL
+  )
+  if (is.null(cost) || !is.finite(cost$lnz) || !is.finite(cost$flops)) {
+    return(no_route)
+  }
+  max_fill <- as.numeric(getOption("eigencore.smallest_ldl_max_fill", 20))
+  max_flops <- as.numeric(getOption("eigencore.smallest_ldl_max_flops", 5e10))
+  if (cost$lnz > max_fill * max(cost$nnz, 1) || cost$flops > max_flops) {
+    return(no_route)
+  }
+  transform <- shift_invert(0, max_subspace = method$max_subspace)
+  transform$auto_smallest_ldl <- TRUE
+  transform$ldl_cost <- cost
+  problem$transform <- transform
+  list(problem = problem, method = transform, implicit = TRUE)
 }
 
 #' @keywords internal

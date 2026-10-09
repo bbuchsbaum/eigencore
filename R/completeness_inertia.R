@@ -301,11 +301,39 @@ inertia_completeness_check <- function(Aop, values, residuals, orthogonality,
          "the k-th and (k+1)-th eigenvalues are not separated by more than the residual bound")
 }
 
+# Item 2 (tranche 5 phase 2): a shift-invert solve already factored
+# A - sigma I. Its simplicial LDL' factor seeds the context (later shifts run
+# Matrix::update on it, reusing the symbolic analysis) and its tally answers
+# a count at sigma itself without refactoring. A factor converted from a
+# relaxed supernodal LL' carries explicit zeros, so it is not used as the
+# symbolic seed (the plain simplicial pattern is smaller), only its tally.
+#' @keywords internal
+inertia_seed_context <- function(ctx, seed) {
+  if (is.null(seed) || !identical(ctx$kind, "sparse") || !is.null(ctx$B) ||
+      !methods::is(seed$factor, "CHMsimpl") ||
+      !identical(as.integer(methods::slot(seed$factor, "Dim")), c(ctx$n, ctx$n))) {
+    return(invisible(ctx))
+  }
+  if (!isTRUE(seed$positive_definite) && is.null(ctx$factor)) {
+    ctx$factor <- seed$factor
+    ctx$seeded_symbolic <- TRUE
+  }
+  tally <- seed$tally
+  if (is.list(tally) && isTRUE(tally$ok)) {
+    tally$sigma <- seed$sigma
+    tally$factor_nnz <- sum(as.numeric(methods::slot(seed$factor, "nz")))
+    tally$max_pivot <- tally$max_pivot %||% NA_real_
+    ctx$seed_tally <- tally
+  }
+  invisible(ctx)
+}
+
 # Should this solve use the inertia certificate? Returns list(use, reason,
 # predicted_seconds, ctx).
 #' @keywords internal
 inertia_completeness_gate <- function(problem, mode, k, solve_seconds = NA_real_,
-                                      controls = inertia_completeness_controls()) {
+                                      controls = inertia_completeness_controls(),
+                                      seed = NULL) {
   no <- function(reason) list(use = FALSE, reason = reason, ctx = NULL,
                               predicted_seconds = NA_real_)
   if (!mode %in% c("auto", "inertia")) {
@@ -334,6 +362,7 @@ inertia_completeness_gate <- function(problem, mode, k, solve_seconds = NA_real_
   if (inherits(ctx, "error")) {
     return(no(paste0("inertia context: ", conditionMessage(ctx))))
   }
+  inertia_seed_context(ctx, seed)
   cost <- if (is.null(problem$metric)) {
     operator_memoised_value(op, "inertia_factor_cost", inertia_factor_cost(ctx))
   } else {
@@ -387,6 +416,7 @@ inertia_completeness_run <- function(problem, values, vectors, cert, tol, ctx,
   record$operator_block_calls <- 0L
   record$gate <- gate$reason %||% NA_character_
   record$predicted_seconds <- gate$predicted_seconds %||% NA_real_
+  record$reused_symbolic <- isTRUE(ctx$seeded_symbolic)
   status <- check$status
   V <- vectors
   repairable <- identical(status, "inertia_failed") && is.null(problem$metric) &&
@@ -430,6 +460,7 @@ inertia_completeness_run <- function(problem, values, vectors, cert, tol, ctx,
     }
     record$rounds <- round
   }
+  record$reused_counts <- as.integer(ctx$seed_hits %||% 0L)
   record$seconds <- proc.time()[["elapsed"]] - started
   list(
     status = status,

@@ -381,8 +381,12 @@ execute_eigen_plan <- function(plan, restart_preparation = NULL) {
     vectors = vectors_requested || need_vectors
   )
   solve_seconds <- proc.time()[["elapsed"]] - started
+  seed <- result$transform$inertia_seed %||% NULL
+  if (!is.null(result$transform)) {
+    result$transform["inertia_seed"] <- NULL
+  }
   apply_target_completeness(result, plan, a, k, mode, vectors_requested,
-                            solve_seconds = solve_seconds)
+                            solve_seconds = solve_seconds, seed = seed)
 }
 
 #' @keywords internal

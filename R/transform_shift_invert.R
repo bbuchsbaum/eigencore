@@ -688,8 +688,10 @@ shift_invert_solver_ldl <- function(A, sigma, B = NULL, tol = NULL,
   } else {
     raw_solve
   }
-  tally <- list(ok = TRUE, neg = diag_info[["neg"]], zero = diag_info[["zero"]],
+  tally <- list(sigma = sigma, ok = TRUE, error = NA_character_,
+                neg = diag_info[["neg"]], zero = diag_info[["zero"]],
                 pos = diag_info[["pos"]], min_pivot = diag_info[["min_abs_pivot"]],
+                max_pivot = diag_info[["max_abs_pivot"]],
                 growth = growth * scale, scale = scale,
                 backward_bound = (max(methods::slot(F, "nz"), 1) + 3) *
                   .Machine$double.eps * growth * scale)
@@ -1821,8 +1823,25 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
     ))
   }
 
+  spd_choice <- NULL
+  if (isTRUE(method$auto_smallest_ldl) && is.null(method$solve)) {
+    # C60 route: the shift must be proved below the spectrum.
+    spd_choice <- auto_spd_shift_factor(problem)
+    if (is.null(spd_choice)) {
+      return(smallest_ldl_route_fallback(
+        problem, k, plan,
+        "no shift at or slightly below 0 gave a positive definite factor (A is not positive semidefinite, or too ill-conditioned)"
+      ))
+    }
+    sigma <- spd_choice$sigma
+  }
   prep <- prepare_shift_invert_operator(problem, sigma, user_solve = method$solve,
-                                        tol = tol)
+                                        tol = tol,
+                                        ldl_factor = spd_choice$factor %||% NULL)
+  if (!is.null(spd_choice) && isTRUE(prep$ldl_fallback)) {
+    return(smallest_ldl_route_fallback(problem, k, plan,
+                                       "the positive definite factor failed validation"))
+  }
   M <- prep$operator
   n <- M$dim[1L]
 
@@ -1918,6 +1937,15 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
       sigma = sigma,
       label_kind = prep$label_kind,
       factorization_cache = prep$factorization_cache,
+      # Internal: the factor and its inertia at sigma, handed to the inertia
+      # completeness certificate (symbolic-analysis reuse, free count at
+      # sigma) and removed from the result afterwards.
+      inertia_seed = if (is.null(Bop) && methods::is(prep$factor, "CHMsimpl")) {
+        list(sigma = sigma, factor = prep$factor, tally = prep$tally,
+             positive_definite = isTRUE(prep$factorization_cache$positive_definite_factor))
+      } else {
+        NULL
+      },
       certification = list(
         problem = "original",
         residual_formula = if (is.null(Bop)) {
@@ -1973,6 +2001,56 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
     )
   }
   class(result) <- "eigencore_eigen_result"
+  result
+}
+
+# C60: the first of sigma = 0, -1e-10 s, -1e-8 s, -1e-6 s (s = ||A||_1) at
+# which A - sigma I has a positive definite (supernodal LL') factor, returned
+# as list(sigma, factor) with the factor in simplicial LDL' form; NULL when
+# none is positive definite.
+#' @keywords internal
+auto_spd_shift_factor <- function(problem) {
+  A <- problem$A$metadata$matrix %||% source_or_null(problem$A)
+  if (!inherits(A, "CsparseMatrix")) {
+    return(NULL)
+  }
+  As <- methods::as(Matrix::forceSymmetric(methods::as(A, "CsparseMatrix"), uplo = "U"),
+                    "CsparseMatrix")
+  s <- max(Matrix::colSums(abs(As)), .Machine$double.xmin)
+  for (rel in c(0, 1e-10, 1e-8, 1e-6)) {
+    F <- ldl_try_spd_factor(As, -rel * s)
+    if (!is.null(F)) {
+      return(list(sigma = -rel * s, factor = F))
+    }
+  }
+  NULL
+}
+
+# C60 fallback: the shift was not provably below the spectrum, so the
+# smallest target is solved by the route plain auto() planning picks.
+#' @keywords internal
+smallest_ldl_route_fallback <- function(problem, k, plan, reason) {
+  problem$transform <- NULL
+  method <- auto(max_subspace = plan$method_descriptor$max_subspace %||% NULL)
+  method$no_ldl_route <- TRUE
+  execution <- plan$execution
+  plan2 <- plan_solver(
+    problem, k = k, method = method, tol = execution$tol,
+    maxit = execution$maxit, vectors = execution$vectors,
+    certify = execution$certify,
+    allow_dense_fallback = execution$allow_dense_fallback,
+    left_vectors = execution$left_vectors %||% "auto"
+  )
+  result <- execute_eigen_plan_dispatch(plan2, vectors = TRUE)
+  result$planned_method <- plan$method
+  result$fallback_used <- TRUE
+  result$fallback_reason <- new_fallback_reason(
+    "spd_shift_rejected",
+    paste0("LDL' shift-invert below the spectrum was planned for the smallest ",
+           "target but ", reason, "; solved with ", result$method, " instead."),
+    plan$method,
+    result$method
+  )
   result
 }
 
