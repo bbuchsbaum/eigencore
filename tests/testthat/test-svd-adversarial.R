@@ -712,26 +712,23 @@ test_that("retained IRLBA LBD native core certifies or falls back honestly", {
   expect_equal(fit$restart$irlba_lbd_retained_from_scout, 5L)
   expect_equal(fit$restart$irlba_lbd_retained_padding, 2L)
   expect_equal(fit$restart$irlba_lbd_residual_augmented_cols, 1L)
-  # Pinned internal counts (C42). The native attempt certificate now scales
-  # by a two-norm lower bound (C12), which is stricter than the former
-  # Frobenius scale, so the augmented recurrence runs two more steps.
-  expect_equal(fit$restart$irlba_lbd_augmented_tail_steps, 34L)
-  expect_equal(fit$restart$irlba_lbd_augmented_basis_cols, 40L)
-  expect_equal(fit$restart$irlba_lbd_augmented_small_svds, 5L)
+  # Behavioural bounds instead of pinned internal counts (C42): the native
+  # attempt certifies without fallback within a bounded amount of work.
+  expect_gte(fit$restart$irlba_lbd_augmented_tail_steps, 20L)
+  expect_lte(fit$restart$irlba_lbd_augmented_tail_steps, 60L)
+  expect_lte(fit$restart$irlba_lbd_augmented_basis_cols, 51L)
+  expect_gte(fit$restart$irlba_lbd_augmented_small_svds, 1L)
+  expect_lte(fit$restart$irlba_lbd_augmented_small_svds, 10L)
   expect_equal(fit$restart$irlba_lbd_augmented_cached_aq_cols,
                fit$restart$irlba_lbd_augmented_basis_cols)
   expect_true("certificate_passed" %in% names(fit$restart$attempt_history))
   expect_true("converged_count" %in% names(fit$restart$attempt_history))
   expect_true("leading_converged_count" %in% names(fit$restart$attempt_history))
   expect_true(tail(fit$restart$attempt_history$certificate_passed, 1L))
-  expect_equal(fit$restart$attempt_history$iterations, 30:34)
+  expect_true(all(diff(fit$restart$attempt_history$iterations) > 0L))
   expect_equal(tail(fit$restart$attempt_history$converged_count, 1L), 5L)
   expect_equal(tail(fit$restart$attempt_history$leading_converged_count, 1L), 5L)
-  expect_true(any(
-    fit$restart$attempt_history$leading_converged_count[
-      !fit$restart$attempt_history$certificate_passed
-    ] < 5L
-  ))
+  expect_lte(fit$matvecs, 200L)
   expect_true(fit$restart$irlba_lbd_augmented_reduces_from_scratch_work)
   expect_gt(fit$restart$irlba_lbd_augmented_matvec_savings, 0L)
   expect_identical(fit$restart$internal_orientation, "transposed_wide_operator")
@@ -767,15 +764,16 @@ test_that("retained IRLBA benchmark candidate avoids repeated fixed-work native 
   expect_equal(fit$restart$irlba_lbd_retained_fixed_work_attempts, 0L)
   expect_equal(fit$restart$irlba_lbd_scout_matvecs, 24L)
   expect_lt(fit$restart$irlba_lbd_retained_matvecs, 136L)
-  # Pinned internal counts (C42), updated for the two-norm attempt
-  # certificate (C12): the first attempt no longer passes under the stricter
-  # scale, and the recurrence certifies two steps later.
-  expect_equal(fit$restart$irlba_lbd_augmented_tail_steps, 32L)
-  expect_equal(fit$restart$irlba_lbd_augmented_basis_cols, 38L)
+  # Behavioural bounds instead of pinned internal counts (C42).
+  expect_gte(fit$restart$irlba_lbd_augmented_tail_steps, 20L)
+  expect_lte(fit$restart$irlba_lbd_augmented_tail_steps, 60L)
+  expect_lte(fit$restart$irlba_lbd_augmented_basis_cols, 51L)
   expect_equal(fit$restart$irlba_lbd_augmented_restart_cycles, 8L)
   expect_equal(fit$restart$irlba_lbd_augmented_kept_vectors, 5L)
-  expect_equal(fit$restart$irlba_lbd_augmented_small_svds, 3L)
-  expect_equal(fit$restart$irlba_lbd_augmented_cached_aq_cols, 38L)
+  expect_gte(fit$restart$irlba_lbd_augmented_small_svds, 1L)
+  expect_lte(fit$restart$irlba_lbd_augmented_small_svds, 10L)
+  expect_equal(fit$restart$irlba_lbd_augmented_cached_aq_cols,
+               fit$restart$irlba_lbd_augmented_basis_cols)
   expect_true(fit$restart$irlba_lbd_augmented_reduces_from_scratch_work)
   expect_gt(fit$restart$irlba_lbd_augmented_matvec_savings, 0L)
   expect_true(is.finite(fit$restart$irlba_lbd_augmented_min_cheap_residual))
@@ -783,7 +781,6 @@ test_that("retained IRLBA benchmark candidate avoids repeated fixed-work native 
   expect_true("converged_count" %in% names(fit$restart$attempt_history))
   expect_true("leading_converged_count" %in% names(fit$restart$attempt_history))
   expect_true(tail(fit$restart$attempt_history$certificate_passed, 1L))
-  expect_false(fit$restart$attempt_history$certificate_passed[[1L]])
   expect_equal(tail(fit$restart$attempt_history$converged_count, 1L), 5L)
   expect_equal(tail(fit$restart$attempt_history$leading_converged_count, 1L), 5L)
   expect_equal(
@@ -1091,13 +1088,17 @@ test_that("retained IRLBA fallback warm start matches transposed orientation", {
     max_restarts = 1L,
     tol = 1e-8,
     vectors = "both",
-    reorth_policy = "full_two_sided"
+    reorth_policy = "full_two_sided",
+    # The thick-restarted native attempt now certifies this case (C42);
+    # disable thick restarts so the fallback warm-start path is exercised.
+    thick_restarts = 0L
   )
 
   expect_true(fit$certificate$passed)
   expect_true(fit$restart$internal_transposed)
   expect_true(fit$restart$retained_restart)
   expect_true(fit$restart$fallback_attempted)
+  expect_equal(fit$restart$irlba_lbd_thick_restarts, 0L)
   expect_identical(fit$restart$irlba_lbd_lock_source, "exact_fallback_certificate")
   expect_equal(fit$restart$retained_locked_count, 5L)
   expect_equal(fit$restart$irlba_lbd_hard_locked_count, 5L)
@@ -1156,7 +1157,7 @@ test_that("retained IRLBA LBD scout state matches the native ABI orientation", {
     state$beta,
     state$restart_random_tail,
     abi$work, abi$retained, 1L, abi$rank,
-    abi$target_kind, 1e-8, 1L,
+    abi$target_kind, 1e-8, 1L, NA_integer_,
     PACKAGE = "eigencore"
   )
   expect_equal(length(out$d), 5L)
@@ -1174,8 +1175,9 @@ test_that("retained IRLBA LBD native ABI entry points are registered", {
     PACKAGE = "eigencore"
   )
 
-  expect_equal(dense_info$numParameters, 14L)
-  expect_equal(csc_info$numParameters, 17L)
+  # + thick_restarts budget (C42)
+  expect_equal(dense_info$numParameters, 15L)
+  expect_equal(csc_info$numParameters, 18L)
   dense <- diag(c(6, 4, 2, 1), nrow = 6L, ncol = 4L)
   csc <- Matrix::Matrix(dense, sparse = TRUE)
   start <- c(1, 1, 0, 0) / sqrt(2)
@@ -1187,14 +1189,14 @@ test_that("retained IRLBA LBD native ABI entry points are registered", {
   dense_out <- .Call(
     "eigencore_irlba_lbd_dense_retained",
     dense, start, right, left, alpha, beta, tails,
-    4L, 2L, 1L, 2L, 1L, 1e-8, 1L,
+    4L, 2L, 1L, 2L, 1L, 1e-8, 1L, NA_integer_,
     PACKAGE = "eigencore"
   )
   csc_out <- .Call(
     "eigencore_irlba_lbd_csc_retained",
     csc@i, csc@p, csc@x, as.integer(csc@Dim),
     start, right, left, alpha, beta, tails,
-    4L, 2L, 1L, 2L, 1L, 1e-8, 1L,
+    4L, 2L, 1L, 2L, 1L, 1e-8, 1L, NA_integer_,
     PACKAGE = "eigencore"
   )
   expect_equal(dense_out$d, c(6, 4), tolerance = 1e-10)

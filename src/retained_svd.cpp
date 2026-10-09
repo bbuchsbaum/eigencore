@@ -44,11 +44,7 @@ static double max_column_norm_retained(const double* x, int rows, int cols,
   for (int col = 0; col < cols; ++col) {
     const int64_t lo = col_ptr ? col_ptr[col] : static_cast<int64_t>(col) * rows;
     const int64_t hi = col_ptr ? col_ptr[col + 1] : lo + rows;
-    long double sum = 0.0L;
-    for (int64_t idx = lo; idx < hi; ++idx) {
-      sum += static_cast<long double>(x[idx]) * x[idx];
-    }
-    const double value = sqrt(static_cast<double>(sum));
+    const double value = ec_norm2(x + lo, static_cast<int>(hi - lo));
     if (value > best) best = value;
   }
   return R_FINITE(best) ? best : R_NaN;
@@ -1838,11 +1834,7 @@ struct BproAppendDiagnostics {
 };
 
 static double vector_norm2_sqrt(const double* x, int n) {
-  long double norm2 = 0.0L;
-  for (int row = 0; row < n; ++row) {
-    norm2 += static_cast<long double>(x[row]) * x[row];
-  }
-  return sqrt(static_cast<double>(norm2));
+  return ec_norm2(x, n);
 }
 
 static double candidate_basis_correlation_loss(const double* basis,
@@ -2043,7 +2035,8 @@ static SEXP irlba_lbd_augmented_retained_projection(
     int reorthogonalize_v,
     double norm_A,
     double native_workspace_bytes,
-    int bpro_policy) {
+    int bpro_policy,
+    int thick_restart_budget) {
   const int tail_width = work - retained;
   const int retained_core = (rank < retained) ? rank : retained;
   const int requested_tail_steps = (tail_width > 0)
@@ -2056,11 +2049,40 @@ static SEXP irlba_lbd_augmented_retained_projection(
     return R_NilValue;
   }
 
+  // Thick restart (C42). The scout-seeded augmented expansion below is a
+  // single Krylov-like subspace of at most `capacity` columns; on harder
+  // spectra (clustered leading values, larger small side) it ran out of room
+  // before certifying and the driver fell back on ~40% of seeds. When the
+  // first expansion fails, the basis is now compressed to the `keep` best
+  // Ritz vectors, re-augmented with their residual block, and expanded again,
+  // up to `max_thick_restarts` cycles (an implicitly restarted Lanczos on
+  // A^T A expressed through one-sided Ritz extraction from A Q).
+  int keep = rank + (capacity - rank) / 3;
+  if (keep < rank + 2) {
+    keep = rank + 2;
+  }
+  if (keep > capacity - 4) {
+    keep = capacity - 4;
+  }
+  const int thick_restart_possible = (capacity < n) && (keep >= rank) &&
+    (capacity - keep >= 4);
+  // Budget: NA / negative selects the default (4 cycles per requested
+  // restart, at least 8); 0 disables thick restarts (diagnostics/tests).
+  const int default_thick_restarts = (max_restarts > 2) ? 4 * max_restarts : 8;
+  const int max_thick_restarts = !thick_restart_possible
+    ? 0
+    : ((thick_restart_budget == NA_INTEGER || thick_restart_budget < 0)
+        ? default_thick_restarts
+        : thick_restart_budget);
+  const int seed_cols_max = (thick_restart_possible && keep > retained_core)
+    ? keep
+    : retained_core;
   std::vector<double> Q(static_cast<size_t>(n) * static_cast<size_t>(capacity), 0.0);
-  std::vector<double> AV_ret(static_cast<size_t>(m) * static_cast<size_t>(retained_core), 0.0);
-  std::vector<double> ATU_ret(static_cast<size_t>(n) * static_cast<size_t>(retained_core), 0.0);
-  std::vector<double> H(static_cast<size_t>(retained_core) * static_cast<size_t>(retained_core), 0.0);
-  std::vector<double> residual(static_cast<size_t>(n) * static_cast<size_t>(retained_core), 0.0);
+  std::vector<double> AV_ret(static_cast<size_t>(m) * static_cast<size_t>(seed_cols_max), 0.0);
+  std::vector<double> ATU_ret(static_cast<size_t>(n) * static_cast<size_t>(seed_cols_max), 0.0);
+  std::vector<double> H(static_cast<size_t>(seed_cols_max) * static_cast<size_t>(seed_cols_max), 0.0);
+  std::vector<double> residual(static_cast<size_t>(n) * static_cast<size_t>(seed_cols_max), 0.0);
+  std::vector<double> residual_sorted;
   std::vector<double> AQ(static_cast<size_t>(m) * static_cast<size_t>(capacity), 0.0);
   std::vector<double> u(static_cast<size_t>(m), 0.0);
   std::vector<double> u_prev(static_cast<size_t>(m), 0.0);
@@ -2126,115 +2148,187 @@ static SEXP irlba_lbd_augmented_retained_projection(
   int tail_steps_taken = 0;
   int micro_certificate_until = -1;
 
+  // Seed the augmented basis Q = [retained right block, orthonormalised
+  // residual block A^T U - V H] from a retained (right, left) pair. Used for
+  // the scout seed and again at every thick restart (C42), where the pair is
+  // the kept Ritz block of the previous cycle and `known_av` holds its cached
+  // A V. `residual_absolute_floor` > 0 drops residual columns whose
+  // post-orthogonalisation norm is below that floor (rounding noise once the
+  // residuals are parallel, as they are for an exact Krylov decomposition).
+  // Returns the number of
+  // residual columns accepted, or -1 on an operator failure.
   auto stage_timer = native_timer_now();
-  int status = apply(impl, EIGENCORE_TRANSPOSE_NONE, retained_core,
-                     retained_right, n, 1.0, 0.0, AV_ret.data(), m, &workspace);
-  stage_apply_seconds += native_timer_elapsed(stage_timer);
-  if (status != 0) {
-    return R_NilValue;
-  }
-  matvecs += retained_core;
-  stage_timer = native_timer_now();
-  status = apply(impl, EIGENCORE_TRANSPOSE_ADJOINT, retained_core,
-                 retained_left, m, 1.0, 0.0, ATU_ret.data(), n, &workspace);
-  stage_apply_seconds += native_timer_elapsed(stage_timer);
-  if (status != 0) {
-    return R_NilValue;
-  }
-  matvecs += retained_core;
-
-  append_orthonormal_block(
-    Q.data(), n, capacity, &q_cols, retained_right, retained_core, tol,
-    &orthogonalization_passes, requested_orthogonalization_passes, bpro_ptr
-  );
-  if (q_cols == retained_core) {
-    std::memcpy(AQ.data(), AV_ret.data(),
-                sizeof(double) * static_cast<size_t>(m) * static_cast<size_t>(retained_core));
-    aq_cols = q_cols;
-  } else if (q_cols > aq_cols) {
-    status = apply_augmented_basis_columns(
-      impl, apply, m, n, Q.data(), aq_cols, q_cols, AQ.data(),
-      &stage_apply_seconds, &matvecs, &workspace
-    );
-    if (status != 0) {
-      return R_NilValue;
+  int status = 0;
+  auto seed_augmented_basis = [&](const double* right,
+                                  const double* left,
+                                  const double* known_av,
+                                  int cols,
+                                  double residual_absolute_floor) -> int {
+    q_cols = 0;
+    aq_cols = 0;
+    auto seed_timer = native_timer_now();
+    if (known_av != nullptr) {
+      std::memcpy(AV_ret.data(), known_av,
+                  sizeof(double) * static_cast<size_t>(m) * static_cast<size_t>(cols));
+    } else {
+      int seed_status = apply(impl, EIGENCORE_TRANSPOSE_NONE, cols,
+                              right, n, 1.0, 0.0, AV_ret.data(), m, &workspace);
+      stage_apply_seconds += native_timer_elapsed(seed_timer);
+      if (seed_status != 0) {
+        return -1;
+      }
+      matvecs += cols;
     }
-    aq_cols = q_cols;
-  }
-  if (q_cols < rank) {
-    append_orthonormal_column(
-      Q.data(), n, capacity, &q_cols, initial_start, tol,
-      &orthogonalization_passes, nullptr, requested_orthogonalization_passes,
-      bpro_ptr
+    seed_timer = native_timer_now();
+    int seed_status = apply(impl, EIGENCORE_TRANSPOSE_ADJOINT, cols,
+                            left, m, 1.0, 0.0, ATU_ret.data(), n, &workspace);
+    stage_apply_seconds += native_timer_elapsed(seed_timer);
+    if (seed_status != 0) {
+      return -1;
+    }
+    matvecs += cols;
+
+    append_orthonormal_block(
+      Q.data(), n, capacity, &q_cols, right, cols, tol,
+      &orthogonalization_passes, requested_orthogonalization_passes, bpro_ptr
     );
-    if (q_cols > aq_cols) {
-      status = apply_augmented_basis_columns(
+    if (q_cols == cols) {
+      std::memcpy(AQ.data(), AV_ret.data(),
+                  sizeof(double) * static_cast<size_t>(m) * static_cast<size_t>(cols));
+      aq_cols = q_cols;
+    } else if (q_cols > aq_cols) {
+      seed_status = apply_augmented_basis_columns(
         impl, apply, m, n, Q.data(), aq_cols, q_cols, AQ.data(),
         &stage_apply_seconds, &matvecs, &workspace
       );
-      if (status != 0) {
-        return R_NilValue;
+      if (seed_status != 0) {
+        return -1;
       }
       aq_cols = q_cols;
     }
-  }
-
-  stage_timer = native_timer_now();
-  const char trans = 'T';
-  const char notrans = 'N';
-  const double one = 1.0;
-  const double zero = 0.0;
-  F77_CALL(dgemm)(&trans, &notrans, &retained_core, &retained_core, &m,
-                  &one, const_cast<double*>(retained_left), &m,
-                  AV_ret.data(), &m, &zero, H.data(), &retained_core FCONE FCONE);
-  stage_projected_seconds += native_timer_elapsed(stage_timer);
-
-  stage_timer = native_timer_now();
-  std::memcpy(residual.data(), ATU_ret.data(),
-              sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(retained_core));
-  const double minus_one = -1.0;
-  F77_CALL(dgemm)(&notrans, &trans, &n, &retained_core, &retained_core,
-                  &minus_one, const_cast<double*>(retained_right), &n,
-                  H.data(), &retained_core, &one, residual.data(), &n FCONE FCONE);
-  stage_recurrence_seconds += native_timer_elapsed(stage_timer);
-  const int residual_cols_before = q_cols;
-  append_orthonormal_block(
-    Q.data(), n, capacity, &q_cols, residual.data(), retained_core, tol,
-    &orthogonalization_passes, requested_orthogonalization_passes, bpro_ptr
-  );
-  const int residual_cols = q_cols - residual_cols_before;
-  if (q_cols > aq_cols) {
-    status = apply_augmented_basis_columns(
-      impl, apply, m, n, Q.data(), aq_cols, q_cols, AQ.data(),
-      &stage_apply_seconds, &matvecs, &workspace
-    );
-    if (status != 0) {
-      return R_NilValue;
+    if (q_cols < rank) {
+      append_orthonormal_column(
+        Q.data(), n, capacity, &q_cols, initial_start, tol,
+        &orthogonalization_passes, nullptr, requested_orthogonalization_passes,
+        bpro_ptr
+      );
+      if (q_cols > aq_cols) {
+        seed_status = apply_augmented_basis_columns(
+          impl, apply, m, n, Q.data(), aq_cols, q_cols, AQ.data(),
+          &stage_apply_seconds, &matvecs, &workspace
+        );
+        if (seed_status != 0) {
+          return -1;
+        }
+        aq_cols = q_cols;
+      }
     }
-    aq_cols = q_cols;
-  }
 
-  if (q_cols == 0) {
-    append_orthonormal_column(
-      Q.data(), n, capacity, &q_cols, initial_start, tol,
-      &orthogonalization_passes, nullptr, requested_orthogonalization_passes,
-      bpro_ptr
+    seed_timer = native_timer_now();
+    const char trans = 'T';
+    const char notrans = 'N';
+    const double one = 1.0;
+    const double zero = 0.0;
+    F77_CALL(dgemm)(&trans, &notrans, &cols, &cols, &m,
+                    &one, const_cast<double*>(left), &m,
+                    AV_ret.data(), &m, &zero, H.data(), &cols FCONE FCONE);
+    stage_projected_seconds += native_timer_elapsed(seed_timer);
+
+    seed_timer = native_timer_now();
+    std::memcpy(residual.data(), ATU_ret.data(),
+                sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(cols));
+    const double minus_one = -1.0;
+    F77_CALL(dgemm)(&notrans, &trans, &n, &cols, &cols,
+                    &minus_one, const_cast<double*>(right), &n,
+                    H.data(), &cols, &one, residual.data(), &n FCONE FCONE);
+    stage_recurrence_seconds += native_timer_elapsed(seed_timer);
+    const int cols_before = q_cols;
+    // Append the residual block in decreasing-norm order and move the
+    // dominant accepted residual to the last basis column, which seeds the
+    // Golub-Kahan tail (C42). Previously the tail started from whichever
+    // residual column was appended last -- typically a rounding-noise
+    // direction left over after the (parallel) dominant residual -- so the
+    // "augmented Krylov" tail never extended the true residual direction and
+    // a 40-column basis converged like a random-start 30-step run.
+    std::vector<int> residual_order(static_cast<size_t>(cols));
+    std::vector<double> residual_norms(static_cast<size_t>(cols), 0.0);
+    for (int col = 0; col < cols; ++col) {
+      residual_order[static_cast<size_t>(col)] = col;
+      residual_norms[static_cast<size_t>(col)] = ec_norm2(
+        residual.data() + static_cast<int64_t>(col) * n, n);
+    }
+    std::stable_sort(residual_order.begin(), residual_order.end(),
+                     [&](int a, int b) {
+                       return residual_norms[static_cast<size_t>(a)] >
+                         residual_norms[static_cast<size_t>(b)];
+                     });
+    residual_sorted.resize(static_cast<size_t>(n) * static_cast<size_t>(cols));
+    for (int col = 0; col < cols; ++col) {
+      std::memcpy(
+        residual_sorted.data() + static_cast<int64_t>(col) * n,
+        residual.data() + static_cast<int64_t>(residual_order[static_cast<size_t>(col)]) * n,
+        sizeof(double) * static_cast<size_t>(n));
+    }
+    double residual_tol = tol;
+    if (residual_absolute_floor > 0.0) {
+      // append_orthonormal_column rejects norms below max(100 eps, 1e-4 tol);
+      // pass a tolerance that turns that into the requested absolute floor.
+      const double floor_tol = 1.0e4 * residual_absolute_floor;
+      if (floor_tol > residual_tol) {
+        residual_tol = floor_tol;
+      }
+    }
+    append_orthonormal_block(
+      Q.data(), n, capacity, &q_cols, residual_sorted.data(), cols,
+      residual_tol,
+      &orthogonalization_passes, requested_orthogonalization_passes, bpro_ptr
     );
+    if (q_cols - cols_before >= 2) {
+      double* first = Q.data() + static_cast<int64_t>(cols_before) * n;
+      double* last = Q.data() + static_cast<int64_t>(q_cols - 1) * n;
+      std::swap_ranges(first, first + n, last);
+    }
+    const int accepted_residual_cols = q_cols - cols_before;
     if (q_cols > aq_cols) {
-      status = apply_augmented_basis_columns(
+      seed_status = apply_augmented_basis_columns(
         impl, apply, m, n, Q.data(), aq_cols, q_cols, AQ.data(),
         &stage_apply_seconds, &matvecs, &workspace
       );
-      if (status != 0) {
-        return R_NilValue;
+      if (seed_status != 0) {
+        return -1;
       }
       aq_cols = q_cols;
     }
-  }
-  if (q_cols == 0) {
+
+    if (q_cols == 0) {
+      append_orthonormal_column(
+        Q.data(), n, capacity, &q_cols, initial_start, tol,
+        &orthogonalization_passes, nullptr, requested_orthogonalization_passes,
+        bpro_ptr
+      );
+      if (q_cols > aq_cols) {
+        seed_status = apply_augmented_basis_columns(
+          impl, apply, m, n, Q.data(), aq_cols, q_cols, AQ.data(),
+          &stage_apply_seconds, &matvecs, &workspace
+        );
+        if (seed_status != 0) {
+          return -1;
+        }
+        aq_cols = q_cols;
+      }
+    }
+    return accepted_residual_cols;
+  };
+
+  const int residual_cols = seed_augmented_basis(
+    retained_right, retained_left, nullptr, retained_core, 0.0
+  );
+  if (residual_cols < 0 || q_cols == 0) {
     return R_NilValue;
   }
 
+  int thick_restarts_done = 0;
+  int certified = 0;
   auto evaluate_augmented_attempt = [&](int tail_for_attempt,
                                         int force_certificate,
                                         int keep_candidate) -> int {
@@ -2244,7 +2338,11 @@ static SEXP irlba_lbd_augmented_retained_projection(
     if (tail_for_attempt > tail_steps_taken) {
       tail_for_attempt = tail_steps_taken;
     }
-    int subspace = retained_core + residual_cols + tail_for_attempt;
+    // After a thick restart the basis holds the kept Ritz block, its residual
+    // block and the new tail, so the whole current basis is the subspace.
+    int subspace = (thick_restarts_done > 0)
+      ? q_cols
+      : retained_core + residual_cols + tail_for_attempt;
     if (subspace > q_cols) {
       subspace = q_cols;
     }
@@ -2269,8 +2367,10 @@ static SEXP irlba_lbd_augmented_retained_projection(
     attempted_subspaces.push_back(subspace);
     attempt_iterations.push_back(tail_for_attempt);
     attempt_matvecs.push_back(
-      2 * retained_core + residual_cols + 2 * tail_for_attempt +
-        (tail_for_attempt > 0 ? 1 : 0)
+      (thick_restarts_done > 0)
+        ? matvecs
+        : 2 * retained_core + residual_cols + 2 * tail_for_attempt +
+            (tail_for_attempt > 0 ? 1 : 0)
     );
     attempt_warm_started.push_back(attempted_subspaces.size() > 1 ? 1 : 0);
     double cheap_residual = R_NaReal;
@@ -2345,8 +2445,12 @@ static SEXP irlba_lbd_augmented_retained_projection(
     }
 
     if (certificate_passed == 1 || keep_candidate) {
+      // attempt_ritz_ is on top of the protect stack, above any previous
+      // candidate: drop both and re-protect only the new candidate (the old
+      // code unprotected the new object and left the stale one protected).
       if (ritz_protected) {
-        UNPROTECT(1);
+        UNPROTECT(2);
+        PROTECT(attempt_ritz_);
       }
       ritz_ = attempt_ritz_;
       ritz_protected = 1;
@@ -2361,10 +2465,16 @@ static SEXP irlba_lbd_augmented_retained_projection(
     return 0;
   };
 
+  // Golub-Kahan tail from the last basis column. `phase_one` keeps the
+  // original scout-seeded certificate schedule; restarted cycles run to the
+  // basis capacity and are certified at the next restart point.
+  // Returns -1 on failure, 1 when an attempt certified, 0 otherwise.
+  auto run_tail = [&](int step_budget, int phase_one) -> int {
   const double* seed = Q.data() + static_cast<int64_t>(q_cols - 1) * n;
   std::memcpy(z.data(), seed, sizeof(double) * static_cast<size_t>(n));
   double beta_prev = 0.0;
-  for (int step = 0; step < requested_tail_steps && q_cols < capacity; ++step) {
+  std::fill(u_prev.begin(), u_prev.end(), 0.0);
+  for (int step = 0; step < step_budget && q_cols < capacity; ++step) {
     stage_timer = native_timer_now();
     status = apply(impl, EIGENCORE_TRANSPOSE_NONE, 1, z.data(), n,
                    1.0, 0.0, u.data(), m, &workspace);
@@ -2398,11 +2508,7 @@ static SEXP irlba_lbd_augmented_retained_projection(
         u[row] -= beta_prev * u_prev[row];
       }
     }
-    long double alpha_norm2 = 0.0L;
-    for (int row = 0; row < m; ++row) {
-      alpha_norm2 += static_cast<long double>(u[row]) * u[row];
-    }
-    const double alpha_step = sqrt(static_cast<double>(alpha_norm2));
+    const double alpha_step = ec_norm2(u.data(), m);
     if (!R_FINITE(alpha_step) || alpha_step <= 100.0 * DBL_EPSILON) {
       stage_recurrence_seconds += native_timer_elapsed(stage_timer);
       break;
@@ -2451,22 +2557,173 @@ static SEXP irlba_lbd_augmented_retained_projection(
     const int micro_certificate_check =
       micro_certificate_until >= tail_steps_taken &&
       tail_steps_taken > last_recorded_tail_steps;
-    if (regular_certificate_check || micro_certificate_check) {
+    if (phase_one && (regular_certificate_check || micro_certificate_check)) {
       const int eval_status = evaluate_augmented_attempt(
         tail_steps_taken,
         1,
         tail_steps_taken >= requested_tail_steps
       );
       if (eval_status < 0) {
-        if (ritz_protected) {
-          UNPROTECT(1);
-        }
-        return R_NilValue;
+        return -1;
       }
       if (eval_status == 1) {
+        return 1;
+      }
+    }
+  }
+  return 0;
+  };
+
+
+  int tail_status = run_tail(requested_tail_steps, 1);
+  if (tail_status < 0) {
+    if (ritz_protected) {
+      UNPROTECT(1);
+    }
+    return R_NilValue;
+  }
+  certified = (tail_status == 1);
+  if (!certified && max_thick_restarts > 0 && q_cols >= rank &&
+      last_recorded_tail_steps != tail_steps_taken) {
+    // The first expansion can stop between scheduled checks (breakdown on an
+    // invariant subspace, or capacity): certify the full basis before
+    // compressing it, exactly as the unrestarted driver did.
+    const int eval_status = evaluate_augmented_attempt(tail_steps_taken, 1, 0);
+    if (eval_status < 0) {
+      if (ritz_protected) {
+        UNPROTECT(1);
+      }
+      return R_NilValue;
+    }
+    certified = (eval_status == 1);
+  }
+
+  std::vector<double> keep_v;
+  std::vector<double> keep_u;
+  std::vector<double> keep_av;
+  int random_injections = 0;
+  int restart_certificate_checks = 0;
+  const int random_tail_cols = (work - retained > 0) ? work - retained : 0;
+  while (!certified && thick_restarts_done < max_thick_restarts &&
+         q_cols > rank) {
+    if (q_cols > aq_cols) {
+      status = apply_augmented_basis_columns(
+        impl, apply, m, n, Q.data(), aq_cols, q_cols, AQ.data(),
+        &stage_apply_seconds, &matvecs, &workspace
+      );
+      if (status != 0) {
+        break;
+      }
+      aq_cols = q_cols;
+    }
+    const int keep_request = (keep < q_cols - 1) ? keep : q_cols - 1;
+    if (keep_request < rank) {
+      break;
+    }
+    auto restart_timer = native_timer_now();
+    SEXP kept_ = PROTECT(eigencore_block_golub_kahan_ritz_from_ptr(
+      Q.data(), n, AQ.data(), m, q_cols, keep_request, target_kind
+    ));
+    stage_projected_seconds += native_timer_elapsed(restart_timer);
+    ++small_svds;
+    const int kept_cols = LENGTH(VECTOR_ELT(kept_, 0));
+    const double kept_top = (kept_cols > 0) ? REAL(VECTOR_ELT(kept_, 0))[0] : 0.0;
+    keep_u.assign(REAL(VECTOR_ELT(kept_, 1)),
+                  REAL(VECTOR_ELT(kept_, 1)) + static_cast<size_t>(m) * kept_cols);
+    keep_v.assign(REAL(VECTOR_ELT(kept_, 2)),
+                  REAL(VECTOR_ELT(kept_, 2)) + static_cast<size_t>(n) * kept_cols);
+    keep_av.assign(REAL(VECTOR_ELT(kept_, 3)),
+                   REAL(VECTOR_ELT(kept_, 3)) + static_cast<size_t>(m) * kept_cols);
+    UNPROTECT(1);
+    if (kept_cols < rank) {
+      break;
+    }
+    ++thick_restarts_done;
+    double scale = (R_FINITE(norm_A) && norm_A > 0.0) ? norm_A : 0.0;
+    if (R_FINITE(kept_top) && fabs(kept_top) > scale) {
+      scale = fabs(kept_top);
+    }
+    // Residual columns below ~1e3 eps ||A|| after two orthogonalisation
+    // passes are rounding noise (parallel residuals of a Krylov
+    // decomposition); dropping them keeps the basis for new directions.
+    const int accepted = seed_augmented_basis(
+      keep_v.data(), keep_u.data(), keep_av.data(), kept_cols,
+      1.0e3 * DBL_EPSILON * (scale > 0.0 ? scale : 1.0)
+    );
+    if (accepted < 0) {
+      break;
+    }
+    // Exact residuals of the kept Ritz block are now in `residual`
+    // (A^T u - V H with A v = u s by construction), so certify only when
+    // they already meet the tolerance.
+    double max_kept_residual = 0.0;
+    for (int col = 0; col < rank && col < kept_cols; ++col) {
+      const double r = ec_norm2(residual.data() + static_cast<int64_t>(col) * n, n);
+      if (!R_FINITE(r)) {
+        max_kept_residual = R_PosInf;
+        break;
+      }
+      if (r > max_kept_residual) {
+        max_kept_residual = r;
+      }
+    }
+    if (max_kept_residual <= tol * (scale > 0.0 ? scale : 1.0)) {
+      ++restart_certificate_checks;
+      const int eval_status = evaluate_augmented_attempt(tail_steps_taken, 1, 0);
+      if (eval_status < 0) {
+        break;
+      }
+      if (eval_status == 1) {
+        certified = 1;
         break;
       }
     }
+    if (accepted == 0 && q_cols < capacity) {
+      // The kept block is (numerically) invariant but not certified: inject
+      // a fresh direction instead of stalling on the same subspace.
+      const int before_injection = q_cols;
+      for (int attempt = 0; attempt < 4 && q_cols == before_injection; ++attempt) {
+        const double* candidate = (random_tail_cols > 0)
+          ? random_tails + static_cast<int64_t>(
+              (random_injections + attempt) % random_tail_cols) * n
+          : initial_start;
+        append_orthonormal_column(
+          Q.data(), n, capacity, &q_cols, candidate, tol,
+          &orthogonalization_passes, nullptr, requested_orthogonalization_passes,
+          bpro_ptr
+        );
+      }
+      ++random_injections;
+      if (q_cols > aq_cols) {
+        status = apply_augmented_basis_columns(
+          impl, apply, m, n, Q.data(), aq_cols, q_cols, AQ.data(),
+          &stage_apply_seconds, &matvecs, &workspace
+        );
+        if (status != 0) {
+          break;
+        }
+        aq_cols = q_cols;
+      }
+      if (q_cols == before_injection) {
+        break;
+      }
+    }
+    tail_status = run_tail(capacity, 0);
+    if (tail_status < 0) {
+      break;
+    }
+  }
+  if (!certified && thick_restarts_done > 0) {
+    // Record the best-effort candidate from the final restarted basis; the
+    // caller's exact certificate decides whether it falls back.
+    const int final_status = evaluate_augmented_attempt(tail_steps_taken, 1, 1);
+    if (final_status < 0) {
+      if (ritz_protected) {
+        UNPROTECT(1);
+      }
+      return R_NilValue;
+    }
+    certified = (final_status == 1);
   }
 
   if (q_cols < rank) {
@@ -2527,7 +2784,7 @@ static SEXP irlba_lbd_augmented_retained_projection(
 
   const int from_scratch_matvecs = 2 * retained_core + 2 * tail_steps_taken + q_cols;
   const int cached_matvec_savings = from_scratch_matvecs - matvecs;
-  SEXP out_ = PROTECT(allocVector(VECSXP, 43));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 47));
   const double augmented_workspace_bytes =
     static_cast<double>(sizeof(double)) *
     static_cast<double>(
@@ -2585,7 +2842,11 @@ static SEXP irlba_lbd_augmented_retained_projection(
   SET_VECTOR_ELT(out_, 40, ScalarReal(final_cheap_residual));
   SET_VECTOR_ELT(out_, 41, ScalarLogical(cached_matvec_savings > 0 ? 1 : 0));
   SET_VECTOR_ELT(out_, 42, cert_diag_);
-  SEXP names_ = PROTECT(allocVector(STRSXP, 43));
+  SET_VECTOR_ELT(out_, 43, ScalarInteger(thick_restarts_done));
+  SET_VECTOR_ELT(out_, 44, ScalarInteger(thick_restart_possible ? keep : 0));
+  SET_VECTOR_ELT(out_, 45, ScalarInteger(random_injections));
+  SET_VECTOR_ELT(out_, 46, ScalarInteger(restart_certificate_checks));
+  SEXP names_ = PROTECT(allocVector(STRSXP, 47));
   SET_STRING_ELT(names_, 0, mkChar("d"));
   SET_STRING_ELT(names_, 1, mkChar("u"));
   SET_STRING_ELT(names_, 2, mkChar("v"));
@@ -2629,6 +2890,10 @@ static SEXP irlba_lbd_augmented_retained_projection(
   SET_STRING_ELT(names_, 40, mkChar("augmented_final_cheap_residual"));
   SET_STRING_ELT(names_, 41, mkChar("augmented_reduces_from_scratch_work"));
   SET_STRING_ELT(names_, 42, mkChar("certificate_diagnostics"));
+  SET_STRING_ELT(names_, 43, mkChar("thick_restarts"));
+  SET_STRING_ELT(names_, 44, mkChar("thick_restart_keep"));
+  SET_STRING_ELT(names_, 45, mkChar("thick_restart_random_injections"));
+  SET_STRING_ELT(names_, 46, mkChar("thick_restart_certificate_checks"));
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(6);
   return out_;
@@ -2651,7 +2916,8 @@ static SEXP irlba_lbd_retained_impl(ConfigureOperator configure_operator,
                                     int target_kind,
                                     double tol,
                                     double norm_A,
-                                    int reorth_policy) {
+                                    int reorth_policy,
+                                    int thick_restarts) {
   (void) alpha;
   (void) beta;
   const int attempts = (max_restarts < 0) ? 1 : max_restarts + 1;
@@ -2680,7 +2946,7 @@ static SEXP irlba_lbd_retained_impl(ConfigureOperator configure_operator,
     augmented_impl, augmented_apply, m, n, initial_start, retained_right,
     retained_left, random_tails, work, retained, max_restarts, rank,
     target_kind, tol, reorthogonalize_u, reorthogonalize_v,
-    norm_A, native_workspace_bytes, bpro_policy
+    norm_A, native_workspace_bytes, bpro_policy, thick_restarts
   ));
   if (augmented_ != R_NilValue) {
     UNPROTECT(1);
@@ -2827,7 +3093,8 @@ extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP A_, SEXP initial_start_,
                                                    SEXP rank_,
                                                    SEXP target_kind_,
                                                    SEXP tol_,
-                                                   SEXP reorth_policy_) {
+                                                   SEXP reorth_policy_,
+                                                 SEXP thick_restarts_) {
   EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
     error("A must be a double matrix");
@@ -2856,7 +3123,7 @@ extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP A_, SEXP initial_start_,
     REAL(alpha_), REAL(beta_), REAL(random_tails_),
     asInteger(work_), asInteger(retained_), asInteger(max_restarts_),
     asInteger(rank_), asInteger(target_kind_), asReal(tol_), norm_A,
-    asInteger(reorth_policy_)
+    asInteger(reorth_policy_), asInteger(thick_restarts_)
   );
   EIGENCORE_ENTRY_END
 }
@@ -2873,7 +3140,8 @@ extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP i_, SEXP p_, SEXP x_,
                                                  SEXP rank_,
                                                  SEXP target_kind_,
                                                  SEXP tol_,
-                                                 SEXP reorth_policy_) {
+                                                 SEXP reorth_policy_,
+                                               SEXP thick_restarts_) {
   EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       LENGTH(dim_) != 2) {
@@ -2900,7 +3168,7 @@ extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP i_, SEXP p_, SEXP x_,
     REAL(alpha_), REAL(beta_), REAL(random_tails_),
     asInteger(work_), asInteger(retained_), asInteger(max_restarts_),
     asInteger(rank_), asInteger(target_kind_), asReal(tol_), norm_A,
-    asInteger(reorth_policy_)
+    asInteger(reorth_policy_), asInteger(thick_restarts_)
   );
   EIGENCORE_ENTRY_END
 }
