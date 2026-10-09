@@ -319,7 +319,12 @@ solve.eigencore_plan <- function(
       execute_svd_plan(a)
     }
   }))
-  result <- withhold_short_certificate(result, a$requested)
+  # An interval() target has no fixed k: its count comes from the inertia
+  # factorisation and the completeness check verifies the returned set
+  # against it, so `requested` (an upper bound) must not withhold it.
+  if (!identical(a$problem$target$kind, "interval")) {
+    result <- withhold_short_certificate(result, a$requested)
+  }
   finished <- proc.time()[["elapsed"]]
   result$work <- finalize_work_record(
     result,
