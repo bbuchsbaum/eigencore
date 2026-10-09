@@ -585,7 +585,8 @@ shift_invert_ldl_tolerance <- function(tol = NULL) {
 }
 
 #' @keywords internal
-shift_invert_solver_ldl <- function(A, sigma, B = NULL, tol = NULL) {
+shift_invert_solver_ldl <- function(A, sigma, B = NULL, tol = NULL,
+                                    try_spd = NA, factor = NULL) {
   started <- proc.time()[["elapsed"]]
   fallback <- function(reason) {
     prep <- shift_invert_solver_csc(methods::as(A, "generalMatrix"), sigma, B = B)
@@ -604,7 +605,24 @@ shift_invert_solver_ldl <- function(A, sigma, B = NULL, tol = NULL) {
     methods::as(Matrix::forceSymmetric(methods::as(As - sigma * B, "CsparseMatrix"),
                                        uplo = "U"), "CsparseMatrix")
   }
-  F <- tryCatch(
+  # A shift below the spectrum (C60 smallest routing, or sigma under the
+  # Gershgorin lower bound) gets a supernodal LL' first: much faster than the
+  # simplicial LDL', and its success proves A - sigma I positive definite.
+  # A precomputed simplicial LDL' of A - sigma B (an inertia context's
+  # factor, which reuses one symbolic analysis across shifts) is used as is.
+  supplied <- methods::is(factor, "CHMsimpl")
+  if (!supplied && is.na(try_spd)) {
+    try_spd <- B_identity && sigma <= sparse_gershgorin_lower(As)
+  }
+  F <- if (supplied) {
+    factor
+  } else if (B_identity && isTRUE(try_spd)) {
+    ldl_try_spd_factor(As, sigma)
+  } else {
+    NULL
+  }
+  spd_factor <- !supplied && !is.null(F)
+  if (is.null(F)) F <- tryCatch(
     suppressWarnings(if (B_identity) {
       Matrix::Cholesky(As, LDL = TRUE, super = FALSE, perm = TRUE, Imult = -sigma)
     } else {
@@ -681,8 +699,16 @@ shift_invert_solver_ldl <- function(A, sigma, B = NULL, tol = NULL) {
     label = "sparse_ldl",
     factor = F,
     M = M,
+    # A refined solve needs M as well; only the plain solve runs natively.
+    native_spec = if (refine) NULL else ldl_native_solve_spec(F),
+    tally = tally,
     cache = list(
-      factorization = "Matrix::Cholesky(LDL = TRUE, super = FALSE)",
+      factorization = if (spd_factor) {
+        "CHOLMOD supernodal LL' (positive definite) converted to simplicial LDL'"
+      } else {
+        "Matrix::Cholesky(LDL = TRUE, super = FALSE)"
+      },
+      positive_definite_factor = spd_factor,
       factorization_cached = TRUE,
       factor_nnz = sum(as.numeric(methods::slot(F, "nz"))),
       factorization_seconds = proc.time()[["elapsed"]] - started,
@@ -706,6 +732,126 @@ shift_invert_solver_ldl <- function(A, sigma, B = NULL, tol = NULL) {
   )
 }
 
+# Native solve (tranche 5, item 4): shift-invert Lanczos applies
+# (A - sigma B)^{-1} through a leaf of the native composite kernel
+# (src/native_operators.cpp) instead of an R callback per Lanczos step.
+# getOption("eigencore.native_ldl_solve", "auto"):
+#   "cholmod"   CHOLMOD's cholmod_solve2() through the ABI-guarded Matrix C
+#               API bridge (src/cholmod_bridge.c);
+#   "eigencore" eigencore's own triangular solves on the simplicial LDL'
+#               slots (no CHOLMOD ABI involved);
+#   "auto"      "cholmod" when the bridge ABI matches, else "eigencore";
+#   FALSE       the R callback (Matrix::solve) as before.
+# Returns NULL when no native leaf applies (e.g. not a simplicial LDL').
+#' @keywords internal
+ldl_native_solve_spec <- function(F) {
+  mode <- getOption("eigencore.native_ldl_solve", "auto")
+  if (isFALSE(mode) || identical(mode, "none") ||
+      !methods::is(F, "CHMsimpl") || !methods::.hasSlot(F, "nz")) {
+    return(NULL)
+  }
+  if (isTRUE(mode)) {
+    mode <- "auto"
+  }
+  type <- methods::slot(F, "type")
+  if (length(type) < 3L || type[[2L]] != 0L || type[[3L]] != 0L) {
+    return(NULL)
+  }
+  if (mode %in% c("auto", "cholmod") && cholmod_bridge_available()) {
+    return(list(type = "cholmod_solve", factor = F,
+                n = as.integer(methods::slot(F, "Dim")[[1L]])))
+  }
+  perm <- methods::slot(F, "perm")
+  list(
+    type = "ldl_solve",
+    p = methods::slot(F, "p"),
+    i = methods::slot(F, "i"),
+    x = methods::slot(F, "x"),
+    nz = methods::slot(F, "nz"),
+    perm = if (length(perm)) as.integer(perm) else NULL
+  )
+}
+
+# Supernodal LL' of A - sigma I converted to simplicial LDL' through the
+# CHOLMOD bridge (src/cholmod_bridge.c), or NULL when A - sigma I is not
+# positive definite or the bridge ABI does not match.
+#' @keywords internal
+ldl_try_spd_factor <- function(As, sigma) {
+  if (isFALSE(getOption("eigencore.spd_supernodal", TRUE)) ||
+      !cholmod_bridge_available()) {
+    return(NULL)
+  }
+  F <- tryCatch(
+    .Call("eigencore_cholmod_spd_ldl", As, as.double(sigma), PACKAGE = "eigencore"),
+    error = function(e) NULL
+  )
+  if (methods::is(F, "CHMsimpl")) F else NULL
+}
+
+# Gershgorin lower bound of a symmetric sparse matrix (min_i a_ii - sum_j |a_ij|).
+#' @keywords internal
+sparse_gershgorin_lower <- function(As) {
+  d <- as.numeric(Matrix::diag(As))
+  r <- as.numeric(Matrix::colSums(abs(As)))
+  if (!length(d)) {
+    return(-Inf)
+  }
+  min(d - (r - abs(d)))
+}
+
+# Composite spec of the (possibly generalized) shift-invert operator: the LDL'
+# leaf alone, or R (A - sigma B)^{-1} R' for B = R'R with a CSC or diagonal R.
+#' @keywords internal
+shift_invert_native_spec <- function(ldl_spec, metric_factor = NULL) {
+  if (is.null(ldl_spec)) {
+    return(NULL)
+  }
+  if (is.null(metric_factor)) {
+    return(ldl_spec)
+  }
+  left <- metric_factor$native_spec %||% NULL
+  if (is.null(left)) {
+    return(NULL)
+  }
+  list(type = "product", children = list(
+    left, ldl_spec, list(type = "adjoint", child = left)
+  ))
+}
+
+# Hermitian operator applying solve_fn, natively through the composite kernel
+# when a spec is given (the R closure remains the semantics otherwise).
+#' @keywords internal
+shift_invert_solve_operator <- function(n, solve_fn, native_spec = NULL, name,
+                                        factorization_cache) {
+  kernel <- if (is.null(native_spec)) NULL else new_native_composite_kernel(native_spec)
+  if (is.null(kernel)) {
+    return(linear_operator(
+      dim = c(n, n),
+      apply = shift_invert_apply_factory(solve_fn),
+      apply_adjoint = NULL,
+      structure = hermitian(),
+      name = name,
+      metadata = list(native = FALSE, native_solve = FALSE,
+                      factorization_cache = factorization_cache)
+    ))
+  }
+  native_apply <- function(X, alpha = 1, beta = 0, Y = NULL) {
+    native_composite_block_apply(kernel, X, alpha = alpha, beta = beta,
+                                 Y = Y, adjoint = FALSE)
+  }
+  op <- linear_operator(
+    dim = c(n, n),
+    apply = native_apply,
+    apply_adjoint = NULL,
+    structure = hermitian(),
+    name = name,
+    metadata = list(native = FALSE, native_solve = TRUE,
+                    native_composite = kernel,
+                    factorization_cache = factorization_cache)
+  )
+  attach_native_composite_kernel(op, kernel)
+}
+
 # Sparse SPD metric B = P' L L' P (CHOLMOD, fill-reducing P): with R = L' P,
 # B = R'R, and the symmetric transform R (A - sigma B)^{-1} R' has the
 # eigenvalues 1 / (lambda - sigma) of the pencil; eigenvectors map back by
@@ -724,9 +870,13 @@ shift_invert_sparse_metric_factor <- function(B) {
   L <- methods::as(Matrix::expand1(FB, "L"), "CsparseMatrix")
   P1 <- Matrix::expand1(FB, "P1")
   Lt <- Matrix::t(L)
+  R <- tryCatch(methods::as(methods::as(Lt %*% P1, "generalMatrix"), "CsparseMatrix"),
+                error = function(e) NULL)
   list(
     kind = "sparse",
     matrix_sparse = Bs,
+    # R = L' P with B = R'R, as a CSC leaf for the native composite kernel.
+    native_spec = if (inherits(R, "dgCMatrix")) native_composite_csc_spec(R) else NULL,
     to_rhs = function(X) as.matrix(Matrix::crossprod(P1, L %*% X)),
     from_solution = function(X) as.matrix(Lt %*% (P1 %*% X)),
     to_original = function(Y) as.matrix(Matrix::crossprod(P1, Matrix::solve(Lt, Y))),
@@ -772,6 +922,7 @@ shift_invert_metric_factor <- function(Bop) {
     sqrt_values <- sqrt(values)
     return(list(
       kind = "diagonal",
+      native_spec = list(type = "diagonal", x = as.double(sqrt_values)),
       matrix_dense = diag(values),
       matrix_sparse = Matrix::Diagonal(x = values),
       to_rhs = function(X) sqrt_values * X,
@@ -793,7 +944,9 @@ shift_invert_metric_factor <- function(Bop) {
 
 #' @keywords internal
 prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL,
-                                          tol = NULL) {
+                                          tol = NULL, ldl_factor = NULL,
+                                          metric_factor = NULL,
+                                          try_spd = NA) {
   Aop <- problem$A
   Bop <- problem$metric
   n <- Aop$dim[1L]
@@ -803,7 +956,9 @@ prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL,
     stop("shift_invert() currently requires a Hermitian eigenproblem.", call. = FALSE)
   }
 
-  metric_factor <- if (is.null(Bop)) NULL else shift_invert_metric_factor(Bop)
+  if (is.null(metric_factor) && !is.null(Bop)) {
+    metric_factor <- shift_invert_metric_factor(Bop)
+  }
 
   # User-supplied solve operator for matrix-free A
   if (!is.null(user_solve)) {
@@ -883,7 +1038,9 @@ prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL,
       csc_A,
       sigma,
       B = metric_factor$matrix_sparse %||% NULL,
-      tol = tol
+      tol = tol,
+      try_spd = try_spd,
+      factor = ldl_factor
     )
   } else {
     stop(
@@ -903,23 +1060,18 @@ prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL,
   }
   label_kind <- if (is.null(metric_factor)) prep$label else paste0(prep$label, "_generalized")
 
-  op <- linear_operator(
-    dim = c(n, n),
-    apply = shift_invert_apply_factory(solve_fn),
-    apply_adjoint = NULL,
-    structure = hermitian(),
+  op <- shift_invert_solve_operator(
+    n, solve_fn,
+    native_spec = shift_invert_native_spec(prep$native_spec, metric_factor),
     name = paste0("shift_invert_", label_kind),
-    metadata = list(
-      native = FALSE,
-      factorization_cache = shift_invert_factorization_cache_merge(
-        cache_info,
-        label_kind,
-        modifyList(
-          prep$cache,
-          list(
-            generalized = !is.null(Bop),
-            metric_factorization = metric_factor$factorization %||% NA_character_
-          )
+    factorization_cache = shift_invert_factorization_cache_merge(
+      cache_info,
+      label_kind,
+      modifyList(
+        prep$cache,
+        list(
+          generalized = !is.null(Bop),
+          metric_factorization = metric_factor$factorization %||% NA_character_
         )
       )
     )
@@ -927,6 +1079,8 @@ prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL,
   cache <- op$metadata$factorization_cache
   list(
     operator = op,
+    tally = prep$tally,
+    factor = prep$factor,
     label_kind = label_kind,
     factorization_cache = cache,
     ldl_fallback = isTRUE(prep$ldl_fallback),
@@ -1778,6 +1932,7 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
       kind = iter$restart$kind %||% "reference_hermitian_lanczos_shift_invert",
       native = isTRUE(iter$restart$native_shift_invert_callback),
       factorization_native = FALSE,
+      native_solve = isTRUE(M$metadata$native_solve),
       max_subspace = subspace,
       restarts_used = as.integer(iter$restarts %||% 0L),
       inner_tolerance = inner_tol,

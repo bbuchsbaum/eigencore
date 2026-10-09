@@ -106,6 +106,71 @@ both_ends <- function(k_low, k_high) {
   new_target("both_ends", list(k_low = k_low, k_high = k_high))
 }
 
+#' Target every eigenvalue in an interval.
+#'
+#' `interval(a, b)` selects all eigenvalues of a Hermitian problem (or of a
+#' symmetric-definite pencil `A x = lambda B x`) that lie in the closed
+#' interval `[a, b]`. The number of such eigenvalues is not supplied: the
+#' solver counts them first with Sylvester's law of inertia (see
+#' [eigen_count()]), so `eig_partial(A, target = interval(a, b))` needs no
+#' `k`. A supplied `k` is an upper bound and must be at least the count.
+#'
+#' **End points.** The interval is closed. Counting factors `A - t B` at
+#' `t = a` and `t = b`; when a factorisation there is not reliable (an
+#' eigenvalue numerically at the end point) the end point is moved outward
+#' by a small recorded perturbation, so an eigenvalue inside that numerical
+#' zero band is counted as inside. Eigenvalues whose residual bound
+#' straddles an end point are reported in
+#' `certificate(fit)$completeness$boundary_ambiguous` rather than dropped.
+#'
+#' **Routes.** Dense matrices use LAPACK `dsyevr` with `RANGE = "V"`
+#' (exact: the tridiagonal Sturm bisection selects the eigenvalues);
+#' generalized dense pencils reduce with the Cholesky factor of `B` first.
+#' Sparse matrices are counted and solved with \eqn{LDL^T} shift-invert
+#' Lanczos at the interval centre; wide intervals are split into slices by
+#' inertia counts (spectrum slicing), each slice is solved at its own centre
+#' (reusing the symbolic factorisation) and the slices are merged. Every
+#' result is certified by residuals and by the inertia count:
+#' `certificate(fit)$target_completeness` is `"inertia_verified"` when the
+#' returned values provably are all eigenvalues in the interval (`"exact"`
+#' for the dense LAPACK route).
+#'
+#' @param a,b Interval end points, `a < b`. One of them may be infinite
+#'   (`interval(-Inf, b)` selects every eigenvalue up to `b`); both infinite
+#'   is the full spectrum, use [eig_full()].
+#' @return An `eigencore_target` descriptor of kind `"interval"`.
+#' @examples
+#' A <- diag(c(1, 2, 2, 5, 7, 9))
+#' fit <- eig_partial(A, target = interval(1.5, 6))
+#' values(fit)
+#' certificate(fit)$target_completeness
+#' @export
+interval <- function(a, b) {
+  check <- function(x, name) {
+    x <- suppressWarnings(as.numeric(x))
+    if (length(x) != 1L || is.na(x)) {
+      stop(name, " must be a single number.", call. = FALSE)
+    }
+    x
+  }
+  a <- check(a, "a")
+  b <- check(b, "b")
+  if (!(a < b)) {
+    stop("interval(a, b) requires a < b, got a = ", format(a), ", b = ",
+         format(b), ".", call. = FALSE)
+  }
+  if (is.infinite(a) && is.infinite(b)) {
+    stop("interval(-Inf, Inf) is the full spectrum; use eig_full().",
+         call. = FALSE)
+  }
+  new_target("interval", list(lower = a, upper = b))
+}
+
+#' @noRd
+is_interval_target <- function(target) {
+  inherits(target, "eigencore_target") && identical(target$kind, "interval")
+}
+
 #' @noRd
 new_method <- function(kind, ...) {
   structure(c(list(kind = kind), list(...)), class = "eigencore_method")
@@ -366,6 +431,10 @@ target_label <- function(target) {
   }
   if (identical(target$kind, "nearest")) {
     return(paste0("nearest(", target$value, ")"))
+  }
+  if (identical(target$kind, "interval")) {
+    return(paste0("interval(", format(target$value$lower, digits = 10), ", ",
+                  format(target$value$upper, digits = 10), ")"))
   }
   if (identical(target$kind, "both_ends")) {
     return(paste0("both_ends(", target$value$k_low, ", ", target$value$k_high, ")"))

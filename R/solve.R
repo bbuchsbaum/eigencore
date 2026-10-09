@@ -1,7 +1,10 @@
 #' Compute a partial eigendecomposition.
 #'
 #' @param A Matrix or eigencore operator.
-#' @param k Number of eigenpairs to compute.
+#' @param k Number of eigenpairs to compute. Required except for an
+#'   [interval()] target, whose count comes from an inertia factorisation;
+#'   there a supplied `k` is an upper bound (an error if the interval holds
+#'   more eigenvalues).
 #' @param target Eigencore eigenvalue target descriptor.
 #' @param B Optional metric matrix or operator for generalized problems.
 #' @param method Solver method descriptor.
@@ -66,7 +69,7 @@
 #' B <- diag(c(2, 1, 1, 1, 1))
 #' gfit <- eig_partial(A, B = B, k = 2, target = smallest())
 #' values(gfit)
-eig_partial <- function(A, k, target = largest(), B = NULL, method = auto(),
+eig_partial <- function(A, k = NULL, target = largest(), B = NULL, method = auto(),
                         tol = 1e-8, maxit = NULL, vectors = TRUE, seed = NULL,
                         certify = TRUE,
                         allow_dense_fallback = c("auto", "never", "always"),
@@ -178,7 +181,7 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
 #' @param ... Reserved for future solver options.
 #' @return An `eigencore_eigen_result`.
 #' @export
-solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
+solve.eigencore_eigen_problem <- function(a, b, k = NULL, method = auto(), tol = 1e-8,
                                           maxit = NULL, vectors = TRUE,
                                           certify = TRUE,
                                           allow_dense_fallback = c("auto", "never", "always"),
@@ -361,6 +364,9 @@ execute_eigen_plan <- function(plan, restart_preparation = NULL) {
   # Ritz vectors, so they are kept internally and dropped afterwards when the
   # caller asked for values only.
   a <- plan$problem
+  if (is_interval_target(a$target)) {
+    return(solve_interval_eigen(plan))
+  }
   k <- plan$requested
   vectors_requested <- isTRUE(plan$execution$vectors)
   mode <- target_completeness_mode(plan$method_descriptor)
@@ -560,6 +566,7 @@ order_indices <- function(x, target) {
     largest_imaginary = order(Im(x), decreasing = TRUE),
     smallest_imaginary = order(Im(x), decreasing = FALSE),
     nearest = order(abs(x - target$value), decreasing = FALSE),
+    interval = order(Re(x), decreasing = FALSE),
     both_ends = {
       low <- order(Re(x), decreasing = FALSE)
       high <- order(Re(x), decreasing = TRUE)
@@ -697,6 +704,9 @@ plan_dispatches_golub_kahan <- function(plan) {
 plan_dispatch_available <- function(plan) {
   if (identical(plan$problem_type, "eigen")) {
     problem <- plan$problem
+    if (is_interval_target(problem$target)) {
+      return(plan$method %in% interval_route_labels())
+    }
     if (is_transform_method(problem$transform)) {
       return(identical(problem$transform$kind, "shift_invert"))
     }

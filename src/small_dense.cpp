@@ -103,21 +103,23 @@ static void* qz_complex_selector(int sort_code) {
 // otherwise RANGE = 'I' over [il, iu] (1-based). Eigenvalues land in w
 // (length n), eigenvectors in z (n x count) when want_vectors.
 // Returns LAPACK info; *m_found receives the number of eigenvalues found.
+// value_range: RANGE = 'V' over the half-open (vl, vu] instead (z must
+// then hold n x n).
 static int run_dsyevr(const double* A, int n, bool want_vectors, int il,
-                      int iu, double* w, double* z, int* m_found) {
+                      int iu, double* w, double* z, int* m_found,
+                      bool value_range = false, double vl = 0.0,
+                      double vu = 0.0) {
   const size_t nn = static_cast<size_t>(n) * static_cast<size_t>(n);
   double* work_matrix = reinterpret_cast<double*>(R_alloc(nn, sizeof(double)));
   std::memcpy(work_matrix, A, sizeof(double) * nn);
-  const bool all = (il <= 0);
-  const int count = all ? n : (iu - il + 1);
+  const bool all = !value_range && (il <= 0);
+  const int count = (all || value_range) ? n : (iu - il + 1);
   char jobz = want_vectors ? 'V' : 'N';
-  char range = all ? 'A' : 'I';
+  char range = value_range ? 'V' : (all ? 'A' : 'I');
   char uplo = 'U';
-  double vl = 0.0;
-  double vu = 0.0;
   double abstol = 0.0;
-  int il_la = all ? 1 : il;
-  int iu_la = all ? n : iu;
+  int il_la = (all || value_range) ? 1 : il;
+  int iu_la = (all || value_range) ? n : iu;
   int ldz = want_vectors ? n : 1;
   double z_dummy = 0.0;
   double* z_ptr = want_vectors ? z : &z_dummy;
@@ -1221,6 +1223,59 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_selected(SEXP A_, SEXP k_,
   SET_STRING_ELT(names_, 1, mkChar("vectors"));
   setAttrib(out_, R_NamesSymbol, names_);
 
+  UNPROTECT(4);
+  return out_;
+  EIGENCORE_ENTRY_END
+}
+
+// Dense symmetric eigenpairs with eigenvalues in the half-open range
+// (vl, vu] via dsyevr RANGE = 'V' (interval targets). Values ascending.
+extern "C" SEXP eigencore_dense_symmetric_eigen_value_range(SEXP A_, SEXP vl_,
+                                                            SEXP vu_,
+                                                            SEXP vectors_flag_) {
+  EIGENCORE_ENTRY_BEGIN
+  if (!isReal(A_)) {
+    error("A must be a double matrix");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  if (dimA == R_NilValue || INTEGER(dimA)[0] != INTEGER(dimA)[1]) {
+    error("A must be a square matrix");
+  }
+  const int n = INTEGER(dimA)[0];
+  const double vl = asReal(vl_);
+  const double vu = asReal(vu_);
+  if (!R_FINITE(vl) || !R_FINITE(vu) || !(vl < vu)) {
+    error("value range must be finite with vl < vu");
+  }
+  const bool want_vectors = vectors_flag(vectors_flag_);
+  int m_found = 0;
+  double* w = reinterpret_cast<double*>(
+    R_alloc(static_cast<size_t>(n > 0 ? n : 1), sizeof(double)));
+  double* z = want_vectors && n > 0 ? reinterpret_cast<double*>(
+    R_alloc(static_cast<size_t>(n) * static_cast<size_t>(n), sizeof(double))) : NULL;
+  if (n > 0) {
+    const int info = run_dsyevr(REAL(A_), n, want_vectors, 0, 0, w, z,
+                                &m_found, true, vl, vu);
+    if (info != 0) {
+      error("LAPACK dsyevr (RANGE = 'V') failed with info=%d", info);
+    }
+  }
+  SEXP values_ = PROTECT(allocVector(REALSXP, m_found));
+  for (int i = 0; i < m_found; ++i) {
+    REAL(values_)[i] = w[i];
+  }
+  SEXP vectors_ = PROTECT(want_vectors ? allocMatrix(REALSXP, n, m_found) : R_NilValue);
+  if (want_vectors && m_found > 0) {
+    std::memcpy(REAL(vectors_), z,
+                sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(m_found));
+  }
+  SEXP out_ = PROTECT(allocVector(VECSXP, 2));
+  SET_VECTOR_ELT(out_, 0, values_);
+  SET_VECTOR_ELT(out_, 1, vectors_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(names_, 0, mkChar("values"));
+  SET_STRING_ELT(names_, 1, mkChar("vectors"));
+  setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(4);
   return out_;
   EIGENCORE_ENTRY_END

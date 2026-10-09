@@ -117,6 +117,7 @@ extern "C" SEXP eigencore_tridiagonal_inertia(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_simplicial_ldl_diagnostics(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_cholmod_abi(void);
 extern "C" SEXP eigencore_cholmod_analyze(SEXP);
+extern "C" SEXP eigencore_cholmod_spd_ldl(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_finite_symmetric(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen_dsyev(SEXP);
@@ -129,6 +130,7 @@ extern "C" SEXP eigencore_dense_complex_generalized_pencil_eigen(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_generalized_schur(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_complex_generalized_schur(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen_selected(SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_dense_symmetric_eigen_value_range(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevx_selected(SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_left_gram_svd(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_right_gram_svd(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -257,6 +259,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_simplicial_ldl_diagnostics", (DL_FUNC) &eigencore_simplicial_ldl_diagnostics, 4},
   {"eigencore_cholmod_abi", (DL_FUNC) &eigencore_cholmod_abi, 0},
   {"eigencore_cholmod_analyze", (DL_FUNC) &eigencore_cholmod_analyze, 1},
+  {"eigencore_cholmod_spd_ldl", (DL_FUNC) &eigencore_cholmod_spd_ldl, 2},
   {"eigencore_dense_finite_symmetric", (DL_FUNC) &eigencore_dense_finite_symmetric, 2},
   {"eigencore_dense_symmetric_eigen", (DL_FUNC) &eigencore_dense_symmetric_eigen, 2},
   {"eigencore_dense_symmetric_eigen_dsyev", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyev, 1},
@@ -269,6 +272,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_dense_generalized_schur", (DL_FUNC) &eigencore_dense_generalized_schur, 4},
   {"eigencore_dense_complex_generalized_schur", (DL_FUNC) &eigencore_dense_complex_generalized_schur, 4},
   {"eigencore_dense_symmetric_eigen_selected", (DL_FUNC) &eigencore_dense_symmetric_eigen_selected, 4},
+  {"eigencore_dense_symmetric_eigen_value_range", (DL_FUNC) &eigencore_dense_symmetric_eigen_value_range, 4},
   {"eigencore_dense_symmetric_eigen_dsyevx_selected", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyevx_selected, 3},
   {"eigencore_csc_left_gram_svd", (DL_FUNC) &eigencore_csc_left_gram_svd, 6},
   {"eigencore_csc_right_gram_svd", (DL_FUNC) &eigencore_csc_right_gram_svd, 6},

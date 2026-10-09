@@ -16,6 +16,7 @@ src/*.o
 src/*.so
 src/*.dll
 vendor/
+.rlib/
 PACKAGES
 PACKAGES.gz
 PACKAGES.rds

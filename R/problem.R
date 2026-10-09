@@ -149,13 +149,27 @@ plan_solver <- function(problem, ...) {
 
 #' @export
 plan_solver.eigencore_eigen_problem <- function(
-    problem, k, method = auto(), tol = 1e-8, maxit = NULL, vectors = TRUE,
+    problem, k = NULL, method = auto(), tol = 1e-8, maxit = NULL, vectors = TRUE,
     certify = TRUE,
     allow_dense_fallback = c("auto", "never", "always"),
     initial_subspace = NULL,
     left_vectors = c("auto", "none", "compute"), ...) {
   if (problem$A$dim[1L] != problem$A$dim[2L]) {
     stop("Eigenproblems require a square operator.", call. = FALSE)
+  }
+  if (is_interval_target(problem$target)) {
+    check_iteration_limit_conflict(method, maxit)
+    return(plan_interval_eigen(
+      problem, k = k, method = method, tol = tol, maxit = maxit,
+      vectors = vectors, certify = certify,
+      allow_dense_fallback = match.arg(allow_dense_fallback),
+      initial_subspace = initial_subspace,
+      left_vectors = match.arg(left_vectors)
+    ))
+  }
+  if (is.null(k)) {
+    stop("k (the number of eigenpairs) is required unless the target is ",
+         "interval(a, b).", call. = FALSE)
   }
   k <- validate_solution_count(k, problem$A$dim[1L], "k")
   left_vectors <- match.arg(left_vectors)
