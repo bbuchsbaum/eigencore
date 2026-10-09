@@ -55,9 +55,12 @@ extern "C" SEXP eigencore_unwind_selftest(SEXP mode_) {
     throw eigencore::Interrupt();
   }
   if (std::strcmp(mode, "r_alloc_failure") == 0) {
-    // R signals "cannot allocate vector ..." by longjmp; the unwind-protected
-    // allocVector turns it into a C++ exception first.
-    SEXP big = PROTECT(allocVector(REALSXP, R_XLEN_T_MAX));
+    // R rejects an over-long vector with an error (a longjmp) before it tries
+    // to allocate, on every platform; the unwind-protected allocVector turns
+    // that longjmp into a C++ exception first. (Asking for R_XLEN_T_MAX
+    // elements instead reaches the system allocator, whose failure mode and
+    // message differ by platform.)
+    SEXP big = PROTECT(allocVector(REALSXP, R_XLEN_T_MAX + static_cast<R_xlen_t>(1)));
     UNPROTECT(1);
     return big;
   }

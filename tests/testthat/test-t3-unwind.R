@@ -26,12 +26,13 @@ test_that("C10: every failure kind becomes an R condition after C++ cleanup", {
   expect_error(unwind_selftest("huge_vector"))
   expect_identical(unwind_selftest("live"), 0L)
 
-  # R's own allocation failure (a longjmp) is caught by the unwind-protected
-  # allocVector, the C++ objects are destroyed, then R's error continues.
-  expect_error(unwind_selftest("r_alloc_failure"), "cannot allocate")
+  # An R error raised inside unwind-protected R API code (a longjmp) becomes a
+  # C++ exception, the C++ objects are destroyed, then R's unwind continues.
+  expect_error(unwind_selftest("r_stop"), "eigencore selftest: R-level stop")
   expect_identical(unwind_selftest("live"), 0L)
 
-  expect_error(unwind_selftest("r_stop"), "eigencore selftest: R-level stop")
+  # The same through the remapped allocVector: R refuses an over-long vector.
+  expect_error(unwind_selftest("r_alloc_failure"), "vector is too large")
   expect_identical(unwind_selftest("live"), 0L)
 
   expect_error(unwind_selftest("no-such-mode"), "unknown selftest mode")
