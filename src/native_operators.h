@@ -1,10 +1,12 @@
 #ifndef EIGENCORE_NATIVE_OPERATORS_H
 #define EIGENCORE_NATIVE_OPERATORS_H
 
+// C++ standard headers first: R's headers define macros (e.g. length())
+// that break libc++ headers on macOS when included after them.
+#include <memory>
+#include <stdint.h>
 #include <Rinternals.h>
 #include <R_ext/Complex.h>
-#include <stdint.h>
-#include <memory>
 #include "eigencore_operator.h"
 
 // Lazily built per-operator acceleration state for the CSC kernels (P8): a
