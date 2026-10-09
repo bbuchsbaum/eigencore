@@ -748,6 +748,20 @@ is_square_symmetric <- function(x, tol = sqrt(.Machine$double.eps)) {
   if (is.matrix(x) && is.double(x)) {
     return(isTRUE(.Call("eigencore_dense_is_symmetric", x, as.numeric(tol), PACKAGE = "eigencore")))
   }
+  if (is.matrix(x) && is.complex(x)) {
+    # isSymmetric.matrix() goes through all.equal(), which switches to an
+    # ABSOLUTE comparison when mean(Mod(x)) < tol: a 1e-12-scale general
+    # complex matrix was classified Hermitian and solved with zheev (C38 for
+    # complex input; found by the oracle sweep). Use a relative test.
+    scale <- max(Mod(x))
+    if (!is.finite(scale)) {
+      return(FALSE)
+    }
+    if (scale == 0) {
+      return(TRUE)
+    }
+    return(max(Mod(x - Conj(t(x)))) <= tol * scale)
+  }
   isTRUE(isSymmetric.matrix(x, tol = tol))
 }
 

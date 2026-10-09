@@ -32,6 +32,7 @@ Imports:
     methods
 Suggests:
     bench,
+    callr,
     knitr,
     rmarkdown,
     RSpectra,

@@ -516,6 +516,18 @@ shift_invert_solver_csc <- function(A, sigma, B = NULL) {
   } else {
     NA
   }
+  # Matrix::solve() refuses a sparse LU whose pivot ratio is below eps
+  # ("computationally singular"); detect that here, at factor time, so the
+  # caller's singular-shift handling (the implicit smallest_magnitude route
+  # perturbs sigma) sees it instead of a callback failure deep inside the
+  # Krylov-Schur kernel ("operator apply failed with status=-8", oracle sweep).
+  if (isTRUE(u_diag_estimate$ratio < .Machine$double.eps) ||
+      isTRUE(u_diag_estimate$min == 0)) {
+    stop("shift_invert(sigma = ", sigma, "): the shifted sparse operator is ",
+         "numerically singular (LU pivot ratio ",
+         format(u_diag_estimate$ratio, digits = 3), "); perturb sigma.",
+         call. = FALSE)
+  }
   list(
     solve_fn = function(X) {
       Z <- Matrix::solve(factor, X)
