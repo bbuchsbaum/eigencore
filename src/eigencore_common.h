@@ -15,6 +15,36 @@
 #include <exception>
 #include <new>
 #include <stdexcept>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+// OpenMP helpers (P8). Every pragma in src/ goes through EIGENCORE_OMP so the
+// package compiles warning-free and runs serially where OpenMP is unavailable
+// (Apple clang, some Windows toolchains): SHLIB_OPENMP_CXXFLAGS is empty there
+// and _OPENMP is undefined. Parallel regions never call the R API and never
+// let a C++ exception escape.
+#ifdef _OPENMP
+#define EIGENCORE_OMP(directive) _Pragma(#directive)
+#else
+#define EIGENCORE_OMP(directive)
+#endif
+
+static inline int eigencore_omp_thread_num() {
+#ifdef _OPENMP
+  return omp_get_thread_num();
+#else
+  return 0;
+#endif
+}
+
+static inline int eigencore_omp_num_threads() {
+#ifdef _OPENMP
+  return omp_get_num_threads();
+#else
+  return 1;
+#endif
+}
 
 // ---------------------------------------------------------------------------
 // Error, interrupt and R-unwind plumbing (review items C10 / P16)
@@ -195,16 +225,36 @@ static inline void eigencore_check_interrupt() {
   Rf_error("eigencore: computation interrupted by user");
 }
 
+// Thread count for the OpenMP sparse kernels (P8), defined in
+// native_operators.cpp. eigencore_call_enter() re-reads
+// getOption("eigencore.threads") (falling back to the package default set at
+// load time) once per .Call, on the main thread, so kernels only read a plain
+// int; eigencore_thread_count() is always >= 1 and is 1 when the package was
+// built without OpenMP. The first multithreaded sparse kernel of a call may
+// switch a spinning-thread BLAS (OpenBLAS pthreads, FlexiBLAS) to one thread;
+// eigencore_call_leave() restores it when the outermost .Call returns or
+// raises, so BLAS and OpenMP threads never compete for cores.
+extern "C" void eigencore_refresh_thread_count(void);
+extern "C" int eigencore_thread_count(void);
+extern "C" void eigencore_call_enter(void);
+extern "C" void eigencore_call_leave(void);
+// Threads for eigencore's own OpenMP dense helpers: > 1 only while BLAS runs
+// single-threaded (see native_operators.cpp).
+extern "C" int eigencore_reorth_threads(void);
+
 // Body of every .Call entry point. All C++ objects created by `body` are
 // destroyed before any R condition is raised.
 template <typename Body>
 static inline SEXP eigencore_call(Body&& body) {
+  eigencore_call_enter();
   enum { kError, kInterrupt, kUnwind } kind = kError;
   char message[8192];
   message[0] = '\0';
   SEXP token = R_NilValue;
   try {
-    return body();
+    SEXP result = body();
+    eigencore_call_leave();
+    return result;
   } catch (const eigencore::Interrupt&) {
     kind = kInterrupt;
   } catch (const eigencore::RUnwind& unwind) {
@@ -218,6 +268,7 @@ static inline SEXP eigencore_call(Body&& body) {
   } catch (...) {
     std::snprintf(message, sizeof(message), "eigencore: unknown C++ exception");
   }
+  eigencore_call_leave();
   if (kind == kUnwind) {
     R_ContinueUnwind(token);
   }

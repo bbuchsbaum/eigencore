@@ -116,6 +116,26 @@
   now labelled `native thick-restart ... Lanczos shift-invert (... solve
   callback)` instead of `reference ...`.
 
+## Multithreaded sparse kernels
+
+* Native sparse (`dgCMatrix`) products now run on OpenMP threads: `A^T X`
+  as a per-column gather, `A X` as a gather over a CSR copy (or per-thread
+  row slabs for tall matrices) built once per solve, the centred and
+  centred-scaled operators, and the implicit `A^T A` / `A A^T` operators of
+  sparse `svds()` / `svd_partial()`. Sparse products are bitwise identical
+  for every thread count. The thread count is `getOption("eigencore.threads")`;
+  the default is 1 under `R CMD check` or `_R_CHECK_LIMIT_CORES_`, otherwise
+  `OMP_NUM_THREADS` or the processor count capped at 8. Builds without
+  OpenMP (Apple clang) stay serial. See `?"eigencore-threads"`.
+* During a multithreaded sparse solve, a spinning-thread BLAS (OpenBLAS
+  pthreads, FlexiBLAS) is switched to one thread and restored afterwards,
+  and the Lanczos reorthogonalisation runs on eigencore's own OpenMP
+  kernels, so BLAS and OpenMP threads do not compete. Results with one and
+  several threads agree to rounding.
+* Multi-column sparse products use row-major panels, and the centred-scaled
+  sparse operator no longer applies one column at a time. R-level block
+  applies no longer duplicate `Y` when `beta = 0` and accept `Y = NULL`.
+
 ## RSpectra compatibility
 
 * `eigs()`, `eigs_sym()` and `svds()` follow the RSpectra signatures:
