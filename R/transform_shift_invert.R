@@ -2337,6 +2337,26 @@ solve_shift_invert_general <- function(problem, k, method, tol, vectors,
   lambda <- current$lambda
   vec <- current$vec
   cert <- current$cert
+  # Target completeness (R/completeness_nonsym.R): probe M for its
+  # largest-magnitude eigenvalues (those nearest sigma) on the complement.
+  probed <- nonsym_completeness_apply(
+    M, current$theta, vec, cert, k, largest_magnitude(), inner_tol, certify,
+    plan,
+    certify_fn = function(theta, vectors) {
+      certify_general_eigen_operator(cert_op, sigma + 1 / theta, vectors, tol = tol)
+    },
+    norm_scale = NULL
+  )
+  if (isTRUE(probed$repaired)) {
+    current$theta <- probed$values
+    vec <- probed$vectors
+    lambda <- sigma + 1 / current$theta
+  }
+  cert <- probed$certificate
+  if (!is.null(cert$completeness) && sigma != requested_sigma) {
+    cert$completeness$shift_perturbation <- sigma - requested_sigma
+  }
+  total_matvecs <- total_matvecs + probed$columns
 
   left_contract <- if (identical(left_vectors, "none")) {
     list(supported = FALSE, reason = "not requested (left_vectors = \"none\")")

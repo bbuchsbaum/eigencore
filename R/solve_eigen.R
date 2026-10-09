@@ -406,7 +406,7 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
       tol = tol,
       maxit = method_subspace,
       max_restarts = method_max_restarts,
-      vectors = vectors,
+      vectors = TRUE,
       extraction = method_extraction,
       krylov_schur_maxit = ks_max_iterations
     )
@@ -418,9 +418,16 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
       tol = tol,
       maxit = method_subspace,
       max_restarts = method_max_restarts,
-      vectors = vectors,
+      vectors = TRUE,
       extraction = method_extraction
     )
+  }
+  # Target completeness (R/completeness_nonsym.R): deflated Krylov-Schur
+  # probe of the complement, repair by a Schur-Rayleigh-Ritz merge.
+  iter <- nonsym_completeness_after_arnoldi(a$A, iter, k, a$target, tol,
+                                            certify, plan)
+  if (!isTRUE(vectors)) {
+    iter["vectors"] <- list(NULL)
   }
   left_contract <- if (identical(left_policy, "none")) {
     list(supported = FALSE, skipped = TRUE,
@@ -603,6 +610,26 @@ solve_eigen_sparse_general_pencil_arnoldi <- function(a, k, method, tol, maxit,
       }
     )
   }
+
+  # Target completeness (R/completeness_nonsym.R): probe B^{-1} A.
+  probed <- nonsym_completeness_apply(
+    Cop, vals, vecs_for_cert, cert, k, a$target, tol, certify, plan,
+    certify_fn = function(values, vectors) {
+      certify_generalized_pencil_operator(a$A, a$metric, values,
+                                          rep(1, length(values)), vectors,
+                                          tol = tol)
+    },
+    norm_scale = NULL
+  )
+  if (isTRUE(probed$repaired)) {
+    vals <- probed$values
+    vecs_for_cert <- probed$vectors
+    alpha <- vals
+    beta <- rep(1, length(vals))
+    pencil <- generalized_pencil_values(alpha, beta, tol = 0)
+  }
+  cert <- probed$certificate
+  iter$matvecs <- as.integer((iter$matvecs %||% 0L) + probed$columns)
 
   restart <- iter$restart
   restart$kind <- "native_transformed_sparse_general_pencil_arnoldi"

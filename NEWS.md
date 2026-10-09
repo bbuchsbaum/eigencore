@@ -1,5 +1,25 @@
 # eigencore (development version)
 
+## Nonsymmetric target completeness
+
+* Nonsymmetric Krylov-Schur results (`eig_partial()` on general matrices,
+  `eigs()`, matrix-free general operators, shift-invert for general
+  matrices, diagonal-`B` sparse pencils) are now probed for completeness:
+  a deflated Krylov-Schur run on the compression of the operator to the
+  complement of the returned vectors looks for a more-preferred eigenvalue
+  outside the returned set. Found intruders are merged in by a
+  Schur-Rayleigh-Ritz step (`target_completeness = "repaired"`); otherwise
+  the result reports `"failed"` or `"inconclusive"` and `passed = FALSE`. A
+  clean probe reports `"probed"` (evidence, not proof; the margin does not
+  cover pseudospectral effects of strongly non-normal matrices). Dense
+  LAPACK general routes report `"exact"`. Fixes O16 (pairs outside the
+  LI/SI/LM target set certified), O18 (matrix-free smallest_magnitude) and
+  C60 (random sparse n = 20000, largest_magnitude k = 6 missed the
+  largest-modulus conjugate pair; now repaired). Options
+  `eigencore.nonsym_probe_wanted` (6), `eigencore.nonsym_probe_subspace`
+  (60), `eigencore.nonsym_probe_exhaust` (64) and
+  `eigencore.nonsym_probe_restarts` (1000) tune the probe.
+
 ## Interval targets and spectrum slicing
 
 * New `interval(a, b)` target: `eig_partial(A, target = interval(a, b))`
