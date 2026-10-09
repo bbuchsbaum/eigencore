@@ -138,7 +138,7 @@ both_ends <- function(k_low, k_high) {
 #' Options: `eigencore.interval_dense_limit` (default 800) is the largest
 #' sparse dimension solved by the dense route; `eigencore.interval_slice_size`
 #' fixes the number of eigenvalues per slice (default: chosen from the
-#' predicted factorisation cost, between 40 and 200). Per-slice diagnostics
+#' predicted factorisation cost, between 60 and 200). Per-slice diagnostics
 #' (bounds, counts, the free count at each slice centre, operator applies,
 #' block size used for repeated eigenvalues) are in `fit$interval`.
 #'

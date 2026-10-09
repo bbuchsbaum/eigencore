@@ -415,17 +415,21 @@ interval_slice_size <- function(ctx, plan, m) {
       return(forced)
     }
   }
-  # Cost per slice ~ F (numeric factorisation) + per-slice overhead, plus
-  # ~40 n s^2 for the Lanczos basis work of s pairs; minimising
-  # (m / s) * (F + overhead) + 40 n m s gives s = sqrt((F + overhead) / 40 n).
+  # Cost per slice ~ F (numeric factorisation) + a per-slice overhead
+  # (counts, operator set-up, certification; ~1e5 n flop-equivalents), plus
+  # ~4 n s^2 effective flops of Lanczos basis work for s pairs (BLAS-speed
+  # reorthogonalisation with a 2s + 20 subspace); minimising
+  # (m / s) * (F + overhead) + 4 n m s gives s = sqrt((F + overhead) / 4 n).
+  # Calibrated on 2-D Laplacians n = 3025 .. 250000 (CPU time minimal near
+  # s = 150 in each case), clamped to [60, 200].
   cost <- tryCatch(inertia_factor_cost(ctx), error = function(e) NULL)
   flops <- cost$flops %||% NA_real_
   if (!is.finite(flops)) {
     flops <- 50 * ctx$n
   }
-  overhead <- 5e7
-  s <- sqrt((flops + overhead) / (40 * ctx$n))
-  as.integer(min(200L, max(40L, ceiling(s))))
+  overhead <- 1e5 * ctx$n
+  s <- sqrt((flops + overhead) / (4 * ctx$n))
+  as.integer(min(200L, max(60L, ceiling(s))))
 }
 
 # Split [lo, hi] (counts below_lo, below_hi) by mid-point counts until every
@@ -536,7 +540,7 @@ interval_slice_solve <- function(problem, sctx, center, want, count, lower,
   }
   k <- min(as.integer(want), n - 1L)
   subspace <- as.integer(plan$controls$max_subspace %||%
-                           default_shift_invert_max_subspace(n, k))
+                           interval_slice_subspace(n, k))
   subspace <- min(n, max(subspace, k + 2L))
   slack <- 1e-8 * (sctx$normA + abs(center) * sctx$normB)
   run <- function(block, subspace, inner_tol) {
@@ -592,7 +596,7 @@ interval_slice_solve <- function(problem, sctx, center, want, count, lower,
       # The shift is off the slice centre (it had to avoid an eigenvalue), so
       # the `want` nearest values do not reach both slice ends: ask for more.
       k <- as.integer(min(n - 1L, k + deficit + max(4L, deficit)))
-      subspace <- min(n, max(subspace, default_shift_invert_max_subspace(n, k)))
+      subspace <- min(n, max(subspace, interval_slice_subspace(n, k)))
     } else if (all(cand$converged)) {
       # Everything converged but copies are missing: repeated eigenvalues.
       block <- as.integer(min(count + 1L, max(2L * block, deficit + 1L), n %/% 4L + 1L))
@@ -613,6 +617,17 @@ interval_slice_solve <- function(problem, sctx, center, want, count, lower,
   best$ldl_fallback <- isTRUE(prep$ldl_fallback)
   best$seconds <- proc.time()[["elapsed"]] - started
   best
+}
+
+# Krylov subspace per slice: f * k + 20 with f =
+# getOption("eigencore.interval_subspace_factor", 2). Shift-invert separates
+# a slice's eigenvalues well, so the 4k + 20 of a single shift-invert solve
+# mostly buys reorthogonalisation work at large n.
+#' @keywords internal
+interval_slice_subspace <- function(n, k) {
+  f <- suppressWarnings(as.numeric(getOption("eigencore.interval_subspace_factor", 2)))
+  if (length(f) != 1L || !is.finite(f) || f < 1.2) f <- 2
+  as.integer(min(n, max(20L, ceiling(f * k) + 20L)))
 }
 
 # Rayleigh-Ritz of (A, B) on span(X): B-orthonormal basis with near-dependent

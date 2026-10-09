@@ -11,7 +11,7 @@
   800) use LAPACK `dsyevr` with a value range (generalized: after the
   Cholesky reduction); the selection is exact (`target_completeness =
   "exact"`). Sparse matrices are counted at both end points, split into
-  slices by bisection on inertia counts (40-200 eigenvalues per slice,
+  slices by bisection on inertia counts (60-200 eigenvalues per slice,
   chosen from CHOLMOD's predicted factor cost, or
   `eigencore.interval_slice_size`), each slice solved by \(LDL^T\)
   shift-invert Lanczos at its centre on one shared symbolic analysis (block
