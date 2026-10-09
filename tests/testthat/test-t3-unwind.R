@@ -65,6 +65,9 @@ rss_mb <- function() {
 }
 
 test_that("C10: the dense shift-invert singular-sigma error path does not leak", {
+  # AddressSanitizer keeps freed blocks in a quarantine (256 MB by default),
+  # so RSS grows by the freed factors; LeakSanitizer checks leaks there.
+  skip_if(running_under_asan(), "RSS growth is not meaningful under ASan")
   n <- 300L
   A <- diag(as.numeric(seq_len(n)))
   sigma <- 5  # exactly an eigenvalue: A - sigma I is singular
