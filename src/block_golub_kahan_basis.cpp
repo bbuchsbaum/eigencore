@@ -47,11 +47,7 @@ static int trl_orthogonalise(const double* V_locked, int n_locked,
 }
 
 static double trl_norm2(const double* x, int n) {
-  long double sum = 0.0L;
-  for (int i = 0; i < n; ++i) {
-    sum += static_cast<long double>(x[i]) * x[i];
-  }
-  return sqrt(static_cast<double>(sum));
+  return ec_norm2(x, n);  // BLAS norm (P4)
 }
 
 static void symmetrize_packed_square(double* A, int n) {

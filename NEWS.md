@@ -36,6 +36,22 @@
 
 ## Correctness fixes
 
+* Wide matrices (`nrow < ncol`) with smallest or nearest singular-value
+  targets now run native Golub-Kahan on the adjoint view (sparse transpose,
+  dense transpose, or swapped callbacks; nothing is densified) so the start
+  vector lives in the small side. Starting in the large side let its null
+  space leak into the Krylov basis, and condition numbers above ~3e4 stalled
+  near 1e-5 backward error and came back uncertified while the tall case
+  certified. Certificates are still computed on the original matrix.
+* The retained IRLBA/LBD Golub-Kahan native attempt is robust: its
+  augmented tail is seeded from the dominant Ritz residual (it previously
+  started from a rounding-noise residual column), and it thick-restarts
+  from the kept Ritz block instead of giving up when its fixed basis fills.
+  On a 320-case seeded sweep it now certifies every case without fallback
+  (before: 177 fallbacks, 67 of them uncertified). Adaptive Golub-Kahan restarts from a fresh vector after an
+  invariant-subspace breakdown, so a converged warm start no longer returns
+  spurious zero singular values. Golub-Kahan norms use the BLAS helper
+  instead of `long double` accumulation.
 * `center(rows = TRUE, columns = TRUE)` now double centers correctly. Row
   means were taken from the uncentered matrix, so the grand mean was
   subtracted twice on the dense, callback, and native CSC paths.

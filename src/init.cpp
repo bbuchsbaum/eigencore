@@ -45,8 +45,8 @@ extern "C" SEXP eigencore_golub_kahan_centered_scaled_csc(SEXP, SEXP, SEXP, SEXP
 extern "C" SEXP eigencore_golub_kahan_r_operator(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
-extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
-extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_golub_kahan_dense_basis(SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_golub_kahan_dense_basis_cached(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_golub_kahan_csc_basis(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -174,8 +174,8 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_golub_kahan_r_operator", (DL_FUNC) &eigencore_golub_kahan_r_operator, 11},
   {"eigencore_golub_kahan_dense_fit", (DL_FUNC) &eigencore_golub_kahan_dense_fit, 9},
   {"eigencore_golub_kahan_csc_fit", (DL_FUNC) &eigencore_golub_kahan_csc_fit, 12},
-  {"eigencore_irlba_lbd_dense_retained", (DL_FUNC) &eigencore_irlba_lbd_dense_retained, 14},
-  {"eigencore_irlba_lbd_csc_retained", (DL_FUNC) &eigencore_irlba_lbd_csc_retained, 17},
+  {"eigencore_irlba_lbd_dense_retained", (DL_FUNC) &eigencore_irlba_lbd_dense_retained, 15},
+  {"eigencore_irlba_lbd_csc_retained", (DL_FUNC) &eigencore_irlba_lbd_csc_retained, 18},
   {"eigencore_block_golub_kahan_dense_basis", (DL_FUNC) &eigencore_block_golub_kahan_dense_basis, 3},
   {"eigencore_block_golub_kahan_dense_basis_cached", (DL_FUNC) &eigencore_block_golub_kahan_dense_basis_cached, 4},
   {"eigencore_block_golub_kahan_csc_basis", (DL_FUNC) &eigencore_block_golub_kahan_csc_basis, 6},
