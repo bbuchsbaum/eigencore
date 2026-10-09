@@ -17,6 +17,16 @@ true_svd_backward <- function(A, d, u, v) {
   sqrt(left^2 + right^2) / norm(A, "2")
 }
 
+# The reported bound may undercut a residual recomputed in R only by the
+# rounding error of evaluating that residual (about n * eps after scaling by
+# ||A||_2): converged pairs sit at ~1e-16, where different BLAS kernels round
+# differently. Perturbed pairs below keep the comparison sharp.
+expect_bounds_truth <- function(reported, truth, n) {
+  slack <- n * .Machine$double.eps
+  expect_true(all(reported >= truth * (1 - 1e-10) - slack),
+              info = paste(signif(reported, 3), signif(truth, 3), collapse = " | "))
+}
+
 test_that("C12: reported eigen backward error bounds the true normwise one", {
   set.seed(101)
   for (trial in 1:4) {
@@ -27,7 +37,7 @@ test_that("C12: reported eigen backward error bounds the true normwise one", {
       fit <- eig_partial(A, k = 4, target = target, tol = 1e-10)
       cert <- fit$certificate
       truth <- true_eigen_backward(A, fit$values, fit$vectors)
-      expect_true(all(cert$backward_error >= truth * (1 - 1e-10)))
+      expect_bounds_truth(cert$backward_error, truth, n)
       expect_true(cert$norm_values[["A"]] <= norm(A, "2") * (1 + 1e-12))
       expect_false(cert$scale_is_estimate)
       expect_match(cert$norm_bound_type, "^two_norm_(exact|lower_bound)\\+identity_exact$")
@@ -39,7 +49,7 @@ test_that("C12: reported eigen backward error bounds the true normwise one", {
   vec <- e$vectors[, 1:3] + 1e-4 * complex(real = rnorm(120), imaginary = rnorm(120))
   cert <- eigencore:::certify_dense_general_eigen(G, e$values[1:3], vec, tol = 1e-8)
   truth <- true_eigen_backward(G, e$values[1:3], vec)
-  expect_true(all(cert$backward_error >= truth * (1 - 1e-10)))
+  expect_bounds_truth(cert$backward_error, truth, 40)
 })
 
 test_that("C12: reported SVD backward error bounds the true normwise one", {
@@ -50,7 +60,7 @@ test_that("C12: reported SVD backward error bounds the true normwise one", {
       fit <- svd_partial(A, rank = 3, target = target, tol = 1e-10)
       cert <- fit$certificate
       truth <- true_svd_backward(A, fit$d, fit$u, fit$v)
-      expect_true(all(cert$backward_error >= truth * (1 - 1e-10)))
+      expect_bounds_truth(cert$backward_error, truth, 80)
       expect_true(cert$norm_values[["A"]] <= norm(A, "2") * (1 + 1e-12))
     }
     # Deliberately inaccurate triplets.
@@ -59,7 +69,7 @@ test_that("C12: reported SVD backward error bounds the true normwise one", {
     v <- s$v[, 1:3]
     cert <- eigencore:::certify_svd(A, s$d[1:3], u, v, tol = 1e-8)
     truth <- true_svd_backward(A, s$d[1:3], u, v)
-    expect_true(all(cert$backward_error >= truth * (1 - 1e-10)))
+    expect_bounds_truth(cert$backward_error, truth, 80)
     S <- Matrix::rsparsematrix(200, 50, density = 0.1)
     cert_op <- eigencore:::certify_svd_operator(
       as_operator(S), s$d[1:3], u[1:3, , drop = FALSE][rep(1:3, length.out = 200), ],
@@ -69,7 +79,7 @@ test_that("C12: reported SVD backward error bounds the true normwise one", {
       S, s$d[1:3], u[1:3, , drop = FALSE][rep(1:3, length.out = 200), ],
       v[rep(1:30, length.out = 50), ]
     )
-    expect_true(all(cert_op$backward_error >= truth_op * (1 - 1e-10)))
+    expect_bounds_truth(cert_op$backward_error, truth_op, 200)
   }
 })
 

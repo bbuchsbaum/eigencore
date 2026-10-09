@@ -30,11 +30,6 @@
 //   64-bit halves of the digest. This is a non-cryptographic hash: it guards
 //   against accidental mismatch, not adversarial collision.
 
-#include <R.h>
-#include <Rinternals.h>
-
-#include "eigencore_common.h"
-
 #include <algorithm>
 #include <cinttypes>
 #include <cstdint>
@@ -42,6 +37,8 @@
 #include <cstring>
 #include <utility>
 #include <vector>
+#include "eigencore_common.h"
+
 
 namespace {
 
@@ -208,15 +205,22 @@ void hash_serialized(StreamHash& h, SEXP x) {
   UNPROTECT(3);
 }
 
+// Attributes are read through base::attributes() rather than ATTRIB(), which
+// is not part of R's API (R >= 4.5 no longer exports it). The argument is
+// quoted so language objects and symbols are not evaluated.
 void hash_attributes(StreamHash& h, SEXP x) {
-  SEXP attrs = ATTRIB(x);
-  if (attrs == R_NilValue) {
+  SEXP quoted = PROTECT(Rf_lang2(Rf_install("quote"), x));
+  SEXP call = PROTECT(Rf_lang2(Rf_install("attributes"), quoted));
+  SEXP attrs = PROTECT(eigencore_unwind_protect([&] { return Rf_eval(call, R_BaseEnv); }));
+  if (attrs == R_NilValue || XLENGTH(attrs) == 0) {
+    UNPROTECT(3);
     h.word(0);
     return;
   }
+  SEXP names = Rf_getAttrib(attrs, R_NamesSymbol);
   std::vector<std::pair<const char*, SEXP>> entries;
-  for (SEXP node = attrs; node != R_NilValue; node = CDR(node)) {
-    entries.emplace_back(CHAR(PRINTNAME(TAG(node))), CAR(node));
+  for (R_xlen_t i = 0; i < XLENGTH(attrs); ++i) {
+    entries.emplace_back(CHAR(STRING_ELT(names, i)), VECTOR_ELT(attrs, i));
   }
   std::sort(entries.begin(), entries.end(),
             [](const std::pair<const char*, SEXP>& a,
@@ -229,11 +233,12 @@ void hash_attributes(StreamHash& h, SEXP x) {
             std::strlen(entry.first));
     hash_node(h, entry.second);
   }
+  UNPROTECT(3);
 }
 
 void hash_node(StreamHash& h, SEXP x) {
   const int type = TYPEOF(x);
-  h.word(kNodeTag | (static_cast<std::uint64_t>(IS_S4_OBJECT(x) ? 1 : 0) << 8) |
+  h.word(kNodeTag | (static_cast<std::uint64_t>(Rf_isS4(x) ? 1 : 0) << 8) |
          static_cast<std::uint64_t>(type));
   switch (type) {
     case NILSXP:

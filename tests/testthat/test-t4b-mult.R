@@ -213,7 +213,9 @@ test_that("the probe never consumes or perturbs the global RNG stream", {
   }
   a <- rng_after("none")
   b <- rng_after("probe")
-  expect_identical(certificate(b$fit)$target_completeness, "repaired")
+  # Whether the solve misses a copy first (and needs repair) depends on BLAS
+  # rounding; this test is about the RNG stream, so accept either outcome.
+  expect_true(certificate(b$fit)$target_completeness %in% c("probed", "repaired"))
   expect_identical(a$seed, b$seed)
 
   # Direct check with a non-default RNG kind: kind and state survive.

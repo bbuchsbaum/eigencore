@@ -1,9 +1,9 @@
 #ifndef EIGENCORE_COMMON_H
 #define EIGENCORE_COMMON_H
 
-#include <R.h>
-#include <Rinternals.h>
-#include <R_ext/BLAS.h>
+// C++ standard headers must come before R's headers: Rinternals.h defines
+// function-like macros such as length() that break libc++ headers (<chrono>
+// pulls in <locale>) on macOS when R's headers are seen first.
 #include <chrono>
 #include <cmath>
 #include <climits>
@@ -13,11 +13,15 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <memory>
 #include <new>
 #include <stdexcept>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+#include <R.h>
+#include <Rinternals.h>
+#include <R_ext/BLAS.h>
 
 // OpenMP helpers (P8). Every pragma in src/ goes through EIGENCORE_OMP so the
 // package compiles warning-free and runs serially where OpenMP is unavailable
@@ -120,6 +124,17 @@ struct RUnwind {
 #endif
 #define error(...) eigencore_raise_error(__VA_ARGS__)
 
+// Diagnostic trace of the unwind path, off unless the self-test turns it on
+// (unwind_selftest("trace_on")); used to bisect platform-specific failures.
+extern "C" int eigencore_unwind_trace_enabled;
+#define EIGENCORE_UNWIND_TRACE(stage)                     \
+  do {                                                    \
+    if (eigencore_unwind_trace_enabled) {                 \
+      REprintf("[eigencore unwind] %s\n", stage);         \
+      R_FlushConsole();                                   \
+    }                                                     \
+  } while (0)
+
 static inline SEXP eigencore_unwind_token() {
   static SEXP token = nullptr;
   if (token == nullptr) {
@@ -134,24 +149,65 @@ static SEXP eigencore_unwind_protect_body(void* data) {
   return (*static_cast<F*>(data))();
 }
 
+// The jump back from R_UnwindProtect's cleanup into eigencore_unwind_protect
+// only skips R's own C frames (R_UnwindProtect and the cleanup callback), which
+// hold no C++ objects. On Windows the C runtime's setjmp/longjmp pair
+// (mingw-w64) performs an SEH unwind of the skipped frames, and that crashed
+// R; GCC's __builtin_setjmp/__builtin_longjmp only restore the stack and frame
+// pointers, which is exactly the semantics needed here.
+#if defined(_WIN32) && defined(__GNUC__)
+typedef void* eigencore_jmp_buf[5];
+#define EIGENCORE_SETJMP(buf) __builtin_setjmp(buf)
+#define EIGENCORE_LONGJMP(buf) __builtin_longjmp(buf, 1)
+#else
+typedef std::jmp_buf eigencore_jmp_buf;
+#define EIGENCORE_SETJMP(buf) setjmp(buf)
+#define EIGENCORE_LONGJMP(buf) std::longjmp(buf, 1)
+#endif
+
 static inline void eigencore_unwind_protect_cleanup(void* jmpbuf, Rboolean jump) {
   if (jump) {
-    std::longjmp(*static_cast<std::jmp_buf*>(jmpbuf), 1);
+    EIGENCORE_UNWIND_TRACE("cleanup: jumping back into C++");
+    EIGENCORE_LONGJMP(*static_cast<eigencore_jmp_buf*>(jmpbuf));
   }
+}
+
+// Runs fun(data) under R_UnwindProtect. If R unwinds out of it, the cleanup
+// jumps back here and this function RETURNS normally with *jumped = true; it
+// never throws. Starting a C++ exception in the frame that received the jump
+// is not reliable on Windows (the callee-saved register state the unwinder
+// needs is not restored by the jump, and R crashed there), whereas a normal
+// return restores the caller's registers from this frame's own prologue.
+#if defined(__GNUC__)
+__attribute__((noinline))
+#endif
+static SEXP eigencore_unwind_protect_raw(SEXP (*fun)(void*), void* data,
+                                         SEXP token, bool* jumped) {
+  eigencore_jmp_buf jmpbuf;
+  if (EIGENCORE_SETJMP(jmpbuf)) {
+    EIGENCORE_UNWIND_TRACE("landed after setjmp; returning to caller");
+    *jumped = true;
+    return R_NilValue;
+  }
+  return R_UnwindProtect(fun, data, eigencore_unwind_protect_cleanup, &jmpbuf,
+                         token);
 }
 
 // Run `code` (a callable returning SEXP that uses the R API) so that an R
 // longjmp out of it becomes an eigencore::RUnwind C++ exception. Only R frames
-// are skipped by the longjmp; C++ frames are unwound by the exception.
+// are skipped by the jump; C++ frames are unwound by the exception, which is
+// thrown from this ordinary frame after eigencore_unwind_protect_raw returned.
 template <typename F>
 static inline SEXP eigencore_unwind_protect(F code) {
   SEXP token = eigencore_unwind_token();
-  std::jmp_buf jmpbuf;
-  if (setjmp(jmpbuf)) {
+  bool jumped = false;
+  SEXP result = eigencore_unwind_protect_raw(eigencore_unwind_protect_body<F>,
+                                             &code, token, &jumped);
+  if (jumped) {
+    EIGENCORE_UNWIND_TRACE("throwing RUnwind");
     throw eigencore::RUnwind{token};
   }
-  return R_UnwindProtect(eigencore_unwind_protect_body<F>, &code,
-                         eigencore_unwind_protect_cleanup, &jmpbuf, token);
+  return result;
 }
 
 static inline SEXP eigencore_alloc_vector(SEXPTYPE type, R_xlen_t length) {
@@ -258,6 +314,7 @@ static inline SEXP eigencore_call(Body&& body) {
   } catch (const eigencore::Interrupt&) {
     kind = kInterrupt;
   } catch (const eigencore::RUnwind& unwind) {
+    EIGENCORE_UNWIND_TRACE("entry wrapper caught RUnwind");
     kind = kUnwind;
     token = unwind.token;
   } catch (const std::bad_alloc&) {
@@ -270,6 +327,7 @@ static inline SEXP eigencore_call(Body&& body) {
   }
   eigencore_call_leave();
   if (kind == kUnwind) {
+    EIGENCORE_UNWIND_TRACE("entry wrapper: R_ContinueUnwind");
     R_ContinueUnwind(token);
   }
   if (kind == kInterrupt) {
