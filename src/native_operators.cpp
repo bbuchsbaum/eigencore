@@ -1451,6 +1451,40 @@ static int composite_closure_apply(SEXP closure, int64_t in_rows,
                                    const double* X, int64_t ldx, double alpha,
                                    double beta, double* Y, int64_t ldy);
 
+// Raise the message of the R error that just aborted an operator callback
+// (R_tryEvalSilent leaves it in geterrmessage()) as an eigencore error.
+[[noreturn]] static void eigencore_raise_callback_error() {
+  char message[1024];
+  std::snprintf(message, sizeof(message), "%s", "unknown error");
+  SEXP call = PROTECT(lang1(install("geterrmessage")));
+  int failed = 0;
+  SEXP text = PROTECT(R_tryEvalSilent(call, R_BaseEnv, &failed));
+  if (!failed && TYPEOF(text) == STRSXP && XLENGTH(text) >= 1 &&
+      STRING_ELT(text, 0) != NA_STRING) {
+    // geterrmessage() is "Error in <call> : <message>\n[Calls: ...]": keep
+    // only <message>.
+    const char* raw = CHAR(STRING_ELT(text, 0));
+    if (std::strncmp(raw, "Error", 5) == 0) {
+      const char* sep = std::strstr(raw, " : ");
+      if (sep != nullptr) {
+        raw = sep + 3;
+        while (*raw == ' ' || *raw == '\n') ++raw;
+      }
+    }
+    std::snprintf(message, sizeof(message), "%s", raw);
+    char* calls = std::strstr(message, "\nCalls:");
+    if (calls != nullptr) {
+      *calls = '\0';
+    }
+    size_t len = std::strlen(message);
+    while (len > 0 && (message[len - 1] == '\n' || message[len - 1] == ' ')) {
+      message[--len] = '\0';
+    }
+  }
+  UNPROTECT(2);
+  error("R operator callback failed: %s", message);
+}
+
 extern "C" int eigencore_r_operator_apply(void* impl,
                                       EigencoreTranspose op,
                                       int64_t block_cols,
@@ -1508,10 +1542,14 @@ extern "C" int eigencore_r_operator_apply(void* impl,
   SET_TAG(CDR(CDR(CDR(CDR(call)))), install("Y"));
 
   int error_occurred = 0;
-  SEXP out_ = PROTECT(R_tryEval(call, R_GlobalEnv, &error_occurred));
+  SEXP out_ = PROTECT(R_tryEvalSilent(call, R_GlobalEnv, &error_occurred));
   if (error_occurred) {
     UNPROTECT(6);
-    return -8;
+    // Surface the callback's own error message instead of a bare status
+    // code (the solvers' "failed with status=-8"). Every caller runs below
+    // an eigencore_call entry point, so the exception unwinds the solver's
+    // buffers and becomes an R error there.
+    eigencore_raise_callback_error();
   }
   SEXP dimY = getAttrib(out_, R_DimSymbol);
   if (!isReal(out_) || dimY == R_NilValue ||

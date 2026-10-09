@@ -431,23 +431,23 @@ section("R callback error inside native solver unwinds", {
     if (calls > 3L) stop("callback boom")
     Sd %*% X
   }, apply_adjoint = function(X, ...) Sd %*% X, structure = hermitian())
-  expect_err(eig_partial(mf, 3L, method = lanczos(), seed = 44))
+  expect_err(eig_partial(mf, 3L, method = lanczos(), seed = 44), "boom")
   calls <- 0L
   mf2 <- linear_operator(c(n, n), apply = function(X, ...) {
     calls <<- calls + 1L
     if (calls > 3L) stop("callback boom")
     NSd %*% X
   }, apply_adjoint = function(X, ...) crossprod(NSd, X))
-  expect_err(eig_partial(mf2, 3L, target = largest_magnitude(), seed = 45))
+  expect_err(eig_partial(mf2, 3L, target = largest_magnitude(), seed = 45), "boom")
   calls <- 0L
   mf3 <- linear_operator(dim(Rd), apply = function(X, ...) {
     calls <<- calls + 1L
     if (calls > 3L) stop("callback boom")
     Rd %*% X
   }, apply_adjoint = function(X, ...) crossprod(Rd, X))
-  expect_err(svd_partial(mf3, 3L, method = golub_kahan(), seed = 46))
+  expect_err(svd_partial(mf3, 3L, method = golub_kahan(), seed = 46), "boom")
   calls <- 0L
-  expect_err(svd_partial(mf3, 3L, seed = 46))
+  expect_err(svd_partial(mf3, 3L, seed = 46), "boom")
 })
 
 if (length(failures)) {

@@ -184,6 +184,44 @@ test_that("unwind selftest reports R-level stops and unknown modes after cleanup
   expect_identical(st("live"), 0L)
 })
 
+test_that("errors raised inside R operator callbacks keep their message through native solvers", {
+  # Before: every matrix-free native solver reported only
+  # "... failed with status=-8" (the callback's message went to stderr).
+  set.seed(16)
+  n <- 50L
+  M <- matrix(stats::rnorm(n * n), n)
+  S <- crossprod(M)
+  failing <- function(A, sym) {
+    calls <- 0L
+    linear_operator(
+      dim(A),
+      apply = function(X, ...) {
+        calls <<- calls + 1L
+        if (calls > 3L) stop("callback boom 42")
+        A %*% X
+      },
+      apply_adjoint = function(X, ...) crossprod(A, X),
+      structure = if (sym) hermitian() else general()
+    )
+  }
+  expect_error(eig_partial(failing(S, TRUE), 3L, seed = 1),
+               "R operator callback failed: callback boom 42", fixed = TRUE)
+  expect_error(eig_partial(failing(M, FALSE), 3L, target = largest_magnitude(),
+                           seed = 1),
+               "callback boom 42", fixed = TRUE)
+  expect_error(svd_partial(failing(M, FALSE), 3L, method = golub_kahan(), seed = 1),
+               "callback boom 42", fixed = TRUE)
+  expect_error(svd_partial(failing(M, FALSE), 3L, seed = 1),
+               "callback boom 42", fixed = TRUE)
+  expect_error(eig_partial(S, 3L, B = failing(diag(n), TRUE), target = smallest(),
+                           method = lobpcg(maxit = 50L), seed = 1),
+               "callback boom 42", fixed = TRUE)
+  # The native state is clean afterwards.
+  expect_identical(native_call("eigencore_unwind_selftest", "live"), 0L)
+  fit <- eig_partial(S, 3L, seed = 2)
+  expect_true(certificate(fit)$passed)
+})
+
 test_that("retained IRLBA restart ABI agrees with svd() under every reorthogonalisation policy", {
   ns <- asNamespace("eigencore")
   set.seed(15)
