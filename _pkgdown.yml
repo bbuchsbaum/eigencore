@@ -119,6 +119,7 @@ reference:
   desc: Inspecting solver output and the numerical evidence.
   contents:
   - certificate
+  - eigen_count
   - residuals
   - backward_error
   - values

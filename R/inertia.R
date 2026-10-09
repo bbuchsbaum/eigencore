@@ -70,8 +70,8 @@
 #'
 #' @param A A real symmetric or complex Hermitian matrix: base `matrix`, a
 #'   `Matrix` object (dense, sparse or diagonal), or an `eigencore_operator`
-#'   with an explicit matrix source. Only the symmetric part is used; the
-#'   input is checked for symmetry.
+#'   with an explicit matrix source. The input must be symmetric (checked);
+#'   only one triangle enters the factorisation.
 #' @param sigma A single finite shift.
 #' @param B Optional symmetric positive definite matrix for the pencil
 #'   `A x = lambda B x` (checked). Counts are then of the generalized
@@ -140,9 +140,8 @@ print.eigencore_inertia <- function(x, ...) {
   cat("<eigencore_inertia>", x$method,
       if (isTRUE(x$generalized)) "(generalized, B SPD)" else "", "\n")
   if (isTRUE(x$perturbed)) {
-    cat("  sigma:", format(x$sigma, digits = 10), " zero band: [",
-        format(x$zero_band[[1L]], digits = 10), ",",
-        format(x$zero_band[[2L]], digits = 10), "]\n")
+    cat("  sigma:", format(x$sigma, digits = 10), " zero band: sigma -/+",
+        format(x$perturbation, digits = 3), "\n")
   } else {
     cat("  sigma:", format(x$sigma, digits = 10), "\n")
   }
@@ -182,6 +181,10 @@ inertia_matrix_of <- function(x) {
 
 #' @keywords internal
 inertia_normalize <- function(x, arg = "A") {
+  # Operators were validated at construction (finite entries, C8) and carry
+  # a Hermitian structure flag only after a symmetry test.
+  trusted <- inherits(x, "eigencore_operator") &&
+    identical(x$structure$kind, "hermitian")
   x <- inertia_matrix_of(x)
   if (is.null(x)) {
     stop(arg, " has no explicit matrix source; inertia counting needs a ",
@@ -209,11 +212,12 @@ inertia_normalize <- function(x, arg = "A") {
     }
     x <- methods::as(x, "CsparseMatrix")
     xs <- methods::slot(x, "x")
-    if (length(xs) && any(!is.finite(xs))) {
+    if (!trusted && length(xs) && any(!is.finite(xs))) {
       stop(arg, " has non-finite entries.", call. = FALSE)
     }
     if (!inherits(x, "symmetricMatrix")) {
-      if (!isTRUE(Matrix::isSymmetric(x, tol = 100 * .Machine$double.eps))) {
+      if (!trusted &&
+          !isTRUE(Matrix::isSymmetric(x, tol = 100 * .Machine$double.eps))) {
         stop(arg, " must be symmetric.", call. = FALSE)
       }
       x <- Matrix::forceSymmetric(x, uplo = "U")
@@ -249,13 +253,18 @@ inertia_normalize <- function(x, arg = "A") {
   if (!is.numeric(x) && !is.logical(x)) {
     stop(arg, " must be numeric.", call. = FALSE)
   }
-  storage.mode(x) <- "double"
-  if (any(!is.finite(x))) {
-    stop(arg, " has non-finite entries.", call. = FALSE)
+  if (!is.double(x)) {
+    storage.mode(x) <- "double"
   }
-  if (!isTRUE(.Call("eigencore_dense_is_symmetric", x, 100 * .Machine$double.eps,
-                    PACKAGE = "eigencore"))) {
-    stop(arg, " must be symmetric.", call. = FALSE)
+  if (!trusted) {
+    check <- .Call("eigencore_dense_finite_symmetric", x,
+                   100 * .Machine$double.eps, PACKAGE = "eigencore")
+    if (!isTRUE(check[[1L]])) {
+      stop(arg, " has non-finite entries.", call. = FALSE)
+    }
+    if (!isTRUE(check[[2L]])) {
+      stop(arg, " must be symmetric.", call. = FALSE)
+    }
   }
   list(kind = "dense", n = n, matrix = x, complex = FALSE)
 }
@@ -357,11 +366,11 @@ inertia_hermitian_embedding <- function(x) {
   out
 }
 
-#' Normalise A (and B) once for repeated inertia counts.
-#'
-#' Returns an environment holding the storage kind, the normalised matrices,
-#' the 1-norms (upper bounds of the 2-norms) and, for the sparse route, the
-#' cached CHOLMOD factor whose symbolic analysis later shifts reuse.
+# Normalise A (and B) once for repeated inertia counts.
+#
+# Returns an environment holding the storage kind, the normalised matrices,
+# the 1-norms (upper bounds of the 2-norms) and, for the sparse route, the
+# cached CHOLMOD factor whose symbolic analysis later shifts reuse.
 #' @keywords internal
 inertia_context <- function(A, B = NULL) {
   a <- inertia_normalize(A, "A")
@@ -417,8 +426,8 @@ inertia_context <- function(A, B = NULL) {
       Ad <- inertia_hermitian_embedding(Ad + 0i)
       Bd <- if (is.null(Bd)) NULL else inertia_hermitian_embedding(Bd + 0i)
     }
-    storage.mode(Ad) <- "double"
-    if (!is.null(Bd)) storage.mode(Bd) <- "double"
+    if (!is.double(Ad)) storage.mode(Ad) <- "double"
+    if (!is.null(Bd) && !is.double(Bd)) storage.mode(Bd) <- "double"
     ctx$A <- Ad
     ctx$B <- Bd
     ctx$complex <- cplx
@@ -445,7 +454,7 @@ inertia_tally_template <- function(sigma, n) {
   )
 }
 
-#' Factor A - s B once and return the raw inertia tally.
+# Factor A - s B once and return the raw inertia tally.
 #' @keywords internal
 inertia_at <- function(ctx, s) {
   n <- ctx$n

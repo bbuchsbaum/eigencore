@@ -17,6 +17,7 @@
       diagnostics(x, ...)
       eig_full(A, B = NULL, structure = NULL, vectors = TRUE, tol = 1e-08, allow_dense_fallback = c("auto", "never", "always"), ...)
       eig_partial(A, k, target = largest(), B = NULL, method = auto(), tol = 1e-08, maxit = NULL, vectors = TRUE, seed = NULL, certify = TRUE, allow_dense_fallback = c("auto", "never", "always"), initial_subspace = NULL, left_vectors = c("auto", "none", "compute"))
+      eigen_count(A, sigma, B = NULL, perturb = TRUE, pivot_tol = NULL)
       eigen_problem(A, metric = NULL, structure = NULL, target = largest(), transform = NULL)
       eigs(A, k, which = "LM", sigma = NULL, opts = list(), ..., n = NULL, args = NULL, left = FALSE)
       eigs_sym(A, k, which = "LM", sigma = NULL, opts = list(), lower = TRUE, ..., n = NULL, args = NULL)
@@ -93,6 +94,7 @@
       print.eigencore_certificate
       print.eigencore_eigen_result
       print.eigencore_gsvd_result
+      print.eigencore_inertia
       print.eigencore_operator
       print.eigencore_plan
       print.eigencore_psd_block_result
@@ -373,14 +375,19 @@
       max_orthogonality_loss
       max_residual
       norm_bound_type
+      norm_source
+      norm_values
       notes
       orthogonality
       orthogonality_passed
       orthogonality_required
       orthogonality_tolerance
       passed
+      residual_passed
       residuals
       scale
       scale_is_estimate
+      target_completeness
+      target_passed
       tolerance
 

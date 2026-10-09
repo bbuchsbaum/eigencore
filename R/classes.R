@@ -172,17 +172,29 @@ auto <- function(max_subspace = NULL) {
 #'   native path always reorthogonalizes (DGKS x2) and ignores this flag;
 #'   it is preserved for the R reference solver's public API.
 #' @param completeness Target-completeness check run after a certified
-#'   standard Hermitian solve with a `largest()`, `smallest()` or
-#'   `largest_magnitude()` target. `"probe"` runs a short block Lanczos
-#'   process on the operator deflated against the returned eigenvectors (from a
-#'   fixed-seed start; the global random stream is not touched) and, if it
-#'   finds a more-preferred eigenvalue outside the returned set (for example a
-#'   missed copy of a repeated eigenvalue), repairs the result with a deflated
-#'   complement solve. `"none"` skips it. `NULL` (default) uses
-#'   `getOption("eigencore.target_completeness", "probe")`. The outcome is
+#'   Hermitian solve with a `largest()`, `smallest()`,
+#'   `largest_magnitude()` (or, for the inertia check, `nearest()`) target.
+#'   `"inertia"` proves completeness deterministically by counting
+#'   eigenvalues with an \eqn{LDL^T} factorisation of `A - t B` (see
+#'   [eigen_count()]); it needs an explicit dense or sparse matrix and
+#'   reports `"inertia_verified"`, `"inertia_failed"` (repaired when
+#'   possible, otherwise `passed = FALSE`) or `"inertia_inconclusive"` (an
+#'   eigenvalue cluster straddles the target edge within the residual
+#'   bound). `"probe"` runs a short block Lanczos process on the operator
+#'   deflated against the returned eigenvectors (from a fixed-seed start; the
+#'   global random stream is not touched) and, if it finds a more-preferred
+#'   eigenvalue outside the returned set (for example a missed copy of a
+#'   repeated eigenvalue), repairs the result with a deflated complement
+#'   solve; it is probabilistic (it can prove a set incomplete but not
+#'   complete) and is the check for matrix-free operators. `"auto"` uses the
+#'   inertia check when the matrix is explicit and its predicted
+#'   factorisation time is at most
+#'   `max(getOption("eigencore.completeness_inertia_seconds", 0.5),
+#'   getOption("eigencore.completeness_inertia_ratio", 1) * solve time)`,
+#'   and the probe otherwise. `"none"` skips the check. `NULL` (default) uses
+#'   `getOption("eigencore.target_completeness", "auto")`. The outcome is
 #'   recorded in `certificate(fit)$target_completeness`; see the
-#'   "Certificates" vignette. The probe is probabilistic: it can prove a set
-#'   incomplete but not complete.
+#'   "Certificates" vignette.
 #' @return An `eigencore_method` descriptor selecting Lanczos iteration.
 #' @export
 lanczos <- function(max_subspace = NULL, max_restarts = NULL, block = 1L,

@@ -251,7 +251,10 @@ inertia_completeness_check <- function(Aop, values, residuals, orthogonality,
   record$edge <- E
   record$rho <- rho
   scale <- ctx$normA + (abs(center) + vmax) * ctx$normB
-  margin <- max(rho, 64 * eps * scale)
+  # A relative floor of 1e-10 covers the typical factorisation backward
+  # error, so the widening recount below is rarely needed; gaps smaller than
+  # that are inside any practical residual bound anyway.
+  margin <- max(rho, 1e-10 * scale, 64 * eps * scale)
   # The count is exact for A - t B + E with ||E|| <= backward_bound; the
   # matched eigenvalues sit at least `margin` from the threshold, so the
   # margin must exceed that bound (widen once if it does not).
@@ -324,7 +327,11 @@ inertia_completeness_gate <- function(problem, mode, k, solve_seconds = NA_real_
   if (inherits(ctx, "error")) {
     return(no(paste0("inertia context: ", conditionMessage(ctx))))
   }
-  cost <- inertia_factor_cost(ctx)
+  cost <- if (is.null(problem$metric)) {
+    operator_memoised_value(op, "inertia_factor_cost", inertia_factor_cost(ctx))
+  } else {
+    inertia_factor_cost(ctx)
+  }
   rate <- if (identical(ctx$kind, "sparse")) controls$sparse_rate else controls$dense_rate
   # Two factorisations in the common verified case (largest_magnitude and
   # nearest need two per threshold).

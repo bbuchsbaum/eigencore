@@ -33,6 +33,11 @@ SEXP eigencore_cholmod_analyze(SEXP A_) {
   c.supernodal = CHOLMOD_SIMPLICIAL;
   c.final_ll = 0;
   c.print = 0;
+  /* AMD only (what Matrix::Cholesky ends up using without METIS), and no
+   * postordering: the fill and flop counts do not depend on it. */
+  c.nmethods = 1;
+  c.method[0].ordering = CHOLMOD_AMD;
+  c.postorder = 0;
   cholmod_sparse tmp;
   CHM_SP A = M_sexp_as_cholmod_sparse(&tmp, A_, FALSE, FALSE);
   CHM_FR L = M_cholmod_analyze(A, &c);
