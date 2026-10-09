@@ -30,11 +30,6 @@
 //   64-bit halves of the digest. This is a non-cryptographic hash: it guards
 //   against accidental mismatch, not adversarial collision.
 
-#include <R.h>
-#include <Rinternals.h>
-
-#include "eigencore_common.h"
-
 #include <algorithm>
 #include <cinttypes>
 #include <cstdint>
@@ -42,6 +37,8 @@
 #include <cstring>
 #include <utility>
 #include <vector>
+#include "eigencore_common.h"
+
 
 namespace {
 

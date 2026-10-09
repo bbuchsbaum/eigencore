@@ -73,7 +73,7 @@ test_that("P6: identity survives serialisation and solving leaves the plan bytes
   S <- S + Matrix::t(S) + Matrix::Diagonal(60, x = 1:60)
   S <- methods::as(methods::as(S, "generalMatrix"), "CsparseMatrix")
   plan <- plan_solver(eigen_problem(S), k = 3L)
-  before <- serialize(plan, NULL, version = 3L)
+  before <- serialize(materialize_srcfiles(plan), NULL, version = 3L)
   fit <- solve(plan)
   expect_true(fit$certificate$passed)
   expect_same_bytes(serialize(plan, NULL, version = 3L), before)

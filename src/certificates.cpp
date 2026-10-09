@@ -1,10 +1,10 @@
 #include <cfloat>
 #include <cmath>
 #include <vector>
+#include "eigencore_common.h"
 #include <R.h>
 #include <Rinternals.h>
 #include <R_ext/BLAS.h>
-#include "eigencore_common.h"
 #include "native_operators.h"
 #include "certificates.h"
 
