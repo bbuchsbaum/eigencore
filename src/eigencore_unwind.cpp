@@ -12,9 +12,24 @@
 // tracked objects are still alive, so tests can verify that destructors ran
 // before R regained control.
 
+extern "C" {
+int eigencore_unwind_trace_enabled = 0;
+}
+
 namespace {
 
 int g_live_tracked = 0;
+
+SEXP selftest_r_stop() {
+  SEXP call = PROTECT(lang2(install("stop"),
+                            mkString("eigencore selftest: R-level stop")));
+  SEXP out = Rf_eval(call, R_BaseEnv);
+  UNPROTECT(1);
+  return out;
+}
+
+SEXP selftest_r_stop_body(void*) { return selftest_r_stop(); }
+void selftest_noop_cleanup(void*, Rboolean) {}
 
 struct Tracked {
   std::vector<double> buffer;
@@ -34,6 +49,42 @@ extern "C" SEXP eigencore_unwind_selftest(SEXP mode_) {
   const char* mode = CHAR(STRING_ELT(mode_, 0));
   if (std::strcmp(mode, "live") == 0) {
     return ScalarInteger(g_live_tracked);
+  }
+  // Stages of the r_stop path, for bisecting platform-specific failures.
+  // They run before the tracked object exists: rerror_c_only and
+  // rerror_continue_local deliberately leave without C++ cleanup.
+  if (std::strcmp(mode, "trace_on") == 0 || std::strcmp(mode, "trace_off") == 0) {
+    eigencore_unwind_trace_enabled = std::strcmp(mode, "trace_on") == 0;
+    return ScalarLogical(TRUE);
+  }
+  if (std::strcmp(mode, "protect_ok") == 0) {
+    return eigencore_unwind_protect([]() { return ScalarInteger(7); });
+  }
+  if (std::strcmp(mode, "rerror_c_only") == 0) {
+    // R's own unwind protection with a no-op cleanup: R resumes the unwind
+    // itself, no jump into C++.
+    return R_UnwindProtect(selftest_r_stop_body, nullptr, selftest_noop_cleanup,
+                           nullptr, eigencore_unwind_token());
+  }
+  if (std::strcmp(mode, "rerror_catch") == 0) {
+    // Jump back into C++ and throw, then drop the R unwind (like a catch).
+    try {
+      eigencore_unwind_protect([]() { return selftest_r_stop(); });
+    } catch (const eigencore::RUnwind&) {
+      EIGENCORE_UNWIND_TRACE("rerror_catch: caught RUnwind locally");
+      return ScalarLogical(TRUE);
+    }
+    return ScalarLogical(FALSE);
+  }
+  if (std::strcmp(mode, "rerror_continue_local") == 0) {
+    SEXP token = R_NilValue;
+    try {
+      eigencore_unwind_protect([]() { return selftest_r_stop(); });
+    } catch (const eigencore::RUnwind& unwind) {
+      token = unwind.token;
+    }
+    EIGENCORE_UNWIND_TRACE("rerror_continue_local: R_ContinueUnwind");
+    R_ContinueUnwind(token);
   }
   Tracked tracked;
   if (std::strcmp(mode, "error") == 0) {
@@ -65,13 +116,7 @@ extern "C" SEXP eigencore_unwind_selftest(SEXP mode_) {
     return big;
   }
   if (std::strcmp(mode, "r_stop") == 0) {
-    return eigencore_unwind_protect([]() {
-      SEXP call = PROTECT(lang2(install("stop"),
-                                mkString("eigencore selftest: R-level stop")));
-      SEXP out = eval(call, R_BaseEnv);
-      UNPROTECT(1);
-      return out;
-    });
+    return eigencore_unwind_protect([]() { return selftest_r_stop(); });
   }
   if (std::strcmp(mode, "probe") == 0) {
     // No interrupt is pending in a test run, so the probe must return.

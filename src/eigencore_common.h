@@ -124,6 +124,17 @@ struct RUnwind {
 #endif
 #define error(...) eigencore_raise_error(__VA_ARGS__)
 
+// Diagnostic trace of the unwind path, off unless the self-test turns it on
+// (unwind_selftest("trace_on")); used to bisect platform-specific failures.
+extern "C" int eigencore_unwind_trace_enabled;
+#define EIGENCORE_UNWIND_TRACE(stage)                     \
+  do {                                                    \
+    if (eigencore_unwind_trace_enabled) {                 \
+      REprintf("[eigencore unwind] %s\n", stage);         \
+      R_FlushConsole();                                   \
+    }                                                     \
+  } while (0)
+
 static inline SEXP eigencore_unwind_token() {
   static SEXP token = nullptr;
   if (token == nullptr) {
@@ -156,6 +167,7 @@ typedef std::jmp_buf eigencore_jmp_buf;
 
 static inline void eigencore_unwind_protect_cleanup(void* jmpbuf, Rboolean jump) {
   if (jump) {
+    EIGENCORE_UNWIND_TRACE("cleanup: jumping back into C++");
     EIGENCORE_LONGJMP(*static_cast<eigencore_jmp_buf*>(jmpbuf));
   }
 }
@@ -168,6 +180,7 @@ static inline SEXP eigencore_unwind_protect(F code) {
   SEXP token = eigencore_unwind_token();
   eigencore_jmp_buf jmpbuf;
   if (EIGENCORE_SETJMP(jmpbuf)) {
+    EIGENCORE_UNWIND_TRACE("landed after setjmp; throwing RUnwind");
     throw eigencore::RUnwind{token};
   }
   return R_UnwindProtect(eigencore_unwind_protect_body<F>, &code,
@@ -278,6 +291,7 @@ static inline SEXP eigencore_call(Body&& body) {
   } catch (const eigencore::Interrupt&) {
     kind = kInterrupt;
   } catch (const eigencore::RUnwind& unwind) {
+    EIGENCORE_UNWIND_TRACE("entry wrapper caught RUnwind");
     kind = kUnwind;
     token = unwind.token;
   } catch (const std::bad_alloc&) {
@@ -290,6 +304,7 @@ static inline SEXP eigencore_call(Body&& body) {
   }
   eigencore_call_leave();
   if (kind == kUnwind) {
+    EIGENCORE_UNWIND_TRACE("entry wrapper: R_ContinueUnwind");
     R_ContinueUnwind(token);
   }
   if (kind == kInterrupt) {
