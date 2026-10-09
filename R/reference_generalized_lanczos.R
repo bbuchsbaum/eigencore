@@ -369,7 +369,8 @@ native_generalized_lanczos_hermitian <- function(op, Bop, k, target = smallest()
                                                  tol = 1e-8, maxit = NULL,
                                                  vectors = TRUE,
                                                  block = 1L,
-                                                 max_restarts = 100L) {
+                                                 max_restarts = 100L,
+                                                 completeness_mode = "none") {
   op <- as_operator(op)
   Bop <- as_operator(Bop)
   n <- as.integer(op$dim[1L])
@@ -403,11 +404,36 @@ native_generalized_lanczos_hermitian <- function(op, Bop, k, target = smallest()
     full_subspace = TRUE,
     certificate_fallback = TRUE
   )
+  # Target completeness (C50) on the transformed standard problem
+  # C = L^{-1} A L^{-T}: Euclidean deflation there is B-orthogonal deflation
+  # of the pencil, so the probe and any repair act before the back-transform.
+  completeness <- NULL
+  if (identical(completeness_mode, "probe") &&
+      isTRUE(iter$certificate$passed) && !is.null(iter$vectors) &&
+      !is.null(completeness_target_kind(target)) &&
+      length(iter$values) == k && k < n) {
+    started <- proc.time()[["elapsed"]]
+    completeness <- target_completeness_check(
+      transformed$operator, iter$values, iter$vectors, target, tol = tol,
+      residuals = iter$certificate$residuals, norm_scale = iter$certificate$scale
+    )
+    completeness$record$seconds <- proc.time()[["elapsed"]] - started
+    completeness$record$space <- "transformed_standard_problem"
+    if (isTRUE(completeness$repaired)) {
+      iter$values <- completeness$values
+      iter$vectors <- completeness$vectors
+    }
+  }
   mapped_vectors <- transformed$back_transform(iter$vectors)
   orth <- lobpcg_b_orthonormalize(mapped_vectors, Bop)
   mapped_vectors <- orth$Q[, seq_len(min(k, ncol(orth$Q))), drop = FALSE]
   values <- iter$values[seq_len(ncol(mapped_vectors))]
   cert <- certify_eigen_operator(op, values, mapped_vectors, Bop = Bop, tol = tol)
+  cert <- if (is.null(completeness)) {
+    certificate_with_completeness(cert, "not_checked")
+  } else {
+    certificate_with_completeness(cert, completeness$status, completeness$record)
+  }
   history <- iter$convergence_history %||% data.frame()
   list(
     values = values,

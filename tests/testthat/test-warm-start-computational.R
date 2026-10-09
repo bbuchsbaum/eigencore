@@ -225,7 +225,8 @@ test_that("matrix-free work accounting matches an independently observed callbac
     fit$operator_columns,
     fit$matvecs +
       fit$certification_operator_columns +
-      fit$initial_subspace$guard_operator_columns
+      fit$initial_subspace$guard_operator_columns +
+      fit$certificate$completeness$operator_columns
   )
   expect_gt(fit$certification_operator_columns, 0L)
   expect_gt(fit$initial_subspace$guard_operator_columns, 0L)
@@ -277,12 +278,14 @@ test_that("native matrix-free block accounting matches the callback exactly", {
   expect_equal(
     fit$operator_block_calls,
     fit$restart$operator_block_calls +
-      fit$initial_subspace$guard_operator_block_calls
+      fit$initial_subspace$guard_operator_block_calls +
+      fit$certificate$completeness$operator_block_calls
   )
   expect_equal(
     fit$operator_columns,
     fit$restart$operator_columns +
-      fit$initial_subspace$guard_operator_columns
+      fit$initial_subspace$guard_operator_columns +
+      fit$certificate$completeness$operator_columns
   )
   expect_equal(fit$restart$operator_block_calls, fit$matvecs)
   expect_gt(fit$certification_operator_columns, 0L)

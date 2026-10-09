@@ -362,6 +362,65 @@ B-inner-product Cholesky-QR refinement inside the solver did its job. If it
 comes back loose (say, `1e-4`), increase `maxit` or lower `tol` — orthogonality
 loss is usually the first thing to surface in ill-conditioned-B problems.
 
+### Target completeness: the right set, not just right pairs
+
+Residuals prove that each returned pair is an eigenpair. They cannot prove
+that the returned *set* is the one you asked for. A single-vector Krylov
+method sees, in exact arithmetic, only one direction of each eigenspace, so
+it can miss a copy of a repeated eigenvalue: for the spectrum
+`9, 9, 7, 7, 7, 5, ...` it may return `9, 9, 7, 7, 5`, and every one of
+those five pairs certifies.
+
+After a certified Hermitian Krylov solve with a `largest()`, `smallest()` or
+`largest_magnitude()` target, eigencore therefore runs a short **deflated
+complement probe**: a few block Lanczos steps on the operator restricted to
+the orthogonal complement of the returned vectors (B-orthogonal for
+generalized problems), from a fixed-seed start that does not touch R's
+random-number stream. Any Ritz value of that restricted operator that lies
+beyond the least-preferred returned value (by more than the residual and
+tolerance margin) proves a more-preferred eigenvalue is missing. The solver
+then repairs the result with a deflated complement solve, merges the two
+sets by a Rayleigh-Ritz step, re-certifies and probes again.
+
+```{r completeness}
+d <- c(9, 9, 7, 7, 7, seq(5, 0.1, length.out = 55))
+set.seed(1001)
+p <- sample(60)
+S <- Matrix::sparseMatrix(i = p, j = p, x = d)
+bare <- eig_partial(S, k = 5, method = lanczos(completeness = "none"), seed = 1)
+sort(values(bare), decreasing = TRUE)
+bare$certificate$passed
+fit_c <- eig_partial(S, k = 5, method = lanczos(), seed = 1)
+sort(values(fit_c), decreasing = TRUE)
+fit_c$certificate$target_completeness
+fit_c$certificate$completeness[c("steps", "operator_columns", "rounds")]
+```
+
+`certificate$target_completeness` is one of:
+
+- `"probed"`: the probe found nothing beyond the returned edge;
+- `"repaired"`: the probe found a missing value and the repaired set then
+  probed clean;
+- `"failed"`: an intruder remained after the repair budget
+  (`options(eigencore.completeness_max_rounds = 3)`); `passed` is then
+  `FALSE` even though every residual passes (`residual_passed` keeps that
+  verdict, `target_passed` is `FALSE`);
+- `"exact"`: a full-spectrum route (dense LAPACK, tridiagonal, analytic grid
+  Laplacian) selected from every eigenvalue, so the set is complete by
+  construction;
+- `"not_checked"`: the probe did not apply (interior or both-ends targets,
+  nonsymmetric problems, a residual certificate that already failed,
+  `certify = FALSE`, or `completeness = "none"`).
+
+The probe is cheap (by default at most 8 steps of block size 2, set by the
+options `eigencore.completeness_probe_steps` and
+`eigencore.completeness_probe_block`) and is switched off with `lanczos(completeness = "none")` or
+`options(eigencore.target_completeness = "none")`. It is a probabilistic
+check: it can prove a set incomplete, not complete — an intruder whose
+Ritz value a short run does not resolve goes unnoticed. The deterministic
+answer is an eigenvalue-counting (inertia, `LDL'`) certificate, planned for a
+later release.
+
 ## Comparing eigencore certificates to RSpectra diagnostics
 
 `RSpectra::eigs_sym()` returns `nconv` and `niter` but does not return
@@ -388,6 +447,7 @@ without changing call sites.
 | `passed = FALSE`, `norm_bound_type` is `two_norm_lower_bound`, residuals tiny | The norm lower bound may be weak (e.g. smallest targets of a matrix-free operator). | Supply `metadata$two_norm` if `||A||_2` is known, or use a built-in matrix class. |
 | `max_orthogonality_loss` near `sqrt(eps)` but residuals tiny | Iterative drift; clustered eigenvalues at risk of duplicates.             | Increase `maxit`; check whether there are repeated eigenvalues. |
 | `failed_indices` includes the first returned pairs | Some leading returned pairs exceed the tolerance. | Inspect `convergence_history`; increase `maxit` if the errors are still declining. |
+| `passed = FALSE`, `residual_passed = TRUE`, `target_completeness = "failed"` | Every pair is accurate, but a more-preferred eigenvalue (e.g. a missed copy of a repeated value) lies outside the returned set. | Use a block method with a block at least the multiplicity (`lanczos(block = )`), raise `eigencore.completeness_max_rounds`, or a dense solve. |
 | `failed_indices` includes the last returned pairs | Some trailing returned pairs exceed the tolerance. | Inspect the spectral gap; a wider `k` may help when the target boundary cuts through a cluster. |
 
 The certificate records which numerical checks were run, the scale used for
