@@ -317,6 +317,23 @@ nonsymmetric_contract <- function(rows) {
         grepl("native dense complex general LAPACK fallback", row$warnings, fixed = TRUE) &&
         grepl("right residuals certified", row$warnings, fixed = TRUE)
     )
+    # The refined route restarts with Krylov-Schur since the V2 tranche
+    # (dgees + dtrsen reordering); the earlier explicit-restart cycle is gone.
+    restart_gate <- if (isTRUE(row$native_refined_arnoldi_label)) {
+      !is.na(row$max_restarts) && row$max_restarts >= 1L &&
+        !is.na(row$restart_count) &&
+        isTRUE(row$ritz_extraction_native) &&
+        isTRUE(row$refined_extraction_native) &&
+        identical(row$arnoldi_extraction, "refined_ritz") &&
+        isTRUE(row$krylov_schur)
+    } else if (isTRUE(row$native_arnoldi_label) ||
+        isTRUE(row$native_matrix_free_arnoldi_label)) {
+      !is.na(row$max_restarts) && row$max_restarts >= 1L &&
+        !is.na(row$restart_count) &&
+        isTRUE(row$ritz_extraction_native)
+    } else {
+      TRUE
+    }
     data.frame(
       case = row$case,
       api = row$api,
@@ -332,39 +349,10 @@ nonsymmetric_contract <- function(rows) {
       native_dense_complex_label = isTRUE(row$native_dense_complex_label),
       matrix_free_native = isTRUE(row$matrix_free_native),
       arnoldi_native = isTRUE(row$arnoldi_native),
-      restart_gate = if (isTRUE(row$native_refined_arnoldi_label)) {
-        !is.na(row$max_restarts) && row$max_restarts >= 1L &&
-          !is.na(row$restart_count) &&
-          isTRUE(row$ritz_extraction_native) &&
-          isTRUE(row$refined_extraction_native) &&
-          identical(row$arnoldi_extraction, "refined_ritz") &&
-          !isTRUE(row$krylov_schur)
-      } else if (isTRUE(row$native_arnoldi_label) ||
-          isTRUE(row$native_matrix_free_arnoldi_label)) {
-        !is.na(row$max_restarts) && row$max_restarts >= 1L &&
-          !is.na(row$restart_count) &&
-          isTRUE(row$ritz_extraction_native)
-      } else {
-        TRUE
-      },
+      restart_gate = restart_gate,
       warning_gate = warning_gate,
       passed = certificate_gate && right_residual_gate && label_gate &&
-        warning_gate &&
-        (if (isTRUE(row$native_refined_arnoldi_label)) {
-          !is.na(row$max_restarts) && row$max_restarts >= 1L &&
-            !is.na(row$restart_count) &&
-            isTRUE(row$ritz_extraction_native) &&
-            isTRUE(row$refined_extraction_native) &&
-            identical(row$arnoldi_extraction, "refined_ritz") &&
-            !isTRUE(row$krylov_schur)
-        } else if (isTRUE(row$native_arnoldi_label) ||
-            isTRUE(row$native_matrix_free_arnoldi_label)) {
-          !is.na(row$max_restarts) && row$max_restarts >= 1L &&
-            !is.na(row$restart_count) &&
-            isTRUE(row$ritz_extraction_native)
-        } else {
-          TRUE
-        }),
+        warning_gate && restart_gate,
       stringsAsFactors = FALSE
     )
   })
