@@ -1,0 +1,90 @@
+# Reproducible benchmark suite (inst/benchmarks/run-suite.R).
+#
+# Manual only: hosted runners are shared, noisy machines, so results are
+# uploaded as an artifact for inspection and are never committed
+# automatically. To publish a machine's results, run the suite locally and
+# commit the directory under inst/benchmarks/results/ (see the benchmarks
+# article, "How to reproduce").
+name: benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Suite profile
+        required: true
+        default: quick
+        type: choice
+        options:
+          - quick
+          - standard
+          - scaling
+      threads:
+        description: Comma-separated thread settings (e.g. 1 or 1,4)
+        required: true
+        default: "1"
+        type: string
+      families:
+        description: Optional comma-separated families / sweep groups
+        required: false
+        default: ""
+        type: string
+
+permissions: read-all
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenBLAS
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenblas-openmp-dev || sudo apt-get install -y libopenblas-dev
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::RSpectra, any::irlba, any::jsonlite, any::RhpcBLASctl
+          needs: none
+
+      - name: Install eigencore into a private library
+        run: |
+          mkdir -p "${RUNNER_TEMP}/eigencore-lib"
+          R CMD INSTALL --preclean --no-docs -l "${RUNNER_TEMP}/eigencore-lib" .
+        shell: bash
+
+      - name: Record BLAS
+        run: Rscript -e 'sessionInfo(); print(extSoftVersion()); print(La_library())'
+
+      - name: Run benchmark suite
+        run: |
+          ARGS="--profile=${{ github.event.inputs.profile }} --threads=${{ github.event.inputs.threads }}"
+          if [ -n "${{ github.event.inputs.families }}" ]; then
+            ARGS="${ARGS} --families=${{ github.event.inputs.families }}"
+          fi
+          Rscript inst/benchmarks/run-suite.R --lib="${RUNNER_TEMP}/eigencore-lib" \
+            --cache="${RUNNER_TEMP}/bench-cache" --out="${RUNNER_TEMP}/bench-results" ${ARGS}
+        shell: bash
+
+      - name: Summarise
+        if: always()
+        run: Rscript inst/benchmarks/report.R "${RUNNER_TEMP}"/bench-results/*/ || true
+        shell: bash
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-suite-${{ github.event.inputs.profile }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/bench-results/
+          if-no-files-found: warn

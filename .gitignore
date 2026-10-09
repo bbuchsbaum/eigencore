@@ -9,7 +9,10 @@ repomix-output.txt
 .RData
 .Ruserdata
 .rcmdcheck_result.rds
-inst/benchmarks/results/
+inst/benchmarks/results/*
+!inst/benchmarks/results/[0-9]*-*-*/
+inst/benchmarks/results/*/.part-*
+.rlib/
 README.html
 pkgdown_site/
 src/*.o
