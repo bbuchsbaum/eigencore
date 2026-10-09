@@ -373,14 +373,19 @@
       max_orthogonality_loss
       max_residual
       norm_bound_type
+      norm_source
+      norm_values
       notes
       orthogonality
       orthogonality_passed
       orthogonality_required
       orthogonality_tolerance
       passed
+      residual_passed
       residuals
       scale
       scale_is_estimate
+      target_completeness
+      target_passed
       tolerance
 

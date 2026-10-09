@@ -14,12 +14,12 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include "eigencore_common.h"
 #include <R.h>
 #include <Rinternals.h>
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
 #include "eigencore_lapack_compat.h"
-#include "eigencore_common.h"
 #include "native_operators.h"
 
 namespace {

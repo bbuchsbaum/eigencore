@@ -5,14 +5,15 @@
 #include <climits>
 #include <memory>
 #include <vector>
+#include "eigencore_common.h"
 #include <R.h>
+#include <Rversion.h>
 #include <Rinternals.h>
 #include <Rdefines.h>
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
 #include "eigencore_lapack_compat.h"
 #include <R_ext/Random.h>
-#include "eigencore_common.h"
 #include "native_operators.h"
 
 // CSC structure validation for every native entry point that dereferences
@@ -387,7 +388,6 @@ static int g_eigencore_threads = 1;
 // getOption("eigencore.csr_cache_mb", 4096).
 static const double kEigencoreDefaultCsrCacheMb = 4096.0;
 static double g_eigencore_csr_cache_bytes = kEigencoreDefaultCsrCacheMb * 1048576.0;
-static const int kEigencoreMaxThreads = 256;
 
 static int eigencore_processor_count() {
 #ifdef _OPENMP
@@ -399,6 +399,8 @@ static int eigencore_processor_count() {
 }
 
 #ifdef _OPENMP
+static const int kEigencoreMaxThreads = 256;
+
 static int eigencore_sanitize_thread_count(double value, int fallback) {
   if (!R_FINITE(value) || value < 1.0) {
     return fallback;
@@ -3832,6 +3834,25 @@ int64_t eigencore_composite_cols(const CompositeOperator* composite) {
 // the namespace serialises by reference). Returns nullptr when the closure
 // carries no live composite of the expected shape, so the caller falls back
 // to evaluating the closure (which rebuilds a pointer lost to serialisation).
+// Look up a binding in env's own frame through the public API: R >= 4.5
+// no longer exports findVarInFrame()/PRVALUE(). Evaluating the symbol forces
+// a promise binding, which is what PRVALUE() read. Returns R_UnboundValue
+// when the frame has no such binding.
+static SEXP eigencore_frame_value(SEXP env, SEXP sym) {
+#if R_VERSION >= R_Version(4, 2, 0)
+  if (!R_existsVarInFrame(env, sym)) {
+    return R_UnboundValue;
+  }
+  return eigencore_unwind_protect([&] { return Rf_eval(sym, env); });
+#else
+  SEXP value = Rf_findVarInFrame(env, sym);
+  if (TYPEOF(value) == PROMSXP) {
+    value = eigencore_unwind_protect([&] { return Rf_eval(sym, env); });
+  }
+  return value;
+#endif
+}
+
 static CompositeOperator* composite_from_closure(SEXP closure, bool* adjoint,
                                                  SEXP* record,
                                                  SEXP* work_env) {
@@ -3855,7 +3876,7 @@ static CompositeOperator* composite_from_closure(SEXP closure, bool* adjoint,
       XLENGTH(adjoint_) != 1 || LOGICAL(adjoint_)[0] == NA_LOGICAL) {
     return nullptr;
   }
-  SEXP ptr = findVarInFrame(kernel_env, ptr_symbol);
+  SEXP ptr = eigencore_frame_value(kernel_env, ptr_symbol);
   CompositeOperator* composite = eigencore_composite_from_extptr(ptr);
   if (composite == nullptr) {
     return nullptr;
@@ -3865,12 +3886,9 @@ static CompositeOperator* composite_from_closure(SEXP closure, bool* adjoint,
   SEXP ns = VECTOR_ELT(attr, 3);
   *work_env = R_NilValue;
   if (TYPEOF(ns) == ENVSXP) {
-    SEXP context = findVarInFrame(ns, context_symbol);
-    if (TYPEOF(context) == PROMSXP) {
-      context = PRVALUE(context);
-    }
+    SEXP context = eigencore_frame_value(ns, context_symbol);
     if (TYPEOF(context) == ENVSXP) {
-      SEXP current = findVarInFrame(context, current_symbol);
+      SEXP current = eigencore_frame_value(context, current_symbol);
       if (current != R_UnboundValue && current != R_NilValue) {
         *work_env = current;
       }

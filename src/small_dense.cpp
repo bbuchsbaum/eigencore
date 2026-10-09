@@ -4,12 +4,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include "eigencore_common.h"
 #include <R.h>
 #include <Rinternals.h>
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
 #include "eigencore_lapack_compat.h"
-#include "eigencore_common.h"
 
 typedef La_LGL (*eigencore_dgges_select_fn)(double*, double*, double*);
 typedef void (*eigencore_dgges_fn)(

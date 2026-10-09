@@ -26,8 +26,8 @@ test_that("eigen and SVD plans are executable, frozen, and immutable", {
   expect_identical(names(eigen_plan$planner_policy),
                    eigencore:::planner_policy_keys())
 
-  eigen_before <- serialize(eigen_plan, NULL, version = 3L)
-  svd_before <- serialize(svd_plan, NULL, version = 3L)
+  eigen_before <- serialize(materialize_srcfiles(eigen_plan), NULL, version = 3L)
+  svd_before <- serialize(materialize_srcfiles(svd_plan), NULL, version = 3L)
   eigen_fit <- solve(eigen_plan)
   svd_fit <- solve(svd_plan)
 
@@ -109,7 +109,7 @@ test_that("replan is explicit and leaves the original plan unchanged", {
   )
   A <- diag(seq(200, 1))
   plan <- plan_solver(eigen_problem(A), k = 10L)
-  before <- serialize(plan, NULL, version = 3L)
+  before <- serialize(materialize_srcfiles(plan), NULL, version = 3L)
 
   options(eigencore.dense_partial_lanczos_min_n = 1000L)
   frozen <- solve(plan)
