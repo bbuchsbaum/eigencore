@@ -71,20 +71,13 @@ static inline bool krylov_coefficient_breakdown(double value, double norm_est) {
   return !(value > 100.0 * DBL_EPSILON * norm_est);
 }
 
-// Golub-Kahan coefficient norms keep the extended-precision accumulation for
-// now (P4 deferred for this kernel only): the retained one-sided IRLBA/LBD
-// driver (retained_svd.cpp) built on native_golub_kahan_run is sensitive to
-// last-bit changes in alpha/beta -- with plain double sums its native attempt
-// on the seed-702 regression problem flips to the certified fallback, and the
-// baseline already falls back on ~40% of seeds. Switch this to ec_norm2 once
-// that driver is made robust (tracked with the SVD workstream). These norms
-// are O(n) per step; the hot reorthogonalisation already runs through BLAS.
-static double gk_norm2(const double* x, int n) {
-  long double sum = 0.0L;
-  for (int i = 0; i < n; ++i) {
-    sum += static_cast<long double>(x[i]) * x[i];
-  }
-  return sqrt(static_cast<double>(sum));
+// Golub-Kahan coefficient norms go through the BLAS helper (P4). They were
+// kept in long double while the retained IRLBA/LBD driver (retained_svd.cpp)
+// was sensitive to last-bit changes in alpha/beta; that driver now seeds its
+// augmented tail from the dominant residual and thick-restarts (C42), so the
+// extended-precision accumulation is no longer load-bearing.
+static inline double gk_norm2(const double* x, int n) {
+  return ec_norm2(x, n);
 }
 
 // Reusable scratch for the Lanczos convergence estimate. The estimate runs

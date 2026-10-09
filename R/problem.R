@@ -314,6 +314,13 @@ plan_solver.eigencore_eigen_problem <- function(
     reference_arnoldi_label()
   } else if (is_hermitian && is_native_csc) {
     "reference Hermitian Lanczos (target unsupported by native path)"
+  } else if (is_hermitian && !has_metric &&
+             native_lanczos_target_supported(problem$target) &&
+             native_matrix_free_block_lanczos_available(problem$A)) {
+    # Matrix-free Hermitian operators (callbacks, lazy compositions,
+    # crossprod_operator()) run the native thick-restart kernel through
+    # their apply callback; the R reference Lanczos does not restart.
+    native_matrix_free_block_lanczos_label()
   } else if (is_hermitian && is.null(source_or_null(problem$A))) {
     "reference Hermitian Lanczos (prototype/oracle fallback)"
   } else if (auto_dense_partial_lanczos(problem, k)) {
@@ -928,6 +935,11 @@ operator_kernel_reason <- function(op) {
     "built-in diagonal operator has native block apply"
   } else if (identical(storage, "complex_dense_matrix")) {
     "base complex dense source has native dense LAPACK decomposition kernels and native zgemm block apply"
+  } else if (identical(storage, "native_composite")) {
+    paste(
+      "lazy algebra over native operators has a native composed-operator",
+      "kernel; matrix-free native solvers apply it without R callbacks"
+    )
   } else if (isTRUE(op$metadata$native)) {
     "built-in dense operator has native block apply"
   } else {

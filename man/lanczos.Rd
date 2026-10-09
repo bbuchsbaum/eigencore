@@ -9,7 +9,8 @@ lanczos(
   max_restarts = NULL,
   block = 1L,
   check_stride = 0L,
-  reorthogonalize = TRUE
+  reorthogonalize = TRUE,
+  completeness = NULL
 )
 }
 \arguments{
@@ -42,6 +43,19 @@ extra operator applications and never change results at
 \item{reorthogonalize}{Whether to apply full reorthogonalization. The
 native path always reorthogonalizes (DGKS x2) and ignores this flag;
 it is preserved for the R reference solver's public API.}
+
+\item{completeness}{Target-completeness check run after a certified
+standard Hermitian solve with a \code{largest()}, \code{smallest()} or
+\code{largest_magnitude()} target. \code{"probe"} runs a short block Lanczos
+process on the operator deflated against the returned eigenvectors (from a
+fixed-seed start; the global random stream is not touched) and, if it
+finds a more-preferred eigenvalue outside the returned set (for example a
+missed copy of a repeated eigenvalue), repairs the result with a deflated
+complement solve. \code{"none"} skips it. \code{NULL} (default) uses
+\code{getOption("eigencore.target_completeness", "probe")}. The outcome is
+recorded in \code{certificate(fit)$target_completeness}; see the
+"Certificates" vignette. The probe is probabilistic: it can prove a set
+incomplete but not complete.}
 }
 \value{
 An \code{eigencore_method} descriptor selecting Lanczos iteration.

@@ -317,6 +317,23 @@ adjoint.eigencore_operator <- function(x, ...) {
   if (!is.null(storage)) {
     storage <- paste0("adjoint:", storage)
   }
+  if (is.environment(x$metadata$native_composite)) {
+    # C52: the adjoint of a native composite is itself a native composite.
+    return(native_algebra_operator(
+      dim = rev(x$dim),
+      apply = x$apply_adjoint,
+      apply_adjoint = x$apply,
+      dtype = x$dtype,
+      structure = x$structure,
+      name = paste0("adjoint(", x$name, ")"),
+      metadata = list(
+        parent = x,
+        fused = "adjoint",
+        algebra = "adjoint",
+        native = isTRUE(x$metadata$native)
+      )
+    ))
+  }
   linear_operator(
     dim = rev(x$dim),
     apply = x$apply_adjoint,
@@ -370,6 +387,91 @@ print.eigencore_operator <- function(x, ...) {
 }
 
 #' @keywords internal
+#' Native composed-operator kernel (C52): an environment holding the R spec
+#' (see native_composite_spec() in operator_algebra.R) and the external
+#' pointer built from it. The spec keeps the leaf storage alive and lets a
+#' pointer cleared by serialisation be rebuilt on the next apply. Returns NULL
+#' when the native build rejects the spec.
+new_native_composite_kernel <- function(spec) {
+  ptr <- tryCatch(
+    .Call("eigencore_composite_operator_build", spec, PACKAGE = "eigencore"),
+    error = function(e) NULL
+  )
+  if (is.null(ptr)) {
+    return(NULL)
+  }
+  kernel <- new.env(parent = emptyenv())
+  kernel$spec <- spec
+  kernel$ptr <- ptr
+  kernel
+}
+
+#' @keywords internal
+native_composite_block_apply <- function(kernel, X, alpha = 1, beta = 0,
+                                         Y = NULL, adjoint = FALSE) {
+  X <- as.matrix(X)
+  if (!is.double(X)) {
+    storage.mode(X) <- "double"
+  }
+  Y <- block_apply_y(Y, beta)
+  if (!is.null(Y) && !is.double(Y)) {
+    storage.mode(Y) <- "double"
+  }
+  alpha <- as.numeric(alpha)
+  beta <- as.numeric(beta)
+  adjoint <- isTRUE(adjoint)
+  out <- .Call("eigencore_composite_block_apply", kernel$ptr, X, alpha, beta,
+               Y, adjoint, PACKAGE = "eigencore")
+  if (is.null(out)) {
+    # Pointer cleared by serialisation: rebuild it from the spec.
+    kernel$ptr <- .Call("eigencore_composite_operator_build", kernel$spec,
+                        PACKAGE = "eigencore")
+    out <- .Call("eigencore_composite_block_apply", kernel$ptr, X, alpha,
+                 beta, Y, adjoint, PACKAGE = "eigencore")
+  }
+  out
+}
+
+#' @keywords internal
+#' Attach a native composite kernel to an operator's apply closures as
+#' attr(, "eigencore_native_kernel") = list(kernel, adjoint, record,
+#' namespace). eigencore_r_operator_apply() (the R-callback operator every
+#' matrix-free native solver uses) recognises it and applies the composite
+#' natively instead of evaluating the closure; record(cols) books that apply
+#' in the active work context exactly as linear_operator()'s wrapper would.
+attach_native_composite_kernel <- function(op, kernel) {
+  frame <- environment(op$apply)
+  identity_fn <- frame$work_identity
+  adjoint_view <- isTRUE(frame$adjoint_view)
+  recorder <- function(kind) {
+    force(kind)
+    function(cols) {
+      token <- work_operator_enter(
+        identity_fn, kind = kind, X = matrix(0, 0L, cols)
+      )
+      work_operator_exit(token)
+      invisible(NULL)
+    }
+  }
+  ns <- environment(attach_native_composite_kernel)
+  attr(op$apply, "eigencore_native_kernel") <- list(
+    kernel, FALSE, recorder(if (adjoint_view) "adjoint" else "operator"), ns
+  )
+  if (!is.null(op$apply_adjoint)) {
+    attr(op$apply_adjoint, "eigencore_native_kernel") <- list(
+      kernel, TRUE, recorder(if (adjoint_view) "operator" else "adjoint"), ns
+    )
+  }
+  op
+}
+
+#' @keywords internal
+#' TRUE when `op` applies through a native composed-operator kernel (C52).
+has_native_composite_kernel <- function(op) {
+  is.environment(op$metadata$native_composite %||% NULL)
+}
+
+#' @keywords internal
 apply_operator <- function(op, X, alpha = 1, beta = 0, Y = NULL) {
   op$apply(X, alpha = alpha, beta = beta, Y = Y)
 }
@@ -383,14 +485,25 @@ apply_adjoint_operator <- function(op, X, alpha = 1, beta = 0, Y = NULL) {
 }
 
 #' @keywords internal
+#' Output argument for the native block applies (P11). The C entry points
+#' allocate the result themselves when Y is NULL (beta is then treated as 0),
+#' so no zero matrix is built here; with beta == 0 a supplied Y is never read
+#' and is dropped unless it carries dimnames, which the C side copies onto the
+#' fresh output.
+block_apply_y <- function(Y, beta) {
+  if (is.null(Y)) {
+    return(NULL)
+  }
+  if (length(beta) == 1L && isTRUE(beta == 0) && is.null(dimnames(Y))) {
+    return(NULL)
+  }
+  as.matrix(Y)
+}
+
+#' @keywords internal
 dense_block_apply <- function(A, X, alpha = 1, beta = 0, Y = NULL, transpose = FALSE) {
   X <- as.matrix(X)
-  if (is.null(Y)) {
-    out_nrow <- if (transpose) ncol(A) else nrow(A)
-    Y <- matrix(0, out_nrow, ncol(X))
-  } else {
-    Y <- as.matrix(Y)
-  }
+  Y <- block_apply_y(Y, beta)
   .Call(
     "eigencore_dense_block_apply",
     A,
@@ -409,14 +522,9 @@ complex_dense_block_apply <- function(A, X, alpha = 1, beta = 0, Y = NULL, adjoi
   if (!is.complex(X)) {
     X <- X + 0i
   }
-  if (is.null(Y)) {
-    out_nrow <- if (adjoint) ncol(A) else nrow(A)
-    Y <- matrix(0 + 0i, out_nrow, ncol(X))
-  } else {
-    Y <- as.matrix(Y)
-    if (!is.complex(Y)) {
-      Y <- Y + 0i
-    }
+  Y <- block_apply_y(Y, beta)
+  if (!is.null(Y) && !is.complex(Y)) {
+    Y <- Y + 0i
   }
   .Call(
     "eigencore_dense_complex_block_apply",
@@ -433,12 +541,7 @@ complex_dense_block_apply <- function(A, X, alpha = 1, beta = 0, Y = NULL, adjoi
 #' @keywords internal
 csc_block_apply <- function(A, X, alpha = 1, beta = 0, Y = NULL, transpose = FALSE) {
   X <- as.matrix(X)
-  if (is.null(Y)) {
-    out_nrow <- if (transpose) ncol(A) else nrow(A)
-    Y <- matrix(0, out_nrow, ncol(X))
-  } else {
-    Y <- as.matrix(Y)
-  }
+  Y <- block_apply_y(Y, beta)
   .Call(
     "eigencore_csc_block_apply",
     methods::slot(A, "i"),
@@ -522,11 +625,7 @@ csc_matrix_as_operator <- function(x, input_storage = class(x)[[1L]]) {
 #' @keywords internal
 diagonal_block_apply <- function(A, X, alpha = 1, beta = 0, Y = NULL) {
   X <- as.matrix(X)
-  if (is.null(Y)) {
-    Y <- matrix(0, nrow(A), ncol(X))
-  } else {
-    Y <- as.matrix(Y)
-  }
+  Y <- block_apply_y(Y, beta)
   .Call(
     "eigencore_diagonal_block_apply",
     methods::slot(A, "x"),

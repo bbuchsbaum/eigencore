@@ -498,7 +498,10 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
                                             "bpro_two_sided",
                                             "bpro_one_sided_guarded",
                                             "bpro_block_guarded"
-                                          )) {
+                                          ),
+                                          thick_restarts = NULL) {
+  # thick_restarts: cycle budget for the native attempt's thick restart
+  # (C42); NULL keeps the native default, 0 disables it.
   vectors <- match.arg(vectors)
   reorth_policy <- match.arg(reorth_policy)
   abi <- native_irlba_lbd_restart_abi(
@@ -646,7 +649,8 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
       rank = abi$rank,
       target_kind = abi$target_kind,
       tol = tol,
-      reorth_policy = reorth_code
+      reorth_policy = reorth_code,
+      thick_restarts = thick_restarts
     ),
     error = function(e) {
       structure(list(error = conditionMessage(e)), class = "eigencore_irlba_lbd_native_error")
@@ -911,6 +915,12 @@ native_irlba_lbd_retained_svd <- function(op, rank, target = largest(),
     } else {
       NA
     }
+  fallback$restart$irlba_lbd_thick_restarts <-
+    if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
+      native$thick_restarts %||% 0L
+    } else {
+      0L
+    }
   fallback$restart$irlba_lbd_bpro_policy <-
     if (!inherits(native, "eigencore_irlba_lbd_native_error")) {
       isTRUE(native$bpro_policy)
@@ -1033,7 +1043,9 @@ native_irlba_lbd_retained_call <- function(active_source, initial_start,
                                            alpha, beta, random_tails,
                                            work, retained, max_restarts,
                                            rank, target_kind, tol,
-                                           reorth_policy) {
+                                           reorth_policy,
+                                           thick_restarts = NULL) {
+  thick_restarts <- if (is.null(thick_restarts)) NA_integer_ else as.integer(thick_restarts)
   if (inherits(active_source, "dgCMatrix")) {
     return(.Call(
       "eigencore_irlba_lbd_csc_retained",
@@ -1054,6 +1066,7 @@ native_irlba_lbd_retained_call <- function(active_source, initial_start,
       as.integer(target_kind),
       as.numeric(tol),
       as.integer(reorth_policy),
+      thick_restarts,
       PACKAGE = "eigencore"
     ))
   }
@@ -1074,6 +1087,7 @@ native_irlba_lbd_retained_call <- function(active_source, initial_start,
       as.integer(target_kind),
       as.numeric(tol),
       as.integer(reorth_policy),
+      thick_restarts,
       PACKAGE = "eigencore"
     ))
   }
@@ -1153,6 +1167,12 @@ native_irlba_lbd_restart_diagnostics <- function(abi, native, small, final,
       native$augmented_final_cheap_residual %||% NA_real_,
     irlba_lbd_augmented_reduces_from_scratch_work =
       isTRUE(native$augmented_reduces_from_scratch_work),
+    irlba_lbd_thick_restarts = native$thick_restarts %||% 0L,
+    irlba_lbd_thick_restart_keep = native$thick_restart_keep %||% NA_integer_,
+    irlba_lbd_thick_restart_random_injections =
+      native$thick_restart_random_injections %||% 0L,
+    irlba_lbd_thick_restart_certificate_checks =
+      native$thick_restart_certificate_checks %||% 0L,
     irlba_lbd_native_certificate_diagnostics_reused =
       isTRUE(native_certificate_reused),
     irlba_lbd_native_certificate_diagnostics_swapped =
@@ -1281,14 +1301,34 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
   external_op <- op
   internal_transposed <- FALSE
   internal_orientation <- "as_given"
-  if (!isTRUE(reorthogonalize) && m < n) {
-    transposed_source <- native_golub_kahan_transpose_source(op)
+  # C37: for wide operators (m < n) the right start vector lives in the large
+  # side, whose (n - m)-dimensional null space leaks into the Krylov basis.
+  # Largest targets do not care, but smallest / interior targets then converge
+  # to spurious (near-)zero Ritz values and stall around 1e-5 backward error.
+  # Run those targets on the adjoint view (start in the small side), exactly
+  # like the tall case; certificates are recomputed on the original operator
+  # in native_golub_kahan_swap_transposed_result().
+  small_side_target <- svd_target_is_smallest(target) || isTRUE(interior_target)
+  if (m < n && (!isTRUE(reorthogonalize) || isTRUE(small_side_target))) {
+    transposed_source <- native_golub_kahan_transpose_source(
+      op,
+      allow_adjoint_view = isTRUE(small_side_target)
+    )
     if (!is.null(transposed_source)) {
+      original_n <- n
       op <- as_operator(transposed_source)
       m <- op$dim[1L]
       n <- op$dim[2L]
       internal_transposed <- TRUE
       internal_orientation <- "transposed_wide_operator"
+      if (!is.null(internal_start) && length(internal_start) == original_n &&
+          original_n != n) {
+        # A warm start supplied in the original right domain maps to the
+        # active (left) domain through A itself.
+        internal_start <- as.numeric(
+          apply_operator(external_op, matrix(as.numeric(internal_start), ncol = 1L))
+        )
+      }
     }
   }
   limit <- min(m, n)
@@ -1464,6 +1504,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     projected_solve = 0
   )
   total_reorthogonalization_passes <- 0L
+  breakdown_restarts <- 0L
   repeat {
     native_started <- proc.time()[["elapsed"]]
     iter <- run_native(active_maxit)
@@ -1536,6 +1577,16 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
 
     if (all(final$certificate$converged) || fixed_maxit || active_maxit >= limit) {
       break
+    }
+    if (iter$iterations < active_maxit && !isTRUE(iter$projected_stop)) {
+      # The recurrence broke down on an invariant subspace before the budget
+      # (e.g. a warm start that is already a singular vector), yet the
+      # certificate failed -- the zero completion of the missing triplets is
+      # not genuine rank deficiency. Growing the budget with the same start
+      # would reproduce the same breakdown, so restart from a fresh random
+      # vector (C42: the retained IRLBA fallback returned 9.3, 0, 0, 0, 0).
+      start <- stats::rnorm(n)
+      breakdown_restarts <- breakdown_restarts + 1L
     }
     retries <- retries + 1L
     active_maxit <- min(
@@ -1639,6 +1690,7 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
     reorthogonalize_u = reorthogonalize_u,
     reorthogonalize_v = reorthogonalize_v,
     warm_started = !is.null(internal_start),
+    breakdown_restarts = breakdown_restarts,
     internal_orientation = internal_orientation,
     internal_transposed = internal_transposed,
     zero_singular_completion = isTRUE(final$zero_singular_completion),
@@ -1655,14 +1707,23 @@ native_golub_kahan_svd <- function(op, rank, target = largest(), tol = 1e-8,
 }
 
 #' @keywords internal
-native_golub_kahan_transpose_source <- function(op) {
+native_golub_kahan_transpose_source <- function(op, allow_adjoint_view = FALSE) {
   storage <- op$metadata$storage %||% NULL
   source <- source_or_null(op)
   if (identical(storage, "dgCMatrix")) {
+    # Sparse transpose stays sparse (CSC of A' == CSR of A); no densification.
     return(get("t", envir = asNamespace("Matrix"))(op$metadata$matrix))
   }
   if (is.matrix(source) && is.double(source)) {
     return(t(source))
+  }
+  if (isTRUE(allow_adjoint_view) && native_matrix_free_golub_kahan_available(op)) {
+    # Matrix-free real operators: swap apply/apply_adjoint (adjoint view);
+    # nothing is materialized.
+    view <- adjoint(op)
+    if (native_matrix_free_golub_kahan_available(view)) {
+      return(view)
+    }
   }
   NULL
 }

@@ -199,3 +199,29 @@ test_that("rescaled nonsymmetric matrices are not classified as symmetric", {
   }
   expect_identical(as_operator(diag(3) * 1e-300)$structure$kind, "hermitian")
 })
+
+test_that("matrix-free Hermitian auto() solves use the native restarted kernel (C53)", {
+  set.seed(310)
+  S <- Matrix::rsparsematrix(3000, 200, density = 0.02)
+  fit <- eig_partial(crossprod_operator(S), k = 6)
+  expect_false(startsWith(fit$method, "reference"))
+  expect_true(fit$certificate$passed)
+  ref <- sort(svd(as.matrix(S), nu = 0, nv = 0)$d[1:6]^2, decreasing = TRUE)
+  expect_equal(sort(fit$values, decreasing = TRUE), ref, tolerance = 1e-9)
+
+  n <- 120
+  Q <- qr.Q(qr(matrix(rnorm(n * n), n)))
+  M <- Q %*% diag(seq_len(n)) %*% t(Q)
+  op <- linear_operator(
+    dim = c(n, n),
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+      Z <- alpha * (M %*% X)
+      if (is.null(Y) || beta == 0) Z else Z + beta * Y
+    },
+    structure = hermitian()
+  )
+  small <- eig_partial(op, k = 4, target = smallest())
+  expect_identical(small$method, eigencore:::native_matrix_free_block_lanczos_label())
+  expect_true(small$certificate$passed)
+  expect_equal(sort(small$values), 1:4, tolerance = 1e-8)
+})

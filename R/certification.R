@@ -730,6 +730,9 @@ print.eigencore_certificate <- function(x, ...) {
   cat("  max orthogonality loss:", format(x$max_orthogonality_loss), "\n")
   cat("  orthogonality tolerance:", format(x$orthogonality_tolerance), "\n")
   cat("  orthogonality required:", x$orthogonality_required, "\n")
+  if (!is.null(x$target_completeness)) {
+    cat("  target completeness:", x$target_completeness, "\n")
+  }
   if (length(x$failed_indices)) {
     cat("  failed indices:", paste(x$failed_indices, collapse = ", "), "\n")
   }

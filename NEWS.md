@@ -36,6 +36,40 @@
 
 ## Correctness fixes
 
+* Wide matrices (`nrow < ncol`) with smallest or nearest singular-value
+  targets now run native Golub-Kahan on the adjoint view (sparse transpose,
+  dense transpose, or swapped callbacks; nothing is densified) so the start
+  vector lives in the small side. Starting in the large side let its null
+  space leak into the Krylov basis, and condition numbers above ~3e4 stalled
+  near 1e-5 backward error and came back uncertified while the tall case
+  certified. Certificates are still computed on the original matrix.
+* The retained IRLBA/LBD Golub-Kahan native attempt is robust: its
+  augmented tail is seeded from the dominant Ritz residual (it previously
+  started from a rounding-noise residual column), and it thick-restarts
+  from the kept Ritz block instead of giving up when its fixed basis fills.
+  On a 320-case seeded sweep it now certifies every case without fallback
+  (before: 177 fallbacks, 67 of them uncertified). Adaptive Golub-Kahan restarts from a fresh vector after an
+  invariant-subspace breakdown, so a converged warm start no longer returns
+  spurious zero singular values. Golub-Kahan norms use the BLAS helper
+  instead of `long double` accumulation.
+* Target completeness (C50): a single-vector Krylov solve could miss a copy
+  of an exactly repeated eigenvalue (spectrum `9, 9, 7, 7, 7` returned as
+  `9, 9, 7, 7, 5`) and still certify, because residuals prove each pair but
+  not the returned set. Certified Hermitian Krylov, LOBPCG and edge
+  shift-invert results (standard, and native generalized SPD Lanczos in its
+  transformed space) for `largest()`, `smallest()` and `largest_magnitude()`
+  targets are now followed by a deflated complement probe: a short native
+  block Lanczos run on the operator restricted to the complement of the
+  returned vectors, from a fixed-seed start that leaves R's random stream
+  untouched. An intruding eigenvalue triggers a deflated complement solve
+  and Rayleigh-Ritz merge, then a re-probe. The outcome is recorded in
+  `certificate$target_completeness` (`"probed"`, `"repaired"`, `"failed"`,
+  `"exact"`, `"not_checked"`) with details in `certificate$completeness`;
+  `"failed"` makes `passed` `FALSE` (`residual_passed` keeps the residual
+  verdict). Opt out with `lanczos(completeness = "none")` or
+  `options(eigencore.target_completeness = "none")`. The probe is
+  probabilistic: it can prove a returned set incomplete but not complete.
+
 * `center(rows = TRUE, columns = TRUE)` now double centers correctly. Row
   means were taken from the uncentered matrix, so the grand mean was
   subtracted twice on the dense, callback, and native CSC paths.
@@ -327,6 +361,29 @@
   of its entries, so a sparse product is never densified. Otherwise the
   result is a lazy composition (e.g. a 3000 x 5 times 5 x 3000 dense
   composition: 0.12 s and 69 MB -> 0.001 s and no stored product).
+* Lazy compositions whose operands all have native kernels (`compose()`,
+  `crossprod_operator()`, operator sums and scalar multiples,
+  `scale_rows()`/`scale_cols()`, `center()`, `adjoint()`, over dense, CSC,
+  centered / centered-scaled CSC and diagonal operators, nested freely) are
+  compiled into one native composed-operator kernel
+  (`metadata$storage == "native_composite"`): product chains, weighted sums,
+  rank-one centering terms and adjoints, with reused buffers for
+  intermediates. R-level applies are one `.Call` instead of nested R
+  closures, and the matrix-free native solvers (Golub-Kahan, Arnoldi, block
+  Lanczos) apply the kernel directly instead of calling back into R; typed
+  work accounting is unchanged. The fused centered CSC operator gets the
+  same treatment. `options(eigencore.native_composite = FALSE)` restores
+  the R composition. Applying a 50000 x 2000 sparse-plus-scaled-low-rank sum
+  is 2-3x faster, and its rank-10 `svd_partial()` went from 3.5 s to 2.8 s
+  (single-threaded). A dense `compose(A, B)` of two 1500 x 1500 factors does
+  not speed up: its applies are memory-bound `dgemv`s either way. It still
+  plans onto the matrix-free Golub-Kahan cycle, which uses about 190
+  forward/adjoint pairs and runs about 3.5x slower than the implicit Gram
+  route used for the explicit product. Closing that gap needs an SVD
+  planner route for composites, which is not part of this change.
+* R-level dense, complex dense, CSC, diagonal and centered CSC block applies
+  no longer allocate a zero `Y` when `beta == 0`; the native entry points
+  allocate the output themselves.
 * Sparse tridiagonal shift-invert now parses and validates the three matrix
   bands once per solve and reuses that immutable representation for planning,
   shift perturbation, factorization, and certification. The native kernel

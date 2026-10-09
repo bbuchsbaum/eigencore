@@ -1445,6 +1445,12 @@ extern "C" int eigencore_normal_equations_apply(void* impl,
   return status;
 }
 
+// Native composed operators (C52), defined at the end of this file.
+static int composite_closure_apply(SEXP closure, int64_t in_rows,
+                                   int64_t out_rows, int64_t block_cols,
+                                   const double* X, int64_t ldx, double alpha,
+                                   double beta, double* Y, int64_t ldy);
+
 extern "C" int eigencore_r_operator_apply(void* impl,
                                       EigencoreTranspose op,
                                       int64_t block_cols,
@@ -1474,6 +1480,13 @@ extern "C" int eigencore_r_operator_apply(void* impl,
   const int cols = static_cast<int>(block_cols);
   if (ldx < in_rows || ldy < out_rows || cols < 1 || TYPEOF(closure) != CLOSXP) {
     return -1;
+  }
+  // C52: a closure carrying a native composite kernel (lazy algebra over
+  // native operators) is applied natively, without the R round trip.
+  const int native_status = composite_closure_apply(
+    closure, in_rows, out_rows, cols, X, ldx, alpha, beta, Y, ldy);
+  if (native_status != 1) {
+    return native_status;
   }
 
   SEXP X_ = PROTECT(allocMatrix(REALSXP, in_rows, cols));
@@ -3427,5 +3440,555 @@ extern "C" SEXP eigencore_csc_apply_repeat(SEXP i_, SEXP p_, SEXP x_,
   setAttrib(result_, R_NamesSymbol, names_);
   UNPROTECT(4);
   return result_;
+  EIGENCORE_ENTRY_END
+}
+
+// ---------------------------------------------------------------------------
+// Native composed operators (C52)
+// ---------------------------------------------------------------------------
+//
+// Lazy algebra over native operators (compose(), crossprod_operator(),
+// operator sums and scalar/row/column scalings, centering, adjoint views) used
+// to apply through nested R closures, so every native solver step on such an
+// operator crossed the R callback boundary once per factor. A composite holds
+// the expression as a small tree whose leaves reuse the native kernels above
+// (BLAS for dense leaves, the OpenMP CSC kernels and their per-operator CSR
+// cache for sparse leaves). It is built once from an R spec (see
+// native_composite_spec() in R/operator_algebra.R):
+//
+//   list(type = "dense", x = <double matrix>)
+//   list(type = "csc", i =, p =, x =, dim =)                     dgCMatrix slots
+//   list(type = "centered_scaled_csc", i =, p =, x =, dim =, means =, weights =)
+//   list(type = "diagonal", x = <double vector>)
+//   list(type = "rank1", u = <length rows>, v = <length cols>)   u v^T
+//   list(type = "product", children = list(C1, ..., Ck))          C1 C2 ... Ck
+//   list(type = "sum", children = list(...), weights = <double>)  sum w_i C_i
+//   list(type = "adjoint", child = C)                             C^T
+//
+// The external pointer protects the spec, so the borrowed leaf storage lives
+// as long as the composite.
+
+namespace {
+
+enum CompositeNodeType {
+  COMPOSITE_DENSE = 0,
+  COMPOSITE_CSC = 1,
+  COMPOSITE_CENTERED_SCALED_CSC = 2,
+  COMPOSITE_DIAGONAL = 3,
+  COMPOSITE_RANK1 = 4,
+  COMPOSITE_PRODUCT = 5,
+  COMPOSITE_SUM = 6,
+  COMPOSITE_ADJOINT = 7
+};
+
+struct CompositeNode {
+  CompositeNodeType type = COMPOSITE_SUM;
+  int64_t rows = 0;
+  int64_t cols = 0;
+  DenseColumnMajorOperator dense = {0, 0, nullptr};
+  CenteredScaledCSCOperator csc = {};  // base doubles as the plain CSC leaf
+  DiagonalOperator diagonal = {0, nullptr, false};
+  const double* u = nullptr;
+  const double* v = nullptr;
+  std::vector<std::unique_ptr<CompositeNode>> children;
+  std::vector<double> weights;
+  // Ping-pong intermediates of a product chain, grown on demand and reused.
+  std::vector<double> buffer[2];
+};
+
+}  // namespace
+
+struct CompositeOperator {
+  std::unique_ptr<CompositeNode> root;
+  // Whether the CSC leaves currently run as per-call R-level applies (see
+  // CscApplyCache::per_call): true for the R-level block apply, false while a
+  // native solver drives the composite through its apply closure.
+  int per_call = -1;
+};
+
+static void composite_mark_per_call_node(CompositeNode* node, bool per_call) {
+  if (node->type == COMPOSITE_CSC ||
+      node->type == COMPOSITE_CENTERED_SCALED_CSC) {
+    csc_apply_cache(&node->csc.base)->per_call = per_call;
+  }
+  for (auto& child : node->children) {
+    composite_mark_per_call_node(child.get(), per_call);
+  }
+}
+
+// One-off R-level applies keep a spinning multithreaded BLAS alive (their CSC
+// kernels go serial while it is busy) instead of switching it off and on
+// around every .Call; solver-driven applies may quiesce it once per solve,
+// exactly like the native CSC solvers.
+static void composite_mark_per_call(CompositeOperator* composite,
+                                    bool per_call) {
+  const int flag = per_call ? 1 : 0;
+  if (composite->per_call != flag) {
+    composite_mark_per_call_node(composite->root.get(), per_call);
+    composite->per_call = flag;
+  }
+}
+
+static SEXP composite_spec_field(SEXP spec, const char* name) {
+  SEXP names = getAttrib(spec, R_NamesSymbol);
+  if (TYPEOF(spec) != VECSXP || TYPEOF(names) != STRSXP) {
+    return R_NilValue;
+  }
+  const R_xlen_t len = XLENGTH(spec);
+  for (R_xlen_t pos = 0; pos < len; ++pos) {
+    if (std::strcmp(CHAR(STRING_ELT(names, pos)), name) == 0) {
+      return VECTOR_ELT(spec, pos);
+    }
+  }
+  return R_NilValue;
+}
+
+static SEXP composite_real_field(SEXP spec, const char* name,
+                                 R_xlen_t length) {
+  SEXP value = composite_spec_field(spec, name);
+  if (!isReal(value) || (length >= 0 && XLENGTH(value) != length)) {
+    error("invalid native composite spec: '%s' must be a double vector of "
+          "length %lld", name, static_cast<long long>(length));
+  }
+  return value;
+}
+
+static std::unique_ptr<CompositeNode> composite_build_node(SEXP spec,
+                                                           int depth) {
+  if (depth > 64) {
+    error("invalid native composite spec: expression nested too deeply");
+  }
+  SEXP type_ = composite_spec_field(spec, "type");
+  if (TYPEOF(type_) != STRSXP || XLENGTH(type_) != 1) {
+    error("invalid native composite spec: missing node type");
+  }
+  const char* type = CHAR(STRING_ELT(type_, 0));
+  std::unique_ptr<CompositeNode> node(new CompositeNode());
+
+  if (std::strcmp(type, "dense") == 0) {
+    SEXP x_ = composite_spec_field(spec, "x");
+    SEXP dim_ = getAttrib(x_, R_DimSymbol);
+    if (!isReal(x_) || dim_ == R_NilValue || XLENGTH(dim_) != 2) {
+      error("invalid native composite spec: dense leaf needs a double matrix");
+    }
+    node->type = COMPOSITE_DENSE;
+    node->rows = INTEGER(dim_)[0];
+    node->cols = INTEGER(dim_)[1];
+    node->dense = {node->rows, node->cols, REAL(x_)};
+  } else if (std::strcmp(type, "csc") == 0 ||
+             std::strcmp(type, "centered_scaled_csc") == 0) {
+    SEXP i_ = composite_spec_field(spec, "i");
+    SEXP p_ = composite_spec_field(spec, "p");
+    SEXP x_ = composite_spec_field(spec, "x");
+    SEXP dim_ = composite_spec_field(spec, "dim");
+    eigencore_validate_csc_structure(i_, p_, x_, dim_, "native composite");
+    const int m = INTEGER(dim_)[0];
+    const int n = INTEGER(dim_)[1];
+    node->rows = m;
+    node->cols = n;
+    node->csc.base = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_), nullptr};
+    if (std::strcmp(type, "csc") == 0) {
+      node->type = COMPOSITE_CSC;
+    } else {
+      node->type = COMPOSITE_CENTERED_SCALED_CSC;
+      node->csc.col_means = REAL(composite_real_field(spec, "means", n));
+      node->csc.col_weights = REAL(composite_real_field(spec, "weights", n));
+    }
+  } else if (std::strcmp(type, "diagonal") == 0) {
+    SEXP x_ = composite_real_field(spec, "x", -1);
+    node->type = COMPOSITE_DIAGONAL;
+    node->rows = node->cols = XLENGTH(x_);
+    node->diagonal = {node->rows, REAL(x_), false};
+  } else if (std::strcmp(type, "rank1") == 0) {
+    SEXP u_ = composite_real_field(spec, "u", -1);
+    SEXP v_ = composite_real_field(spec, "v", -1);
+    node->type = COMPOSITE_RANK1;
+    node->rows = XLENGTH(u_);
+    node->cols = XLENGTH(v_);
+    node->u = REAL(u_);
+    node->v = REAL(v_);
+  } else if (std::strcmp(type, "product") == 0 ||
+             std::strcmp(type, "sum") == 0) {
+    const bool product = type[0] == 'p';
+    SEXP children_ = composite_spec_field(spec, "children");
+    if (TYPEOF(children_) != VECSXP || XLENGTH(children_) < 1) {
+      error("invalid native composite spec: %s needs at least one child", type);
+    }
+    const R_xlen_t count = XLENGTH(children_);
+    node->type = product ? COMPOSITE_PRODUCT : COMPOSITE_SUM;
+    for (R_xlen_t pos = 0; pos < count; ++pos) {
+      node->children.push_back(
+        composite_build_node(VECTOR_ELT(children_, pos), depth + 1));
+    }
+    node->rows = node->children.front()->rows;
+    node->cols = product ? node->children.back()->cols :
+      node->children.front()->cols;
+    for (R_xlen_t pos = 1; pos < count; ++pos) {
+      const CompositeNode* prev = node->children[pos - 1].get();
+      const CompositeNode* next = node->children[pos].get();
+      const bool ok = product ? prev->cols == next->rows :
+        (next->rows == node->rows && next->cols == node->cols);
+      if (!ok) {
+        error("invalid native composite spec: non-conformable %s", type);
+      }
+    }
+    if (!product) {
+      SEXP weights_ = composite_real_field(spec, "weights", count);
+      node->weights.assign(REAL(weights_), REAL(weights_) + count);
+      for (double w : node->weights) {
+        if (!R_FINITE(w)) {
+          error("invalid native composite spec: sum weights must be finite");
+        }
+      }
+    }
+  } else if (std::strcmp(type, "adjoint") == 0) {
+    node->type = COMPOSITE_ADJOINT;
+    node->children.push_back(
+      composite_build_node(composite_spec_field(spec, "child"), depth + 1));
+    node->rows = node->children.front()->cols;
+    node->cols = node->children.front()->rows;
+  } else {
+    error("invalid native composite spec: unknown node type '%s'", type);
+  }
+  if (!eigencore_int_indexable(node->rows) ||
+      !eigencore_int_indexable(node->cols)) {
+    error("native composite dimensions exceed the LP64 BLAS/R integer range");
+  }
+  return node;
+}
+
+static int composite_node_apply(CompositeNode* node, bool adjoint,
+                                int64_t block_cols, const double* X,
+                                int64_t ldx, double alpha, double beta,
+                                double* Y, int64_t ldy) {
+  const EigencoreTranspose op =
+    adjoint ? EIGENCORE_TRANSPOSE_ADJOINT : EIGENCORE_TRANSPOSE_NONE;
+  const int64_t out_rows = adjoint ? node->cols : node->rows;
+  const int64_t in_rows = adjoint ? node->rows : node->cols;
+  switch (node->type) {
+    case COMPOSITE_DENSE:
+      return eigencore_dense_apply(&node->dense, op, block_cols, X, ldx,
+                                   alpha, beta, Y, ldy, nullptr);
+    case COMPOSITE_CSC:
+      return eigencore_csc_apply(&node->csc.base, op, block_cols, X, ldx,
+                                 alpha, beta, Y, ldy, nullptr);
+    case COMPOSITE_CENTERED_SCALED_CSC:
+      return eigencore_centered_scaled_csc_apply(&node->csc, op, block_cols,
+                                                 X, ldx, alpha, beta, Y, ldy,
+                                                 nullptr);
+    case COMPOSITE_DIAGONAL:
+      return eigencore_diagonal_apply(&node->diagonal, op, block_cols, X, ldx,
+                                      alpha, beta, Y, ldy, nullptr);
+    case COMPOSITE_RANK1: {
+      // u v^T x (forward) or v u^T x (adjoint).
+      const double* left = adjoint ? node->v : node->u;
+      const double* right = adjoint ? node->u : node->v;
+      for (int64_t c = 0; c < block_cols; ++c) {
+        const double* x = X + c * ldx;
+        double* y = Y + c * ldy;
+        double s = 0.0;
+        for (int64_t r = 0; r < in_rows; ++r) {
+          s += right[r] * x[r];
+        }
+        s *= alpha;
+        if (beta == 0.0) {
+          for (int64_t r = 0; r < out_rows; ++r) {
+            y[r] = s * left[r];
+          }
+        } else {
+          for (int64_t r = 0; r < out_rows; ++r) {
+            y[r] = beta * y[r] + s * left[r];
+          }
+        }
+      }
+      return 0;
+    }
+    case COMPOSITE_ADJOINT:
+      return composite_node_apply(node->children.front().get(), !adjoint,
+                                  block_cols, X, ldx, alpha, beta, Y, ldy);
+    case COMPOSITE_SUM: {
+      const size_t count = node->children.size();
+      for (size_t pos = 0; pos < count; ++pos) {
+        const int status = composite_node_apply(
+          node->children[pos].get(), adjoint, block_cols, X, ldx,
+          alpha * node->weights[pos], pos == 0 ? beta : 1.0, Y, ldy);
+        if (status != 0) {
+          return status;
+        }
+      }
+      return 0;
+    }
+    case COMPOSITE_PRODUCT: {
+      // C1 C2 ... Ck X applies Ck first; the adjoint Ck^T ... C1^T X applies
+      // C1^T first. Every factor but the last writes into a node buffer.
+      const size_t count = node->children.size();
+      const double* cur = X;
+      int64_t cur_ld = ldx;
+      int which = 0;
+      for (size_t step = 0; step + 1 < count; ++step) {
+        CompositeNode* child =
+          node->children[adjoint ? step : count - 1 - step].get();
+        const int64_t rows = adjoint ? child->cols : child->rows;
+        const size_t need = static_cast<size_t>(rows > 0 ? rows : 1) *
+          static_cast<size_t>(block_cols);
+        std::vector<double>& buffer = node->buffer[which];
+        if (buffer.size() < need) {
+          buffer.resize(need);
+        }
+        const int status = composite_node_apply(
+          child, adjoint, block_cols, cur, cur_ld, 1.0, 0.0, buffer.data(),
+          rows);
+        if (status != 0) {
+          return status;
+        }
+        cur = buffer.data();
+        cur_ld = rows;
+        which ^= 1;
+      }
+      CompositeNode* last = node->children[adjoint ? count - 1 : 0].get();
+      return composite_node_apply(last, adjoint, block_cols, cur, cur_ld,
+                                  alpha, beta, Y, ldy);
+    }
+  }
+  return -1;
+}
+
+extern "C" int eigencore_composite_apply(void* impl,
+                                         EigencoreTranspose op,
+                                         int64_t block_cols,
+                                         const double* X,
+                                         int64_t ldx,
+                                         double alpha,
+                                         double beta,
+                                         double* Y,
+                                         int64_t ldy,
+                                         EigencoreWorkspace* workspace) {
+  (void) workspace;
+  CompositeOperator* composite = static_cast<CompositeOperator*>(impl);
+  if (composite == nullptr || !composite->root ||
+      (op != EIGENCORE_TRANSPOSE_NONE && op != EIGENCORE_TRANSPOSE_ADJOINT)) {
+    return -1;
+  }
+  const bool adjoint = op == EIGENCORE_TRANSPOSE_ADJOINT;
+  CompositeNode* root = composite->root.get();
+  const int64_t out_rows = adjoint ? root->cols : root->rows;
+  const int64_t in_rows = adjoint ? root->rows : root->cols;
+  if (block_cols < 0 || ldx < in_rows || ldy < out_rows) {
+    return -1;
+  }
+  if (!eigencore_int_indexable(block_cols) || !eigencore_int_indexable(ldx) ||
+      !eigencore_int_indexable(ldy)) {
+    return -2;
+  }
+  if (block_cols == 0) {
+    return 0;
+  }
+  try {
+    return composite_node_apply(root, adjoint, block_cols, X, ldx, alpha, beta,
+                                Y, ldy);
+  } catch (const std::bad_alloc&) {
+    return -3;
+  }
+}
+
+static SEXP composite_tag() {
+  static SEXP tag = nullptr;
+  if (tag == nullptr) {
+    tag = install("eigencore_native_composite");
+  }
+  return tag;
+}
+
+static void composite_finalize(SEXP ptr) {
+  CompositeOperator* composite =
+    static_cast<CompositeOperator*>(R_ExternalPtrAddr(ptr));
+  if (composite != nullptr) {
+    delete composite;
+    R_ClearExternalPtr(ptr);
+  }
+}
+
+CompositeOperator* eigencore_composite_from_extptr(SEXP ptr) {
+  if (TYPEOF(ptr) != EXTPTRSXP || R_ExternalPtrTag(ptr) != composite_tag()) {
+    return nullptr;
+  }
+  return static_cast<CompositeOperator*>(R_ExternalPtrAddr(ptr));
+}
+
+int64_t eigencore_composite_rows(const CompositeOperator* composite) {
+  return composite->root->rows;
+}
+
+int64_t eigencore_composite_cols(const CompositeOperator* composite) {
+  return composite->root->cols;
+}
+
+// Kernel attached to an R apply closure by attach_native_composite_kernel()
+// (R/operator.R): attr(closure, "eigencore_native_kernel") is
+// list(kernel_env, adjoint, record, namespace). kernel_env$ptr is the
+// composite external pointer; adjoint says whether the closure applies its
+// adjoint; record(cols) books the apply in the active work context, which
+// lives in namespace$.eigencore_work_context$current (NULL outside a solve;
+// the namespace serialises by reference). Returns nullptr when the closure
+// carries no live composite of the expected shape, so the caller falls back
+// to evaluating the closure (which rebuilds a pointer lost to serialisation).
+static CompositeOperator* composite_from_closure(SEXP closure, bool* adjoint,
+                                                 SEXP* record,
+                                                 SEXP* work_env) {
+  static SEXP attr_symbol = nullptr;
+  static SEXP ptr_symbol = nullptr;
+  static SEXP current_symbol = nullptr;
+  static SEXP context_symbol = nullptr;
+  if (attr_symbol == nullptr) {
+    attr_symbol = install("eigencore_native_kernel");
+    ptr_symbol = install("ptr");
+    current_symbol = install("current");
+    context_symbol = install(".eigencore_work_context");
+  }
+  SEXP attr = getAttrib(closure, attr_symbol);
+  if (TYPEOF(attr) != VECSXP || XLENGTH(attr) != 4) {
+    return nullptr;
+  }
+  SEXP kernel_env = VECTOR_ELT(attr, 0);
+  SEXP adjoint_ = VECTOR_ELT(attr, 1);
+  if (TYPEOF(kernel_env) != ENVSXP || !isLogical(adjoint_) ||
+      XLENGTH(adjoint_) != 1 || LOGICAL(adjoint_)[0] == NA_LOGICAL) {
+    return nullptr;
+  }
+  SEXP ptr = findVarInFrame(kernel_env, ptr_symbol);
+  CompositeOperator* composite = eigencore_composite_from_extptr(ptr);
+  if (composite == nullptr) {
+    return nullptr;
+  }
+  *adjoint = LOGICAL(adjoint_)[0] != 0;
+  *record = VECTOR_ELT(attr, 2);
+  SEXP ns = VECTOR_ELT(attr, 3);
+  *work_env = R_NilValue;
+  if (TYPEOF(ns) == ENVSXP) {
+    SEXP context = findVarInFrame(ns, context_symbol);
+    if (TYPEOF(context) == PROMSXP) {
+      context = PRVALUE(context);
+    }
+    if (TYPEOF(context) == ENVSXP) {
+      SEXP current = findVarInFrame(context, current_symbol);
+      if (current != R_UnboundValue && current != R_NilValue) {
+        *work_env = current;
+      }
+    }
+  }
+  return composite;
+}
+
+// Applies a closure's native composite in place of evaluating the closure.
+// Returns 1 when no native kernel applies (caller evaluates the closure),
+// otherwise the apply status.
+static int composite_closure_apply(SEXP closure, int64_t in_rows,
+                                   int64_t out_rows, int64_t block_cols,
+                                   const double* X, int64_t ldx, double alpha,
+                                   double beta, double* Y, int64_t ldy) {
+  bool adjoint = false;
+  SEXP record = R_NilValue;
+  SEXP work_context = R_NilValue;
+  CompositeOperator* composite =
+    composite_from_closure(closure, &adjoint, &record, &work_context);
+  if (composite == nullptr) {
+    return 1;
+  }
+  const CompositeNode* root = composite->root.get();
+  if ((adjoint ? root->rows : root->cols) != in_rows ||
+      (adjoint ? root->cols : root->rows) != out_rows) {
+    return 1;
+  }
+  if (work_context != R_NilValue && TYPEOF(record) == CLOSXP) {
+    // Typed work accounting (R/work.R) sees the apply exactly as the closure
+    // would have booked it.
+    SEXP cols_ = PROTECT(ScalarInteger(static_cast<int>(block_cols)));
+    SEXP call = PROTECT(lang2(record, cols_));
+    int error_occurred = 0;
+    R_tryEval(call, R_GlobalEnv, &error_occurred);
+    UNPROTECT(2);
+    if (error_occurred) {
+      return -8;
+    }
+  }
+  composite_mark_per_call(composite, false);
+  return eigencore_composite_apply(
+    composite,
+    adjoint ? EIGENCORE_TRANSPOSE_ADJOINT : EIGENCORE_TRANSPOSE_NONE,
+    block_cols, X, ldx, alpha, beta, Y, ldy, nullptr);
+}
+
+extern "C" SEXP eigencore_composite_operator_build(SEXP spec_) {
+  EIGENCORE_ENTRY_BEGIN
+  std::unique_ptr<CompositeOperator> composite(new CompositeOperator());
+  composite->root = composite_build_node(spec_, 0);
+  SEXP ptr = PROTECT(R_MakeExternalPtr(composite.get(), composite_tag(), spec_));
+  composite.release();
+  R_RegisterCFinalizerEx(ptr, composite_finalize, TRUE);
+  UNPROTECT(1);
+  return ptr;
+  EIGENCORE_ENTRY_END
+}
+
+// c(rows, cols) of a live composite, or NULL for a cleared pointer.
+extern "C" SEXP eigencore_composite_operator_dim(SEXP ptr_) {
+  EIGENCORE_ENTRY_BEGIN
+  CompositeOperator* composite = eigencore_composite_from_extptr(ptr_);
+  if (composite == nullptr) {
+    return R_NilValue;
+  }
+  SEXP out = PROTECT(allocVector(INTSXP, 2));
+  INTEGER(out)[0] = static_cast<int>(composite->root->rows);
+  INTEGER(out)[1] = static_cast<int>(composite->root->cols);
+  UNPROTECT(1);
+  return out;
+  EIGENCORE_ENTRY_END
+}
+
+// R-level block apply: alpha op(C) X + beta Y. Y may be NULL (beta treated as
+// 0, P11). Returns NULL when the pointer was cleared (e.g. by serialisation)
+// so the R wrapper can rebuild it from the spec.
+extern "C" SEXP eigencore_composite_block_apply(SEXP ptr_, SEXP X_,
+                                                SEXP alpha_, SEXP beta_,
+                                                SEXP Y_, SEXP adjoint_) {
+  EIGENCORE_ENTRY_BEGIN
+  CompositeOperator* composite = eigencore_composite_from_extptr(ptr_);
+  if (composite == nullptr) {
+    return R_NilValue;
+  }
+  if (!isReal(X_) || !(isReal(Y_) || isNull(Y_)) || !isReal(alpha_) ||
+      !isReal(beta_) || !isLogical(adjoint_) || LENGTH(adjoint_) != 1) {
+    error("invalid native composite block apply inputs");
+  }
+  SEXP dimX = getAttrib(X_, R_DimSymbol);
+  SEXP dimY = getAttrib(Y_, R_DimSymbol);
+  if (dimX == R_NilValue || (dimY == R_NilValue && !isNull(Y_))) {
+    error("X and Y must be matrices");
+  }
+  const bool adjoint = LOGICAL(adjoint_)[0];
+  const int64_t out_rows64 = adjoint ? composite->root->cols :
+    composite->root->rows;
+  const int64_t in_rows64 = adjoint ? composite->root->rows :
+    composite->root->cols;
+  const int xr = INTEGER(dimX)[0];
+  const int xc = INTEGER(dimX)[1];
+  if (xr != in_rows64 || (!isNull(Y_) && (INTEGER(dimY)[0] != out_rows64 ||
+                                          INTEGER(dimY)[1] != xc))) {
+    error("non-conformable native composite block apply inputs");
+  }
+  const int out_rows = static_cast<int>(out_rows64);
+  const double beta = isNull(Y_) ? 0.0 : REAL(beta_)[0];
+  SEXP out_ = PROTECT(block_apply_output(Y_, REALSXP, out_rows, xc,
+                                         beta == 0.0));
+  composite_mark_per_call(composite, true);
+  const int status = eigencore_composite_apply(
+    composite,
+    adjoint ? EIGENCORE_TRANSPOSE_ADJOINT : EIGENCORE_TRANSPOSE_NONE,
+    xc, REAL(X_), xr, REAL(alpha_)[0], beta, REAL(out_), out_rows, nullptr);
+  if (status != 0) {
+    eigencore_apply_status_error("native composite block apply", status);
+  }
+  UNPROTECT(1);
+  return out_;
   EIGENCORE_ENTRY_END
 }

@@ -355,13 +355,35 @@ replan_eigencore_plan <- function(plan) {
 
 #' @keywords internal
 execute_eigen_plan <- function(plan, restart_preparation = NULL) {
+  # Target completeness (C50): residual certificates prove each returned pair
+  # but not that the returned set is the requested one. Eligible Krylov results
+  # are probed on the deflated complement after dispatch; the probe needs the
+  # Ritz vectors, so they are kept internally and dropped afterwards when the
+  # caller asked for values only.
+  a <- plan$problem
+  k <- plan$requested
+  vectors_requested <- isTRUE(plan$execution$vectors)
+  mode <- target_completeness_mode(plan$method_descriptor)
+  need_vectors <- identical(mode, "probe") &&
+    isTRUE(plan$execution$certify) &&
+    identical(target_completeness_route_class(plan, a), "krylov") &&
+    target_completeness_eligible(a, k)
+  result <- execute_eigen_plan_dispatch(
+    plan, restart_preparation = restart_preparation,
+    vectors = vectors_requested || need_vectors
+  )
+  apply_target_completeness(result, plan, a, k, mode, vectors_requested)
+}
+
+#' @keywords internal
+execute_eigen_plan_dispatch <- function(plan, restart_preparation = NULL,
+                                        vectors = plan$execution$vectors) {
   a <- plan$problem
   execution <- plan$execution
   k <- plan$requested
   method <- plan$method_descriptor
   tol <- execution$tol
   maxit <- execution$maxit
-  vectors <- execution$vectors
   certify <- execution$certify
   allow_dense_fallback <- execution$allow_dense_fallback
   prepared_restart <- restart_preparation$prepared_start %||% NULL

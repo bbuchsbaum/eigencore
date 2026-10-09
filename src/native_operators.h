@@ -231,4 +231,34 @@ extern "C" int eigencore_normal_equations_apply(void* impl,
                                                  int64_t ldy,
                                                  EigencoreWorkspace* workspace);
 
+// Native composed operator (C52): an expression tree over native leaves
+// (dense, CSC, centered-scaled CSC, diagonal, rank-one u v^T) with product
+// chains, weighted sums and adjoint nodes, built once from an R spec by
+// eigencore_composite_operator_build() and owned by an external pointer.
+// eigencore_composite_apply() is an EigencoreApplyFn, so any native solver can
+// drive a composite through the same block-operator interface; intermediates
+// of product chains live in per-node buffers reused across applies. Leaf
+// storage is borrowed from R objects the external pointer protects. A
+// composite (like a CSC operator and its apply cache) must not be applied
+// from two threads at once.
+struct CompositeOperator;
+
+extern "C" int eigencore_composite_apply(void* impl,
+                                         EigencoreTranspose op,
+                                         int64_t block_cols,
+                                         const double* X,
+                                         int64_t ldx,
+                                         double alpha,
+                                         double beta,
+                                         double* Y,
+                                         int64_t ldy,
+                                         EigencoreWorkspace* workspace);
+
+// The composite held by an external pointer made by
+// eigencore_composite_operator_build(), or nullptr (wrong tag, or a pointer
+// cleared by serialisation).
+CompositeOperator* eigencore_composite_from_extptr(SEXP ptr);
+int64_t eigencore_composite_rows(const CompositeOperator* composite);
+int64_t eigencore_composite_cols(const CompositeOperator* composite);
+
 #endif

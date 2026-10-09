@@ -485,7 +485,9 @@ test_that("auto uses Lanczos for matrix-free Hermitian operators", {
 
   fit <- eig_partial(op, k = 1, seed = 321)
   expect_equal(values(fit), 4, tolerance = 1e-10)
-  expect_equal(fit$plan$method, "reference Hermitian Lanczos (prototype/oracle fallback)")
+  # Matrix-free Hermitian auto() runs the native restarted callback kernel
+  # (C53); the reference Lanczos does not restart.
+  expect_equal(fit$plan$method, eigencore:::native_matrix_free_block_lanczos_label())
 })
 
 test_that("auto uses native CSC-backed Lanczos for sparse Hermitian matrices", {

@@ -22,6 +22,9 @@ extern "C" SEXP eigencore_csc_apply_repeat(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, S
 extern "C" SEXP eigencore_csc_centered_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_centered_scaled_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_diagonal_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_composite_operator_build(SEXP);
+extern "C" SEXP eigencore_composite_operator_dim(SEXP);
+extern "C" SEXP eigencore_composite_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_native_apply_noalloc_check(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_apply_int_guard_check();
 extern "C" SEXP eigencore_col_norms(SEXP);
@@ -45,8 +48,8 @@ extern "C" SEXP eigencore_golub_kahan_centered_scaled_csc(SEXP, SEXP, SEXP, SEXP
 extern "C" SEXP eigencore_golub_kahan_r_operator(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_dense_fit(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_csc_fit(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
-extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
-extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_irlba_lbd_dense_retained(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_irlba_lbd_csc_retained(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_golub_kahan_dense_basis(SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_golub_kahan_dense_basis_cached(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_golub_kahan_csc_basis(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -62,6 +65,9 @@ extern "C" SEXP eigencore_block_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, 
 extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_thick_restart_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_thick_restart_lanczos_r_operator(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_completeness_probe_dense(SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_completeness_probe_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_completeness_probe_r_operator(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_normal_thick_restart_lanczos_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_normal_thick_restart_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_lobpcg_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -151,6 +157,9 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_csc_centered_block_apply", (DL_FUNC) &eigencore_csc_centered_block_apply, 13},
   {"eigencore_csc_centered_scaled_block_apply", (DL_FUNC) &eigencore_csc_centered_scaled_block_apply, 11},
   {"eigencore_diagonal_block_apply", (DL_FUNC) &eigencore_diagonal_block_apply, 7},
+  {"eigencore_composite_operator_build", (DL_FUNC) &eigencore_composite_operator_build, 1},
+  {"eigencore_composite_operator_dim", (DL_FUNC) &eigencore_composite_operator_dim, 1},
+  {"eigencore_composite_block_apply", (DL_FUNC) &eigencore_composite_block_apply, 6},
   {"eigencore_native_apply_noalloc_check", (DL_FUNC) &eigencore_native_apply_noalloc_check, 4},
   {"eigencore_dense_apply_int_guard_check", (DL_FUNC) &eigencore_dense_apply_int_guard_check, 0},
   {"eigencore_col_norms", (DL_FUNC) &eigencore_col_norms, 1},
@@ -174,8 +183,8 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_golub_kahan_r_operator", (DL_FUNC) &eigencore_golub_kahan_r_operator, 11},
   {"eigencore_golub_kahan_dense_fit", (DL_FUNC) &eigencore_golub_kahan_dense_fit, 9},
   {"eigencore_golub_kahan_csc_fit", (DL_FUNC) &eigencore_golub_kahan_csc_fit, 12},
-  {"eigencore_irlba_lbd_dense_retained", (DL_FUNC) &eigencore_irlba_lbd_dense_retained, 14},
-  {"eigencore_irlba_lbd_csc_retained", (DL_FUNC) &eigencore_irlba_lbd_csc_retained, 17},
+  {"eigencore_irlba_lbd_dense_retained", (DL_FUNC) &eigencore_irlba_lbd_dense_retained, 15},
+  {"eigencore_irlba_lbd_csc_retained", (DL_FUNC) &eigencore_irlba_lbd_csc_retained, 18},
   {"eigencore_block_golub_kahan_dense_basis", (DL_FUNC) &eigencore_block_golub_kahan_dense_basis, 3},
   {"eigencore_block_golub_kahan_dense_basis_cached", (DL_FUNC) &eigencore_block_golub_kahan_dense_basis_cached, 4},
   {"eigencore_block_golub_kahan_csc_basis", (DL_FUNC) &eigencore_block_golub_kahan_csc_basis, 6},
@@ -191,6 +200,9 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_block_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_block_thick_restart_lanczos_dense, 10},
   {"eigencore_block_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_block_thick_restart_lanczos_csc, 13},
   {"eigencore_block_thick_restart_lanczos_r_operator", (DL_FUNC) &eigencore_block_thick_restart_lanczos_r_operator, 11},
+  {"eigencore_completeness_probe_dense", (DL_FUNC) &eigencore_completeness_probe_dense, 3},
+  {"eigencore_completeness_probe_csc", (DL_FUNC) &eigencore_completeness_probe_csc, 6},
+  {"eigencore_completeness_probe_r_operator", (DL_FUNC) &eigencore_completeness_probe_r_operator, 4},
   {"eigencore_normal_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_normal_thick_restart_lanczos_dense, 10},
   {"eigencore_normal_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_normal_thick_restart_lanczos_csc, 13},
   {"eigencore_lobpcg_dense", (DL_FUNC) &eigencore_lobpcg_dense, 10},

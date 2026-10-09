@@ -96,7 +96,9 @@ test_that("maxit maps to each route's own iteration limit", {
     Z <- alpha * (A %*% X)
     if (!is.null(Y) && beta != 0) Z + beta * Y else Z
   }, structure = hermitian())
-  ref <- plan_solver(eigen_problem(op), k = 2L, maxit = 12L)
+  # auto() now routes matrix-free Hermitian operators natively (C53); an
+  # explicit scalar lanczos() still selects the unrestarted reference path.
+  ref <- plan_solver(eigen_problem(op), k = 2L, maxit = 12L, method = lanczos())
   expect_identical(ref$method, "reference Hermitian Lanczos (prototype/oracle fallback)")
   expect_identical(ref$controls$iteration_limit_kind, "lanczos_steps")
   expect_identical(ref$controls$max_subspace, 12L)
