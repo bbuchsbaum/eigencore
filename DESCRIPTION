@@ -39,7 +39,8 @@ Suggests:
     RSpectra,
     irlba,
     rsvd,
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    withr
 VignetteBuilder: knitr
 Config/testthat/edition: 3
 SystemRequirements: C++17
