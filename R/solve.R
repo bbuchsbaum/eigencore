@@ -364,15 +364,19 @@ execute_eigen_plan <- function(plan, restart_preparation = NULL) {
   k <- plan$requested
   vectors_requested <- isTRUE(plan$execution$vectors)
   mode <- target_completeness_mode(plan$method_descriptor)
-  need_vectors <- identical(mode, "probe") &&
+  need_vectors <- !identical(mode, "none") &&
     isTRUE(plan$execution$certify) &&
     identical(target_completeness_route_class(plan, a), "krylov") &&
-    target_completeness_eligible(a, k)
+    (target_completeness_eligible(a, k) ||
+       (mode %in% c("auto", "inertia") && inertia_completeness_eligible(a, k)))
+  started <- proc.time()[["elapsed"]]
   result <- execute_eigen_plan_dispatch(
     plan, restart_preparation = restart_preparation,
     vectors = vectors_requested || need_vectors
   )
-  apply_target_completeness(result, plan, a, k, mode, vectors_requested)
+  solve_seconds <- proc.time()[["elapsed"]] - started
+  apply_target_completeness(result, plan, a, k, mode, vectors_requested,
+                            solve_seconds = solve_seconds)
 }
 
 #' @keywords internal

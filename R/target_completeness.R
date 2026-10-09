@@ -18,8 +18,11 @@
 # returned value (by more than the residual and tolerance margin) is therefore
 # proof that a more-preferred eigenvalue is missing. The converse does not
 # hold: a short Krylov run can fail to resolve an intruder, so a clean probe is
-# evidence, not proof. The deterministic answer is an inertia (LDL')
-# eigenvalue-counting certificate, planned for tranche 5.
+# evidence, not proof. The deterministic answer is the inertia (LDL')
+# eigenvalue-counting certificate in R/completeness_inertia.R, used instead
+# of the probe whenever the operator has an explicit matrix source and the
+# factorisation is affordable (completeness mode "auto"); the probe remains
+# the check for matrix-free operators.
 #
 # When the probe finds an intruder the solve is repaired: the deflated
 # operator P A P (P = I - V V') is solved with the native block Lanczos kernel
@@ -31,7 +34,8 @@
 
 #' @keywords internal
 target_completeness_states <- function() {
-  c("probed", "repaired", "failed", "not_checked", "exact")
+  c("probed", "repaired", "failed", "not_checked", "exact",
+    "inertia_verified", "inertia_failed", "inertia_inconclusive")
 }
 
 #' @keywords internal
@@ -40,18 +44,19 @@ validate_completeness_mode <- function(mode, arg = "completeness") {
     return(NULL)
   }
   if (!is.character(mode) || length(mode) != 1L || is.na(mode) ||
-      !mode %in% c("probe", "none")) {
-    stop(arg, " must be \"probe\" or \"none\".", call. = FALSE)
+      !mode %in% completeness_modes()) {
+    stop(arg, " must be one of \"auto\", \"inertia\", \"probe\" or \"none\".",
+         call. = FALSE)
   }
   mode
 }
 
 # Resolve the completeness mode for a solve: an explicit method descriptor
-# setting wins, then the eigencore.target_completeness option, then "probe".
+# setting wins, then the eigencore.target_completeness option, then "auto".
 #' @keywords internal
 target_completeness_mode <- function(method = NULL) {
   mode <- if (inherits(method, "eigencore_method")) method$completeness else NULL
-  mode <- mode %||% getOption("eigencore.target_completeness", "probe")
+  mode <- mode %||% getOption("eigencore.target_completeness", "auto")
   validate_completeness_mode(mode, "option eigencore.target_completeness")
 }
 
@@ -404,7 +409,9 @@ certificate_with_completeness <- function(certificate, status, record = NULL) {
     probed = TRUE,
     repaired = TRUE,
     exact = TRUE,
+    inertia_verified = TRUE,
     failed = FALSE,
+    inertia_failed = FALSE,
     NA
   )
   certificate$completeness <- record
@@ -414,10 +421,23 @@ certificate_with_completeness <- function(certificate, status, record = NULL) {
       certificate$notes,
       "target completeness probe found a more-preferred eigenvalue outside the returned set that could not be resolved"
     ))
-  } else if (identical(status, "repaired")) {
+  } else if (identical(status, "inertia_failed")) {
+    certificate$passed <- FALSE
     certificate$notes <- unique(c(
       certificate$notes,
-      "target completeness probe found a missing eigenvalue copy; the returned set was repaired by a deflated complement solve"
+      "inertia count proves a more-preferred eigenvalue is missing from the returned set"
+    ))
+  } else if (identical(status, "repaired") ||
+             (identical(status, "inertia_verified") && isTRUE(record$repaired))) {
+    certificate$notes <- unique(c(
+      certificate$notes,
+      "target completeness check found a missing eigenvalue copy; the returned set was repaired by a deflated complement solve"
+    ))
+  } else if (identical(status, "inertia_inconclusive")) {
+    certificate$notes <- unique(c(
+      certificate$notes,
+      paste0("inertia completeness check inconclusive: ",
+             record$reason %||% "no reliable separation")
     ))
   }
   certificate
@@ -470,9 +490,24 @@ target_completeness_eligible <- function(problem, k) {
 
 # Post-dispatch hook for execute_eigen_plan(): probe eligible Krylov results,
 # label full-spectrum results, and leave others "not_checked".
+# Is a real Hermitian result (standard, or generalized with SPD B) eligible
+# for the inertia certificate? The matrix-source and cost checks are in
+# inertia_completeness_gate().
+#' @keywords internal
+inertia_completeness_eligible <- function(problem, k) {
+  op <- problem$A
+  inherits(op, "eigencore_operator") &&
+    identical(op$structure$kind, "hermitian") &&
+    identical(op$dtype %||% "double", "double") &&
+    !is.null(inertia_completeness_kind(problem$target)) &&
+    k < op$dim[[1L]] &&
+    (is.null(problem$metric) || isTRUE(tryCatch(
+      generalized_spd_metric_known(problem$metric), error = function(e) FALSE)))
+}
+
 #' @keywords internal
 apply_target_completeness <- function(result, plan, problem, k, mode,
-                                      vectors_requested) {
+                                      vectors_requested, solve_seconds = NA_real_) {
   cert <- result$certificate
   if (is.null(cert) || !is.null(cert$target_completeness)) {
     if (!isTRUE(vectors_requested)) {
@@ -482,12 +517,31 @@ apply_target_completeness <- function(result, plan, problem, k, mode,
   }
   route <- target_completeness_route_class(plan, problem)
   certify <- isTRUE(plan$execution$certify)
+  krylov_ok <- identical(route, "krylov") && certify &&
+    isTRUE(cert$passed) &&
+    is.numeric(result$values) && !is.complex(result$values) &&
+    length(result$values) == k
+  gate <- NULL
+  if (!identical(route, "exact") && mode %in% c("auto", "inertia") && krylov_ok &&
+      inertia_completeness_eligible(problem, k)) {
+    gate <- inertia_completeness_gate(problem, mode, k, solve_seconds = solve_seconds)
+    if (isTRUE(gate$use)) {
+      check <- inertia_completeness_run(
+        problem, result$values, result$vectors, cert,
+        tol = cert$tolerance %||% plan$execution$tol,
+        ctx = gate$ctx, gate = gate
+      )
+      result <- result_with_completeness(result, check, problem, plan)
+      if (!isTRUE(vectors_requested)) {
+        result["vectors"] <- list(NULL)
+      }
+      return(result)
+    }
+  }
   if (identical(route, "exact")) {
     result$certificate <- certificate_with_completeness(cert, "exact")
-  } else if (identical(mode, "probe") && identical(route, "krylov") && certify &&
-             isTRUE(cert$passed) && !is.null(result$vectors) &&
-             is.numeric(result$values) && !is.complex(result$values) &&
-             length(result$values) == k &&
+  } else if (mode %in% c("auto", "inertia", "probe") && krylov_ok &&
+             !is.null(result$vectors) &&
              target_completeness_eligible(problem, k)) {
     started <- proc.time()[["elapsed"]]
     check <- target_completeness_check(
@@ -497,9 +551,17 @@ apply_target_completeness <- function(result, plan, problem, k, mode,
       norm_scale = cert$scale
     )
     check$record$seconds <- proc.time()[["elapsed"]] - started
+    if (!is.null(gate)) {
+      check$record$inertia_gate <- gate$reason
+      check$record$inertia_predicted_seconds <- gate$predicted_seconds
+    }
     result <- result_with_completeness(result, check, problem, plan)
   } else {
-    result$certificate <- certificate_with_completeness(cert, "not_checked")
+    result$certificate <- certificate_with_completeness(
+      cert, "not_checked",
+      if (is.null(gate)) NULL else list(inertia_gate = gate$reason,
+                                        inertia_predicted_seconds = gate$predicted_seconds)
+    )
   }
   if (!isTRUE(vectors_requested)) {
     result["vectors"] <- list(NULL)
@@ -540,12 +602,23 @@ result_with_completeness <- function(result, check, problem, plan) {
         ") outside the returned set; certificate withheld"
       )
     )
-  } else if (identical(check$status, "repaired")) {
+  } else if (identical(check$status, "inertia_failed")) {
+    result$warnings <- c(
+      result$warnings,
+      paste0(
+        "inertia count proves an eigenvalue more preferred than the returned edge is ",
+        "missing (", record$reason %||% "count mismatch", "); certificate withheld"
+      )
+    )
+  } else if (identical(check$status, "repaired") ||
+             (identical(check$status, "inertia_verified") && isTRUE(record$repaired))) {
     result$warnings <- c(
       result$warnings,
       "target completeness probe found a missing eigenvalue copy; result repaired by a deflated complement solve"
     )
   }
+  record$operator_block_calls <- record$operator_block_calls %||% 0L
+  record$operator_columns <- record$operator_columns %||% 0L
   result$operator_block_calls <- as.integer(
     (result$operator_block_calls %||% 0L) + record$operator_block_calls +
       (extra_cert_columns > 0L)
