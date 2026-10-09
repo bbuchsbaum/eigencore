@@ -37,7 +37,7 @@
   definite factor at 0 (or slightly below 0 for a singular PSD matrix) and
   otherwise falls back to the Lanczos route (`fallback_reason$code ==
   "spd_shift_rejected"`). `options(eigencore.smallest_ldl_route = FALSE)`
-  disables the route. BENCH_C60
+  disables the route. 2-D Laplacian n = 250000, k = 10 (CPU seconds, best of 2, machine under heavy external load): Lanczos route 150 s and uncertified (error 3.5e-4) -> 12.7 s certified with `inertia_verified` (RSpectra `sigma = 0`: 4.3 s, no certificate).
 * Shift-invert Lanczos applies the sparse \(LDL^T\) solve natively (a
   native composite-kernel leaf calling CHOLMOD's `cholmod_solve2` through
   the ABI-guarded Matrix C API, or eigencore's own triangular solves on the
@@ -46,7 +46,11 @@
   `R (A - sigma B)^{-1} R'`. A shift below the Gershgorin bound is factored
   with a supernodal \(LL^T\) (converted to simplicial \(LDL^T\)), which is
   2-3 times faster than the simplicial \(LDL^T\) and proves positive
-  definiteness. BENCH_NATIVE
+  definiteness. On the 2-D Laplacian n = 250000 (`shift_invert(0)`, k = 10)
+  the native solve did not measurably change total CPU time (the Lanczos
+  steps are dominated by the triangular solves themselves); the remaining gap
+  to RSpectra (6.6 s without the completeness count vs 4.3 s) is the
+  factorisation, its validation probe and the certificate.
 * The shift-invert factor and its inertia at `sigma` seed the inertia
   completeness certificate (symbolic analysis reused by `Matrix::update()`,
   a count at `sigma` itself is free; `completeness$reused_symbolic`,

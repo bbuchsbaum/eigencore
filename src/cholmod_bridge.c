@@ -11,6 +11,7 @@
  * so the R layer can refuse the bridge (and fall back to a heuristic) when a
  * different Matrix ABI / SuiteSparse is loaded at run time.
  */
+#include <stdlib.h>
 #include <Rinternals.h>
 #include <R_ext/Rdynload.h>
 #include <Matrix/Matrix.h>
@@ -75,9 +76,6 @@ SEXP eigencore_cholmod_analyze(SEXP A_) {
  * protects its spec, which holds the factor). Only built after the R layer
  * has checked the run-time Matrix ABI (cholmod_bridge_available()).
  */
-#include <stdlib.h>
-#include <string.h>
-
 typedef struct {
   cholmod_common c;
   cholmod_factor L;
