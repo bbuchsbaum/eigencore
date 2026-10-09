@@ -17,8 +17,14 @@
   C60 (random sparse n = 20000, largest_magnitude k = 6 missed the
   largest-modulus conjugate pair; now repaired). Options
   `eigencore.nonsym_probe_wanted` (6), `eigencore.nonsym_probe_subspace`
-  (60), `eigencore.nonsym_probe_exhaust` (64) and
-  `eigencore.nonsym_probe_restarts` (1000) tune the probe.
+  (60), `eigencore.nonsym_probe_exhaust` (64),
+  `eigencore.nonsym_probe_restarts` (1000) and
+  `eigencore.nonsym_probe_screen_tol` (1e-4, the tolerance of a first
+  screening pass) tune the probe. The probe costs roughly one more
+  Krylov-Schur solve on hard (clustered) spectra; a 20000 x 20000 sparse
+  `largest_magnitude()` k = 6 solve went from 8.7 s to 16.2 s (C60,
+  repaired) and a dense 1500 `largest_real()` k = 10 solve from 6.6 s to
+  6.9 s (single thread).
 
 ## Interval targets and spectrum slicing
 

@@ -75,6 +75,12 @@ nonsym_completeness_controls <- function() {
     subspace = as_count(getOption("eigencore.nonsym_probe_subspace"), 60L, 3L),
     exhaust = as_count(getOption("eigencore.nonsym_probe_exhaust"), 64L, 0L),
     restarts = as_count(getOption("eigencore.nonsym_probe_restarts"), 1000L, 1L),
+    # Screening tolerance of the first (clean-verdict) probe pass.
+    screen_tol = {
+      value <- suppressWarnings(as.numeric(
+        getOption("eigencore.nonsym_probe_screen_tol", 1e-4)))
+      if (length(value) != 1L || !is.finite(value) || value <= 0) 1e-4 else value
+    },
     max_rounds = as_count(getOption("eigencore.completeness_max_rounds"), 3L, 0L)
   )
 }
@@ -398,40 +404,70 @@ nonsym_completeness_check <- function(op, values, vectors, target, tol,
     record$invariance_defect <- basis$coupling
     edge <- min(nonsym_completeness_key(values, kind))
     record$edge <- edge
-    probe <- if (ncol(Q) >= op$dim[[1L]]) {
-      # The returned subspace is the whole space: the complement is empty.
-      list(theta = complex(), residuals = numeric(),
-           basis = matrix(0, op$dim[[1L]], 0L), converged = TRUE,
-           exhausted = TRUE, matvecs = 0L, restarts = 0L, subspace = 0L)
-    } else {
-      nonsym_deflated_probe(op, Q, kind, tol, controls, stream = round)
-    }
-    record$subspace <- probe$subspace
-    record$restarts <- record$restarts + probe$restarts
-    record$operator_columns <- record$operator_columns + probe$matvecs
-    record$operator_block_calls <- record$operator_block_calls + probe$matvecs
-    record$probe_converged <- probe$converged
-    record$exhausted <- probe$exhausted
     # Candidates: the complement Ritz values, and the eigenvalues of T that no
     # returned value claimed (conjugate partners of returned complex values,
     # deflated with them; for imaginary-part targets a partner can be more
-    # preferred than the returned edge).
-    theta <- c(as.complex(basis$unmatched), as.complex(probe$theta))
-    theta_res <- c(rep(0, length(basis$unmatched)), probe$residuals)
-    margin <- nonsym_completeness_margin(values, theta, tol, basis$coupling,
-                                         norm_scale)
+    # preferred than the returned edge). A suspect must lie beyond the edge by
+    # the margin plus its own Ritz residual.
+    assess <- function(probe) {
+      theta <- c(as.complex(basis$unmatched), as.complex(probe$theta))
+      theta_res <- c(rep(0, length(basis$unmatched)), probe$residuals)
+      margin <- nonsym_completeness_margin(values, theta, tol, basis$coupling,
+                                           norm_scale)
+      key <- nonsym_completeness_key(theta, kind)
+      suspect <- key > edge + margin + theta_res
+      theta_scale <- pmax(Mod(theta), .Machine$double.eps^(1 / 3) *
+                            max(c(Mod(theta), 1e-300)))
+      converged <- theta_res <= max(tol, 100 * .Machine$double.eps) * theta_scale
+      list(theta = theta, margin = margin, key = key, suspect = suspect,
+           confirmed = suspect & converged)
+    }
+    run_probe <- function(probe_tol, restarts = controls$restarts) {
+      probe_controls <- controls
+      probe_controls$restarts <- restarts
+      probe <- if (ncol(Q) >= op$dim[[1L]]) {
+        # The returned subspace is the whole space: the complement is empty.
+        list(theta = complex(), residuals = numeric(),
+             basis = matrix(0, op$dim[[1L]], 0L), converged = TRUE,
+             exhausted = TRUE, matvecs = 0L, restarts = 0L, subspace = 0L)
+      } else {
+        nonsym_deflated_probe(op, Q, kind, probe_tol, probe_controls, stream = round)
+      }
+      record$subspace <<- probe$subspace
+      record$restarts <<- record$restarts + probe$restarts
+      record$operator_columns <<- record$operator_columns + probe$matvecs
+      record$operator_block_calls <<- record$operator_block_calls + probe$matvecs
+      record$probe_converged <<- probe$converged
+      record$exhausted <<- probe$exhausted
+      probe
+    }
+    # Screen at a loose tolerance with a short restart budget (a clean
+    # verdict only needs the complement values resolved to within the gap);
+    # re-run at the solve tolerance when the screen finds a suspect (so a
+    # repair merges accurate complement vectors) or does not converge (the
+    # Krylov-Schur restart selection can stagnate at a loose tolerance on
+    # heavily tied keys, e.g. imaginary-part targets over a real complement).
+    loose_tol <- max(tol, min(sqrt(tol), controls$screen_tol))
+    screened <- loose_tol > tol
+    probe <- run_probe(loose_tol, if (screened) min(controls$restarts, 100L) else controls$restarts)
+    verdict <- assess(probe)
+    if (screened && !isTRUE(probe$exhausted) &&
+        (any(verdict$suspect) || !isTRUE(probe$converged))) {
+      probe <- run_probe(tol)
+      verdict <- assess(probe)
+      screened <- FALSE
+    }
+    theta <- verdict$theta
+    margin <- verdict$margin
+    suspect <- verdict$suspect
+    confirmed <- verdict$confirmed
     record$margin <- margin
-    key <- nonsym_completeness_key(theta, kind)
+    record$probe_tolerance <- if (screened) loose_tol else tol
     record$most_preferred_complement <- if (length(theta)) {
-      theta[[which.max(key)]]
+      theta[[which.max(verdict$key)]]
     } else {
       NA_complex_
     }
-    suspect <- key > edge + margin + theta_res
-    theta_scale <- pmax(Mod(theta), .Machine$double.eps^(1 / 3) *
-                          max(c(Mod(theta), 1e-300)))
-    converged_theta <- theta_res <= max(tol, 100 * .Machine$double.eps) * theta_scale
-    confirmed <- suspect & converged_theta
     if (!any(suspect)) {
       status <- if (!probe$converged) "inconclusive" else if (repaired) "repaired" else "probed"
       if (!probe$converged) {
