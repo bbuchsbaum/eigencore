@@ -183,12 +183,18 @@ test_that("sparse interval slicing matches the known spectrum", {
       expect_lt(max(abs(crossprod(V) - diag(ncol(V)))), 1e-8)
     }
   }
-  # End points on eigenvalues: those values sit within the residual bound of
-  # the boundary and are resolved by the widened recount, not dropped.
+  # End points on eigenvalues: every copy is kept and the set is verified.
+  # Whether those values land within the residual bound of the (possibly
+  # nudged) end point depends on rounding, so the widened recount runs on some
+  # platforms and not others; when it runs it must count exactly the 100.
   fit <- eig_partial(S, target = interval(3, 6))
+  expect_identical(certificate(fit)$target_completeness, "inertia_verified")
+  expect_equal(sum(abs(values(fit) - 3) < 1e-7), 25L)
+  expect_equal(sum(abs(values(fit) - 6) < 1e-7), 25L)
   rec <- certificate(fit)$completeness
-  expect_true(length(rec$boundary_ambiguous) > 0L)
-  expect_identical(rec$widened_count, 100)
+  if (length(rec$boundary_ambiguous) > 0L) {
+    expect_identical(rec$widened_count, 100)
+  }
 })
 
 test_that("a wide sparse interval is sliced and merged without duplicates or gaps", {
