@@ -1,0 +1,103 @@
+# AddressSanitizer + UndefinedBehaviorSanitizer run of the full test suite.
+#
+# Approach (see docs/test-assurance.md, "Native code assurance"): R itself is
+# the stock (uninstrumented) build from setup-r; only eigencore's C++ is
+# compiled with -fsanitize=address,undefined through the Makevars hooks
+# EIGENCORE_SANITIZER_CXXFLAGS / EIGENCORE_SANITIZER_LIBS (make reads them
+# from the environment). Because R is not linked against libasan, the ASan
+# runtime must be the first library loaded, so every R process that loads the
+# package runs with LD_PRELOAD=$(gcc -print-file-name=libasan.so).
+#
+# ASAN_OPTIONS:
+#   allocator_may_return_null=1  the suite deliberately requests absurd sizes
+#                                (C10 unwind tests); ASan would abort instead
+#                                of returning NULL / throwing std::bad_alloc.
+#   detect_leaks                 0 for the main run; the leak job turns it on
+#                                (R does not leak at exit, so LeakSanitizer
+#                                reports are actionable).
+# UBSan runs with -fno-sanitize-recover=undefined, so any UB aborts the test
+# process and the job fails.
+#
+# The suite runs twice under ASan, with options(eigencore.threads = 1) and
+# = 4 (EIGENCORE_TEST_THREADS, read by tests/testthat/helper-native-assurance.R),
+# so both the serial and the OpenMP branches of the sparse kernels are checked.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"  # Mondays 04:17 UTC
+
+name: sanitizers.yaml
+
+permissions: read-all
+
+jobs:
+  asan-ubsan:
+    runs-on: ubuntu-latest
+    name: ASan/UBSan (${{ matrix.threads }} thread(s), leaks=${{ matrix.leaks }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {threads: 1, leaks: 0}
+          - {threads: 4, leaks: 0}
+          - {threads: 2, leaks: 1}
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      NOT_CRAN: "true"
+      EIGENCORE_TEST_THREADS: ${{ matrix.threads }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::testthat, any::RSpectra, any::irlba
+          needs: check
+
+      - name: Install eigencore with ASan/UBSan
+        env:
+          EIGENCORE_SANITIZER_CXXFLAGS: >-
+            -fsanitize=address,undefined -fno-omit-frame-pointer
+            -fno-sanitize-recover=undefined -g
+          EIGENCORE_SANITIZER_LIBS: -fsanitize=address,undefined
+        run: |
+          mkdir -p "$RUNNER_TEMP/sanlib"
+          R CMD INSTALL --preclean --no-test-load \
+            --library="$RUNNER_TEMP/sanlib" .
+          # The shared object must link the sanitizer runtimes.
+          ldd "$RUNNER_TEMP/sanlib/eigencore/libs/eigencore.so" | grep -E 'libasan|libubsan'
+
+      - name: Run native smoke, entry-point script and full test suite
+        run: |
+          export R_LIBS="$RUNNER_TEMP/sanlib"
+          export LD_PRELOAD="$(gcc -print-file-name=libasan.so)"
+          export ASAN_OPTIONS="detect_leaks=${{ matrix.leaks }}:abort_on_error=1:allocator_may_return_null=1"
+          export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
+          export EIGENCORE_ENTRY_THREADS="${{ matrix.threads }}"
+          Rscript inst/validation/native-smoke.R
+          Rscript inst/validation/native-entry-points.R
+          Rscript -e '
+            library(eigencore)
+            res <- testthat::test_dir("tests/testthat", package = "eigencore",
+                                      load_package = "installed",
+                                      reporter = testthat::ProgressReporter$new(show_praise = FALSE),
+                                      stop_on_failure = TRUE)
+          ' 2>&1 | tee "$RUNNER_TEMP/sanitizer-tests.log"
+          # A sanitizer report aborts the process (and a LeakSanitizer report
+          # makes R exit non-zero); double-check the log for ASan/UBSan text.
+          # LeakSanitizer reports are not grepped: the R front-end shell
+          # script runs sed under LD_PRELOAD and sed leaks one byte.
+          ! grep -E "ERROR: AddressSanitizer|runtime error:" "$RUNNER_TEMP/sanitizer-tests.log"
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitizer-log-${{ matrix.threads }}-${{ matrix.leaks }}
+          path: ${{ runner.temp }}/sanitizer-tests.log
+          if-no-files-found: ignore
