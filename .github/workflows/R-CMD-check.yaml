@@ -64,7 +64,7 @@ jobs:
             writeLines(c(
               sprintf(".libPaths(c(%s, .libPaths()))", deparse(lib)),
               "suppressMessages(library(testthat))",
-              sprintf(paste0("r <- as.data.frame(test_file(%s, reporter = 'silent', ",
+              sprintf(paste0("r <- as.data.frame(test_file(%s, reporter = 'summary', ",
                              "package = 'eigencore', load_package = 'installed'))"),
                       deparse(normalizePath(f))),
               "cat('failed', sum(r$failed), 'errors', sum(r$error), '\\n')"
@@ -74,5 +74,7 @@ jobs:
             if (is.null(status)) status <- 0L
             cat(sprintf("%-40s status=%s %s\n", basename(f), status,
                         paste(utils::tail(out, 1), collapse = "")))
-            if (status != 0L) cat(utils::tail(out, 40), sep = "\n")
+            if (status != 0L || !any(grepl("failed 0 errors 0", out, fixed = TRUE))) {
+              cat(utils::tail(out, 80), sep = "\n")
+            }
           }
