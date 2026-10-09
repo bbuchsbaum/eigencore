@@ -109,6 +109,12 @@ suite_environment <- function(repo_dir = NULL, profile = NA_character_, args = l
     eigencore_built = if (!is.null(ec_desc)) ec_desc$Built %||% NA_character_ else NA_character_,
     eigencore_remote_sha = if (!is.null(ec_desc)) ec_desc$RemoteSha %||% NA_character_ else NA_character_,
     git_sha = git$sha,
+    # fingerprint of the suite's own code (run-suite.R + suite/*.R), so a
+    # result set identifies the exact harness even when it was uncommitted
+    suite_md5 = if (!is.null(repo_dir)) substr(suite_md5_string(paste(unname(tools::md5sum(
+      c(file.path(repo_dir, "inst", "benchmarks", "run-suite.R"),
+        sort(list.files(file.path(repo_dir, "inst", "benchmarks", "suite"), full.names = TRUE)))
+    )), collapse = "")), 1L, 12L) else NA_character_,
     git_dirty_package_sources = git$dirty,
     packages = as.list(stats::setNames(vapply(pkgs, suite_pkg_version, character(1)), pkgs)),
     loadavg_start = suite_loadavg(),

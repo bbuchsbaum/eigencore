@@ -89,7 +89,9 @@ suite_scaling_cases <- function() {
   out <- list()
   add <- function(x) out[[length(out) + 1L]] <<- x
   # n sweep, random sparse symmetric, 5 nnz/row, LA k=10
-  for (n in c(2500L, 5000L, 10000L, 20000L, 40000L, 80000L)) {
+  # (Matrix::rsparsematrix(symmetric = TRUE) allocates O(n^2) workspace, so the
+  # sweep stops at 40000.)
+  for (n in c(2500L, 5000L, 10000L, 20000L, 40000L)) {
     add(suite_case(sprintf("scale_n_sym_sparse_n%d_LA_k10", n), "sym_sparse", "sym", "LA", 10,
                    local({ nn <- n; function() gen_sparse_sym(nn, 5, seed = 201L) }), seed = 201L,
                    group = "scaling_n", sweep = "n", sweep_value = n))

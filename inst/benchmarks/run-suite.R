@@ -144,6 +144,7 @@ suite_case_info <- function(case, prob, ref) {
     reference_source = ref$source %||% NA_character_,
     reference_crosscheck = ref$crosscheck %||% NA_real_,
     reference_backward_error = ref$reference_backward_error %||% NA_real_,
+    reference_ambiguous = isTRUE(ref$ambiguous),
     reference_seconds = ref$seconds %||% NA_real_,
     norm2 = ref$norm2 %||% NA_real_, norm2_source = ref$norm2_source %||% NA_character_,
     normB = ref$normB %||% NA_real_,

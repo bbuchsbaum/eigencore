@@ -16,15 +16,18 @@
 #                  Golub-Kahan-Lanczos estimate), not by a lower bound.
 #   orthogonality  max |X' X - I| (X' B X - I for generalized; U and V for SVD)
 #   values         matched against a trusted reference: the analytic spectrum
-#                  when known, dense LAPACK when feasible, otherwise the most
-#                  accurate certified iterative result (RSpectra and eigencore
-#                  at tol ~1e-13, cross-checked against each other).
+#                  when known, dense LAPACK when feasible, otherwise a
+#                  tight certified iterative reference (see
+#                  suite_certified_reference()), cross-checked.
 #                  value_err = max_i |lambda_i - lambda_ref_i| / (||A||_2 + |lambda_ref_i| ||B||_2)
 #   target_ok      the method returned k values and every reference value in
 #                  the target set was matched within a gap-aware tolerance
 #                  tau = clamp(gap/2, 1e-10, 1e-6) (gap = smallest scaled gap
 #                  between distinct reference values, including the first
 #                  values outside the target set).
+
+# Bump when the reference computation changes (part of the cache key).
+SUITE_REFERENCE_VERSION <- 3L
 
 # Operator closures for A (with optional column centring).
 suite_ops <- function(prob) {
@@ -100,7 +103,7 @@ suite_target_sort <- function(values, case, extra = 0L) {
 # ---- references ---------------------------------------------------------
 
 suite_reference <- function(case, prob, cache_dir = NULL, verbose = TRUE) {
-  key <- paste0(case$id, "-g", SUITE_GENERATOR_VERSION, "-",
+  key <- paste0(case$id, "-g", SUITE_GENERATOR_VERSION, "-r", SUITE_REFERENCE_VERSION, "-",
                 substr(suite_md5_string(suite_fingerprint(prob$A)), 1L, 10L))
   cache_file <- if (!is.null(cache_dir)) file.path(cache_dir, paste0(key, ".rds")) else NULL
   if (!is.null(cache_file) && file.exists(cache_file)) {
@@ -145,6 +148,7 @@ suite_compute_reference <- function(case, prob) {
   source <- NULL
   crosscheck <- NA_real_
   ref_be <- NA_real_
+  ambiguous <- FALSE
   nrm <- NULL
 
   if (!is.null(prob$exact)) {
@@ -194,68 +198,93 @@ suite_compute_reference <- function(case, prob) {
     source <- cert$source
     crosscheck <- cert$crosscheck
     ref_be <- cert$backward_error
+    ambiguous <- cert$ambiguous
   }
 
   list(values = vals, source = source, norm2 = nrm$value, norm2_source = nrm$source,
        normB = normB, normB_source = normB_source, crosscheck = crosscheck,
-       reference_backward_error = ref_be, fingerprint = suite_fingerprint(A))
+       reference_backward_error = ref_be, ambiguous = ambiguous,
+       fingerprint = suite_fingerprint(A))
 }
 
-# Tight iterative reference: RSpectra (primary, independent of eigencore) and
-# eigencore at a tight tolerance; the one with the smaller independent
-# backward error wins and the other provides a cross-check.
+# Tight iterative reference when no analytic or dense reference is feasible.
+#
+# Candidates: RSpectra at tol 1e-13 asking for k+10 values with a large
+# subspace, RSpectra again asking for k+20 values with an even larger one
+# (extremal sets with nearly equal keys, e.g. the circular-law edge of a random
+# nonsymmetric matrix, are only found reliably that way), and eigencore at tol
+# 1e-12. Every candidate is verified with the independent backward error;
+# among the accurate ones (<= 1e-9) the one whose k wanted values are most
+# extreme for the target wins: a value with a tiny backward error is a genuine
+# eigenvalue, so a set that reaches further cannot be wrong where a set that
+# stops short can have skipped values. Disagreement between candidates is
+# recorded as `crosscheck` (scaled value distance of the top k).
 suite_certified_reference <- function(case, prob, extra, norm2, normB) {
-  kk <- case$k + extra
+  k <- case$k
   tight <- 1e-13
-  tcase <- case
-  tcase$k <- kk
+  fake_ref <- list(norm2 = norm2, normB = normB, values = NULL)
+  rs_run <- function(kk, ncv) {
+    A <- prob$A
+    o <- list(tol = tight, maxitr = 20000L, ncv = min(ncv, min(dim(A)) - 1L))
+    suite_set_seed(case$seed)
+    res <- switch(case$task,
+      sym = RSpectra::eigs_sym(A, kk, which = if (case$target == "near") "LM" else case$target,
+                               sigma = if (case$target == "near") case$sigma else NULL, opts = o),
+      nonsym = RSpectra::eigs(A, kk, which = "LM", opts = o),
+      svd = if (is.null(prob$mu)) RSpectra::svds(A, kk, nu = kk, nv = kk, opts = o) else {
+        mu <- prob$mu
+        RSpectra::svds(function(x, args) as.numeric(A %*% x) - sum(mu * x), kk, nu = kk, nv = kk,
+                       Atrans = function(y, args) as.numeric(Matrix::crossprod(A, y)) - mu * sum(y),
+                       dim = dim(A), opts = o)
+      })
+    if (case$task == "svd") suite_std(values = res$d, u = res$u, v = res$v)
+    else suite_std(values = res$values, vectors = res$vectors)
+  }
   cands <- list()
   if (requireNamespace("RSpectra", quietly = TRUE) && case$task != "gen") {
-    ad <- suite_adapter_rspectra(tcase, prob, tight)
-    ad$run_tight <- function() {
-      A <- prob$A
-      ncv <- max(2L * kk + 1L, 40L)
-      o <- list(tol = tight, maxitr = 20000L, ncv = ncv)
-      suite_set_seed(case$seed)
-      switch(case$task,
-             sym = RSpectra::eigs_sym(A, kk, which = if (case$target == "near") "LM" else case$target,
-                                      sigma = if (case$target == "near") case$sigma else NULL, opts = o),
-             nonsym = RSpectra::eigs(A, kk, which = "LM", opts = o),
-             svd = if (is.null(prob$mu)) RSpectra::svds(A, kk, nu = kk, nv = kk, opts = o) else {
-               mu <- prob$mu
-               RSpectra::svds(function(x, args) as.numeric(A %*% x) - sum(mu * x), kk, nu = kk, nv = kk,
-                              Atrans = function(y, args) as.numeric(Matrix::crossprod(A, y)) - mu * sum(y),
-                              dim = dim(A), opts = o)
-             })
-    }
-    res <- tryCatch(ad$extract(ad$run_tight()), error = function(e) NULL)
-    if (!is.null(res)) cands$RSpectra <- res
+    k1 <- k + max(extra, 10L)
+    k2 <- k + 20L
+    r1 <- tryCatch(rs_run(k1, max(3L * k1, 60L)), error = function(e) NULL)
+    if (!is.null(r1)) cands[[sprintf("RSpectra(k=%d, tol=%g)", k1, tight)]] <- r1
+    r2 <- tryCatch(rs_run(k2, max(4L * k2, 100L)), error = function(e) NULL)
+    if (!is.null(r2)) cands[[sprintf("RSpectra(k=%d, tol=%g)", k2, tight)]] <- r2
   }
   if (requireNamespace("eigencore", quietly = TRUE)) {
+    tcase <- case
+    tcase$k <- k + max(extra, 10L)
     ad <- suite_adapter_eigencore(tcase, prob, 1e-12)
     res <- tryCatch(ad$extract(ad$run()), error = function(e) NULL)
-    if (!is.null(res)) cands$eigencore <- res
+    if (!is.null(res)) cands[[sprintf("eigencore(k=%d, tol=1e-12)", tcase$k)]] <- res
   }
   if (!length(cands)) stop("no method available to compute a reference")
-  fake_ref <- list(norm2 = norm2, normB = normB, values = NULL)
-  bes <- vapply(cands, function(r) {
-    acc <- suite_accuracy(tcase, prob, r, fake_ref)
-    if (length(r$values) < kk) Inf else acc$max_backward_error
-  }, numeric(1))
-  best <- names(which.min(bes))
-  vals <- suite_target_sort(cands[[best]]$values, tcase)
-  cross <- NA_real_
-  if (length(cands) == 2L) {
-    other <- setdiff(names(cands), best)
-    ov <- suite_target_sort(cands[[other]]$values, tcase)
-    m <- min(length(ov), case$k)
-    if (m > 0) cross <- suite_match_values(ov[seq_len(m)], vals[seq_len(case$k)], norm2, normB)$err
-  }
+  info <- lapply(cands, function(r) {
+    tc <- case
+    tc$k <- length(r$values)
+    acc <- suite_accuracy(tc, prob, r, fake_ref)
+    vals <- suite_target_sort(r$values, tc)
+    list(vals = vals, be = acc$max_backward_error,
+         score = if (length(vals) >= k) sum(suite_target_key(vals[seq_len(k)], case)) else Inf)
+  })
+  be <- vapply(info, `[[`, numeric(1), "be")
+  score <- vapply(info, `[[`, numeric(1), "score")
+  ok <- is.finite(be) & be <= 1e-9 & is.finite(score)
+  if (!any(ok)) ok <- is.finite(score)
+  best <- names(cands)[ok][which.min(score[ok])]
+  vals <- info[[best]]$vals
+  others <- setdiff(names(cands), best)
+  cross <- if (length(others)) max(vapply(others, function(o) {
+    ov <- info[[o]]$vals
+    m <- min(length(ov), k)
+    if (m == 0) return(Inf)
+    suite_match_values(ov[seq_len(m)], vals[seq_len(k)], norm2, normB)$err
+  }, numeric(1))) else NA_real_
   list(values = vals,
-       source = sprintf("certified iterative: %s at tol %g (independent backward error %.1e)%s", best,
-                        if (best == "RSpectra") tight else 1e-12, bes[[best]],
-                        if (length(cands) == 2L) sprintf("; cross-checked against %s", setdiff(names(cands), best)) else ""),
-       crosscheck = cross, backward_error = bes[[best]])
+       source = sprintf("certified iterative: %s, independent backward error %.1e; candidates %s; max top-k disagreement %.1e",
+                        best, be[[best]],
+                        paste(sprintf("%s (bwd %.1e)", names(cands), be), collapse = ", "), cross),
+       crosscheck = cross, backward_error = be[[best]],
+       # No candidate was accurate: there is no trusted reference.
+       ambiguous = !any(is.finite(be) & be <= 1e-9))
 }
 
 # Greedy nearest matching: each computed value (in the order given) takes the
@@ -383,6 +412,8 @@ suite_accuracy <- function(case, prob, std, ref) {
     out$value_rel_err <- mv$rel
     out$target_tau <- tau
     out$target_ok <- length(lam) >= k_ref && is.finite(mv$err) && mv$err <= tau && isTRUE(in_target)
+    # No trusted reference set: report the value error, but no verdict.
+    if (isTRUE(ref$ambiguous)) out$target_ok <- NA
   }
   out
 }

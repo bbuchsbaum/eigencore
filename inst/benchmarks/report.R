@@ -14,6 +14,8 @@
 #
 # or from the shell:  Rscript inst/benchmarks/report.R <run-dir> [<run-dir> ...]
 
+if (!exists("%||%")) `%||%` <- function(x, y) if (is.null(x) || length(x) == 0L) y else x
+
 bench_methods_order <- c("eigencore", "RSpectra", "irlba", "PRIMME", "base")
 
 bench_results_root <- function(start = getwd()) {
@@ -82,10 +84,10 @@ bench_fmt_ratio <- function(x) ifelse(is.finite(x), sprintf("%.2f", x), "-")
 
 # Quality flag for a result row: "" (accurate, right target set),
 # "†" (wrong / incomplete target set) or "‡" (backward error > 1e-6).
-bench_flag <- function(r) {
+bench_flag <- function(r, marks = c("\u2020", "\u2021")) {
   ifelse(r$status != "ok", "",
-  ifelse(!is.na(r$target_ok) & !r$target_ok, "†",
-  ifelse(is.finite(r$max_backward_error) & r$max_backward_error > 1e-6, "‡", "")))
+  ifelse(!is.na(r$target_ok) & !r$target_ok, marks[[1L]],
+  ifelse(is.finite(r$max_backward_error) & r$max_backward_error > 1e-6, marks[[2L]], "")))
 }
 
 bench_rows <- function(res, threads = NULL, run_id = NULL) {
@@ -116,8 +118,6 @@ bench_wide <- function(r, value_fun, methods = NULL) {
   }
   out
 }
-
-if (!exists("%||%")) `%||%` <- function(x, y) if (is.null(x) || length(x) == 0L) y else x
 
 # Median wall time per method (status/quality flags appended).
 bench_time_table <- function(res, threads = NULL, methods = NULL, run_id = NULL) {
@@ -198,11 +198,11 @@ bench_env_table <- function(res) {
 bench_env_line <- function(res, id = names(res$env)[1L]) {
   e <- res$env[[id]]
   p <- e$packages %||% list()
-  sprintf("%s; %s, %s logical cores; R %s; %s; eigencore %s (%s); RSpectra %s, irlba %s; median of %s reps; load average %.1f at start; run `%s`.",
+  sprintf("%s; %s, %s logical cores; R %s; %s; eigencore %s (%s); RSpectra %s, irlba %s; median of %s reps; load average %.1f at start, %.1f at end; run `%s`.",
           sub("T.*", "", e$timestamp_utc %||% ""), e$cpu_model %||% "?", e$cores_logical %||% "?",
           sub("R version ([^ ]+).*", "\\1", e$r_version %||% "?"), e$blas_vendor %||% "?",
           p$eigencore %||% "?", e$git_sha %||% "?", p$RSpectra %||% "-", p$irlba %||% "-",
-          e$reps %||% "?", (e$loadavg_start %||% NA)[1], id)
+          e$reps %||% "?", (e$loadavg_start %||% NA)[1], (e$loadavg_end %||% NA)[1], id)
 }
 
 # Scaling curves: time (and optionally matvecs) against the sweep variable.
@@ -224,10 +224,14 @@ bench_plot_scaling <- function(res, group, threads = 1, methods = c("eigencore",
   y <- r[[metric]]
   op <- graphics::par(mar = c(4.2, 4.4, 2.2, 1))
   on.exit(graphics::par(op))
-  graphics::plot(range(x), range(y), type = "n", log = "xy", bty = "n",
+  # headroom above the data for the legend (log scale)
+  graphics::plot(range(x), range(y) * c(0.8, 6), type = "n", log = "xy", bty = "n", xaxt = "n",
                  xlab = unique(r$sweep)[1L],
                  ylab = if (metric == "time_median") "median wall time (s)" else "operator applications",
                  main = main %||% sprintf("%s (threads = %s)", group, paste(threads, collapse = ",")))
+  ux <- sort(unique(x))
+  graphics::axis(1, at = ux, labels = format(ux, big.mark = ",", scientific = FALSE, trim = TRUE),
+                 cex.axis = 0.8)
   for (m in ms) {
     for (t in threads) {
       s <- r[r$method == m & r$threads == t, , drop = FALSE]
@@ -239,7 +243,7 @@ bench_plot_scaling <- function(res, group, threads = 1, methods = c("eigencore",
   }
   leg <- ms
   if (length(threads) > 1L) leg <- c(leg, paste("threads", threads))
-  graphics::legend("topleft", legend = leg, bty = "n", cex = 0.85,
+  graphics::legend("topleft", legend = leg, bty = "n", cex = 0.8, ncol = 2,
                    col = c(cols[ms], rep("grey30", length(leg) - length(ms))),
                    pch = c(pchs[ms], rep(NA, length(leg) - length(ms))),
                    lty = c(rep(1, length(ms)), if (length(threads) > 1L) seq_along(threads)))
@@ -256,7 +260,7 @@ bench_scaling_slopes <- function(res, group) {
     if (nrow(s) < 3L) return(NA_real_)
     unname(stats::coef(stats::lm(log(time_median) ~ log(sweep_value), data = s))[2L])
   }, numeric(1))
-  keys
+  keys[is.finite(keys$slope), , drop = FALSE]
 }
 
 # Compact README table: one row per core case, eigencore at 1 and 4 threads
