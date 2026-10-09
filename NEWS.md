@@ -36,6 +36,25 @@
 
 ## Correctness fixes
 
+* Target completeness (C50): a single-vector Krylov solve could miss a copy
+  of an exactly repeated eigenvalue (spectrum `9, 9, 7, 7, 7` returned as
+  `9, 9, 7, 7, 5`) and still certify, because residuals prove each pair but
+  not the returned set. Certified Hermitian Krylov, LOBPCG and edge
+  shift-invert results (standard, and native generalized SPD Lanczos in its
+  transformed space) for `largest()`, `smallest()` and `largest_magnitude()`
+  targets are now followed by a deflated complement probe: a short native
+  block Lanczos run on the operator restricted to the complement of the
+  returned vectors, from a fixed-seed start that leaves R's random stream
+  untouched. An intruding eigenvalue triggers a deflated complement solve
+  and Rayleigh-Ritz merge, then a re-probe. The outcome is recorded in
+  `certificate$target_completeness` (`"probed"`, `"repaired"`, `"failed"`,
+  `"exact"`, `"not_checked"`) with details in `certificate$completeness`;
+  `"failed"` makes `passed` `FALSE` (`residual_passed` keeps the residual
+  verdict). Opt out with `lanczos(completeness = "none")` or
+  `options(eigencore.target_completeness = "none")`. The probe is
+  probabilistic; the deterministic inertia certificate is planned for
+  tranche 5.
+
 * `center(rows = TRUE, columns = TRUE)` now double centers correctly. Row
   means were taken from the uncentered matrix, so the grand mean was
   subtracted twice on the dense, callback, and native CSC paths.

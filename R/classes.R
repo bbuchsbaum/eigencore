@@ -171,10 +171,24 @@ auto <- function(max_subspace = NULL) {
 #' @param reorthogonalize Whether to apply full reorthogonalization. The
 #'   native path always reorthogonalizes (DGKS x2) and ignores this flag;
 #'   it is preserved for the R reference solver's public API.
+#' @param completeness Target-completeness check run after a certified
+#'   standard Hermitian solve with a `largest()`, `smallest()` or
+#'   `largest_magnitude()` target. `"probe"` runs a short block Lanczos
+#'   process on the operator deflated against the returned eigenvectors (from a
+#'   fixed-seed start; the global random stream is not touched) and, if it
+#'   finds a more-preferred eigenvalue outside the returned set (for example a
+#'   missed copy of a repeated eigenvalue), repairs the result with a deflated
+#'   complement solve. `"none"` skips it. `NULL` (default) uses
+#'   `getOption("eigencore.target_completeness", "probe")`. The outcome is
+#'   recorded in `certificate(fit)$target_completeness`; see the
+#'   "Certificates" vignette. The probe is probabilistic: it can prove a set
+#'   incomplete but not complete.
 #' @return An `eigencore_method` descriptor selecting Lanczos iteration.
 #' @export
 lanczos <- function(max_subspace = NULL, max_restarts = NULL, block = 1L,
-                    check_stride = 0L, reorthogonalize = TRUE) {
+                    check_stride = 0L, reorthogonalize = TRUE,
+                    completeness = NULL) {
+  completeness <- validate_completeness_mode(completeness)
   block <- as.integer(block)
   if (length(block) != 1L || is.na(block) || block < 1L) {
     stop("block must be a single positive integer.", call. = FALSE)
@@ -189,7 +203,7 @@ lanczos <- function(max_subspace = NULL, max_restarts = NULL, block = 1L,
       stop("max_restarts must be a single non-negative integer.", call. = FALSE)
     }
   }
-  new_method(
+  method <- new_method(
     "lanczos",
     max_subspace = validate_max_subspace(max_subspace),
     max_restarts = max_restarts,
@@ -197,6 +211,10 @@ lanczos <- function(max_subspace = NULL, max_restarts = NULL, block = 1L,
     check_stride = check_stride,
     reorthogonalize = reorthogonalize
   )
+  if (!is.null(completeness)) {
+    method$completeness <- completeness
+  }
+  method
 }
 
 #' Golub-Kahan bidiagonalization method descriptor.

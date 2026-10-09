@@ -171,7 +171,11 @@ test_that("P7: reference Lanczos certifies once instead of every iteration", {
   # Lanczos steps + a single k-column certificate: the dominant Ritz values
   # already give the norm bound, so no extra probes are needed. The
   # per-iteration certificate used to add k + 8 applies for every step j >= k.
-  expect_lte(calls, fit$iterations + 2L)
+  # The target-completeness probe (C50) adds its own, separately recorded,
+  # block applies after the solve.
+  probe_calls <- fit$certificate$completeness$operator_block_calls
+  expect_identical(fit$certificate$target_completeness, "probed")
+  expect_lte(calls, fit$iterations + 2L + probe_calls)
   expect_lte(as.integer(fit$work$certification_operator_columns), 3L)
 })
 

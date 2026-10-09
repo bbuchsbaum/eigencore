@@ -208,7 +208,12 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
       maxit = method_subspace,
       vectors = vectors,
       block = method_block,
-      max_restarts = method_max_restarts
+      max_restarts = method_max_restarts,
+      completeness_mode = if (isTRUE(certify)) {
+        target_completeness_mode(method)
+      } else {
+        "none"
+      }
     )
   } else if (reference_generalized_path) {
     reference_generalized_lanczos_hermitian(
