@@ -13,10 +13,15 @@
   `A` is an explicit matrix and the factorisation is cheap
   (`"inertia_verified"` / `"inertia_failed"`; cost gate
   `eigencore.svd_completeness_inertia_seconds` = 0.25 s and
-  `eigencore.svd_completeness_inertia_ratio` = 0.1 of the solve time), and
+  `eigencore.svd_completeness_inertia_ratio` = 0.1 of the solve time, only
+  for `m + n <= eigencore.svd_completeness_inertia_max_dim` = 20000;
+  `options(eigencore.target_completeness = "inertia")` always counts), and
   otherwise by the deflated-complement probe on the Gram operator `A'A`
   (or `AA'`, smaller side) with a repair round when a missing value is
-  found (`"probed"` / `"repaired"` / `"failed"`). `nearest()` SVD targets
+  found (`"probed"` / `"repaired"` / `"failed"`). A short result (fewer
+  triplets than requested, e.g. a Krylov space exhausted by repeated
+  singular values) is completed from the deflated Gram complement and kept
+  when it certifies. `nearest()` SVD targets
   have no probe: matrix-free interior SVD results stay `"not_checked"`
   (`passed = FALSE`, `residual_passed = TRUE`). Fixes oracle finding O8
   (missing copies of repeated singular values).

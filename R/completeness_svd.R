@@ -365,7 +365,9 @@ svd_augmented_matrix <- function(A) {
 # eigencore.svd_completeness_inertia_seconds (default 0.25 s) or below
 # eigencore.svd_completeness_inertia_ratio (default 0.1) times the solve.
 # The prediction counts two factorisations per threshold (the margin
-# re-count is common).
+# re-count is common). Auto mode does not consider matrices with
+# m + n > eigencore.svd_completeness_inertia_max_dim (default 20000);
+# completeness = "inertia" always counts.
 #' @keywords internal
 svd_inertia_completeness_controls <- function() {
   controls <- inertia_completeness_controls()
@@ -375,6 +377,7 @@ svd_inertia_completeness_controls <- function() {
   }
   controls$seconds <- num(getOption("eigencore.svd_completeness_inertia_seconds"), 0.25)
   controls$ratio <- num(getOption("eigencore.svd_completeness_inertia_ratio"), 0.1)
+  controls$max_dim <- num(getOption("eigencore.svd_completeness_inertia_max_dim"), 20000)
   controls
 }
 
@@ -392,6 +395,11 @@ svd_inertia_gate <- function(op, kind, mode, solve_seconds,
     return(no("no explicit matrix source"))
   }
   N <- as.numeric(sum(dim(A)))
+  if (identical(mode, "auto") && N > controls$max_dim) {
+    # Skip even the symbolic analysis (about 0.1 s at m + n = 50000, a
+    # sizeable share of a fast solve); the probe covers these sizes.
+    return(no("augmented dimension above eigencore.svd_completeness_inertia_max_dim"))
+  }
   per_threshold <- if (identical(kind, "nearest")) 4 else 2
   dense <- is.matrix(A)
   if (dense) {
