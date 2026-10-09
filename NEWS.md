@@ -185,6 +185,24 @@
   unknown `opts` entries and unknown `which` codes are reported instead of
   being ignored, `nu`/`nv` are honoured, and non-convergence warns.
 
+## Documentation and infrastructure
+
+* New reproducible benchmark suite, `inst/benchmarks/run-suite.R`
+  (profiles `quick`, `standard`, `scaling`; filters for families, methods,
+  threads and repetitions; optional SuiteSparse cases). It times eigencore,
+  RSpectra, irlba, PRIMME and dense base R on deterministic problem families,
+  records operator applications, memory and the full environment (CPU, BLAS,
+  threads, package versions, git SHA, load), and checks every method's output
+  independently: two-sided residuals, 2-norm backward error against a
+  high-accuracy `||A||_2`, value error against analytic, dense or
+  cross-checked certified references, and whether the wanted set was
+  returned. Results are stored under `inst/benchmarks/results/`;
+  `inst/benchmarks/report.R` summarises them. The README table and the
+  benchmarks article now render from those stored results instead of
+  timing at build time, and a manual `benchmarks` GitHub workflow runs the
+  suite and uploads the results. `inst/benchmarks/bench-readme.R` is a thin
+  wrapper around the suite.
+
 # eigencore 1.3.0 (2026-08-25)
 
 ## Certified positive-semidefinite geometry

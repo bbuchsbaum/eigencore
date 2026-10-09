@@ -41,8 +41,8 @@ eigencore focuses on three things:
    proves, and unsupported requests fail before dense fallback.
 
 Supported structured problems run through fast native kernels. The
-[Benchmarks](#benchmarks) section provides reproducible single-machine timings
-without treating them as cross-package rankings.
+[Benchmarks](#benchmarks) section compares them with RSpectra, irlba and base
+R using stored, reproducible results with independent accuracy checks.
 
 ## Installation
 
@@ -72,8 +72,7 @@ error, and orthogonality loss across the returned triplets, and shows the
 certificate passed. The backward error divides by a lower bound on `||A||_2`
 (`two_norm_lower_bound`), so it can only over-state the true normwise backward
 error. This problem uses the native
-certified Gram path; see [Benchmarks](#benchmarks) for a reproducible timing on
-the development machine.
+certified Gram path; see [Benchmarks](#benchmarks) for reproducible timings.
 
 ```{r scree, echo = FALSE, fig.alt = "The ten largest singular values highlighted in blue against the full 500-point singular spectrum of A in grey."}
 sig_all <- sort(sqrt(pmax(0, eigen(as.matrix(crossprod(A)),
@@ -263,34 +262,53 @@ par(op)
 
 ## Benchmarks {#benchmarks}
 
-These are median wall-clock times for eigencore on one development machine.
-They include certificate computation and are intended as a reproducible
-performance smoke test, not a cross-package ranking or a performance guarantee.
-Reproduce them with `Rscript inst/benchmarks/bench-readme.R`.
+The table is drawn from stored results of the benchmark suite
+(`inst/benchmarks/results/`, profile `standard`), not timed when this README
+is built. Times are medians over repeated calls; eigencore's include building
+its certificate, the other packages do no certification. Every method's output
+is checked independently by the suite (2-norm backward error, error against a
+trusted reference, and whether the wanted eigenvalues were actually
+returned); † marks a result that missed part of the wanted set. RSpectra and
+irlba are single-threaded here; "n/a" means the method does not apply or the
+dense problem was too large.
 
-| Problem (certificate `passed`) | Median time | Planner path |
-|---|---:|---|
-| Tall sparse SVD, 100000 × 500, k = 10 | 15 ms | native certified Gram SVD special case |
-| Wide sparse SVD, 500 × 100000, k = 10 | 12 ms | native certified Gram SVD special case |
-| Banded Hermitian, smallest, n = 20000, k = 8 | 31 ms | native tridiagonal Hermitian shift-invert |
+```{r bench-table, echo = FALSE, results = "asis"}
+source("inst/benchmarks/report.R")
+bench_run <- bench_find_runs("inst/benchmarks/results", profile = "standard")[1]
+bench_res <- bench_load(bench_run)
+bench_labels <- c(
+  sym_sparse_n20000_LA_k10 = "sparse symmetric 20k, largest, k = 10",
+  sym_sparse_n20000_SA_k10 = "sparse symmetric 20k, smallest, k = 10",
+  nonsym_sparse_n20000_LM_k6 = "sparse nonsymmetric 20k, largest modulus, k = 6",
+  svd_sparse_50000x2000_k20 = "sparse SVD 50k × 2k, k = 20",
+  svd_sparse_50000x20000_k20 = "sparse SVD 50k × 20k, k = 20",
+  pca_centered_50000x1000_k10 = "centred sparse PCA 50k × 1k, k = 10",
+  dense_sym_n1500_LA_k10 = "dense symmetric 1500, largest, k = 10",
+  eig_full_n1500_vectors = "full dense eigen 1500 (`eig_full` vs `eigen`)",
+  `shift_invert_lap2d_g100_sigma4.01_k6` = "2-D Laplacian 10k, nearest 4.01, k = 6",
+  generalized_fem2d_g50_SA_k6 = "generalized FEM pencil 2.5k, smallest, k = 6",
+  banded_lap1d_n20000_SA_k8 = "1-D Laplacian 20k, smallest, k = 8"
+)
+cat(bench_readme_markdown(bench_res, cases = names(bench_labels), labels = as.list(bench_labels)),
+    sep = "\n")
+cat("\n<sub>", bench_env_line(bench_res), "</sub>\n", sep = "")
+```
 
-<sub>Measured with R 4.5.1 on aarch64-apple-darwin20. Timings depend on the
-processor, BLAS/LAPACK, package versions, sparsity pattern, and workload; rerun
-the script before making performance decisions.</sub>
+Results depend on the processor, BLAS/LAPACK, thread count, machine load and
+the matrices themselves; these are random and model matrices measured on one
+shared machine. On that machine other jobs pushed the load well above the
+core count during the 4-thread pass, and eigencore's multithreaded kernels
+slowed down by up to an order of magnitude under that oversubscription (same
+operator-application counts, single-threaded competitors unaffected); the
+1-thread column is the representative one. The
+[benchmarks article](https://bbuchsbaum.github.io/eigencore/articles/benchmarks.html)
+shows every case and method, operator-application counts, accuracy, scaling
+curves and the limits of the comparison. Reproduce or add your machine with
 
-The SVD rows use a bounded Gram kernel for tall or wide sparse problems whose
-small dimension is ≤ 512 (≤ 1024 for wide matrices). Other shapes may select
-different paths with different costs. `fit$method` always names the path that
-ran, making the relevant implementation boundary visible.
-
-That path has fixed work associated with solving the smaller Gram problem and
-constructing a certified result. On the tiny examples used in documentation
-smoke tests, this overhead can dominate and `RSpectra` or `irlba` may finish
-sooner. As the long dimension grows while the smaller dimension remains within
-the planner boundary, the same path can cross over and become faster. This is a
-shape-specific effect, not a claim that eigencore becomes faster whenever a
-matrix gets larger; the [benchmark vignette](https://bbuchsbaum.github.io/eigencore/articles/benchmarks.html)
-explains the comparison and its limits.
+```sh
+R CMD INSTALL --preclean --no-docs -l .rlib .
+Rscript inst/benchmarks/run-suite.R --lib=.rlib --profile=standard --threads=1,4
+```
 
 ## When to use what
 
