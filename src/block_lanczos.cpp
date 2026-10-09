@@ -322,7 +322,9 @@ static double standard_eigen_lock_scale(double norm_a, double theta,
   const double vnorm = trl_norm2(v, n);
   const double scale = (norm_a + fabs(theta)) *
     ((vnorm > DBL_EPSILON) ? vnorm : DBL_EPSILON);
-  return (scale > DBL_EPSILON) ? scale : DBL_EPSILON;
+  // Relative, not absolute: a floor at DBL_EPSILON made every Ritz pair of an
+  // operator with ||A|| ~ 1e-150 look converged on the first check.
+  return (std::isfinite(scale) && scale > 0.0) ? scale : DBL_MIN;
 }
 
 // Ritz/locked vectors are unit vectors, so the norm thresholds below are
