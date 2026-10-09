@@ -47,3 +47,64 @@ jobs:
         with:
           upload-snapshots: true
           build_args: 'c("--no-manual","--compact-vignettes=gs+qpdf")'
+
+      # testthat's check reporter prints nothing when a native crash kills the
+      # test process, so on failure re-run each test file in its own R process
+      # against the package R CMD check installed, and report which one dies.
+      - name: Locate failing or crashing test file
+        if: failure()
+        shell: Rscript {0}
+        run: |
+          lib <- normalizePath(file.path("check", "eigencore.Rcheck"), mustWork = FALSE)
+          if (!dir.exists(file.path(lib, "eigencore"))) quit(status = 0)
+          rscript <- file.path(R.home("bin"), "Rscript")
+          files <- sort(list.files("tests/testthat", "^test-.*[.]R$", full.names = TRUE))
+          for (f in files) {
+            script <- tempfile(fileext = ".R")
+            writeLines(c(
+              sprintf(".libPaths(c(%s, .libPaths()))", deparse(lib)),
+              "suppressMessages(library(testthat))",
+              sprintf(paste0("r <- as.data.frame(test_file(%s, reporter = 'summary', ",
+                             "package = 'eigencore', load_package = 'installed'))"),
+                      deparse(normalizePath(f))),
+              "cat('failed', sum(r$failed), 'errors', sum(r$error), '\\n')"
+            ), script)
+            out <- suppressWarnings(system2(rscript, script, stdout = TRUE, stderr = TRUE))
+            status <- attr(out, "status")
+            if (is.null(status)) status <- 0L
+            cat(sprintf("%-40s status=%s %s\n", basename(f), status,
+                        paste(utils::tail(out, 1), collapse = "")))
+            if (status != 0L || !any(grepl("failed 0 errors 0", out, fixed = TRUE))) {
+              cat(utils::tail(out, 80), sep = "\n")
+            }
+          }
+
+      # Bisect the unwind path (R error -> R_UnwindProtect cleanup -> jump back
+      # into C++ -> RUnwind -> R_ContinueUnwind) on Windows, one fresh process
+      # per stage, with the native trace on.
+      - name: Bisect unwind path (Windows)
+        if: failure() && runner.os == 'Windows'
+        shell: Rscript {0}
+        run: |
+          lib <- normalizePath(file.path("check", "eigencore.Rcheck"), mustWork = FALSE)
+          if (!dir.exists(file.path(lib, "eigencore"))) quit(status = 0)
+          rscript <- file.path(R.home("bin"), "Rscript")
+          modes <- c("protect_ok", "rerror_c_only", "rerror_catch",
+                     "rerror_continue_local", "r_stop")
+          for (m in modes) {
+            script <- tempfile(fileext = ".R")
+            writeLines(c(
+              sprintf(".libPaths(c(%s, .libPaths()))", deparse(lib)),
+              "library(eigencore)",
+              "st <- function(m) .Call('eigencore_unwind_selftest', m, PACKAGE = 'eigencore')",
+              "invisible(st('trace_on'))",
+              sprintf("r <- try(st(%s), silent = TRUE)", deparse(m)),
+              "cat('RESULT', if (inherits(r, 'try-error')) conditionMessage(attr(r, 'condition')) else format(r), '\\n')",
+              "cat('LIVE', st('live'), '\\n')"
+            ), script)
+            out <- suppressWarnings(system2(rscript, script, stdout = TRUE, stderr = TRUE))
+            status <- attr(out, "status")
+            if (is.null(status)) status <- 0L
+            cat(sprintf("== %s (status %s)\n", m, status))
+            cat(out, sep = "\n")
+          }

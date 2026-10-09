@@ -26,13 +26,13 @@ test_that("eigen and SVD plans are executable, frozen, and immutable", {
   expect_identical(names(eigen_plan$planner_policy),
                    eigencore:::planner_policy_keys())
 
-  eigen_before <- serialize(eigen_plan, NULL, version = 3L)
-  svd_before <- serialize(svd_plan, NULL, version = 3L)
+  eigen_before <- serialize(materialize_srcfiles(eigen_plan), NULL, version = 3L)
+  svd_before <- serialize(materialize_srcfiles(svd_plan), NULL, version = 3L)
   eigen_fit <- solve(eigen_plan)
   svd_fit <- solve(svd_plan)
 
-  expect_identical(serialize(eigen_plan, NULL, version = 3L), eigen_before)
-  expect_identical(serialize(svd_plan, NULL, version = 3L), svd_before)
+  expect_same_bytes(serialize(eigen_plan, NULL, version = 3L), eigen_before)
+  expect_same_bytes(serialize(svd_plan, NULL, version = 3L), svd_before)
   expect_identical(eigen_fit$plan, eigen_plan)
   expect_identical(svd_fit$plan, svd_plan)
   expect_equal(values(eigen_fit), c(5, 4), tolerance = 1e-12)
@@ -109,7 +109,7 @@ test_that("replan is explicit and leaves the original plan unchanged", {
   )
   A <- diag(seq(200, 1))
   plan <- plan_solver(eigen_problem(A), k = 10L)
-  before <- serialize(plan, NULL, version = 3L)
+  before <- serialize(materialize_srcfiles(plan), NULL, version = 3L)
 
   options(eigencore.dense_partial_lanczos_min_n = 1000L)
   frozen <- solve(plan)
@@ -121,7 +121,7 @@ test_that("replan is explicit and leaves the original plan unchanged", {
   expect_identical(replanned$method,
                    "native dense Hermitian LAPACK fallback")
   expect_false(identical(replanned$plan, plan))
-  expect_identical(serialize(plan, NULL, version = 3L), before)
+  expect_same_bytes(serialize(plan, NULL, version = 3L), before)
 })
 
 test_that("execution overrides and corrupt plans fail closed with typed codes", {
