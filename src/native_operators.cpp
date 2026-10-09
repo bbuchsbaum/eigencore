@@ -1,7 +1,9 @@
+#include <algorithm>
 #include <cstring>
 #include <cmath>
 #include <cfloat>
 #include <climits>
+#include <memory>
 #include <vector>
 #include <R.h>
 #include <Rinternals.h>
@@ -368,6 +370,931 @@ extern "C" int eigencore_tridiagonal_generalized_shift_invert_apply(
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+// Thread count (P8)
+// ---------------------------------------------------------------------------
+//
+// The package default is computed in R at load time (R/threads.R: 1 under
+// R CMD check or when _R_CHECK_LIMIT_CORES_ is set, otherwise OMP_NUM_THREADS
+// or the processor count capped at 8) and stored with
+// eigencore_set_default_threads(). getOption("eigencore.threads") overrides it;
+// every .Call entry re-reads the option once (eigencore_refresh_thread_count,
+// called from eigencore_call), so kernels below only read g_eigencore_threads.
+
+static int g_eigencore_default_threads = 1;
+static int g_eigencore_threads = 1;
+// Memory cap for the cached CSR copy used by parallel forward CSC applies;
+// getOption("eigencore.csr_cache_mb", 4096).
+static const double kEigencoreDefaultCsrCacheMb = 4096.0;
+static double g_eigencore_csr_cache_bytes = kEigencoreDefaultCsrCacheMb * 1048576.0;
+static const int kEigencoreMaxThreads = 256;
+
+static int eigencore_processor_count() {
+#ifdef _OPENMP
+  const int procs = omp_get_num_procs();
+  return procs > 0 ? procs : 1;
+#else
+  return 1;
+#endif
+}
+
+#ifdef _OPENMP
+static int eigencore_sanitize_thread_count(double value, int fallback) {
+  if (!R_FINITE(value) || value < 1.0) {
+    return fallback;
+  }
+  if (value > static_cast<double>(kEigencoreMaxThreads)) {
+    return kEigencoreMaxThreads;
+  }
+  return static_cast<int>(value);
+}
+#endif
+
+extern "C" int eigencore_thread_count(void) {
+  return g_eigencore_threads;
+}
+
+extern "C" void eigencore_refresh_thread_count(void) {
+#ifdef _OPENMP
+  static SEXP option_symbol = nullptr;
+  if (option_symbol == nullptr) {
+    option_symbol = Rf_install("eigencore.threads");
+  }
+  const SEXP option = Rf_GetOption1(option_symbol);
+  int threads = g_eigencore_default_threads;
+  if (option != R_NilValue && XLENGTH(option) >= 1) {
+    if (TYPEOF(option) == REALSXP) {
+      threads = eigencore_sanitize_thread_count(REAL(option)[0], threads);
+    } else if (TYPEOF(option) == INTSXP && INTEGER(option)[0] != NA_INTEGER) {
+      threads = eigencore_sanitize_thread_count(
+        static_cast<double>(INTEGER(option)[0]), threads);
+    }
+  }
+  g_eigencore_threads = threads;
+  static SEXP csr_symbol = nullptr;
+  if (csr_symbol == nullptr) {
+    csr_symbol = Rf_install("eigencore.csr_cache_mb");
+  }
+  const SEXP csr_option = Rf_GetOption1(csr_symbol);
+  double csr_mb = kEigencoreDefaultCsrCacheMb;
+  if ((TYPEOF(csr_option) == REALSXP || TYPEOF(csr_option) == INTSXP) &&
+      XLENGTH(csr_option) >= 1) {
+    const double value = TYPEOF(csr_option) == REALSXP ? REAL(csr_option)[0] :
+      (INTEGER(csr_option)[0] == NA_INTEGER ? NA_REAL :
+         static_cast<double>(INTEGER(csr_option)[0]));
+    if (!ISNAN(value) && value >= 0.0) {
+      csr_mb = value;
+    }
+  }
+  g_eigencore_csr_cache_bytes = csr_mb * 1048576.0;
+#else
+  g_eigencore_threads = 1;
+#endif
+}
+
+// BLAS thread coordination. OpenBLAS (pthreads build) and FlexiBLAS keep their
+// worker threads spinning for a while after every call; an OpenMP region that
+// starts meanwhile runs time-sliced against them and can be several times
+// slower than serial. The first multithreaded sparse kernel of a .Call
+// therefore switches such a BLAS to one thread (found at run time with
+// dlsym, so there is no link dependency) and eigencore_call_leave() restores
+// the previous count when the outermost .Call returns or raises. While BLAS is
+// single-threaded, the Lanczos reorthogonalisation runs its own OpenMP
+// kernels (eigencore_reorth_threads()). An OpenMP-built OpenBLAS, MKL and BLIS
+// are left alone and keep doing the dense work with their own threads.
+#if defined(_OPENMP) && !defined(_WIN32)
+#include <dlfcn.h>
+#define EIGENCORE_HAVE_BLAS_QUIESCE 1
+#endif
+
+enum EigencoreBlasKind {
+  EIGENCORE_BLAS_SERIAL = 0,        // no known threading control (reference)
+  EIGENCORE_BLAS_CONTROLLABLE = 1,  // OpenBLAS pthreads / FlexiBLAS
+  EIGENCORE_BLAS_THREADED = 2       // threaded, left alone (OpenMP OpenBLAS, MKL, BLIS)
+};
+
+#ifdef EIGENCORE_HAVE_BLAS_QUIESCE
+typedef void (*eigencore_blas_set_threads_fn)(int);
+typedef int (*eigencore_blas_get_threads_fn)(void);
+static bool g_blas_probed = false;
+static int g_blas_kind = EIGENCORE_BLAS_SERIAL;
+static eigencore_blas_set_threads_fn g_blas_set_threads = nullptr;
+static eigencore_blas_get_threads_fn g_blas_get_threads = nullptr;
+static bool g_blas_quiesced = false;
+static int g_blas_saved_threads = 0;
+
+static void eigencore_blas_probe() {
+  if (g_blas_probed) {
+    return;
+  }
+  g_blas_probed = true;
+  void* set = dlsym(RTLD_DEFAULT, "openblas_set_num_threads");
+  void* get = dlsym(RTLD_DEFAULT, "openblas_get_num_threads");
+  if (set != nullptr && get != nullptr) {
+    // openblas_get_parallel(): 0 sequential, 1 pthreads, 2 OpenMP.
+    void* parallel = dlsym(RTLD_DEFAULT, "openblas_get_parallel");
+    const int mode = parallel != nullptr ?
+      reinterpret_cast<int (*)(void)>(parallel)() : 1;
+    if (mode == 2) {
+      g_blas_kind = EIGENCORE_BLAS_THREADED;
+    } else if (mode == 1) {
+      g_blas_kind = EIGENCORE_BLAS_CONTROLLABLE;
+      g_blas_set_threads = reinterpret_cast<eigencore_blas_set_threads_fn>(set);
+      g_blas_get_threads = reinterpret_cast<eigencore_blas_get_threads_fn>(get);
+    }
+    return;
+  }
+  set = dlsym(RTLD_DEFAULT, "flexiblas_set_num_threads");
+  get = dlsym(RTLD_DEFAULT, "flexiblas_get_num_threads");
+  if (set != nullptr && get != nullptr) {
+    g_blas_kind = EIGENCORE_BLAS_CONTROLLABLE;
+    g_blas_set_threads = reinterpret_cast<eigencore_blas_set_threads_fn>(set);
+    g_blas_get_threads = reinterpret_cast<eigencore_blas_get_threads_fn>(get);
+    return;
+  }
+  if (dlsym(RTLD_DEFAULT, "MKL_Get_Max_Threads") != nullptr ||
+      dlsym(RTLD_DEFAULT, "mkl_get_max_threads") != nullptr ||
+      dlsym(RTLD_DEFAULT, "bli_thread_get_num_threads") != nullptr) {
+    g_blas_kind = EIGENCORE_BLAS_THREADED;
+  }
+}
+#endif
+
+// Called on the main thread before a multithreaded sparse kernel.
+static void eigencore_blas_quiesce() {
+#ifdef EIGENCORE_HAVE_BLAS_QUIESCE
+  if (g_blas_quiesced) {
+    return;
+  }
+  eigencore_blas_probe();
+  if (g_blas_set_threads == nullptr) {
+    return;
+  }
+  const int current = g_blas_get_threads();
+  if (current > 1) {
+    g_blas_saved_threads = current;
+    g_blas_set_threads(1);
+    g_blas_quiesced = true;
+  }
+#endif
+}
+
+// True when a multithreaded spinning-thread BLAS is active (and not already
+// quiesced by this call).
+static bool eigencore_blas_busy() {
+#ifdef EIGENCORE_HAVE_BLAS_QUIESCE
+  if (g_blas_quiesced) {
+    return false;
+  }
+  eigencore_blas_probe();
+  return g_blas_get_threads != nullptr && g_blas_get_threads() > 1;
+#else
+  return false;
+#endif
+}
+
+// Threads for eigencore's own OpenMP dense helpers (Lanczos
+// reorthogonalisation): the thread count while BLAS runs single-threaded
+// (quiesced by this call, configured to one thread, or a serial reference
+// BLAS); 1 when a threaded BLAS should do the work.
+extern "C" int eigencore_reorth_threads(void) {
+  const int threads = g_eigencore_threads;
+  if (threads <= 1) {
+    return 1;
+  }
+#ifdef EIGENCORE_HAVE_BLAS_QUIESCE
+  if (g_blas_quiesced) {
+    return threads;
+  }
+  eigencore_blas_probe();
+  if (g_blas_kind == EIGENCORE_BLAS_THREADED) {
+    return 1;
+  }
+  if (g_blas_kind == EIGENCORE_BLAS_CONTROLLABLE) {
+    return g_blas_get_threads() > 1 ? 1 : threads;
+  }
+  return threads;
+#else
+  return threads;
+#endif
+}
+
+// .Call nesting depth: BLAS threads are restored only when the outermost call
+// leaves, so a native solver driving an R callback operator (whose applies
+// are nested .Calls) keeps BLAS quiet for the whole solve. Every exit of
+// eigencore_call (return, C++ exception, interrupt, R unwind) runs
+// eigencore_call_leave(); only an R longjmp from an unprotected R API call in
+// a body (e.g. a failed small allocation) could skip it, which would at worst
+// leave BLAS at one thread.
+static int g_call_depth = 0;
+
+extern "C" void eigencore_call_enter(void) {
+  ++g_call_depth;
+  eigencore_refresh_thread_count();
+}
+
+extern "C" void eigencore_call_leave(void) {
+  if (g_call_depth > 0) {
+    --g_call_depth;
+  }
+#ifdef EIGENCORE_HAVE_BLAS_QUIESCE
+  if (g_call_depth == 0 && g_blas_quiesced) {
+    g_blas_quiesced = false;
+    g_blas_set_threads(g_blas_saved_threads);
+  }
+#endif
+}
+
+// c(openmp, processors, default, current, blas_kind, blas_threads):
+// blas_kind 0 = no known threading control, 1 = OpenBLAS pthreads/FlexiBLAS
+// (switched to one thread during multithreaded sparse solves), 2 = threaded
+// BLAS left alone; blas_threads is the controllable BLAS's current thread
+// count, or NA.
+static SEXP eigencore_thread_info_pack() {
+  SEXP out = PROTECT(allocVector(INTSXP, 6));
+#ifdef _OPENMP
+  INTEGER(out)[0] = 1;
+#else
+  INTEGER(out)[0] = 0;
+#endif
+  INTEGER(out)[1] = eigencore_processor_count();
+  INTEGER(out)[2] = g_eigencore_default_threads;
+  INTEGER(out)[3] = g_eigencore_threads;
+#ifdef EIGENCORE_HAVE_BLAS_QUIESCE
+  eigencore_blas_probe();
+  INTEGER(out)[4] = g_blas_kind;
+  INTEGER(out)[5] = g_blas_get_threads != nullptr ? g_blas_get_threads() :
+    NA_INTEGER;
+#else
+  INTEGER(out)[4] = EIGENCORE_BLAS_SERIAL;
+  INTEGER(out)[5] = NA_INTEGER;
+#endif
+  SEXP names = PROTECT(allocVector(STRSXP, 6));
+  SET_STRING_ELT(names, 0, mkChar("openmp"));
+  SET_STRING_ELT(names, 1, mkChar("processors"));
+  SET_STRING_ELT(names, 2, mkChar("default"));
+  SET_STRING_ELT(names, 3, mkChar("current"));
+  SET_STRING_ELT(names, 4, mkChar("blas_kind"));
+  SET_STRING_ELT(names, 5, mkChar("blas_threads"));
+  setAttrib(out, R_NamesSymbol, names);
+  UNPROTECT(2);
+  return out;
+}
+
+// eigencore_set_default_threads(n): n < 1 or NA leaves the default unchanged.
+// Returns eigencore_thread_info_pack() after the update.
+extern "C" SEXP eigencore_set_default_threads(SEXP n_) {
+  EIGENCORE_ENTRY_BEGIN
+  if ((isReal(n_) || isInteger(n_)) && XLENGTH(n_) >= 1) {
+    const double value = isReal(n_) ? REAL(n_)[0] :
+      (INTEGER(n_)[0] == NA_INTEGER ? NA_REAL :
+         static_cast<double>(INTEGER(n_)[0]));
+#ifdef _OPENMP
+    g_eigencore_default_threads =
+      eigencore_sanitize_thread_count(value, g_eigencore_default_threads);
+#else
+    (void) value;
+    g_eigencore_default_threads = 1;
+#endif
+  }
+  eigencore_refresh_thread_count();
+  return eigencore_thread_info_pack();
+  EIGENCORE_ENTRY_END
+}
+
+extern "C" SEXP eigencore_thread_info(void) {
+  EIGENCORE_ENTRY_BEGIN
+  return eigencore_thread_info_pack();
+  EIGENCORE_ENTRY_END
+}
+
+// ---------------------------------------------------------------------------
+// CSC kernels (P8)
+// ---------------------------------------------------------------------------
+//
+// Adjoint (A^T X): a gather per output column, parallel over the columns of A.
+//
+// Forward (A X): serially a scatter over the columns of A. In parallel it is a
+// gather over the rows of a CSR copy of A (row pointers, column indices and
+// values: 4 (nrow + 1) + 12 nnz bytes), built once per operator and cached on
+// it. Within each row the CSR copy keeps the nonzeros in column order, and
+// the gather accumulates into the output entry with the same expression and
+// zero-skip rule as the serial scatter, so A X is bitwise identical for every
+// thread count (no atomics, no per-thread partial sums). The copy is built on
+// the second forward apply of an operator (or the first one with at least
+// kCscCsrMinBlock right-hand sides), so one-off products such as the per-call
+// R-level applies never pay for it, and only when it fits in
+// getOption("eigencore.csr_cache_mb", 4096) MB. Without it, blocks of more
+// than kCscPanelCols columns run in parallel over aligned column chunks and
+// narrower blocks run serially.
+//
+// Multi-RHS blocks of three or more columns go through row-major panels
+// (chunks of at most kCscPanelCols columns), so each nonzero touches one or
+// two cache lines instead of one per right-hand side.
+
+struct CscApplyCache {
+  // Set by the per-call R-level entry points (one apply per .Call, typically
+  // an R callback operator inside a solver whose BLAS work dominates): their
+  // kernels run serially rather than switch a spinning multithreaded BLAS
+  // off, which would slow the surrounding solver's BLAS work.
+  bool per_call = false;
+  int forward_calls = 0;
+  bool csr_ready = false;
+  bool csr_unavailable = false;
+  std::vector<int> csr_ptr;            // nrow + 1
+  std::vector<int> csr_col;            // nnz
+  std::vector<double> csr_val;         // nnz
+  std::vector<double> panel;           // max(nrow, ncol) * kCscPanelCols
+  std::vector<unsigned char> skip;     // ncol zero-column flags
+  // Row slabs: slab t holds the nonzeros of rows [slab_rows[t],
+  // slab_rows[t + 1]) as its own CSC block; slab_ptr has (n + 1) global
+  // offsets per slab.
+  int slab_parts = 0;
+  bool slab_unavailable = false;
+  std::vector<int> slab_rows;
+  std::vector<int> slab_ptr;
+  std::vector<int> slab_idx;
+  std::vector<double> slab_val;
+};
+
+static const int kCscPanelCols = 10;
+static const int kCscCsrMinBlock = 4;
+// Below this many nonzero-times-RHS updates a parallel region costs more than
+// it saves.
+static const int64_t kCscParallelMinWork = 32768;
+
+static CscApplyCache* csc_apply_cache(CSCOperator* csc) {
+  if (!csc->cache) {
+    csc->cache = std::make_shared<CscApplyCache>();
+  }
+  return csc->cache.get();
+}
+
+static double* csc_panel(CSCOperator* csc, int64_t rows) {
+  CscApplyCache* cache = csc_apply_cache(csc);
+  const size_t need = static_cast<size_t>(rows > 0 ? rows : 1) * kCscPanelCols;
+  if (cache->panel.size() < need) {
+    cache->panel.resize(need);
+  }
+  return cache->panel.data();
+}
+
+static int csc_apply_threads(const CSCOperator* csc, int64_t block_cols) {
+  const int threads = eigencore_thread_count();
+  if (threads <= 1) {
+    return 1;
+  }
+  const int64_t nnz = csc->col_ptr[csc->cols];
+  if (nnz * block_cols < kCscParallelMinWork) {
+    return 1;
+  }
+  if (csc->cache && csc->cache->per_call && eigencore_blas_busy()) {
+    return 1;
+  }
+  return threads;
+}
+
+static void csc_mark_per_call(CSCOperator* csc) {
+  csc_apply_cache(csc)->per_call = true;
+}
+
+static bool csc_build_csr(CSCOperator* csc, CscApplyCache* cache) {
+  if (cache->csr_ready) {
+    return true;
+  }
+  if (cache->csr_unavailable) {
+    return false;
+  }
+  const int m = static_cast<int>(csc->rows);
+  const int n = static_cast<int>(csc->cols);
+  const int* p = csc->col_ptr;
+  const int* ri = csc->row_idx;
+  const int nnz = p[n];
+  const double bytes = 4.0 * (static_cast<double>(m) + 1.0) +
+    12.0 * static_cast<double>(nnz);
+  if (bytes > g_eigencore_csr_cache_bytes) {
+    cache->csr_unavailable = true;
+    return false;
+  }
+  try {
+    std::vector<int> ptr(static_cast<size_t>(m) + 1, 0);
+    for (int pos = 0; pos < nnz; ++pos) {
+      ++ptr[static_cast<size_t>(ri[pos]) + 1];
+    }
+    for (int row = 0; row < m; ++row) {
+      ptr[static_cast<size_t>(row) + 1] += ptr[static_cast<size_t>(row)];
+    }
+    std::vector<int> next(ptr.begin(), ptr.end() - 1);
+    std::vector<int> cols(eigencore_buffer_size(nnz));
+    std::vector<double> vals(eigencore_buffer_size(nnz));
+    // Column-major traversal keeps each row's nonzeros in column order, the
+    // order in which the serial scatter accumulates them.
+    for (int col = 0; col < n; ++col) {
+      for (int pos = p[col]; pos < p[col + 1]; ++pos) {
+        const int dst = next[static_cast<size_t>(ri[pos])]++;
+        cols[static_cast<size_t>(dst)] = col;
+        vals[static_cast<size_t>(dst)] = csc->values[pos];
+      }
+    }
+    cache->csr_ptr.swap(ptr);
+    cache->csr_col.swap(cols);
+    cache->csr_val.swap(vals);
+  } catch (const std::bad_alloc&) {
+    cache->csr_unavailable = true;
+    return false;
+  }
+  cache->csr_ready = true;
+  return true;
+}
+
+static bool csc_build_slabs(CSCOperator* csc, CscApplyCache* cache, int parts) {
+  if (cache->slab_parts == parts) {
+    return true;
+  }
+  if (cache->slab_unavailable) {
+    return false;
+  }
+  const int m = static_cast<int>(csc->rows);
+  const int n = static_cast<int>(csc->cols);
+  const int* p = csc->col_ptr;
+  const int* ri = csc->row_idx;
+  const int nnz = p[n];
+  const double bytes = 4.0 * static_cast<double>(parts) * (n + 1.0) +
+    12.0 * static_cast<double>(nnz);
+  if (bytes > g_eigencore_csr_cache_bytes) {
+    cache->slab_unavailable = true;
+    return false;
+  }
+  try {
+    std::vector<int> counts(eigencore_buffer_size(m), 0);
+    for (int pos = 0; pos < nnz; ++pos) {
+      ++counts[static_cast<size_t>(ri[pos])];
+    }
+    std::vector<int> rows(static_cast<size_t>(parts) + 1, m);
+    rows[0] = 0;
+    int64_t running = 0;
+    int next_part = 1;
+    for (int row = 0; row < m && next_part < parts; ++row) {
+      running += counts[static_cast<size_t>(row)];
+      while (next_part < parts &&
+             running * parts >= static_cast<int64_t>(nnz) * next_part) {
+        rows[static_cast<size_t>(next_part)] = row + 1;
+        ++next_part;
+      }
+    }
+    std::vector<int> slab_of_row(eigencore_buffer_size(m), 0);
+    for (int t = 0; t < parts; ++t) {
+      for (int row = rows[t]; row < rows[t + 1]; ++row) {
+        slab_of_row[static_cast<size_t>(row)] = t;
+      }
+    }
+    const size_t stride = static_cast<size_t>(n) + 1;
+    std::vector<int> ptr(static_cast<size_t>(parts) * stride, 0);
+    for (int col = 0; col < n; ++col) {
+      for (int pos = p[col]; pos < p[col + 1]; ++pos) {
+        ++ptr[static_cast<size_t>(slab_of_row[ri[pos]]) * stride + col + 1];
+      }
+    }
+    int offset = 0;
+    for (int t = 0; t < parts; ++t) {
+      int* slab = ptr.data() + static_cast<size_t>(t) * stride;
+      slab[0] = offset;
+      for (int col = 0; col < n; ++col) {
+        slab[col + 1] += slab[col];
+      }
+      offset = slab[n];
+    }
+    std::vector<int> next(ptr);
+    std::vector<int> idx(eigencore_buffer_size(nnz));
+    std::vector<double> val(eigencore_buffer_size(nnz));
+    // Position order within each column is kept, so every output row still
+    // accumulates its nonzeros in the serial scatter's order.
+    for (int col = 0; col < n; ++col) {
+      for (int pos = p[col]; pos < p[col + 1]; ++pos) {
+        const int row = ri[pos];
+        const int dst = next[static_cast<size_t>(slab_of_row[row]) * stride + col]++;
+        idx[static_cast<size_t>(dst)] = row;
+        val[static_cast<size_t>(dst)] = csc->values[pos];
+      }
+    }
+    cache->slab_rows.swap(rows);
+    cache->slab_ptr.swap(ptr);
+    cache->slab_idx.swap(idx);
+    cache->slab_val.swap(val);
+  } catch (const std::bad_alloc&) {
+    cache->slab_unavailable = true;
+    return false;
+  }
+  cache->slab_parts = parts;
+  return true;
+}
+
+// Serial forward scatter of one chunk of c <= kCscPanelCols right-hand sides.
+// kScaled multiplies x by the column weights first and uses the
+// coefficient-first update of the centered-scaled operator; otherwise the
+// update is (alpha a_ij) x_j. Both match the historical serial expressions bit
+// for bit; the parallel CSR gather below reproduces them.
+template <bool kScaled>
+static void csc_forward_chunk(int n, const int* cp, const int* ri,
+                              const double* values, int r0, int r1, int c,
+                              const double* X, int64_t ldx,
+                              const double* weights, double alpha,
+                              double* Y, int64_t ldy, double* panel) {
+  if (c == 1) {
+    for (int col = 0; col < n; ++col) {
+      const double xv = kScaled ? weights[col] * X[col] : X[col];
+      if (xv == 0.0) continue;
+      if (kScaled) {
+        const double coefficient = alpha * xv;
+        for (int pos = cp[col]; pos < cp[col + 1]; ++pos) {
+          Y[ri[pos]] += coefficient * values[pos];
+        }
+      } else {
+        for (int pos = cp[col]; pos < cp[col + 1]; ++pos) {
+          Y[ri[pos]] += alpha * values[pos] * xv;
+        }
+      }
+    }
+    return;
+  }
+  const double* xptr[kCscPanelCols];
+  double* yptr[kCscPanelCols];
+  for (int block = 0; block < c; ++block) {
+    xptr[block] = X + block * ldx;
+    yptr[block] = Y + block * ldy;
+  }
+  double xval[kCscPanelCols];
+  if (panel != nullptr) {
+    for (int row = r0; row < r1; ++row) {
+      double* prow = panel + static_cast<int64_t>(row) * kCscPanelCols;
+      for (int block = 0; block < c; ++block) {
+        prow[block] = yptr[block][row];
+      }
+    }
+  }
+  for (int col = 0; col < n; ++col) {
+    bool all_zero = true;
+    for (int block = 0; block < c; ++block) {
+      xval[block] = kScaled ? weights[col] * xptr[block][col] : xptr[block][col];
+      all_zero = all_zero && xval[block] == 0.0;
+    }
+    if (all_zero) continue;
+    if (kScaled) {
+      for (int block = 0; block < c; ++block) {
+        xval[block] *= alpha;
+      }
+    }
+    for (int pos = cp[col]; pos < cp[col + 1]; ++pos) {
+      const int row = ri[pos];
+      const double a = kScaled ? values[pos] : alpha * values[pos];
+      if (panel != nullptr) {
+        double* prow = panel + static_cast<int64_t>(row) * kCscPanelCols;
+        for (int block = 0; block < c; ++block) {
+          if (kScaled) {
+            prow[block] += xval[block] * a;
+          } else {
+            prow[block] += a * xval[block];
+          }
+        }
+      } else {
+        for (int block = 0; block < c; ++block) {
+          if (kScaled) {
+            yptr[block][row] += xval[block] * a;
+          } else {
+            yptr[block][row] += a * xval[block];
+          }
+        }
+      }
+    }
+  }
+  if (panel != nullptr) {
+    for (int block = 0; block < c; ++block) {
+      double* y = yptr[block];
+      for (int row = r0; row < r1; ++row) {
+        y[row] = panel[static_cast<int64_t>(row) * kCscPanelCols + block];
+      }
+    }
+  }
+}
+
+// Rows [row_begin, row_end) of the parallel forward gather for one chunk.
+// xp is the chunk's row-major column panel (ld kCscPanelCols) holding x (plain)
+// or alpha * w .* x (kScaled); skip flags the columns the serial scatter
+// skips. With c == 1 and !kScaled, x is read directly from X.
+template <bool kScaled>
+static void csc_forward_gather_rows(const CscApplyCache* cache, int row_begin,
+                                    int row_end, int c, const double* X,
+                                    const double* xp,
+                                    const unsigned char* skip, double alpha,
+                                    double* Y, int64_t ldy) {
+  const int* ptr = cache->csr_ptr.data();
+  const int* cols = cache->csr_col.data();
+  const double* vals = cache->csr_val.data();
+  if (c == 1) {
+    for (int row = row_begin; row < row_end; ++row) {
+      double acc = Y[row];
+      for (int k = ptr[row]; k < ptr[row + 1]; ++k) {
+        const int col = cols[k];
+        if (kScaled) {
+          if (skip[col]) continue;
+          acc += xp[static_cast<int64_t>(col) * kCscPanelCols] * vals[k];
+        } else {
+          const double xv = X[col];
+          if (xv == 0.0) continue;
+          acc += alpha * vals[k] * xv;
+        }
+      }
+      Y[row] = acc;
+    }
+    return;
+  }
+  double acc[kCscPanelCols];
+  for (int row = row_begin; row < row_end; ++row) {
+    for (int block = 0; block < c; ++block) {
+      acc[block] = Y[row + block * ldy];
+    }
+    for (int k = ptr[row]; k < ptr[row + 1]; ++k) {
+      const int col = cols[k];
+      if (skip[col]) continue;
+      const double* xrow = xp + static_cast<int64_t>(col) * kCscPanelCols;
+      if (kScaled) {
+        const double a = vals[k];
+        for (int block = 0; block < c; ++block) {
+          acc[block] += xrow[block] * a;
+        }
+      } else {
+        const double a = alpha * vals[k];
+        for (int block = 0; block < c; ++block) {
+          acc[block] += a * xrow[block];
+        }
+      }
+    }
+    for (int block = 0; block < c; ++block) {
+      Y[row + block * ldy] = acc[block];
+    }
+  }
+}
+
+template <bool kScaled>
+static void csc_forward_gather(CSCOperator* csc, int threads,
+                               int64_t block_cols, const double* X,
+                               int64_t ldx, const double* weights,
+                               double alpha, double* Y, int64_t ldy) {
+  CscApplyCache* cache = csc_apply_cache(csc);
+  const int m = static_cast<int>(csc->rows);
+  const int n = static_cast<int>(csc->cols);
+  const bool need_panel = kScaled || block_cols > 1;
+  double* xp = need_panel ? csc_panel(csc, n) : nullptr;
+  if (need_panel && cache->skip.size() < static_cast<size_t>(n)) {
+    cache->skip.resize(static_cast<size_t>(n));
+  }
+  unsigned char* skip = cache->skip.data();
+  const int* ptr = cache->csr_ptr.data();
+  const int64_t nnz = ptr[m];
+  eigencore_blas_quiesce();
+  for (int64_t chunk = 0; chunk < block_cols; chunk += kCscPanelCols) {
+    const int c = static_cast<int>(
+      std::min<int64_t>(kCscPanelCols, block_cols - chunk));
+    const double* Xc = X + chunk * ldx;
+    double* Yc = Y + chunk * ldy;
+    EIGENCORE_OMP(omp parallel num_threads(threads))
+    {
+      if (need_panel) {
+        EIGENCORE_OMP(omp for schedule(static))
+        for (int col = 0; col < n; ++col) {
+          double* prow = xp + static_cast<int64_t>(col) * kCscPanelCols;
+          bool all_zero = true;
+          for (int block = 0; block < c; ++block) {
+            const double x = Xc[col + block * ldx];
+            prow[block] = kScaled ? weights[col] * x : x;
+            all_zero = all_zero && prow[block] == 0.0;
+          }
+          if (kScaled) {
+            for (int block = 0; block < c; ++block) {
+              prow[block] *= alpha;
+            }
+          }
+          skip[col] = all_zero ? 1 : 0;
+        }
+      }
+      // Contiguous row ranges balanced by nonzero count.
+      const int nt = eigencore_omp_num_threads();
+      const int t = eigencore_omp_thread_num();
+      const int64_t lo_target = nnz * t / nt;
+      const int64_t hi_target = nnz * (t + 1) / nt;
+      const int row_begin = (t == 0) ? 0 : static_cast<int>(
+        std::lower_bound(ptr, ptr + m + 1, lo_target) - ptr);
+      const int row_end = (t + 1 == nt) ? m : static_cast<int>(
+        std::lower_bound(ptr, ptr + m + 1, hi_target) - ptr);
+      csc_forward_gather_rows<kScaled>(cache, std::min(row_begin, m),
+                                       std::min(row_end, m), c, Xc, xp, skip,
+                                       alpha, Yc, ldy);
+    }
+  }
+}
+
+template <bool kScaled>
+static void csc_forward_apply(CSCOperator* csc, int64_t block_cols,
+                              const double* X, int64_t ldx,
+                              const double* weights, double alpha,
+                              double* Y, int64_t ldy) {
+  const int m = static_cast<int>(csc->rows);
+  const int n = static_cast<int>(csc->cols);
+  if (block_cols <= 0 || m == 0 || n == 0) {
+    return;
+  }
+  const int threads = csc_apply_threads(csc, block_cols);
+  const int64_t chunks = (block_cols + kCscPanelCols - 1) / kCscPanelCols;
+  if (threads > 1) {
+    CscApplyCache* cache = csc_apply_cache(csc);
+    ++cache->forward_calls;
+    const bool amortized =
+      cache->forward_calls >= 2 || block_cols >= kCscCsrMinBlock;
+    // Long rows (n * threads >= m, i.e. at least as many nonzeros per row as
+    // per column per thread) favour the CSR gather; tall matrices with short
+    // rows favour per-thread row slabs, whose scatter runs over longer column
+    // segments. The first choice sticks for the operator's lifetime.
+    const bool use_slabs = !cache->csr_ready &&
+      (cache->slab_parts > 0 ||
+       static_cast<int64_t>(n) * threads < static_cast<int64_t>(m));
+    if (amortized && use_slabs && csc_build_slabs(csc, cache, threads)) {
+      double* panel = (block_cols >= 3 && csc->col_ptr[n] >= m) ?
+        csc_panel(csc, m) : nullptr;
+      const int* sp = cache->slab_ptr.data();
+      const int* sidx = cache->slab_idx.data();
+      const double* sval = cache->slab_val.data();
+      const int* srows = cache->slab_rows.data();
+      const int parts = cache->slab_parts;
+      eigencore_blas_quiesce();
+      EIGENCORE_OMP(omp parallel num_threads(parts))
+      {
+        const int stride = eigencore_omp_num_threads();
+        for (int t = eigencore_omp_thread_num(); t < parts; t += stride) {
+          const int* cp = sp + static_cast<int64_t>(t) * (n + 1);
+          for (int64_t chunk = 0; chunk < block_cols; chunk += kCscPanelCols) {
+            const int c = static_cast<int>(
+              std::min<int64_t>(kCscPanelCols, block_cols - chunk));
+            csc_forward_chunk<kScaled>(n, cp, sidx, sval, srows[t],
+                                       srows[t + 1], c, X + chunk * ldx, ldx,
+                                       weights, alpha, Y + chunk * ldy, ldy,
+                                       panel);
+          }
+        }
+      }
+      return;
+    }
+    if (amortized && csc_build_csr(csc, cache)) {
+      csc_forward_gather<kScaled>(csc, threads, block_cols, X, ldx, weights,
+                                  alpha, Y, ldy);
+      return;
+    }
+    if (chunks > 1) {
+      // No CSR copy: split aligned column chunks across threads.
+      const int use = static_cast<int>(std::min<int64_t>(threads, chunks));
+      (void) use;  // only read by the OpenMP pragma
+      eigencore_blas_quiesce();
+      EIGENCORE_OMP(omp parallel for num_threads(use) schedule(static))
+      for (int64_t chunk_id = 0; chunk_id < chunks; ++chunk_id) {
+        const int64_t chunk = chunk_id * kCscPanelCols;
+        const int c = static_cast<int>(
+          std::min<int64_t>(kCscPanelCols, block_cols - chunk));
+        csc_forward_chunk<kScaled>(n, csc->col_ptr, csc->row_idx,
+                                   csc->values, 0, m, c, X + chunk * ldx, ldx,
+                                   weights, alpha, Y + chunk * ldy, ldy,
+                                   nullptr);
+      }
+      return;
+    }
+  }
+  double* panel = nullptr;
+  if (block_cols >= 3 && csc->col_ptr[n] >= m) {
+    panel = csc_panel(csc, m);
+  }
+  for (int64_t chunk = 0; chunk < block_cols; chunk += kCscPanelCols) {
+    const int c = static_cast<int>(
+      std::min<int64_t>(kCscPanelCols, block_cols - chunk));
+    csc_forward_chunk<kScaled>(n, csc->col_ptr, csc->row_idx, csc->values, 0,
+                               m, c, X + chunk * ldx, ldx, weights, alpha,
+                               Y + chunk * ldy, ldy, panel);
+  }
+}
+
+// Adjoint gather for one column and one chunk of c right-hand sides. xt, when non-null, is the row-major panel of the chunk's X columns
+// (ld kCscPanelCols). kScaled applies the centered-scaled epilogue
+// alpha w_j (dot - mu_j sum(x)); otherwise alpha * dot.
+template <bool kScaled>
+static inline void csc_adjoint_column(const CSCOperator* csc, int col, int c,
+                                      const double* const* xptr,
+                                      const double* xt,
+                                      const double* weights,
+                                      const double* means,
+                                      const double* xsum, double alpha,
+                                      double* const* yptr) {
+  const int* ri = csc->row_idx;
+  const double* values = csc->values;
+  const int begin = csc->col_ptr[col];
+  const int end = csc->col_ptr[col + 1];
+  if (c == 1) {
+    double acc = 0.0;
+    const double* x = xptr[0];
+    for (int pos = begin; pos < end; ++pos) {
+      acc += values[pos] * x[ri[pos]];
+    }
+    if (kScaled) {
+      yptr[0][col] += alpha * weights[col] * (acc - means[col] * xsum[0]);
+    } else {
+      yptr[0][col] += alpha * acc;
+    }
+    return;
+  }
+  double acc[kCscPanelCols];
+  for (int block = 0; block < c; ++block) {
+    acc[block] = 0.0;
+  }
+  if (xt != nullptr) {
+    for (int pos = begin; pos < end; ++pos) {
+      const double a = values[pos];
+      const double* xrow = xt + static_cast<int64_t>(ri[pos]) * kCscPanelCols;
+      for (int block = 0; block < c; ++block) {
+        acc[block] += a * xrow[block];
+      }
+    }
+  } else {
+    for (int pos = begin; pos < end; ++pos) {
+      const int row = ri[pos];
+      const double a = values[pos];
+      for (int block = 0; block < c; ++block) {
+        acc[block] += a * xptr[block][row];
+      }
+    }
+  }
+  for (int block = 0; block < c; ++block) {
+    if (kScaled) {
+      yptr[block][col] +=
+        alpha * weights[col] * (acc[block] - means[col] * xsum[block]);
+    } else {
+      yptr[block][col] += alpha * acc[block];
+    }
+  }
+}
+
+template <bool kScaled>
+static void csc_adjoint_apply(CSCOperator* csc, int64_t block_cols,
+                              const double* X, int64_t ldx,
+                              const double* weights, const double* means,
+                              double alpha, double* Y, int64_t ldy) {
+  const int m = static_cast<int>(csc->rows);
+  const int n = static_cast<int>(csc->cols);
+  if (block_cols <= 0 || n == 0) {
+    return;
+  }
+  const int threads = csc_apply_threads(csc, block_cols);
+  for (int64_t chunk = 0; chunk < block_cols; chunk += kCscPanelCols) {
+    const int c = static_cast<int>(
+      std::min<int64_t>(kCscPanelCols, block_cols - chunk));
+    const double* xptr[kCscPanelCols];
+    double* yptr[kCscPanelCols];
+    double xsum[kCscPanelCols];
+    for (int block = 0; block < c; ++block) {
+      xptr[block] = X + (chunk + block) * ldx;
+      yptr[block] = Y + (chunk + block) * ldy;
+      xsum[block] = 0.0;
+      if (kScaled) {
+        for (int row = 0; row < m; ++row) {
+          xsum[block] += xptr[block][row];
+        }
+      }
+    }
+    if (threads > 1) {
+      eigencore_blas_quiesce();
+    }
+    const double* xt = nullptr;
+    if (c >= 3 && m > 0 && csc->col_ptr[n] >= m) {
+      double* panel = csc_panel(csc, m);
+      EIGENCORE_OMP(omp parallel for num_threads(threads) schedule(static) if(threads > 1))
+      for (int row = 0; row < m; ++row) {
+        double* prow = panel + static_cast<int64_t>(row) * kCscPanelCols;
+        for (int block = 0; block < c; ++block) {
+          prow[block] = xptr[block][row];
+        }
+      }
+      xt = panel;
+    }
+    if (threads > 1) {
+      EIGENCORE_OMP(omp parallel for num_threads(threads) schedule(dynamic, 256))
+      for (int col = 0; col < n; ++col) {
+        csc_adjoint_column<kScaled>(csc, col, c, xptr, xt, weights, means,
+                                    xsum, alpha, yptr);
+      }
+    } else {
+      for (int col = 0; col < n; ++col) {
+        csc_adjoint_column<kScaled>(csc, col, c, xptr, xt, weights, means,
+                                    xsum, alpha, yptr);
+      }
+    }
+  }
+}
+
 extern "C" int eigencore_csc_apply(void* impl,
                                     EigencoreTranspose op,
                                     int64_t block_cols,
@@ -389,163 +1316,10 @@ extern "C" int eigencore_csc_apply(void* impl,
   scale_or_zero_output(Y, out_rows, block_cols, beta);
 
   if (op == EIGENCORE_TRANSPOSE_NONE) {
-    if (block_cols == 1) {
-      for (int64_t col = 0; col < csc->cols; ++col) {
-        const double x_col = X[col];
-        if (x_col == 0.0) continue;
-        for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
-          Y[csc->row_idx[pos]] += alpha * csc->values[pos] * x_col;
-        }
-      }
-    } else if (block_cols == 2) {
-      double* y0 = Y;
-      double* y1 = Y + ldy;
-      const double* x0 = X;
-      const double* x1 = X + ldx;
-      for (int64_t col = 0; col < csc->cols; ++col) {
-        const double x_col0 = x0[col];
-        const double x_col1 = x1[col];
-        if (x_col0 == 0.0 && x_col1 == 0.0) continue;
-        for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
-          const int row = csc->row_idx[pos];
-          const double a = alpha * csc->values[pos];
-          y0[row] += a * x_col0;
-          y1[row] += a * x_col1;
-        }
-      }
-    } else if (block_cols <= 10) {
-      double* yptr[10];
-      const double* xptr[10];
-      double xval[10];
-      for (int64_t block = 0; block < block_cols; ++block) {
-        yptr[block] = Y + block * ldy;
-        xptr[block] = X + block * ldx;
-      }
-      for (int64_t col = 0; col < csc->cols; ++col) {
-        bool all_zero = true;
-        for (int64_t block = 0; block < block_cols; ++block) {
-          xval[block] = xptr[block][col];
-          all_zero = all_zero && xval[block] == 0.0;
-        }
-        if (all_zero) continue;
-        for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
-          const int row = csc->row_idx[pos];
-          const double a = alpha * csc->values[pos];
-          for (int64_t block = 0; block < block_cols; ++block) {
-            yptr[block][row] += a * xval[block];
-          }
-        }
-      }
-    } else {
-      // Wide blocks: sweep the matrix once per chunk of at most 10 columns so
-      // each pass keeps the per-column accumulators and X/Y panels hot,
-      // instead of striding across the whole block per nonzero.
-      for (int64_t chunk = 0; chunk < block_cols; chunk += 10) {
-        const int64_t chunk_cols =
-          (block_cols - chunk < 10) ? block_cols - chunk : 10;
-        double* yptr[10];
-        const double* xptr[10];
-        double xval[10];
-        for (int64_t block = 0; block < chunk_cols; ++block) {
-          yptr[block] = Y + (chunk + block) * ldy;
-          xptr[block] = X + (chunk + block) * ldx;
-        }
-        for (int64_t col = 0; col < csc->cols; ++col) {
-          bool all_zero = true;
-          for (int64_t block = 0; block < chunk_cols; ++block) {
-            xval[block] = xptr[block][col];
-            all_zero = all_zero && xval[block] == 0.0;
-          }
-          if (all_zero) continue;
-          for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
-            const int row = csc->row_idx[pos];
-            const double a = alpha * csc->values[pos];
-            for (int64_t block = 0; block < chunk_cols; ++block) {
-              yptr[block][row] += a * xval[block];
-            }
-          }
-        }
-      }
-    }
+    csc_forward_apply<false>(csc, block_cols, X, ldx, nullptr, alpha, Y, ldy);
   } else {
-    if (block_cols == 1) {
-      for (int64_t col = 0; col < csc->cols; ++col) {
-        double acc = 0.0;
-        for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
-          acc += csc->values[pos] * X[csc->row_idx[pos]];
-        }
-        Y[col] += alpha * acc;
-      }
-    } else if (block_cols == 2) {
-      double* y0 = Y;
-      double* y1 = Y + ldy;
-      const double* x0 = X;
-      const double* x1 = X + ldx;
-      for (int64_t col = 0; col < csc->cols; ++col) {
-        double acc0 = 0.0;
-        double acc1 = 0.0;
-        for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
-          const int row = csc->row_idx[pos];
-          const double a = csc->values[pos];
-          acc0 += a * x0[row];
-          acc1 += a * x1[row];
-        }
-        y0[col] += alpha * acc0;
-        y1[col] += alpha * acc1;
-      }
-    } else if (block_cols <= 10) {
-      double* yptr[10];
-      const double* xptr[10];
-      double acc[10];
-      for (int64_t block = 0; block < block_cols; ++block) {
-        yptr[block] = Y + block * ldy;
-        xptr[block] = X + block * ldx;
-      }
-      for (int64_t col = 0; col < csc->cols; ++col) {
-        for (int64_t block = 0; block < block_cols; ++block) {
-          acc[block] = 0.0;
-        }
-        for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
-          const int row = csc->row_idx[pos];
-          const double a = csc->values[pos];
-          for (int64_t block = 0; block < block_cols; ++block) {
-            acc[block] += a * xptr[block][row];
-          }
-        }
-        for (int64_t block = 0; block < block_cols; ++block) {
-          yptr[block][col] += alpha * acc[block];
-        }
-      }
-    } else {
-      // Wide blocks: same chunking as the forward path, keeping at most 10
-      // running dot-product accumulators per matrix sweep.
-      for (int64_t chunk = 0; chunk < block_cols; chunk += 10) {
-        const int64_t chunk_cols =
-          (block_cols - chunk < 10) ? block_cols - chunk : 10;
-        double* yptr[10];
-        const double* xptr[10];
-        double acc[10];
-        for (int64_t block = 0; block < chunk_cols; ++block) {
-          yptr[block] = Y + (chunk + block) * ldy;
-          xptr[block] = X + (chunk + block) * ldx;
-        }
-        for (int64_t col = 0; col < csc->cols; ++col) {
-          for (int64_t block = 0; block < chunk_cols; ++block) {
-            acc[block] = 0.0;
-          }
-          for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
-            const int row = csc->row_idx[pos];
-            const double a = csc->values[pos];
-            for (int64_t block = 0; block < chunk_cols; ++block) {
-              acc[block] += a * xptr[block][row];
-            }
-          }
-          for (int64_t block = 0; block < chunk_cols; ++block) {
-            yptr[block][col] += alpha * acc[block];
-          }
-        }
-      }
-    }
+    csc_adjoint_apply<false>(csc, block_cols, X, ldx, nullptr, nullptr,
+                             alpha, Y, ldy);
   }
   return 0;
 }
@@ -584,7 +1358,10 @@ extern "C" int eigencore_centered_scaled_csc_apply(
   }
 
   if (op == EIGENCORE_TRANSPOSE_NONE) {
-    // Y <- alpha (A - 1 mu^T) D X + beta Y.
+    // Y <- alpha (A - 1 mu^T) D X + beta Y: scatter alpha A D X, then subtract
+    // the rank-one correction alpha (mu^T D x) from every row.
+    csc_forward_apply<true>(csc, block_cols, X, ldx, fused->col_weights,
+                            alpha, Y, ldy);
     for (int64_t block = 0; block < block_cols; ++block) {
       const double* x_col = X + block * ldx;
       double* y_col = Y + block * ldy;
@@ -592,13 +1369,6 @@ extern "C" int eigencore_centered_scaled_csc_apply(
       for (int64_t col = 0; col < csc->cols; ++col) {
         const double scaled_x = fused->col_weights[col] * x_col[col];
         correction += fused->col_means[col] * scaled_x;
-        if (scaled_x == 0.0) {
-          continue;
-        }
-        const double coefficient = alpha * scaled_x;
-        for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
-          y_col[csc->row_idx[pos]] += coefficient * csc->values[pos];
-        }
       }
       correction *= alpha;
       for (int64_t row = 0; row < csc->rows; ++row) {
@@ -607,22 +1377,8 @@ extern "C" int eigencore_centered_scaled_csc_apply(
     }
   } else {
     // Y <- alpha D (A^T X - mu 1^T X) + beta Y.
-    for (int64_t block = 0; block < block_cols; ++block) {
-      const double* x_col = X + block * ldx;
-      double* y_col = Y + block * ldy;
-      double x_sum = 0.0;
-      for (int64_t row = 0; row < csc->rows; ++row) {
-        x_sum += x_col[row];
-      }
-      for (int64_t col = 0; col < csc->cols; ++col) {
-        double dot = 0.0;
-        for (int pos = csc->col_ptr[col]; pos < csc->col_ptr[col + 1]; ++pos) {
-          dot += csc->values[pos] * x_col[csc->row_idx[pos]];
-        }
-        y_col[col] += alpha * fused->col_weights[col] *
-          (dot - fused->col_means[col] * x_sum);
-      }
-    }
+    csc_adjoint_apply<true>(csc, block_cols, X, ldx, fused->col_weights,
+                            fused->col_means, alpha, Y, ldy);
   }
   return 0;
 }
@@ -759,18 +1515,39 @@ extern "C" int eigencore_r_operator_apply(void* impl,
   return 0;
 }
 
+// Output buffer of the R-level block applies (P11). When beta == 0 the old
+// contents of Y are never read (every kernel zero-fills or uses BLAS beta = 0),
+// so a fresh matrix replaces the former duplicate(Y); dimnames are kept. Y may
+// be NULL, meaning a zero matrix of the output shape: callers set beta = 0
+// then, so R wrappers need not allocate Y at all.
+static SEXP block_apply_output(SEXP Y_, SEXPTYPE type, int rows, int cols,
+                               bool beta_is_zero) {
+  if (Y_ != R_NilValue && !beta_is_zero) {
+    return duplicate(Y_);
+  }
+  SEXP out_ = PROTECT(allocMatrix(type, rows, cols));
+  if (Y_ != R_NilValue) {
+    SEXP dimnames_ = getAttrib(Y_, R_DimNamesSymbol);
+    if (dimnames_ != R_NilValue) {
+      setAttrib(out_, R_DimNamesSymbol, dimnames_);
+    }
+  }
+  UNPROTECT(1);
+  return out_;
+}
+
 extern "C" SEXP eigencore_dense_block_apply(SEXP A_, SEXP X_, SEXP alpha_,
                                             SEXP beta_, SEXP Y_,
                                             SEXP transpose_) {
   EIGENCORE_ENTRY_BEGIN
-  if (!isReal(A_) || !isReal(X_) || !isReal(Y_)) {
+  if (!isReal(A_) || !isReal(X_) || !(isReal(Y_) || isNull(Y_))) {
     error("A, X, and Y must be double matrices");
   }
 
   SEXP dimA = getAttrib(A_, R_DimSymbol);
   SEXP dimX = getAttrib(X_, R_DimSymbol);
   SEXP dimY = getAttrib(Y_, R_DimSymbol);
-  if (dimA == R_NilValue || dimX == R_NilValue || dimY == R_NilValue) {
+  if (dimA == R_NilValue || dimX == R_NilValue || (dimY == R_NilValue && !isNull(Y_))) {
     error("A, X, and Y must be matrices");
   }
 
@@ -778,22 +1555,22 @@ extern "C" SEXP eigencore_dense_block_apply(SEXP A_, SEXP X_, SEXP alpha_,
   const int n = INTEGER(dimA)[1];
   const int xr = INTEGER(dimX)[0];
   const int xc = INTEGER(dimX)[1];
-  const int yr = INTEGER(dimY)[0];
-  const int yc = INTEGER(dimY)[1];
+  const int yr = isNull(Y_) ? -1 : INTEGER(dimY)[0];
+  const int yc = isNull(Y_) ? -1 : INTEGER(dimY)[1];
   const bool transpose = LOGICAL(transpose_)[0];
   const double alpha = REAL(alpha_)[0];
-  const double beta = REAL(beta_)[0];
+  const double beta = isNull(Y_) ? 0.0 : REAL(beta_)[0];
 
   const int inner = transpose ? m : n;
   const int out_rows = transpose ? n : m;
   if (xr != inner) {
     error("non-conformable X for dense block apply");
   }
-  if (yr != out_rows || yc != xc) {
+  if ((!isNull(Y_) && (yr != out_rows || yc != xc))) {
     error("non-conformable Y for dense block apply");
   }
 
-  SEXP out_ = PROTECT(duplicate(Y_));
+  SEXP out_ = PROTECT(block_apply_output(Y_, REALSXP, out_rows, xc, beta == 0.0));
   double* A = REAL(A_);
   double* X = REAL(X_);
   double* out = REAL(out_);
@@ -824,7 +1601,7 @@ extern "C" SEXP eigencore_dense_complex_block_apply(SEXP A_, SEXP X_, SEXP alpha
                                                     SEXP beta_, SEXP Y_,
                                                     SEXP adjoint_) {
   EIGENCORE_ENTRY_BEGIN
-  if (!isComplex(A_) || !isComplex(X_) || !isComplex(Y_)) {
+  if (!isComplex(A_) || !isComplex(X_) || !(isComplex(Y_) || isNull(Y_))) {
     error("A, X, and Y must be complex matrices");
   }
   if (!isLogical(adjoint_) || LENGTH(adjoint_) != 1) {
@@ -834,7 +1611,7 @@ extern "C" SEXP eigencore_dense_complex_block_apply(SEXP A_, SEXP X_, SEXP alpha
   SEXP dimA = getAttrib(A_, R_DimSymbol);
   SEXP dimX = getAttrib(X_, R_DimSymbol);
   SEXP dimY = getAttrib(Y_, R_DimSymbol);
-  if (dimA == R_NilValue || dimX == R_NilValue || dimY == R_NilValue) {
+  if (dimA == R_NilValue || dimX == R_NilValue || (dimY == R_NilValue && !isNull(Y_))) {
     error("A, X, and Y must be matrices");
   }
 
@@ -842,8 +1619,8 @@ extern "C" SEXP eigencore_dense_complex_block_apply(SEXP A_, SEXP X_, SEXP alpha
   const int n = INTEGER(dimA)[1];
   const int xr = INTEGER(dimX)[0];
   const int xc = INTEGER(dimX)[1];
-  const int yr = INTEGER(dimY)[0];
-  const int yc = INTEGER(dimY)[1];
+  const int yr = isNull(Y_) ? -1 : INTEGER(dimY)[0];
+  const int yc = isNull(Y_) ? -1 : INTEGER(dimY)[1];
   const bool adjoint = LOGICAL(adjoint_)[0];
 
   const int inner = adjoint ? m : n;
@@ -851,11 +1628,17 @@ extern "C" SEXP eigencore_dense_complex_block_apply(SEXP A_, SEXP X_, SEXP alpha
   if (xr != inner) {
     error("non-conformable X for dense complex block apply");
   }
-  if (yr != out_rows || yc != xc) {
+  if ((!isNull(Y_) && (yr != out_rows || yc != xc))) {
     error("non-conformable Y for dense complex block apply");
   }
 
-  SEXP out_ = PROTECT(duplicate(Y_));
+  Rcomplex beta = scalar_as_rcomplex(beta_, "beta");
+  if (isNull(Y_)) {
+    beta.r = 0.0;
+    beta.i = 0.0;
+  }
+  SEXP out_ = PROTECT(block_apply_output(Y_, CPLXSXP, out_rows, xc,
+                                         beta.r == 0.0 && beta.i == 0.0));
   DenseComplexColumnMajorOperator impl = {m, n, COMPLEX(A_)};
   const int status = eigencore_dense_complex_apply(
     &impl,
@@ -864,7 +1647,7 @@ extern "C" SEXP eigencore_dense_complex_block_apply(SEXP A_, SEXP X_, SEXP alpha
     COMPLEX(X_),
     xr,
     scalar_as_rcomplex(alpha_, "alpha"),
-    scalar_as_rcomplex(beta_, "beta"),
+    beta,
     COMPLEX(out_),
     out_rows,
     nullptr
@@ -1354,6 +2137,44 @@ static void csc_randomized_apply_block(const CSCOperator& impl,
   }
 }
 
+// B (q_cols x n, column-major) += (A^T Q)^T column by column: a gather per
+// column of A over a row-major copy Qt of Q, parallel over columns of A
+// (each output column is owned by one thread, so results do not depend on
+// the thread count). Qt must hold m * q_cols doubles.
+static void csc_project_transposed_kernel(const int* row_idx, const int* col_ptr,
+                                          const double* values, int m, int n,
+                                          const double* Q, int q_cols,
+                                          double* Qt, double* B,
+                                          bool per_call) {
+  int threads = eigencore_thread_count();
+  if (static_cast<int64_t>(col_ptr[n]) * q_cols < kCscParallelMinWork ||
+      (per_call && threads > 1 && eigencore_blas_busy())) {
+    threads = 1;
+  }
+  if (threads > 1) {
+    eigencore_blas_quiesce();
+  }
+  EIGENCORE_OMP(omp parallel for num_threads(threads) schedule(static) if(threads > 1))
+  for (int row = 0; row < m; ++row) {
+    for (int block = 0; block < q_cols; ++block) {
+      Qt[static_cast<int64_t>(row) * q_cols + block] =
+        Q[static_cast<int64_t>(block) * m + row];
+    }
+  }
+  EIGENCORE_OMP(omp parallel for num_threads(threads) schedule(dynamic, 256) if(threads > 1))
+  for (int col = 0; col < n; ++col) {
+    double* out_col = B + static_cast<int64_t>(col) * q_cols;
+    for (int pos = col_ptr[col]; pos < col_ptr[col + 1]; ++pos) {
+      const int row = row_idx[pos];
+      const double a = values[pos];
+      const double* qt_row = Qt + static_cast<int64_t>(row) * q_cols;
+      for (int block = 0; block < q_cols; ++block) {
+        out_col[block] += a * qt_row[block];
+      }
+    }
+  }
+}
+
 static void csc_randomized_project_transposed(const CSCOperator& impl,
                                               const std::vector<double>& Q,
                                               int q_cols,
@@ -1365,23 +2186,8 @@ static void csc_randomized_project_transposed(const CSCOperator& impl,
   // inner loop reads a contiguous q_cols-length panel instead of striding m
   // doubles per element across Q's columns.
   std::vector<double> Qt(static_cast<size_t>(m) * static_cast<size_t>(q_cols));
-  for (int block = 0; block < q_cols; ++block) {
-    const double* q_col = Q.data() + static_cast<int64_t>(block) * m;
-    for (int row = 0; row < m; ++row) {
-      Qt[static_cast<int64_t>(row) * q_cols + block] = q_col[row];
-    }
-  }
-  for (int col = 0; col < n; ++col) {
-    double* out_col = B.data() + static_cast<int64_t>(col) * q_cols;
-    for (int pos = impl.col_ptr[col]; pos < impl.col_ptr[col + 1]; ++pos) {
-      const int row = impl.row_idx[pos];
-      const double value = impl.values[pos];
-      const double* qt_row = Qt.data() + static_cast<int64_t>(row) * q_cols;
-      for (int block = 0; block < q_cols; ++block) {
-        out_col[block] += value * qt_row[block];
-      }
-    }
-  }
+  csc_project_transposed_kernel(impl.row_idx, impl.col_ptr, impl.values, m, n,
+                                Q.data(), q_cols, Qt.data(), B.data(), false);
 }
 
 static DenseRandomizedCertificate csc_randomized_certificate(
@@ -1901,14 +2707,14 @@ extern "C" SEXP eigencore_csc_block_apply(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                           SEXP Y_, SEXP transpose_) {
   EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
-      !isReal(X_) || !isReal(Y_)) {
+      !isReal(X_) || !(isReal(Y_) || isNull(Y_))) {
     error("invalid CSC block apply inputs");
   }
   eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_block_apply");
 
   SEXP dimX = getAttrib(X_, R_DimSymbol);
   SEXP dimY = getAttrib(Y_, R_DimSymbol);
-  if (dimX == R_NilValue || dimY == R_NilValue) {
+  if (dimX == R_NilValue || (dimY == R_NilValue && !isNull(Y_))) {
     error("X and Y must be matrices");
   }
 
@@ -1916,22 +2722,22 @@ extern "C" SEXP eigencore_csc_block_apply(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   const int n = INTEGER(dim_)[1];
   const int xr = INTEGER(dimX)[0];
   const int xc = INTEGER(dimX)[1];
-  const int yr = INTEGER(dimY)[0];
-  const int yc = INTEGER(dimY)[1];
+  const int yr = isNull(Y_) ? -1 : INTEGER(dimY)[0];
+  const int yc = isNull(Y_) ? -1 : INTEGER(dimY)[1];
   const bool transpose = LOGICAL(transpose_)[0];
   const double alpha = REAL(alpha_)[0];
-  const double beta = REAL(beta_)[0];
+  const double beta = isNull(Y_) ? 0.0 : REAL(beta_)[0];
   const int out_rows = transpose ? n : m;
   const int inner = transpose ? m : n;
 
   if (xr != inner) {
     error("non-conformable X for CSC block apply");
   }
-  if (yr != out_rows || yc != xc) {
+  if ((!isNull(Y_) && (yr != out_rows || yc != xc))) {
     error("non-conformable Y for CSC block apply");
   }
 
-  SEXP out_ = PROTECT(duplicate(Y_));
+  SEXP out_ = PROTECT(block_apply_output(Y_, REALSXP, out_rows, xc, beta == 0.0));
   const int* row_idx = INTEGER(i_);
   const int* col_ptr = INTEGER(p_);
   const double* values = REAL(x_);
@@ -1939,6 +2745,7 @@ extern "C" SEXP eigencore_csc_block_apply(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
   double* out = REAL(out_);
 
   CSCOperator impl = {m, n, row_idx, col_ptr, values};
+  csc_mark_per_call(&impl);
   const int status = eigencore_csc_apply(
     &impl,
     transpose ? EIGENCORE_TRANSPOSE_ADJOINT : EIGENCORE_TRANSPOSE_NONE,
@@ -1990,6 +2797,7 @@ extern "C" SEXP eigencore_csc_randomized_apply(SEXP i_, SEXP p_, SEXP x_,
   const int* col_ptr = INTEGER(p_);
   const double* values = REAL(x_);
   CSCOperator impl = {m, n, row_idx, col_ptr, values};
+  csc_mark_per_call(&impl);
   const int status = eigencore_csc_apply(
     &impl,
     transpose ? EIGENCORE_TRANSPOSE_ADJOINT : EIGENCORE_TRANSPOSE_NONE,
@@ -2087,23 +2895,8 @@ extern "C" SEXP eigencore_csc_randomized_project_transposed(
   // Row-major copy of Q so each nonzero reads a contiguous qcols-length panel
   // instead of striding m doubles per element across Q's columns.
   std::vector<double> Qt(static_cast<size_t>(m) * static_cast<size_t>(qcols));
-  for (int block = 0; block < qcols; ++block) {
-    const double* q_col = Q + static_cast<int64_t>(block) * m;
-    for (int row = 0; row < m; ++row) {
-      Qt[static_cast<int64_t>(row) * qcols + block] = q_col[row];
-    }
-  }
-  for (int col = 0; col < n; ++col) {
-    double* out_col = out + static_cast<int64_t>(col) * qcols;
-    for (int pos = col_ptr[col]; pos < col_ptr[col + 1]; ++pos) {
-      const int row = row_idx[pos];
-      const double a = values[pos];
-      const double* qt_row = Qt.data() + static_cast<int64_t>(row) * qcols;
-      for (int block = 0; block < qcols; ++block) {
-        out_col[block] += a * qt_row[block];
-      }
-    }
-  }
+  csc_project_transposed_kernel(row_idx, col_ptr, values, m, n, Q, qcols,
+                                Qt.data(), out, true);
   SEXP transposed_ = PROTECT(ScalarLogical(TRUE));
   setAttrib(out_, install("transposed"), transposed_);
   UNPROTECT(2);
@@ -2197,14 +2990,14 @@ extern "C" SEXP eigencore_csc_centered_block_apply(
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(row_means_) || !isReal(col_means_) ||
       !isLogical(rows_) || !isLogical(columns_) ||
-      !isReal(X_) || !isReal(Y_) || !isLogical(transpose_)) {
+      !isReal(X_) || !(isReal(Y_) || isNull(Y_)) || !isLogical(transpose_)) {
     error("invalid centered CSC block apply inputs");
   }
   eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_centered_block_apply");
 
   SEXP dimX = getAttrib(X_, R_DimSymbol);
   SEXP dimY = getAttrib(Y_, R_DimSymbol);
-  if (dimX == R_NilValue || dimY == R_NilValue) {
+  if (dimX == R_NilValue || (dimY == R_NilValue && !isNull(Y_))) {
     error("X and Y must be matrices");
   }
 
@@ -2212,20 +3005,20 @@ extern "C" SEXP eigencore_csc_centered_block_apply(
   const int n = INTEGER(dim_)[1];
   const int xr = INTEGER(dimX)[0];
   const int xc = INTEGER(dimX)[1];
-  const int yr = INTEGER(dimY)[0];
-  const int yc = INTEGER(dimY)[1];
+  const int yr = isNull(Y_) ? -1 : INTEGER(dimY)[0];
+  const int yc = isNull(Y_) ? -1 : INTEGER(dimY)[1];
   const bool transpose = LOGICAL(transpose_)[0];
   const bool rows = LOGICAL(rows_)[0];
   const bool columns = LOGICAL(columns_)[0];
   const double alpha = REAL(alpha_)[0];
-  const double beta = REAL(beta_)[0];
+  const double beta = isNull(Y_) ? 0.0 : REAL(beta_)[0];
   const int out_rows = transpose ? n : m;
   const int inner = transpose ? m : n;
 
   if (xr != inner) {
     error("non-conformable X for centered CSC block apply");
   }
-  if (yr != out_rows || yc != xc) {
+  if ((!isNull(Y_) && (yr != out_rows || yc != xc))) {
     error("non-conformable Y for centered CSC block apply");
   }
   if (rows && LENGTH(row_means_) != m) {
@@ -2235,7 +3028,7 @@ extern "C" SEXP eigencore_csc_centered_block_apply(
     error("col_means length must equal CSC column dimension");
   }
 
-  SEXP out_ = PROTECT(duplicate(Y_));
+  SEXP out_ = PROTECT(block_apply_output(Y_, REALSXP, out_rows, xc, beta == 0.0));
   const int* row_idx = INTEGER(i_);
   const int* col_ptr = INTEGER(p_);
   const double* values = REAL(x_);
@@ -2245,6 +3038,7 @@ extern "C" SEXP eigencore_csc_centered_block_apply(
   double* out = REAL(out_);
 
   CSCOperator impl = {m, n, row_idx, col_ptr, values};
+  csc_mark_per_call(&impl);
   const int status = eigencore_csc_apply(
     &impl,
     transpose ? EIGENCORE_TRANSPOSE_ADJOINT : EIGENCORE_TRANSPOSE_NONE,
@@ -2320,14 +3114,14 @@ extern "C" SEXP eigencore_csc_centered_scaled_block_apply(
   EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(col_means_) || !isReal(weights_) || !isReal(X_) ||
-      !isReal(alpha_) || !isReal(beta_) || !isReal(Y_) ||
+      !isReal(alpha_) || !isReal(beta_) || !(isReal(Y_) || isNull(Y_)) ||
       !isLogical(transpose_)) {
     error("invalid centered-scaled CSC block apply inputs");
   }
   eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_centered_scaled_block_apply");
   SEXP dimX = getAttrib(X_, R_DimSymbol);
   SEXP dimY = getAttrib(Y_, R_DimSymbol);
-  if (dimX == R_NilValue || dimY == R_NilValue) {
+  if (dimX == R_NilValue || (dimY == R_NilValue && !isNull(Y_))) {
     error("X and Y must be matrices");
   }
 
@@ -2336,21 +3130,23 @@ extern "C" SEXP eigencore_csc_centered_scaled_block_apply(
   const bool transpose = LOGICAL(transpose_)[0];
   const int xr = INTEGER(dimX)[0];
   const int xc = INTEGER(dimX)[1];
-  const int yr = INTEGER(dimY)[0];
-  const int yc = INTEGER(dimY)[1];
+  const int yr = isNull(Y_) ? -1 : INTEGER(dimY)[0];
+  const int yc = isNull(Y_) ? -1 : INTEGER(dimY)[1];
   const int out_rows = transpose ? n : m;
   const int inner = transpose ? m : n;
   if (LENGTH(col_means_) != n || LENGTH(weights_) != n || xr != inner ||
-      yr != out_rows || yc != xc) {
+      (!isNull(Y_) && (yr != out_rows || yc != xc))) {
     error("non-conformable centered-scaled CSC block apply inputs");
   }
 
-  SEXP out_ = PROTECT(duplicate(Y_));
+  const double beta = isNull(Y_) ? 0.0 : REAL(beta_)[0];
+  SEXP out_ = PROTECT(block_apply_output(Y_, REALSXP, out_rows, xc, beta == 0.0));
   CenteredScaledCSCOperator impl = {
     {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)},
     REAL(col_means_),
     REAL(weights_)
   };
+  csc_mark_per_call(&impl.base);
   const int status = eigencore_centered_scaled_csc_apply(
     &impl,
     transpose ? EIGENCORE_TRANSPOSE_ADJOINT : EIGENCORE_TRANSPOSE_NONE,
@@ -2358,7 +3154,7 @@ extern "C" SEXP eigencore_csc_centered_scaled_block_apply(
     REAL(X_),
     xr,
     REAL(alpha_)[0],
-    REAL(beta_)[0],
+    beta,
     REAL(out_),
     out_rows,
     nullptr
@@ -2376,25 +3172,26 @@ extern "C" SEXP eigencore_diagonal_block_apply(SEXP x_, SEXP dim_, SEXP unit_,
                                                SEXP Y_) {
   EIGENCORE_ENTRY_BEGIN
   if (!isReal(x_) || !isInteger(dim_) || !isLogical(unit_) ||
-      !isReal(X_) || !isReal(Y_)) {
+      !isReal(X_) || !(isReal(Y_) || isNull(Y_))) {
     error("invalid diagonal block apply inputs");
   }
   SEXP dimX = getAttrib(X_, R_DimSymbol);
   SEXP dimY = getAttrib(Y_, R_DimSymbol);
-  if (dimX == R_NilValue || dimY == R_NilValue) {
+  if (dimX == R_NilValue || (dimY == R_NilValue && !isNull(Y_))) {
     error("X and Y must be matrices");
   }
 
   const int n = INTEGER(dim_)[0];
   const int xr = INTEGER(dimX)[0];
   const int xc = INTEGER(dimX)[1];
-  const int yr = INTEGER(dimY)[0];
-  const int yc = INTEGER(dimY)[1];
-  if (INTEGER(dim_)[1] != n || xr != n || yr != n || yc != xc) {
+  const int yr = isNull(Y_) ? -1 : INTEGER(dimY)[0];
+  const int yc = isNull(Y_) ? -1 : INTEGER(dimY)[1];
+  if (INTEGER(dim_)[1] != n || xr != n || (!isNull(Y_) && (yr != n || yc != xc))) {
     error("non-conformable diagonal block apply inputs");
   }
 
-  SEXP out_ = PROTECT(duplicate(Y_));
+  const double beta = isNull(Y_) ? 0.0 : REAL(beta_)[0];
+  SEXP out_ = PROTECT(block_apply_output(Y_, REALSXP, n, xc, beta == 0.0));
   DiagonalOperator impl = {n, REAL(x_), static_cast<bool>(LOGICAL(unit_)[0])};
   const int status = eigencore_diagonal_apply(
     &impl,
@@ -2403,7 +3200,7 @@ extern "C" SEXP eigencore_diagonal_block_apply(SEXP x_, SEXP dim_, SEXP unit_,
     REAL(X_),
     xr,
     REAL(alpha_)[0],
-    REAL(beta_)[0],
+    beta,
     REAL(out_),
     n,
     nullptr
@@ -2549,5 +3346,86 @@ extern "C" SEXP eigencore_col_norms(SEXP X_) {
   }
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
+}
+
+// Test and benchmark hook for the cached CSC kernels (P8): applies
+// Y <- alpha op(A) X + beta Y0 `reps` times (reps >= 1) on ONE operator, so
+// the second and later applies use the cached CSR copy / row slabs exactly
+// as a native solver does. With col_means/weights non-NULL the operator is
+// the centered-scaled (A - 1 mu^T) D. Returns list(Y, ms_per_apply).
+extern "C" SEXP eigencore_csc_apply_repeat(SEXP i_, SEXP p_, SEXP x_,
+                                           SEXP dim_, SEXP col_means_,
+                                           SEXP weights_, SEXP X_,
+                                           SEXP alpha_, SEXP beta_, SEXP Y_,
+                                           SEXP transpose_, SEXP reps_) {
+  EIGENCORE_ENTRY_BEGIN
+  if (!isReal(X_) || !isReal(Y_) || !isLogical(transpose_) ||
+      !isReal(alpha_) || !isReal(beta_)) {
+    error("invalid CSC repeat-apply inputs");
+  }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_, "csc_apply_repeat");
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  const bool transpose = LOGICAL(transpose_)[0];
+  const int reps = asInteger(reps_);
+  SEXP dimX = getAttrib(X_, R_DimSymbol);
+  SEXP dimY = getAttrib(Y_, R_DimSymbol);
+  if (dimX == R_NilValue || dimY == R_NilValue || reps == NA_INTEGER ||
+      reps < 1) {
+    error("invalid CSC repeat-apply inputs");
+  }
+  const int xr = INTEGER(dimX)[0];
+  const int xc = INTEGER(dimX)[1];
+  const int out_rows = transpose ? n : m;
+  if (xr != (transpose ? m : n) || INTEGER(dimY)[0] != out_rows ||
+      INTEGER(dimY)[1] != xc) {
+    error("non-conformable CSC repeat-apply inputs");
+  }
+  const bool scaled = col_means_ != R_NilValue;
+  if (scaled && (!isReal(col_means_) || !isReal(weights_) ||
+                 XLENGTH(col_means_) != n || XLENGTH(weights_) != n)) {
+    error("col_means and weights must be double vectors of length ncol");
+  }
+  CenteredScaledCSCOperator impl = {
+    {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)},
+    scaled ? REAL(col_means_) : nullptr,
+    scaled ? REAL(weights_) : nullptr
+  };
+  const size_t len = static_cast<size_t>(out_rows) * static_cast<size_t>(xc);
+  SEXP out_ = PROTECT(allocMatrix(REALSXP, out_rows, xc));
+  double* out = REAL(out_);
+  const EigencoreTranspose op =
+    transpose ? EIGENCORE_TRANSPOSE_ADJOINT : EIGENCORE_TRANSPOSE_NONE;
+  double seconds = 0.0;
+  for (int rep = 0; rep < reps; ++rep) {
+    if (len > 0) {
+      std::memcpy(out, REAL(Y_), sizeof(double) * len);
+    }
+    auto start = std::chrono::steady_clock::now();
+    const int status = scaled ?
+      eigencore_centered_scaled_csc_apply(&impl, op, xc, REAL(X_), xr,
+                                          REAL(alpha_)[0], REAL(beta_)[0],
+                                          out, out_rows, nullptr) :
+      eigencore_csc_apply(&impl.base, op, xc, REAL(X_), xr, REAL(alpha_)[0],
+                          REAL(beta_)[0], out, out_rows, nullptr);
+    if (status != 0) {
+      eigencore_apply_status_error("CSC repeat apply", status);
+    }
+    if (rep > 0 || reps == 1) {
+      seconds += std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - start).count();
+    }
+  }
+  SEXP ms_ = PROTECT(ScalarReal(1e3 * seconds / (reps > 1 ? reps - 1 : 1)));
+  SEXP result_ = PROTECT(allocVector(VECSXP, 2));
+  SET_VECTOR_ELT(result_, 0, out_);
+  SET_VECTOR_ELT(result_, 1, ms_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(names_, 0, mkChar("Y"));
+  SET_STRING_ELT(names_, 1, mkChar("ms"));
+  setAttrib(result_, R_NamesSymbol, names_);
+  UNPROTECT(4);
+  return result_;
   EIGENCORE_ENTRY_END
 }

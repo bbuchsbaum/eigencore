@@ -4,7 +4,17 @@
 #include <Rinternals.h>
 #include <R_ext/Complex.h>
 #include <stdint.h>
+#include <memory>
 #include "eigencore_operator.h"
+
+// Lazily built per-operator acceleration state for the CSC kernels (P8): a
+// CSR copy for thread-parallel forward applies and reusable row-major panels
+// (see native_operators.cpp). Owned through a shared_ptr so CSCOperator stays
+// an aggregate that existing call sites brace-initialise with five members;
+// the cache is created on the first apply that needs it and freed with the
+// operator. An operator (and its cache) must not be applied from two threads
+// at once.
+struct CscApplyCache;
 
 struct DenseColumnMajorOperator {
   int64_t rows;
@@ -24,11 +34,12 @@ struct CSCOperator {
   const int* row_idx;
   const int* col_ptr;
   const double* values;
+  std::shared_ptr<CscApplyCache> cache;
 };
 
 // Column-centered and right-scaled CSC map (A - 1 mu^T) D. The base CSC
 // storage, means, and weights are borrowed from R for the duration of a native
-// call; the apply function owns no heap allocation or cached operator action.
+// call; only the base operator's CSC apply cache (P8) is owned.
 struct CenteredScaledCSCOperator {
   CSCOperator base;
   const double* col_means;

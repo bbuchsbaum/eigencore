@@ -16,6 +16,9 @@ extern "C" SEXP eigencore_csc_randomized_sketch(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_randomized_project_transposed(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_randomized_svd_controller(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_column_moments(SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_set_default_threads(SEXP);
+extern "C" SEXP eigencore_thread_info(void);
+extern "C" SEXP eigencore_csc_apply_repeat(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_centered_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_centered_scaled_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_diagonal_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -142,6 +145,9 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_csc_randomized_project_transposed", (DL_FUNC) &eigencore_csc_randomized_project_transposed, 5},
   {"eigencore_csc_randomized_svd_controller", (DL_FUNC) &eigencore_csc_randomized_svd_controller, 9},
   {"eigencore_csc_column_moments", (DL_FUNC) &eigencore_csc_column_moments, 3},
+  {"eigencore_set_default_threads", (DL_FUNC) &eigencore_set_default_threads, 1},
+  {"eigencore_thread_info", (DL_FUNC) &eigencore_thread_info, 0},
+  {"eigencore_csc_apply_repeat", (DL_FUNC) &eigencore_csc_apply_repeat, 12},
   {"eigencore_csc_centered_block_apply", (DL_FUNC) &eigencore_csc_centered_block_apply, 13},
   {"eigencore_csc_centered_scaled_block_apply", (DL_FUNC) &eigencore_csc_centered_scaled_block_apply, 11},
   {"eigencore_diagonal_block_apply", (DL_FUNC) &eigencore_diagonal_block_apply, 7},
