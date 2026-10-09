@@ -13,7 +13,7 @@
   `A` is an explicit matrix and the factorisation is cheap
   (`"inertia_verified"` / `"inertia_failed"`; cost gate
   `eigencore.svd_completeness_inertia_seconds` = 0.25 s and
-  `eigencore.svd_completeness_inertia_ratio` = 0.25 of the solve time), and
+  `eigencore.svd_completeness_inertia_ratio` = 0.1 of the solve time), and
   otherwise by the deflated-complement probe on the Gram operator `A'A`
   (or `AA'`, smaller side) with a repair round when a missing value is
   found (`"probed"` / `"repaired"` / `"failed"`). `nearest()` SVD targets

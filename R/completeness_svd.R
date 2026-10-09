@@ -363,7 +363,9 @@ svd_augmented_matrix <- function(A) {
 # that it replaces costs a few dozen applies of A, so the factorisation must
 # stay small next to the solve: it runs when its predicted time is below
 # eigencore.svd_completeness_inertia_seconds (default 0.25 s) or below
-# eigencore.svd_completeness_inertia_ratio (default 0.25) times the solve.
+# eigencore.svd_completeness_inertia_ratio (default 0.1) times the solve.
+# The prediction counts two factorisations per threshold (the margin
+# re-count is common).
 #' @keywords internal
 svd_inertia_completeness_controls <- function() {
   controls <- inertia_completeness_controls()
@@ -372,7 +374,7 @@ svd_inertia_completeness_controls <- function() {
     if (length(value) != 1L || !is.finite(value) || value < 0) default else value
   }
   controls$seconds <- num(getOption("eigencore.svd_completeness_inertia_seconds"), 0.25)
-  controls$ratio <- num(getOption("eigencore.svd_completeness_inertia_ratio"), 0.25)
+  controls$ratio <- num(getOption("eigencore.svd_completeness_inertia_ratio"), 0.1)
   controls
 }
 
@@ -390,7 +392,7 @@ svd_inertia_gate <- function(op, kind, mode, solve_seconds,
     return(no("no explicit matrix source"))
   }
   N <- as.numeric(sum(dim(A)))
-  per_threshold <- if (identical(kind, "nearest")) 2 else 1
+  per_threshold <- if (identical(kind, "nearest")) 4 else 2
   dense <- is.matrix(A)
   if (dense) {
     predicted <- per_threshold * (N^3 / 3) / controls$dense_rate
