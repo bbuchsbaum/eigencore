@@ -5,7 +5,9 @@
 #'   [interval()] target, whose count comes from an inertia factorisation;
 #'   there a supplied `k` is an upper bound (an error if the interval holds
 #'   more eigenvalues).
-#' @param target Eigencore eigenvalue target descriptor.
+#' @param target Eigencore eigenvalue target descriptor. With
+#'   `method = shift_invert(sigma)` it defaults to `nearest(sigma)`; other
+#'   targets (except `smallest_magnitude()` with `sigma = 0`) are an error.
 #' @param B Optional metric matrix or operator for generalized problems.
 #' @param method Solver method descriptor.
 #' @param tol Convergence and certification tolerance.
@@ -77,6 +79,11 @@ eig_partial <- function(A, k = NULL, target = largest(), B = NULL, method = auto
                         left_vectors = c("auto", "none", "compute")) {
   allow_dense_fallback <- match.arg(allow_dense_fallback)
   left_vectors <- match.arg(left_vectors)
+  if (missing(target) && inherits(method, "eigencore_method") &&
+      identical(method$kind, "shift_invert") && !is.null(method$sigma)) {
+    # shift_invert(sigma) computes the eigenvalues nearest sigma.
+    target <- nearest(method$sigma)
+  }
   if (!is.null(seed)) {
     seed_state <- saved_random_seed()
     on.exit(restore_random_seed(seed_state), add = TRUE)
@@ -312,6 +319,7 @@ solve.eigencore_plan <- function(
       execute_svd_plan(a)
     }
   }))
+  result <- withhold_short_certificate(result, a$requested)
   finished <- proc.time()[["elapsed"]]
   result$work <- finalize_work_record(
     result,
@@ -331,6 +339,31 @@ solve.eigencore_plan <- function(
     }
   )
   result$memory <- result_memory_record(result)
+  result
+}
+
+# A certificate proves the returned pairs; it cannot pass for a request it
+# did not fill. Krylov routes return fewer than k pairs when the Krylov space
+# is exhausted (e.g. shift-invert on a spectrum with repeated eigenvalues:
+# 1, 7, 9 for k = 6 of {1,1,7,7,7,9,9,9}); found by the oracle sweep.
+#' @keywords internal
+withhold_short_certificate <- function(result, k) {
+  cert <- result$certificate
+  returned <- length(result$values)
+  if (is.null(k) || is.null(cert) || !isTRUE(cert$passed) || returned >= k) {
+    return(result)
+  }
+  note <- sprintf(
+    "only %d of the %d requested pairs were returned; certificate withheld",
+    returned, as.integer(k)
+  )
+  cert$passed <- FALSE
+  cert$notes <- unique(c(cert$notes, note))
+  if (!is.null(cert$target_passed) && isTRUE(cert$target_passed)) {
+    cert$target_passed <- FALSE
+  }
+  result$certificate <- cert
+  result$warnings <- unique(c(result$warnings, note))
   result
 }
 
