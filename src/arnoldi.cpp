@@ -159,6 +159,22 @@ static int arnoldi_cgs2(int n, int cols, const double* V, double* w,
   return 2;
 }
 
+// Deflation (target-completeness probe, R/completeness_nonsym.R): remove the
+// components of w along the orthonormal columns of D (n x dcols) with two
+// classical Gram-Schmidt passes. Arnoldi on vectors orthogonal to D with this
+// projection applied after every operator product is Arnoldi on the
+// compression (I - D D^T) A (I - D D^T) to the orthogonal complement of D.
+static void arnoldi_deflate(int n, int dcols, const double* D, double* w,
+                            double* dcoeff) {
+  if (dcols <= 0 || D == nullptr) {
+    return;
+  }
+  for (int pass = 0; pass < 2; ++pass) {
+    arnoldi_gemv_t(n, dcols, D, w, dcoeff);
+    arnoldi_gemv_n_sub(n, dcols, D, dcoeff, w);
+  }
+}
+
 static double arnoldi_normalize_start(int n, const double* start, double* v) {
   const double start_norm = arnoldi_norm2(n, start);
   if (!std::isfinite(start_norm) || !(start_norm > 0.0)) {
@@ -175,8 +191,10 @@ static double arnoldi_normalize_start(int n, const double* start, double* v) {
 // factorization A V = V H + f e^T stays valid with a zero subdiagonal entry.
 // Returns false when no such direction exists numerically (cols == n).
 static bool arnoldi_random_orthonormal(int n, int cols, const double* V,
-                                       double* v, double* coeff, double* tmp) {
-  if (cols >= n) {
+                                       double* v, double* coeff, double* tmp,
+                                       const double* D = nullptr, int dcols = 0,
+                                       double* dcoeff = nullptr) {
+  if (cols + std::max(dcols, 0) >= n) {
     return false;
   }
   for (int attempt = 0; attempt < 3; ++attempt) {
@@ -186,6 +204,7 @@ static bool arnoldi_random_orthonormal(int n, int cols, const double* V,
     }
     PutRNGstate();
     const double before = arnoldi_norm2(n, v);
+    arnoldi_deflate(n, dcols, D, v, dcoeff);
     double after = 0.0;
     arnoldi_cgs2(n, cols, V, v, coeff, tmp, -1.0, &after);
     if (std::isfinite(after) && after > 1e-3 * before) {
@@ -444,7 +463,9 @@ static SEXP native_krylov_schur_impl(void* impl,
                                      int max_subspace,
                                      const ArnoldiTarget& target,
                                      double tol,
-                                     int max_iterations) {
+                                     int max_iterations,
+                                     const double* D = nullptr,
+                                     int dcols = 0) {
   if (n64 < 1 || max_subspace < 1 || k < 1) {
     error("native Krylov-Schur Arnoldi requires positive dimensions");
   }
@@ -460,7 +481,15 @@ static SEXP native_krylov_schur_impl(void* impl,
     error("native Krylov-Schur Arnoldi target code is out of range");
   }
   const int n = static_cast<int>(n64);
-  const int m = std::min(max_subspace, n);
+  if (D == nullptr || dcols < 0) {
+    dcols = 0;
+  }
+  // Dimension of the space the iteration runs in (the complement of D).
+  const int n_eff = n - dcols;
+  if (n_eff < 1) {
+    error("native Krylov-Schur Arnoldi deflation leaves an empty complement");
+  }
+  const int m = std::min(max_subspace, n_eff);
   if (k > m) {
     error("native Krylov-Schur Arnoldi requires k <= max_subspace");
   }
@@ -489,6 +518,8 @@ static SEXP native_krylov_schur_impl(void* impl,
   int* order = reinterpret_cast<int*>(R_alloc(m_sz, sizeof(int)));
   int* select = reinterpret_cast<int*>(R_alloc(m_sz, sizeof(int)));
   int* bwork = reinterpret_cast<int*>(R_alloc(m_sz, sizeof(int)));
+  double* dcoeff = reinterpret_cast<double*>(
+    R_alloc(static_cast<size_t>(std::max(dcols, 1)), sizeof(double)));
   std::memset(V, 0, sizeof(double) * n_sz * (m_sz + 1));
   std::memset(S, 0, sizeof(double) * static_cast<size_t>(lds) * m_sz);
 
@@ -508,10 +539,20 @@ static SEXP native_krylov_schur_impl(void* impl,
   double* gees_work = reinterpret_cast<double*>(R_alloc(static_cast<size_t>(lwork), sizeof(double)));
 
   arnoldi_normalize_start(n, start, V);
+  if (dcols > 0) {
+    arnoldi_deflate(n, dcols, D, V, dcoeff);
+    const double vnorm = arnoldi_norm2(n, V);
+    if (!(vnorm > 1e-8) || !std::isfinite(vnorm)) {
+      error("native Krylov-Schur Arnoldi start vector lies in the deflated subspace");
+    }
+    for (int i = 0; i < n; ++i) {
+      V[i] /= vnorm;
+    }
+  }
 
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
   ArnoldiKrylovSchurResult state = {0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0};
-  const int max_keep = (m < n) ? m - 1 : m;
+  const int max_keep = (m < n_eff) ? m - 1 : m;
   int l = 0;
   double scale = 0.0;
   int p = 0;
@@ -528,6 +569,7 @@ static SEXP native_krylov_schur_impl(void* impl,
       state.apply_seconds += native_timer_elapsed(stage_start);
       stage_start = native_timer_now();
       ++state.matvecs;
+      arnoldi_deflate(n, dcols, D, w, dcoeff);
       const double wnorm = arnoldi_norm2(n, w);
       scale = std::max(scale, wnorm);
       double* scol = S + static_cast<int64_t>(j) * lds;
@@ -538,13 +580,14 @@ static SEXP native_krylov_schur_impl(void* impl,
         error("native Krylov-Schur Arnoldi produced a non-finite residual norm");
       }
       double* vnext = V + static_cast<int64_t>(j + 1) * n;
-      const bool full_space = (j + 1 == n);
+      const bool full_space = (j + 1 == n_eff);
       if (full_space || beta <= kArnoldiBreakdownFactor * DBL_EPSILON * scale) {
         // Invariant subspace: the factorization is exact in this column.
         scol[j + 1] = 0.0;
         if (j + 1 < m) {
           ++state.breakdowns;
-          if (!arnoldi_random_orthonormal(n, j + 1, V, vnext, coeff, tmp)) {
+          if (!arnoldi_random_orthonormal(n, j + 1, V, vnext, coeff, tmp,
+                                          D, dcols, dcoeff)) {
             error("native Krylov-Schur Arnoldi could not extend an exhausted Krylov space");
           }
         } else {
@@ -668,7 +711,7 @@ static SEXP native_krylov_schur_impl(void* impl,
       }
     }
     state.nconv = nconv;
-    converged = (nconv >= k) || (m == n);
+    converged = (nconv >= k) || (m == n_eff);
 
     state.schur_seconds += native_timer_elapsed(schur_start);
     auto restart_start = native_timer_now();
@@ -1081,6 +1124,81 @@ extern "C" SEXP eigencore_arnoldi_ks_r_operator(SEXP dim_, SEXP apply_,
     asInteger(max_subspace_), arnoldi_target_or_error(target_, target_values_),
     asReal(tol_), asInteger(maxit_)
   );
+  EIGENCORE_ENTRY_END
+}
+
+// Deflated Krylov-Schur for the nonsymmetric target-completeness probe
+// (R/completeness_nonsym.R): Krylov-Schur on (I - D D^T) A (I - D D^T)
+// restricted to the orthogonal complement of the orthonormal columns of D.
+// op_ is list(kind, ...): list("dense", A), list("csc", i, p, x, dim,
+// transposed) or list("r", dim, apply).
+extern "C" SEXP eigencore_arnoldi_ks_deflated(SEXP op_, SEXP start_, SEXP k_,
+                                               SEXP max_subspace_, SEXP target_,
+                                               SEXP tol_, SEXP maxit_,
+                                               SEXP D_) {
+  EIGENCORE_ENTRY_BEGIN
+  if (TYPEOF(op_) != VECSXP || LENGTH(op_) < 2 ||
+      TYPEOF(VECTOR_ELT(op_, 0)) != STRSXP || !isReal(start_)) {
+    error("invalid deflated Krylov-Schur Arnoldi inputs");
+  }
+  if (!isReal(D_) || !isMatrix(D_)) {
+    error("deflation basis must be a double matrix");
+  }
+  const int n = LENGTH(start_);
+  SEXP dimD = getAttrib(D_, R_DimSymbol);
+  if (INTEGER(dimD)[0] != n) {
+    error("deflation basis must have one row per operator row");
+  }
+  const int dcols = INTEGER(dimD)[1];
+  const ArnoldiTarget target = arnoldi_target_or_error(target_, R_NilValue);
+  const char* kind = CHAR(STRING_ELT(VECTOR_ELT(op_, 0), 0));
+  if (std::strcmp(kind, "dense") == 0) {
+    SEXP A_ = VECTOR_ELT(op_, 1);
+    SEXP dimA = getAttrib(A_, R_DimSymbol);
+    if (!isReal(A_) || dimA == R_NilValue || LENGTH(dimA) != 2 ||
+        INTEGER(dimA)[0] != n || INTEGER(dimA)[1] != n) {
+      error("A must be a square double matrix matching the start vector");
+    }
+    DenseColumnMajorOperator impl = {n, n, REAL(A_)};
+    return native_krylov_schur_impl(
+      &impl, eigencore_dense_apply, n, REAL(start_), asInteger(k_),
+      asInteger(max_subspace_), target, asReal(tol_), asInteger(maxit_),
+      REAL(D_), dcols);
+  }
+  if (std::strcmp(kind, "csc") == 0 && LENGTH(op_) >= 6) {
+    SEXP i_ = VECTOR_ELT(op_, 1);
+    SEXP p_ = VECTOR_ELT(op_, 2);
+    SEXP x_ = VECTOR_ELT(op_, 3);
+    SEXP dim_ = VECTOR_ELT(op_, 4);
+    if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
+        LENGTH(dim_) != 2) {
+      error("invalid CSC deflated Krylov-Schur Arnoldi inputs");
+    }
+    eigencore_validate_csc_structure(i_, p_, x_, dim_, "deflated Krylov-Schur Arnoldi");
+    if (INTEGER(dim_)[0] != n || INTEGER(dim_)[1] != n) {
+      error("A must be a square dgCMatrix matching the start vector");
+    }
+    const bool transposed = asLogical(VECTOR_ELT(op_, 5)) == TRUE;
+    CSCOperator impl = {n, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
+    return native_krylov_schur_impl(
+      &impl, transposed ? arnoldi_csc_adjoint_apply : eigencore_csc_apply,
+      n, REAL(start_), asInteger(k_), asInteger(max_subspace_), target,
+      asReal(tol_), asInteger(maxit_), REAL(D_), dcols);
+  }
+  if (std::strcmp(kind, "r") == 0 && LENGTH(op_) >= 3) {
+    SEXP dim_ = VECTOR_ELT(op_, 1);
+    SEXP apply_ = VECTOR_ELT(op_, 2);
+    if (!isInteger(dim_) || LENGTH(dim_) != 2 || TYPEOF(apply_) != CLOSXP ||
+        INTEGER(dim_)[0] != n || INTEGER(dim_)[1] != n) {
+      error("invalid matrix-free deflated Krylov-Schur Arnoldi inputs");
+    }
+    RApplyOperator impl = {n, n, apply_, R_NilValue};
+    return native_krylov_schur_impl(
+      &impl, eigencore_r_operator_apply, n, REAL(start_), asInteger(k_),
+      asInteger(max_subspace_), target, asReal(tol_), asInteger(maxit_),
+      REAL(D_), dcols);
+  }
+  error("unknown deflated Krylov-Schur Arnoldi operator kind");
   EIGENCORE_ENTRY_END
 }
 

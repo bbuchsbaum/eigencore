@@ -312,9 +312,16 @@ expect_certified_set_ok <- function(id) {
               label = sprintf("case %d [%s] certified set", id, rec$describe))
 }
 
-test_that("O16 (known): nonsymmetric Arnoldi certifies pairs outside the LI/SI/LM target set", {
-  skip("known: O16 (nonsymmetric target identity is not checked)")
-  for (id in c(2692L, 2783L, 4543L, 7072L, 13198L)) expect_certified_set_ok(id)
+test_that("O16: nonsymmetric Arnoldi does not certify pairs outside the LI/SI/LM target set", {
+  # Fixed by the deflated Krylov-Schur completeness probe
+  # (R/completeness_nonsym.R): the intruder is found and the set repaired,
+  # or the result is not certified. These five cases are repaired.
+  for (id in c(2692L, 2783L, 4543L, 7072L, 13198L)) {
+    rec <- oracle_run_case(id)
+    expect_true(isTRUE(rec$certified) && isTRUE(rec$set_ok),
+                label = sprintf("case %d [%s] repaired and certified", id, rec$describe))
+    expect_identical(rec$completeness, "repaired")
+  }
 })
 
 test_that("O17: LOBPCG magnitude targets on indefinite problems are repaired", {
@@ -327,8 +334,9 @@ test_that("O17: LOBPCG magnitude targets on indefinite problems are repaired", {
   }
 })
 
-test_that("O18 (known): matrix-free nonsymmetric smallest_magnitude certifies non-smallest pairs", {
-  skip("known: O18 (no shift-invert for matrix-free nonsymmetric SM; not checked)")
+test_that("O18: matrix-free nonsymmetric smallest_magnitude does not certify non-smallest pairs", {
+  # The completeness probe spans the (small) complement and repairs the set,
+  # or the result is not certified.
   set.seed(518)
   M <- matrix(rnorm(2500), 50) / sqrt(50)
   op <- linear_operator(
@@ -342,8 +350,8 @@ test_that("O18 (known): matrix-free nonsymmetric smallest_magnitude certifies no
       if (is.null(Y) || beta == 0) Z else Z + beta * Y
     })
   fit <- eig_partial(op, 1, target = smallest_magnitude(), tol = 1e-10)
-  if (isTRUE(fit$certificate$passed)) {
-    expect_equal(Mod(fit$values), min(Mod(eigen(M, only.values = TRUE)$values)),
-                 tolerance = 1e-6)
-  }
+  expect_true(fit$certificate$passed)
+  expect_true(fit$certificate$target_completeness %in% c("probed", "repaired"))
+  expect_equal(Mod(fit$values), min(Mod(eigen(M, only.values = TRUE)$values)),
+               tolerance = 1e-6)
 })
