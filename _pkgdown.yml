@@ -95,6 +95,7 @@ reference:
   - smallest_imaginary
   - both_ends
   - nearest
+  - interval
 - title: Methods
   desc: Solver families and method descriptors.
   contents:
