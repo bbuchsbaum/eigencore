@@ -16,8 +16,19 @@ test_that("O1: backward errors of operators with ||A||_2 < eps are not floored (
   X <- matrix(rnorm(12 * 8), 12, 8) * 1e-12
   A <- crossprod(X)
   fit <- eig_partial(crossprod_operator(X), k = 2, tol = 1e-8)
-  true_be <- oracle_true_backward(A, fit$values, fit$vectors)
-  expect_true(all(fit$certificate$backward_error >= 0.99 * true_be))
+  # The scale must follow ||A|| (~1e-23), not a floor at eps: this is the O1
+  # bug itself, and it stays detectable when the pairs are converged.
+  expect_lt(max(fit$certificate$scale), 1e-20)
+  expect_lt(fit$certificate$norm_values[["A"]], 1e-20)
+  # Converged pairs sit at rounding level (~1e-16); compute the true residual
+  # through the same X'(X v) operator form and allow a few ulps of slack, as
+  # BLAS kernels round differently across platforms.
+  V <- fit$vectors
+  R <- crossprod(X, X %*% V) - sweep(V, 2L, fit$values, `*`)
+  nA <- max(abs(eigen(A, symmetric = TRUE, only.values = TRUE)$values))
+  true_be <- sqrt(colSums(R^2)) / ((nA + abs(fit$values)) * sqrt(colSums(V^2)))
+  expect_true(all(fit$certificate$backward_error >=
+                    0.99 * true_be - 8 * .Machine$double.eps))
   if (isTRUE(fit$certificate$passed)) {
     expect_lte(max(true_be), 1.05e-8)
   }
@@ -26,7 +37,9 @@ test_that("O1: backward errors of operators with ||A||_2 < eps are not floored (
   sfit <- svd_partial(D, rank = 2)
   r <- sqrt(colSums((D %*% sfit$v - sweep(sfit$u, 2L, sfit$d, `*`))^2) +
               colSums((crossprod(D, sfit$u) - sweep(sfit$v, 2L, sfit$d, `*`))^2))
-  expect_true(all(sfit$certificate$backward_error >= 0.99 * r / 5e-20))
+  expect_lt(max(sfit$certificate$scale), 1e-18)
+  expect_true(all(sfit$certificate$backward_error >=
+                    0.99 * r / 5e-20 - 8 * .Machine$double.eps))
 
   # The scale itself is never floored at eps.
   op <- as_operator(diag(c(3, 2, 1) * 1e-30))
