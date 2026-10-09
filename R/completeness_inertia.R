@@ -348,12 +348,9 @@ inertia_completeness_gate <- function(problem, mode, k, solve_seconds = NA_real_
   if (is.null(kind)) {
     return(no("target"))
   }
-  if (identical(mode, "auto") && identical(kind, "nearest")) {
-    # Interior counts need two factorisations per threshold at shifts where
-    # LDL' pivot growth (and hence the margin) is largest; auto mode keeps
-    # them opt-in (completeness = "inertia").
-    return(no("nearest targets are counted only with completeness = \"inertia\""))
-  }
+  # nearest targets (two factorisations per threshold) are counted in auto
+  # mode too when the cost gate below passes; an unreliable count is
+  # inconclusive, never verified.
   if (is.null(inertia_matrix_of(op)) ||
       (!is.null(problem$metric) && is.null(inertia_matrix_of(problem$metric)))) {
     return(no("no explicit matrix source"))

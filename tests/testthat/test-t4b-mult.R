@@ -81,10 +81,13 @@ test_that("scalar Lanczos misses a repeated copy without the probe (the C50 haza
     S <- t4b_diag_sparse(d, 1000L + s)
     fit <- eig_partial(S, 5L, largest(),
                        method = lanczos(completeness = "none"), seed = s)
-    if (isTRUE(certificate(fit)$passed) && !t4b_same_set(fit, c(9, 9, 7, 7, 7))) {
+    # Unchecked sets never pass; the residual certificate alone would.
+    if (isTRUE(certificate(fit)$residual_passed) &&
+        !t4b_same_set(fit, c(9, 9, 7, 7, 7))) {
       wrong_certified <- wrong_certified + 1L
     }
     expect_identical(certificate(fit)$target_completeness, "not_checked")
+    expect_false(certificate(fit)$passed)
   }
   # Documents the hazard the probe exists for; if the base solver ever stops
   # missing copies this expectation can be relaxed.
@@ -195,7 +198,10 @@ test_that("generalized SPD (diagonal B) Lanczos is probed in the transformed spa
       bare <- eig_partial(A, 5L, largest(), B = B,
                           method = lanczos(max_subspace = 12L, completeness = "none"),
                           seed = s)
-      expect_true(certificate(bare)$passed)
+      # The residuals certify the wrong set; without a completeness check
+      # passed is withheld.
+      expect_true(certificate(bare)$residual_passed)
+      expect_false(certificate(bare)$passed)
       expect_false(t4b_same_set(bare, c(9, 9, 7, 7, 7)))
     }
   }
@@ -287,7 +293,10 @@ test_that("completeness labels: exact, not_checked, option and descriptor", {
   fit <- eig_partial(A, 3L, method = lanczos(), seed = 1L, certify = FALSE)
   expect_identical(certificate(fit)$target_completeness, "not_checked")
   fit <- eig_partial(A, 4L, target = both_ends(2L, 2L), method = lanczos(), seed = 1L)
-  expect_identical(certificate(fit)$target_completeness, "not_checked")
+  expect_true(certificate(fit)$target_completeness %in%
+                c("inertia_verified", "probed", "repaired"))
+  expect_true(certificate(fit)$passed)
+  expect_equal(sort(values(fit)), c(0.1, sort(t4b_spectrum(40L))[2], 9, 9), tolerance = 1e-8)
   expect_error(lanczos(completeness = "always"), "completeness")
 })
 

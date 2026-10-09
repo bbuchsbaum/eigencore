@@ -174,7 +174,9 @@ test_that("P7: reference Lanczos certifies once instead of every iteration", {
   # The target-completeness probe (C50) adds its own, separately recorded,
   # block applies after the solve.
   probe_calls <- fit$certificate$completeness$operator_block_calls
-  expect_identical(fit$certificate$target_completeness, "probed")
+  # Small matrix-free operators are now materialised and counted (proof);
+  # the probe is the fallback above the materialisation limit.
+  expect_true(fit$certificate$target_completeness %in% c("inertia_verified", "probed"))
   expect_lte(calls, fit$iterations + 2L + probe_calls)
   expect_lte(as.integer(fit$work$certification_operator_columns), 3L)
 })

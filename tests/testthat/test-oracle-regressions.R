@@ -121,11 +121,12 @@ test_that("O5: reference Golub-Kahan breakdown is relative; no DSYRK error on ti
 })
 
 # ---------------------------------------------------------------------------
-# Known, not fixed here (see docs/test-assurance.md). These are certified
-# results whose SET is wrong while the certificate reports
-# target_completeness = "not_checked" (or has no completeness field): the
-# per-pair residual certificate is sound, target identity is not checked on
-# these routes.
+# Target-set regressions (see docs/test-assurance.md). These were certified
+# results whose SET was wrong while the certificate reported
+# target_completeness = "not_checked". certificate$passed now requires a
+# verified set (R/completeness_hermitian.R for the Hermitian classes); each
+# test checks the verified status, the passed flag and the set itself, under
+# the default completeness mode (inertia proof) and under the probe.
 # ---------------------------------------------------------------------------
 
 repeated_spectrum_matrix <- function(values, seed = 5) {
@@ -136,22 +137,56 @@ repeated_spectrum_matrix <- function(values, seed = 5) {
   (A + t(A)) / 2
 }
 
-test_that("O6 (known): nearest(sigma) misses copies of repeated eigenvalues (case 194)", {
-  skip("known: O6 / C50 (completeness probe does not cover nearest/shift-invert)")
+expect_verified_set <- function(fit, expected, states) {
+  cert <- fit$certificate
+  expect_true(cert$passed)
+  expect_true(cert$target_completeness %in% states)
+  expect_equal(sort(fit$values), sort(expected), tolerance = 1e-8)
+}
+
+with_probe <- function(expr) {
+  old <- options(eigencore.target_completeness = "probe")
+  on.exit(options(old), add = TRUE)
+  expr
+}
+
+test_that("O6: nearest(sigma) finds every copy of a repeated eigenvalue (case 194)", {
   A <- repeated_spectrum_matrix(c(-1, 1, 7, 7, 7, 7, 9, 9))
+  # auto: inertia counts of A - t I prove the set (no longer opt-in for nearest)
   fit <- eig_partial(A, k = 6, target = nearest(7.5))
-  if (isTRUE(fit$certificate$passed)) {
-    expect_equal(sort(fit$values), c(7, 7, 7, 7, 9, 9), tolerance = 1e-8)
-  }
+  expect_verified_set(fit, c(7, 7, 7, 7, 9, 9), "inertia_verified")
+  # probe: the squared-shift probe finds the missing copy and repairs it
+  fit <- with_probe(eig_partial(A, k = 6, target = nearest(7.5),
+                     method = shift_invert(7.5)))
+  expect_verified_set(fit, c(7, 7, 7, 7, 9, 9), c("probed", "repaired"))
+  # sparse shift-invert: the probe runs on the route's own (A - sigma I)^-1
+  S <- methods::as(methods::as(Matrix::Matrix(
+    repeated_spectrum_matrix(c(seq(-5, 5, length.out = 40), 2, 2, 2)), sparse = TRUE),
+    "generalMatrix"), "CsparseMatrix")
+  fit <- with_probe(eig_partial(S, k = 5, target = nearest(2.05),
+                     method = shift_invert(2.05)))
+  expect_true(fit$certificate$passed)
+  expect_identical(fit$certificate$completeness$probe_operators, "shift_invert")
+  expect_equal(sum(abs(fit$values - 2) < 1e-8), 3L)
 })
 
-test_that("O7 (known): both_ends / nearest on the reference Lanczos route miss copies (case 341)", {
-  skip("known: O7 / C50 (reference Lanczos route is not probed)")
+test_that("O7: both_ends / nearest on Lanczos routes find every copy (case 341)", {
   A <- repeated_spectrum_matrix(rep(c(-1, 1, 3, 5, 7, 9), length.out = 50))
   fit <- eig_partial(A, k = 5, target = both_ends(2, 3), method = lanczos(block = 2))
-  if (isTRUE(fit$certificate$passed)) {
-    expect_equal(sort(fit$values), c(-1, -1, 9, 9, 9), tolerance = 1e-8)
-  }
+  expect_identical(fit$method, "native Hermitian Lanczos both ends (two thick-restart solves)")
+  expect_verified_set(fit, c(-1, -1, 9, 9, 9), "inertia_verified")
+  fit <- eig_partial(A, k = 5, target = both_ends(2, 3),
+                     method = lanczos(block = 2, completeness = "probe"))
+  expect_verified_set(fit, c(-1, -1, 9, 9, 9), c("probed", "repaired"))
+  # The reference Lanczos route (taken with a warm start) is probed too.
+  set.seed(7)
+  fit <- eig_partial(A, k = 5, target = both_ends(2, 3),
+                     method = lanczos(completeness = "probe"),
+                     initial_subspace = matrix(rnorm(50), 50))
+  expect_match(fit$method, "^reference Hermitian Lanczos")
+  expect_verified_set(fit, c(-1, -1, 9, 9, 9), c("probed", "repaired"))
+  fit <- eig_partial(A, k = 4, target = nearest(4.2), method = lanczos())
+  expect_verified_set(fit, c(5, 5, 5, 5), "inertia_verified")
 })
 
 test_that("O8 (known): SVD routes miss copies of repeated singular values (case 215)", {
@@ -164,18 +199,31 @@ test_that("O8 (known): SVD routes miss copies of repeated singular values (case 
   }
 })
 
-test_that("O9 (known): matrix-free smallest_magnitude misses a multiple zero eigenvalue (case 133)", {
-  skip("known: O9 / C50 (smallest_magnitude not probed)")
+test_that("O9: matrix-free smallest_magnitude finds the multiple zero eigenvalue (case 133)", {
   A <- repeated_spectrum_matrix(c(rep(0, 10), seq(-3, 3, length.out = 20)))
   f <- function(x, args) as.numeric(A %*% x)
+  # Small matrix-free operators are materialised for an exact count; six of
+  # the ten zero copies is a tie at the edge, verified as such.
   fit <- eigs_sym(f, k = 6, which = "SM", n = 30, opts = list(ncv = 20))
-  if (isTRUE(fit$certificate$passed)) {
-    expect_lt(max(abs(fit$values)), 1e-8)
-  }
+  expect_true(fit$certificate$passed)
+  expect_identical(fit$certificate$target_completeness, "inertia_verified")
+  expect_true(isTRUE(fit$certificate$completeness$materialized))
+  expect_true(isTRUE(fit$certificate$completeness$tie))
+  expect_lt(max(abs(fit$values)), 1e-8)
+  # The probe (squared operator A^2) gives the same set as evidence.
+  op <- linear_operator(dim = c(30, 30), apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+    Z <- alpha * (A %*% X)
+    if (is.null(Y) || beta == 0) Z else Z + beta * Y
+  }, structure = hermitian())
+  fit <- eig_partial(op, k = 6, target = smallest_magnitude(),
+                     method = lanczos(completeness = "probe"), tol = 1e-10)
+  expect_true(fit$certificate$passed)
+  expect_true(fit$certificate$target_completeness %in% c("probed", "repaired"))
+  expect_identical(fit$certificate$completeness$probe_operators, "squared_shift")
+  expect_lt(max(abs(fit$values)), 1e-8)
 })
 
-test_that("O10 (known): sparse both_ends takes the unrestarted reference Lanczos and does not certify", {
-  skip("known: O10 (quality: sparse/matrix-free both_ends has no native route)")
+test_that("O10: sparse both_ends runs two native thick-restart solves and certifies", {
   set.seed(1)
   n <- 40
   vals <- sample(c(-1, 1), n, replace = TRUE) * (seq_len(n) + stats::runif(n, 0, 0.5))
@@ -185,7 +233,13 @@ test_that("O10 (known): sparse both_ends takes the unrestarted reference Lanczos
   S <- methods::as(methods::as(Matrix::Matrix(A, sparse = TRUE), "generalMatrix"),
                    "CsparseMatrix")
   fit <- eig_partial(S, k = 1, target = both_ends(0, 1), tol = 1e-10)
+  expect_identical(fit$method, "native Hermitian Lanczos both ends (two thick-restart solves)")
   expect_true(fit$certificate$passed)
+  expect_equal(fit$values, max(vals), tolerance = 1e-8)
+  fit <- eig_partial(S, k = 5, target = both_ends(2, 3), tol = 1e-10)
+  expect_true(fit$certificate$passed)
+  expect_equal(sort(fit$values), sort(c(sort(vals)[1:2], sort(vals, decreasing = TRUE)[1:3])),
+               tolerance = 1e-8)
 })
 
 test_that("O11: svds(nu = 0, nv = 0) is still certified (shim solves with both sides)", {
@@ -263,9 +317,14 @@ test_that("O16 (known): nonsymmetric Arnoldi certifies pairs outside the LI/SI/L
   for (id in c(2692L, 2783L, 4543L, 7072L, 13198L)) expect_certified_set_ok(id)
 })
 
-test_that("O17 (known): LOBPCG magnitude targets on indefinite problems miss the other end", {
-  skip("known: O17 (LOBPCG magnitude targets are not completeness-checked)")
-  for (id in c(8847L, 10647L, 13154L)) expect_certified_set_ok(id)
+test_that("O17: LOBPCG magnitude targets on indefinite problems are repaired", {
+  # The count proves the other end missing; the deflated complement repair
+  # (in the B-transformed space for generalized problems) finds it.
+  for (id in c(8847L, 10647L, 13154L)) {
+    rec <- oracle_run_case(id)
+    expect_true(isTRUE(rec$certified) && isTRUE(rec$set_ok),
+                label = sprintf("case %d [%s] certified with the right set", id, rec$describe))
+  }
 })
 
 test_that("O18 (known): matrix-free nonsymmetric smallest_magnitude certifies non-smallest pairs", {

@@ -156,13 +156,13 @@ Each violation was minimised into `test-oracle-regressions.R`.
 | O13 | Implicit `smallest_magnitude` on a singular sparse nonsymmetric matrix failed with `native Krylov-Schur Arnoldi operator apply failed with status=-8`: `Matrix::solve()` refused the LU at apply time (case 6743) | unexpected error | **fixed**: singular pivot ratio detected at factor time, so the implicit route perturbs σ (`R/transform_shift_invert.R`) |
 | O14 | `eigs_sym()` re-sorted values and vectors but left `certificate$residuals`/`backward_error`/`converged` in solver order | API | **fixed** (`R/compatibility.R`) |
 | O15 | Unclear errors: `svd_partial(method = lanczos())` gave "Invalid eigencore plan (dispatch_unavailable): planned_method." (159 cases). `k = n` on Lanczos routes gave "max_subspace must be at least k + 1" when no subspace had been requested (235 cases) | unclear error | **fixed**: messages now name the cause and the remedy (`R/problem.R`, `R/reference_lanczos.R`) |
-| O6 | `nearest(σ)` and shift-invert routes miss copies of repeated eigenvalues while certified (case 194) | wrong set, `not_checked` | **known**: the C50 probe does not cover nearest/shift-invert |
-| O7 | `both_ends`/`nearest` on the reference Lanczos route miss copies (cases 341, 357, 1544) | wrong set, `not_checked` | **known** (C50) |
+| O6 | `nearest(σ)` and shift-invert routes miss copies of repeated eigenvalues while certified (case 194) | wrong set, `not_checked` | **fixed**: `nearest`/`smallest_magnitude` are inertia-counted under `completeness = "auto"` when the cost gate passes (proof), else probed on the route's (A − σI)⁻¹ or on (A − σI)² (evidence), with repair (`R/completeness_hermitian.R`) |
+| O7 | `both_ends`/`nearest` on the reference Lanczos route miss copies (cases 341, 357, 1544) | wrong set, `not_checked` | **fixed**: every non-exact Hermitian route is checked; `both_ends` is counted (or probed) per end (`R/completeness_hermitian.R`) |
 | O8 | SVD routes (prototype/native GK, implicit Gram) miss copies of repeated singular values (case 215) | wrong set, no completeness field | **known**: there is no SVD completeness check |
-| O9 | Matrix-free `smallest_magnitude` (`eigs_sym(f, which = "SM", ncv = 20)`) misses a multiple zero eigenvalue (case 133) | wrong set, `not_checked` | **known** (C50) |
-| O10 | Sparse `both_ends` takes the unrestarted reference Lanczos and does not converge even at n = 40 (honest, but RSpectra solves it) | quality | **known** |
+| O9 | Matrix-free `smallest_magnitude` (`eigs_sym(f, which = "SM", ncv = 20)`) misses a multiple zero eigenvalue (case 133) | wrong set, `not_checked` | **fixed**: small matrix-free operators are materialised and counted; larger ones are probed on A² (`R/completeness_hermitian.R`) |
+| O10 | Sparse `both_ends` takes the unrestarted reference Lanczos and does not converge even at n = 40 (honest, but RSpectra solves it) | quality | **fixed**: native both-ends route, two thick-restart solves merged by Rayleigh–Ritz (`R/both_ends_lanczos.R`) |
 | O16 | Nonsymmetric Arnoldi certifies pairs outside the `largest/smallest_imaginary` and `largest_magnitude` target set on random matrices (cases 2692, 2783, 4543, 7072, 13198) | wrong set, `not_checked` | **known**: nonsymmetric target identity is unchecked |
-| O17 | LOBPCG with magnitude targets on indefinite problems misses the other end of the spectrum (cases 8847, 10647, 13154) | wrong set, `not_checked` | **known** |
+| O17 | LOBPCG with magnitude targets on indefinite problems misses the other end of the spectrum (cases 8847, 10647, 13154) | wrong set, `not_checked` | **fixed**: the count proves the other end missing and the deflated-complement repair (in the B-transformed space for generalized problems) finds it |
 | O18 | Matrix-free nonsymmetric `smallest_magnitude` (no shift-invert available) certifies pairs that are not the smallest (cases 518, 10320, 14913) | wrong set, `not_checked` | **known** |
 
 The sweep also exposed several harness-side pitfalls, which the harness now
@@ -184,6 +184,15 @@ are O16–O18. None of them claims completeness: every one reports
 the inertia/completeness work planned for tranche 5 (gap 4), and the probe
 should be extended to nearest, both_ends, smallest_magnitude, SVD and
 nonsymmetric targets.
+
+Since `certificate$passed` requires a verified set (`require_verified_completeness()`
+in `R/solve.R`), every Hermitian route is checked by
+`R/completeness_hermitian.R`: inertia counts (a proof; ties at the target edge
+are verified as ties, see `hermitian_completeness_tie()`), materialised counts
+for small matrix-free operators, and otherwise the deflated-complement probe
+(evidence) in the B-transformed standard space, with repair. A Hermitian
+result that cannot be checked reports `passed = FALSE` with
+`residual_passed = TRUE`.
 
 ## Uncertified rate per configuration
 

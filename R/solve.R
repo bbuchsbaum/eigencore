@@ -451,6 +451,8 @@ execute_eigen_plan <- function(plan, restart_preparation = NULL) {
     identical(target_completeness_route_class(plan, a), "krylov") &&
     (target_completeness_eligible(a, k) ||
        (mode %in% c("auto", "inertia") && inertia_completeness_eligible(a, k)))
+  need_vectors <- need_vectors ||
+    hermitian_completeness_wants_vectors(plan, a, k, mode)
   started <- proc.time()[["elapsed"]]
   result <- execute_eigen_plan_dispatch(
     plan, restart_preparation = restart_preparation,
@@ -461,8 +463,12 @@ execute_eigen_plan <- function(plan, restart_preparation = NULL) {
   if (!is.null(result$transform)) {
     result$transform["inertia_seed"] <- NULL
   }
-  apply_target_completeness(result, plan, a, k, mode, vectors_requested,
-                            solve_seconds = solve_seconds, seed = seed)
+  result <- apply_target_completeness(result, plan, a, k, mode, vectors_requested,
+                                      solve_seconds = solve_seconds, seed = seed)
+  if (!is.null(result$transform)) {
+    result$transform["completeness_solve"] <- NULL
+  }
+  result
 }
 
 #' @keywords internal
@@ -711,6 +717,7 @@ plan_dispatches_lanczos <- function(plan) {
     native_matrix_free_block_lanczos_label(),
     native_generalized_lanczos_label(),
     generalized_lanczos_label(),
+    native_both_ends_lanczos_label(),
     "reference Hermitian Lanczos (target unsupported by native path)",
     "reference Hermitian Lanczos (prototype/oracle fallback)"
   )

@@ -1964,6 +1964,14 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
       } else {
         NULL
       },
+      # Internal: the solve operator (A - sigma I)^{-1}, used by the target
+      # completeness probe for nearest(sigma) (R/completeness_hermitian.R)
+      # and removed from the result afterwards.
+      completeness_solve = if (is.null(Bop)) {
+        list(sigma = sigma, operator = M)
+      } else {
+        NULL
+      },
       certification = list(
         problem = "original",
         residual_formula = if (is.null(Bop)) {

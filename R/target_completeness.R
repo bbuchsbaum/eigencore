@@ -509,6 +509,16 @@ inertia_completeness_eligible <- function(problem, k) {
 apply_target_completeness <- function(result, plan, problem, k, mode,
                                       vectors_requested, solve_seconds = NA_real_,
                                       seed = NULL) {
+  # Every non-exact Hermitian route is checked in R/completeness_hermitian.R;
+  # the code below handles the rest (exact routes, uncertified or
+  # non-Hermitian results, completeness = "none").
+  hermitian <- hermitian_target_completeness(
+    result, plan, problem, k, mode, vectors_requested,
+    solve_seconds = solve_seconds, seed = seed
+  )
+  if (!is.null(hermitian)) {
+    return(hermitian)
+  }
   cert <- result$certificate
   if (is.null(cert) || !is.null(cert$target_completeness)) {
     if (!isTRUE(vectors_requested)) {

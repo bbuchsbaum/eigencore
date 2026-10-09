@@ -226,6 +226,12 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
       vectors = vectors,
       reorthogonalize = method_reorth
     )
+  } else if (identical(plan$method, native_both_ends_lanczos_label())) {
+    native_both_ends_lanczos_hermitian(
+      a$A, k = k, target = a$target, tol = tol, maxit = method_subspace,
+      block = method_block, max_restarts = method_max_restarts,
+      vectors = vectors, check_stride = method_check_stride
+    )
   } else if (plan_dispatches_native_lanczos(plan)) {
     if (method_block > 1L) {
       native_block_lanczos_hermitian(
@@ -311,6 +317,12 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
       )
     } else {
       "using reference generalized SPD B-orthogonal Lanczos refinement; native generalized Lanczos hot loop not yet implemented"
+    }
+  } else if (identical(plan$method, native_both_ends_lanczos_label())) {
+    if (!isTRUE(iter$certificate$passed)) {
+      paste0(plan$method, " did not converge all ", k, " requested pairs")
+    } else {
+      character()
     }
   } else if (plan_dispatches_native_lanczos(plan)) {
     if (!isTRUE(iter$certificate$passed)) {

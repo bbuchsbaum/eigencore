@@ -45,23 +45,33 @@ native path always reorthogonalizes (DGKS x2) and ignores this flag;
 it is preserved for the R reference solver's public API.}
 
 \item{completeness}{Target-completeness check run after a certified
-Hermitian solve with a \code{largest()}, \code{smallest()},
-\code{largest_magnitude()} (or, for the inertia check, \code{nearest()}) target.
+Hermitian solve (every target except \code{interval()}, which verifies its
+own set; \code{smallest_magnitude()} is checked as \code{nearest(0)} and
+\code{both_ends()} one end at a time). Unless the check verifies the set,
+\code{certificate(fit)$passed} is \code{FALSE} (with \code{residual_passed = TRUE}).
 \code{"inertia"} proves completeness deterministically by counting
 eigenvalues with an \eqn{LDL^T} factorisation of \verb{A - t B} (see
-\code{\link[=eigen_count]{eigen_count()}}); it needs an explicit dense or sparse matrix and
+\code{\link[=eigen_count]{eigen_count()}}); it needs an explicit dense or sparse matrix (a
+matrix-free operator with n at most
+\code{getOption("eigencore.completeness_materialize_limit", 2000)} is
+materialised by n applies) and
 reports \code{"inertia_verified"}, \code{"inertia_failed"} (repaired when
 possible, otherwise \code{passed = FALSE}) or \code{"inertia_inconclusive"} (an
 eigenvalue cluster straddles the target edge within the residual
-bound). \code{"probe"} runs a short block Lanczos process on the operator
+bound and the counts cannot show that a correct choice was returned; a
+repeated eigenvalue at the edge is verified as a tie, recorded in
+\code{certificate(fit)$completeness$tie}). \code{"probe"} runs a short block Lanczos process on the operator
 deflated against the returned eigenvectors (from a fixed-seed start; the
 global random stream is not touched) and, if it finds a more-preferred
 eigenvalue outside the returned set (for example a missed copy of a
 repeated eigenvalue), repairs the result with a deflated complement
 solve; it is probabilistic (it can prove a set incomplete but not
-complete) and is the check for matrix-free operators. \code{"auto"} uses the
-inertia check for edge targets (not \code{nearest()}) when the matrix is
-explicit and its predicted
+complete) and is the check for large matrix-free operators; for
+\code{nearest()} targets it runs on the route's own \eqn{(A - \sigma I)^{-1}}
+after shift-invert, otherwise on \eqn{(A - \sigma I)^2}. Generalized
+problems are probed in the standard space \eqn{R^{-T} A R^{-1}},
+\eqn{B = R^T R}. \code{"auto"} uses the inertia check when the matrix is
+explicit (or materialisable) and its predicted
 factorisation time is at most
 \verb{max(getOption("eigencore.completeness_inertia_seconds", 0.5), getOption("eigencore.completeness_inertia_ratio", 1) * solve time)},
 and the probe otherwise. \code{"none"} skips the check. \code{NULL} (default) uses
