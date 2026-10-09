@@ -172,19 +172,42 @@ static inline void eigencore_unwind_protect_cleanup(void* jmpbuf, Rboolean jump)
   }
 }
 
+// Runs fun(data) under R_UnwindProtect. If R unwinds out of it, the cleanup
+// jumps back here and this function RETURNS normally with *jumped = true; it
+// never throws. Starting a C++ exception in the frame that received the jump
+// is not reliable on Windows (the callee-saved register state the unwinder
+// needs is not restored by the jump, and R crashed there), whereas a normal
+// return restores the caller's registers from this frame's own prologue.
+#if defined(__GNUC__)
+__attribute__((noinline))
+#endif
+static SEXP eigencore_unwind_protect_raw(SEXP (*fun)(void*), void* data,
+                                         SEXP token, bool* jumped) {
+  eigencore_jmp_buf jmpbuf;
+  if (EIGENCORE_SETJMP(jmpbuf)) {
+    EIGENCORE_UNWIND_TRACE("landed after setjmp; returning to caller");
+    *jumped = true;
+    return R_NilValue;
+  }
+  return R_UnwindProtect(fun, data, eigencore_unwind_protect_cleanup, &jmpbuf,
+                         token);
+}
+
 // Run `code` (a callable returning SEXP that uses the R API) so that an R
 // longjmp out of it becomes an eigencore::RUnwind C++ exception. Only R frames
-// are skipped by the longjmp; C++ frames are unwound by the exception.
+// are skipped by the jump; C++ frames are unwound by the exception, which is
+// thrown from this ordinary frame after eigencore_unwind_protect_raw returned.
 template <typename F>
 static inline SEXP eigencore_unwind_protect(F code) {
   SEXP token = eigencore_unwind_token();
-  eigencore_jmp_buf jmpbuf;
-  if (EIGENCORE_SETJMP(jmpbuf)) {
-    EIGENCORE_UNWIND_TRACE("landed after setjmp; throwing RUnwind");
+  bool jumped = false;
+  SEXP result = eigencore_unwind_protect_raw(eigencore_unwind_protect_body<F>,
+                                             &code, token, &jumped);
+  if (jumped) {
+    EIGENCORE_UNWIND_TRACE("throwing RUnwind");
     throw eigencore::RUnwind{token};
   }
-  return R_UnwindProtect(eigencore_unwind_protect_body<F>, &code,
-                         eigencore_unwind_protect_cleanup, &jmpbuf, token);
+  return result;
 }
 
 static inline SEXP eigencore_alloc_vector(SEXPTYPE type, R_xlen_t length) {
