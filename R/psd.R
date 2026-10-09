@@ -1843,6 +1843,7 @@ psd_construct_complete_factor <- function(
   serialization <- structure(
     list(
       schema_version = 1L,
+      hash_format = identity_hash_format(),
       portable = isTRUE(factor_identity$portable),
       originating_session = eigencore_session_id(),
       incompatibility_reason = NULL,
@@ -1981,6 +1982,7 @@ psd_construct_structural_factor <- function(
   serialization <- structure(
     list(
       schema_version = 1L,
+      hash_format = identity_hash_format(),
       portable = TRUE,
       originating_session = eigencore_session_id(),
       incompatibility_reason = NULL,
@@ -2321,6 +2323,19 @@ validate_psd_factor <- function(x) {
       source_identity = x$source_identity %||% NULL,
       factor_identity = x$operator_identity %||% NULL,
       representation = x$representation %||% NULL
+    )
+  }
+  # Tokens below are digests under identity_hash_format(); a factor persisted
+  # under an older format would otherwise fail with a generic token error.
+  if (!identical(x$serialization$hash_format, identity_hash_format())) {
+    psd_abort(
+      "eigencore_psd_corrupt_state", "identity_format_changed",
+      "serialization$hash_format",
+      identity_hash_format(), x$serialization$hash_format %||% NULL,
+      source_identity = x$source_identity %||% NULL,
+      factor_identity = x$operator_identity %||% NULL,
+      representation = x$representation %||% NULL,
+      message = identity_hash_format_message("PSD factor")
     )
   }
   state <- attr(x, "eigencore_psd_state", exact = TRUE)

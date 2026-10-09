@@ -4,6 +4,17 @@
 #' @param B Right operator-like object.
 #' @param name Optional label for the composed operator.
 #' @return An `eigencore_operator` representing the composition `A %*% B`.
+#' @details When both operands are built-in explicit matrices (dense double
+#'   or `Matrix` storage), the product is formed once and wrapped as a native
+#'   explicit operator (`metadata$fused == "compose"`) only when that is cheap
+#'   and memory-safe: always for a small product (at most 65,536 entries);
+#'   for a larger dense product only when it holds no more entries than the
+#'   two factors together and costs at most 2^30 multiply-adds; for a larger
+#'   sparse product only when a structural bound on its nonzeros stays within
+#'   four times the factors' nonzeros and below a quarter of its entries, so
+#'   a sparse product is never densified. Otherwise (and for callback or
+#'   mixed operands) the result is a lazy composition that applies `B` then
+#'   `A` and stores no product.
 compose <- function(A, B, name = NULL) {
   A <- as_operator(A)
   B <- as_operator(B)
@@ -13,21 +24,23 @@ compose <- function(A, B, name = NULL) {
          paste(B$dim, collapse = " x "), ".", call. = FALSE)
   }
 
-  src <- source_or_null(A)
-  rhs <- source_or_null(B)
-  # NN-3: only fold source when both operands are dense double matrices.
-  # A sparse source threaded through metadata$source is later materialized
-  # via as.matrix(src) by downstream certification helpers, silently
-  # densifying a potentially huge product. A non-dense source must stay
-  # NULL here so the operator remains matrix-free.
-  source <- if (is_dense_double_matrix(src) && is_dense_double_matrix(rhs)) {
-    src %*% rhs
-  } else {
-    NULL
-  }
+  # The product, when it is materialised at all, is formed exactly once.
+  # Native operands go through native_compose_operator_or_null(); for
+  # non-native dense sources the same size policy decides whether the
+  # product is folded into metadata$source. NN-3: never fold a non-dense
+  # source (downstream certification helpers would as.matrix() it).
   fused <- native_compose_operator_or_null(A, B, name = name)
   if (!is.null(fused)) {
     return(fused)
+  }
+  src <- source_or_null(A)
+  rhs <- source_or_null(B)
+  source <- if (!(isTRUE(A$metadata$native) && isTRUE(B$metadata$native)) &&
+                is_dense_double_matrix(src) && is_dense_double_matrix(rhs) &&
+                algebra_dense_product_ok(nrow(src), ncol(src), ncol(rhs))) {
+    src %*% rhs
+  } else {
+    NULL
   }
 
   linear_operator(
@@ -72,15 +85,21 @@ operator_sum <- function(..., name = NULL) {
     stop("All summed operators must have the same dimensions.", call. = FALSE)
   }
 
-  # NN-3: only fold source when every term carries a dense double-matrix
-  # source. A single sparse-source term must collapse the fold to NULL so
-  # the summed operator stays matrix-free.
-  source <- Reduce(function(a, b) {
-    if (is_dense_double_matrix(a) && is_dense_double_matrix(b)) a + b else NULL
-  }, lapply(ops, source_or_null))
+  # Native explicit terms are summed once into a native explicit operator
+  # (a sum never grows memory beyond one term and never densifies a sparse
+  # sum). Only when that does not apply is a dense source folded here.
   fused <- native_sum_operator_or_null(ops, name = name)
   if (!is.null(fused)) {
     return(fused)
+  }
+  # NN-3: only fold source when every term carries a dense double-matrix
+  # source. A single sparse-source term must collapse the fold to NULL so
+  # the summed operator stays matrix-free.
+  sources <- lapply(ops, source_or_null)
+  source <- if (all(vapply(sources, is_dense_double_matrix, logical(1)))) {
+    Reduce(`+`, sources)
+  } else {
+    NULL
   }
 
   linear_operator(
@@ -465,6 +484,15 @@ symmetric_operator <- function(A, validate = TRUE, tol = 1e-10) {
 #' @param A Operator-like object with an adjoint implementation.
 #' @param name Optional label for the cross-product operator.
 #' @return A Hermitian `eigencore_operator` representing `A^* A`.
+#' @details For a built-in explicit `A`, `A^* A` is formed once and wrapped as
+#'   a native explicit operator (`metadata$materialized_crossprod`) only when
+#'   that is cheap and memory-safe: always when it has at most 65,536
+#'   entries; for a larger dense `A` only when `A` has no more columns than
+#'   rows and forming it costs at most 2^30 multiply-adds; for a larger
+#'   sparse `A` only when a structural bound on its nonzeros stays within
+#'   four times `nnz(A)` and below a quarter of its entries (a sparse
+#'   cross-product is never densified). Otherwise the result is lazy and
+#'   applies `A` then its adjoint.
 crossprod_operator <- function(A, name = NULL) {
   A <- as_operator(A)
   if (is.null(A$apply_adjoint)) {
@@ -547,6 +575,73 @@ source_or_null <- function(A) {
 #' as.matrix() a huge product, preserving the no-silent-densification policy.
 is_dense_double_matrix <- function(x) {
   !is.null(x) && is.matrix(x) && is.double(x) && !inherits(x, "Matrix")
+}
+
+# Materialisation policy for compose() / crossprod_operator() (P10). A
+# product of built-in explicit operators is formed (once) only when that is
+# cheap and memory-safe; otherwise the algebra stays lazy.
+#' @keywords internal
+algebra_small_product_entries <- function() 65536
+
+#' @keywords internal
+algebra_dense_product_flop_budget <- function() 2^30
+
+#' @keywords internal
+#' Whether the dense (m x k) %*% (k x p) product should be materialised:
+#' always when it has at most algebra_small_product_entries() entries;
+#' otherwise only when it holds no more entries than its operands (so
+#' materialising never grows memory) and costs at most
+#' algebra_dense_product_flop_budget() multiply-adds.
+algebra_dense_product_ok <- function(m, k, p, operand_entries = NULL) {
+  m <- as.double(m)
+  k <- as.double(k)
+  p <- as.double(p)
+  entries <- m * p
+  if (entries <= algebra_small_product_entries()) {
+    return(TRUE)
+  }
+  operand_entries <- operand_entries %||% (m * k + k * p)
+  entries <= operand_entries && m * k * p <= algebra_dense_product_flop_budget()
+}
+
+#' @keywords internal
+#' Nonzero pattern counts of a Matrix-package object (per column, per row).
+algebra_sparse_pattern_counts <- function(x) {
+  g <- methods::as(methods::as(x, "CsparseMatrix"), "generalMatrix")
+  list(
+    nnz = length(g@i),
+    col = diff(g@p),
+    row = tabulate(g@i + 1L, nbins = nrow(g))
+  )
+}
+
+#' @keywords internal
+#' Whether the Matrix-package product A %*% B (or crossprod(A) when
+#' crossprod = TRUE) should be materialised. Uses the structural bound
+#' nnz(AB) <= sum_j nnz(A[, j]) * nnz(B[j, ]) (for A^T A, the sum of squared
+#' row counts of A): materialise when the product is small, or when the
+#' bound stays within four times the operands' nonzeros and below a quarter
+#' of the product's entries, so a sparse product is never densified.
+algebra_sparse_product_ok <- function(A, B, crossprod = FALSE) {
+  m <- if (crossprod) ncol(A) else nrow(A)
+  p <- ncol(B)
+  entries <- as.double(m) * as.double(p)
+  if (entries <= algebra_small_product_entries()) {
+    return(TRUE)
+  }
+  ok <- tryCatch({
+    a <- algebra_sparse_pattern_counts(A)
+    if (crossprod) {
+      bound <- sum(as.double(a$row)^2)
+      operand_nnz <- a$nnz
+    } else {
+      b <- algebra_sparse_pattern_counts(B)
+      bound <- sum(as.double(a$col) * as.double(b$row))
+      operand_nnz <- a$nnz + b$nnz
+    }
+    bound <= 4 * operand_nnz && bound <= 0.25 * entries
+  }, error = function(e) FALSE)
+  isTRUE(ok)
 }
 
 #' @keywords internal
@@ -696,6 +791,10 @@ native_compose_operator_or_null <- function(A, B, name = NULL) {
   left_source <- source_or_null(A)
   right_source <- source_or_null(B)
   if (is_dense_double_matrix(left_source) && is_dense_double_matrix(right_source)) {
+    if (!algebra_dense_product_ok(nrow(left_source), ncol(left_source),
+                                  ncol(right_source))) {
+      return(NULL)
+    }
     composed <- left_source %*% right_source
     return(native_explicit_operator_or_null(
       composed,
@@ -708,6 +807,9 @@ native_compose_operator_or_null <- function(A, B, name = NULL) {
   left_matrix <- A$metadata$matrix
   right_matrix <- B$metadata$matrix
   if (!inherits(left_matrix, "Matrix") || !inherits(right_matrix, "Matrix")) {
+    return(NULL)
+  }
+  if (!algebra_sparse_product_ok(left_matrix, right_matrix)) {
     return(NULL)
   }
   composed <- left_matrix %*% right_matrix
@@ -726,6 +828,12 @@ native_crossprod_operator_or_null <- function(A, name = NULL) {
   }
   source <- source_or_null(A)
   if (is_dense_double_matrix(source)) {
+    # A^T A has ncol^2 entries: materialise it only when small, or when it
+    # is no larger than A itself (ncol <= nrow) and cheap to form.
+    if (!algebra_dense_product_ok(ncol(source), nrow(source), ncol(source),
+                                  operand_entries = length(source))) {
+      return(NULL)
+    }
     cp <- crossprod(source)
     op <- native_explicit_operator_or_null(
       cp,
@@ -741,6 +849,9 @@ native_crossprod_operator_or_null <- function(A, name = NULL) {
 
   matrix <- A$metadata$matrix
   if (!inherits(matrix, "Matrix")) {
+    return(NULL)
+  }
+  if (!algebra_sparse_product_ok(matrix, matrix, crossprod = TRUE)) {
     return(NULL)
   }
   cp <- Matrix::crossprod(matrix)

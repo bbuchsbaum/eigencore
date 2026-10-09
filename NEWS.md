@@ -22,7 +22,12 @@
   `norm_values` record where the scale came from. The stochastic Hutchinson
   norm estimate is gone, so matrix-free operators without norm metadata now
   certify (`scale_is_estimate` is always `FALSE` for built-in
-  certificates). Native solvers use the same lower bounds for their internal
+  certificates). The planner accordingly routes matrix-free smallest and
+  nearest (interior) SVD targets to the native matrix-free Golub-Kahan
+  routes without requiring `metadata$frobenius_norm` (the plan control
+  `requires_nonestimated_norm_scale` is now `FALSE`); before, a callback
+  operator without metadata got the largest-target route or an
+  unsupported-interior error. Native solvers use the same lower bounds for their internal
   convergence scales; the implicit Gram SVD kernel runs at `tol / 2` and,
   if the exact certificate still fails, retries once at a tighter tolerance.
 * Certificates for complex eigenvectors of real sparse or matrix-free
@@ -280,6 +285,28 @@
   and restart states now record `serialization$hash_format`; ones saved by an
   earlier version are rejected with code `identity_format_changed` and a
   message asking to re-plan, rather than a generic identity mismatch.
+  PSD factors (`psd_factor()`, `psd_gram_factor()`, ...) record the same
+  `serialization$hash_format`; a factor persisted by an earlier version
+  fails with an `eigencore_psd_corrupt_state` condition of code
+  `identity_format_changed` asking to re-factor, instead of a generic
+  integrity-token error. The unused legacy FNV entry point
+  `eigencore_stable_raw_hash` is removed.
+* Dense matrix operator construction screens finiteness and symmetry in one
+  native pass instead of an R-level `all(is.finite())` plus a separate
+  symmetry scan (dense `Matrix` classes are no longer screened twice).
+  `as_operator()` at n = 4000: 0.17-0.21 s -> 0.058 s; `plan_solver()`:
+  0.20 s -> 0.10 s (the rest is the identity hash). Errors and the
+  relative symmetry tolerance are unchanged.
+* `compose()`, `crossprod_operator()` and operator sums no longer form a
+  dense product twice, and they materialise a product only when it is cheap
+  and memory-safe: always for a product with at most 65,536 entries; a
+  larger dense product only when it holds no more entries than its factors
+  (for `crossprod_operator()`, no more columns than rows) and costs at most
+  2^30 multiply-adds; a larger sparse product only when a structural
+  nonzero bound stays within 4x the factors' nonzeros and below a quarter
+  of its entries, so a sparse product is never densified. Otherwise the
+  result is a lazy composition (e.g. a 3000 x 5 times 5 x 3000 dense
+  composition: 0.12 s and 69 MB -> 0.001 s and no stored product).
 * Sparse tridiagonal shift-invert now parses and validates the three matrix
   bands once per solve and reuses that immutable representation for planning,
   shift perturbation, factorization, and certification. The native kernel
