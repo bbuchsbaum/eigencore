@@ -42,6 +42,13 @@ result is certified by residuals and by the inertia count:
 \code{certificate(fit)$target_completeness} is \code{"inertia_verified"} when the
 returned values provably are all eigenvalues in the interval (\code{"exact"}
 for the dense LAPACK route).
+
+Options: \code{eigencore.interval_dense_limit} (default 800) is the largest
+sparse dimension solved by the dense route; \code{eigencore.interval_slice_size}
+fixes the number of eigenvalues per slice (default: chosen from the
+predicted factorisation cost, between 40 and 200). Per-slice diagnostics
+(bounds, counts, the free count at each slice centre, operator applies,
+block size used for repeated eigenvalues) are in \code{fit$interval}.
 }
 \examples{
 A <- diag(c(1, 2, 2, 5, 7, 9))

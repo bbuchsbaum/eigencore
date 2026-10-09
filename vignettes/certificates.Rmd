@@ -494,6 +494,42 @@ the count was skipped. Matrices whose factors fill catastrophically (large
 random sparse graphs) are left to the probe; banded, grid and other
 mesh-like sparse matrices factor cheaply and are counted.
 
+#### Every eigenvalue in an interval
+
+The same counts drive the `interval(a, b)` target: `eig_partial()` counts
+the eigenvalues in the closed interval `[a, b]` first (so `k` can be left
+out), solves for exactly that many, and certifies the set with the count.
+For a sparse matrix the interval is split into slices by further counts
+("spectrum slicing"); each slice is solved by shift-invert Lanczos at its
+centre and the slices are merged.
+
+```{r interval-certificate}
+L1 <- Matrix::bandSparse(30, k = c(0, 1),
+                         diagonals = list(rep(2, 30), rep(-1, 29)),
+                         symmetric = TRUE)
+L2 <- kronecker(L1, Matrix::Diagonal(30)) + kronecker(Matrix::Diagonal(30), L1)
+op <- options(eigencore.interval_dense_limit = 0)  # show the sparse route
+fit_iv <- eig_partial(L2, target = interval(1, 1.5))
+options(op)
+length(values(fit_iv))
+fit_iv$certificate$target_completeness
+fit_iv$interval[c("count", "slices", "factorizations")]
+```
+
+The interval is closed: an eigenvalue numerically on an end point (inside
+the zero band of the factorisation there) counts as inside. With residual
+bound \(\rho\) from Kahan's theorem, if all `m` returned values lie inside
+\([a, b]\) by more than \(\rho\), they are provably the `m` eigenvalues of
+the interval (`"inertia_verified"`). A value within \(\rho\) of an end point
+is listed in `completeness$boundary_ambiguous`; one recount on the interval
+widened by \(\rho\) settles it (the same count proves the set; a larger one
+means an eigenvalue sits just outside within the residual bound and the
+result is `"inertia_inconclusive"`). A returned count different from the
+interval count is `"inertia_failed"` and `passed = FALSE`. Dense matrices
+use LAPACK's `dsyevr` with a value range instead, which selects the
+eigenvalues by the same kind of Sturm count on the tridiagonal form
+(`"exact"`).
+
 ## Comparing eigencore certificates to RSpectra diagnostics
 
 `RSpectra::eigs_sym()` returns `nconv` and `niter` but does not return

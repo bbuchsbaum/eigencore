@@ -110,6 +110,17 @@ With `n = 200` this computed 5 of 200 pairs. In a production problem with
 `n = 1e6`, computing the full spectrum is impossible — the *partial* result
 is the only result, which is exactly why a certificate matters.
 
+When the question is "which eigenvalues lie between `a` and `b`?" rather than
+"the `k` largest", ask for an interval and leave `k` out: eigencore counts
+the eigenvalues in `[a, b]` first and returns exactly those, with the count
+as part of the certificate (see `vignette("certificates")`).
+
+```{r interval}
+fit_iv <- eig_partial(A, target = interval(4, 5))
+values(fit_iv)
+fit_iv$certificate$target_completeness
+```
+
 ## Generalized SPD eigenproblem (`A v = lambda B v`)
 
 Pass a metric `B` to `eig_partial()` when the problem is `A v = lambda B v`

@@ -1,5 +1,57 @@
 # eigencore (development version)
 
+## Interval targets and spectrum slicing
+
+* New `interval(a, b)` target: `eig_partial(A, target = interval(a, b))`
+  returns every eigenvalue of a Hermitian matrix (or of a pencil with
+  symmetric positive definite `B`) in the closed interval `[a, b]`; one end
+  may be infinite. `k` may be omitted (it is inferred from an inertia count);
+  a supplied `k` is an upper bound and an error if the interval holds more.
+  Dense matrices (and sparse ones with `n <= eigencore.interval_dense_limit`,
+  800) use LAPACK `dsyevr` with a value range (generalized: after the
+  Cholesky reduction); the selection is exact (`target_completeness =
+  "exact"`). Sparse matrices are counted at both end points, split into
+  slices by bisection on inertia counts (40-200 eigenvalues per slice,
+  chosen from CHOLMOD's predicted factor cost, or
+  `eigencore.interval_slice_size`), each slice solved by \(LDL^T\)
+  shift-invert Lanczos at its centre on one shared symbolic analysis (block
+  Lanczos when copies of a repeated eigenvalue are missing), and the slices
+  merged (Rayleigh-Ritz on pairs near a slice boundary removes duplicates).
+  The result is certified by residuals and by the count:
+  `"inertia_verified"` when the returned values provably are all `m`
+  eigenvalues of the interval, `"inertia_failed"` (`passed = FALSE`) when
+  the returned count differs, `"inertia_inconclusive"` when an eigenvalue
+  sits within the residual bound just outside an end point. Values within
+  the residual bound of an end point are reported in
+  `certificate(fit)$completeness$boundary_ambiguous`, never dropped.
+  `fit$interval` holds the counts and a per-slice table.
+* `eig_partial()` / `solve()` / `plan_solver()` for eigenproblems: `k` now
+  defaults to `NULL` and is required (with a clear error) except for
+  interval targets.
+* C60: `smallest()` on a large sparse symmetric matrix with positive
+  diagonal and a cheap factor (`n >= eigencore.smallest_ldl_min_n`, 10000;
+  CHOLMOD-predicted fill at most `eigencore.smallest_ldl_max_fill` = 20
+  times `nnz(A)` and at most `eigencore.smallest_ldl_max_flops` = 5e10
+  flops) is planned as \(LDL^T\) shift-invert below the spectrum instead of
+  Lanczos. The solve proves the shift below the spectrum with a positive
+  definite factor at 0 (or slightly below 0 for a singular PSD matrix) and
+  otherwise falls back to the Lanczos route (`fallback_reason$code ==
+  "spd_shift_rejected"`). `options(eigencore.smallest_ldl_route = FALSE)`
+  disables the route. BENCH_C60
+* Shift-invert Lanczos applies the sparse \(LDL^T\) solve natively (a
+  native composite-kernel leaf calling CHOLMOD's `cholmod_solve2` through
+  the ABI-guarded Matrix C API, or eigencore's own triangular solves on the
+  simplicial factor; `options(eigencore.native_ldl_solve = "auto" /
+  "cholmod" / "eigencore" / FALSE)`), also for generalized problems as
+  `R (A - sigma B)^{-1} R'`. A shift below the Gershgorin bound is factored
+  with a supernodal \(LL^T\) (converted to simplicial \(LDL^T\)), which is
+  2-3 times faster than the simplicial \(LDL^T\) and proves positive
+  definiteness. BENCH_NATIVE
+* The shift-invert factor and its inertia at `sigma` seed the inertia
+  completeness certificate (symbolic analysis reused by `Matrix::update()`,
+  a count at `sigma` itself is free; `completeness$reused_symbolic`,
+  `completeness$reused_counts`).
+
 ## Eigenvalue counting, LDL' shift-invert and counting certificates
 
 * New `eigen_count(A, sigma, B = NULL)` counts the eigenvalues of a real

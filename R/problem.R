@@ -196,6 +196,10 @@ plan_solver.eigencore_eigen_problem <- function(
     initial_subspace = initial_subspace
   )
   execution$left_vectors <- left_vectors
+  if (!is.null(initial_subspace) && is_auto_method(method)) {
+    # A warm start needs a route that consumes it: no C60 shift-invert.
+    method$no_ldl_route <- TRUE
+  }
   auto_shift <- auto_shift_invert_route(problem, method)
   problem <- auto_shift$problem
   method <- auto_shift$method
@@ -626,7 +630,10 @@ auto_smallest_ldl_shift_invert <- function(problem, method) {
   A <- problem$A$metadata$matrix %||% NULL
   n <- problem$A$dim[[1L]]
   min_n <- as.numeric(getOption("eigencore.smallest_ldl_min_n", 10000))
-  if (!inherits(A, "CsparseMatrix") || n < min_n || !cholmod_bridge_available()) {
+  if (!inherits(A, "CsparseMatrix") || n < min_n || !cholmod_bridge_available() ||
+      !is.null(tryCatch(structured_grid_laplacian_2d_metadata(problem$A),
+                        error = function(e) NULL))) {
+    # (A structured grid Laplacian keeps its analytic route.)
     return(no_route)
   }
   d <- tryCatch(as.numeric(Matrix::diag(A)), error = function(e) NULL)

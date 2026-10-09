@@ -135,6 +135,13 @@ both_ends <- function(k_low, k_high) {
 #' returned values provably are all eigenvalues in the interval (`"exact"`
 #' for the dense LAPACK route).
 #'
+#' Options: `eigencore.interval_dense_limit` (default 800) is the largest
+#' sparse dimension solved by the dense route; `eigencore.interval_slice_size`
+#' fixes the number of eigenvalues per slice (default: chosen from the
+#' predicted factorisation cost, between 40 and 200). Per-slice diagnostics
+#' (bounds, counts, the free count at each slice centre, operator applies,
+#' block size used for repeated eigenvalues) are in `fit$interval`.
+#'
 #' @param a,b Interval end points, `a < b`. One of them may be infinite
 #'   (`interval(-Inf, b)` selects every eigenvalue up to `b`); both infinite
 #'   is the full spectrum, use [eig_full()].
