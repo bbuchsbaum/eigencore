@@ -562,8 +562,12 @@ interval_slice_solve <- function(problem, sctx, center, want, count, lower,
     xn <- sqrt(colSums(X * BX))
     converged <- res <= tol * scale * pmax(xn, .Machine$double.xmin)
     inside <- converged & lambda >= lower - slack & lambda <= upper + slack
+    # Radius around the shift that the converged values cover: the slice is
+    # covered once it reaches both slice ends.
+    radius <- if (any(converged)) max(abs(lambda[converged] - center)) else 0
     list(values = lambda, vectors = X, residuals = res, converged = converged,
-         found = sum(inside), block = block,
+         found = sum(inside), block = block, k = k,
+         covered = radius >= max(center - lower, upper - center) - slack,
          matvecs = as.integer(iter$matvecs %||% iter$operator_columns %||% 0L),
          iterations = as.integer(iter$iterations %||% 0L))
   }
@@ -584,7 +588,12 @@ interval_slice_solve <- function(problem, sctx, center, want, count, lower,
       break
     }
     deficit <- count - best$found
-    if (all(cand$converged)) {
+    if (all(cand$converged) && !isTRUE(cand$covered) && k < n - 1L) {
+      # The shift is off the slice centre (it had to avoid an eigenvalue), so
+      # the `want` nearest values do not reach both slice ends: ask for more.
+      k <- as.integer(min(n - 1L, k + deficit + max(4L, deficit)))
+      subspace <- min(n, max(subspace, default_shift_invert_max_subspace(n, k)))
+    } else if (all(cand$converged)) {
       # Everything converged but copies are missing: repeated eigenvalues.
       block <- as.integer(min(count + 1L, max(2L * block, deficit + 1L), n %/% 4L + 1L))
     } else {
@@ -636,7 +645,10 @@ interval_merge_slices <- function(problem, slices, solved, width) {
   for (j in seq_along(solved)) {
     s <- solved[[j]]
     if (is.null(s) || !length(s$values)) next
-    ord <- order(abs(s$values - s$center))
+    # The slice's eigenvalues are the `count` nearest its mid point (the
+    # shift itself may sit off centre).
+    mid <- (slices$lower[[j]] + slices$upper[[j]]) / 2
+    ord <- order(abs(s$values - mid))
     take <- utils::head(ord, slices$count[[j]])
     rest <- setdiff(ord, take)
     edges <- c(slices$lower[[j]], slices$upper[[j]])

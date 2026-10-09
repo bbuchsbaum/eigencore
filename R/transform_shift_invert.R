@@ -1842,6 +1842,12 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
     return(smallest_ldl_route_fallback(problem, k, plan,
                                        "the positive definite factor failed validation"))
   }
+  if (!is.null(spd_choice)) {
+    prep$factorization_cache$positive_definite_factor <- TRUE
+    prep$factorization_cache$factorization <-
+      "CHOLMOD supernodal LL' (positive definite) converted to simplicial LDL'"
+    prep$factorization_cache$auto_shift <- "C60: shift proved below the spectrum"
+  }
   M <- prep$operator
   n <- M$dim[1L]
 
