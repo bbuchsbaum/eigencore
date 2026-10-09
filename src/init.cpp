@@ -112,6 +112,11 @@ extern "C" SEXP eigencore_bidiagonal_svd(SEXP, SEXP);
 extern "C" SEXP eigencore_block_golub_kahan_ritz(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_ritz(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_is_symmetric(SEXP, SEXP);
+extern "C" SEXP eigencore_dense_symmetric_inertia(SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_tridiagonal_inertia(SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_simplicial_ldl_diagnostics(SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_cholmod_abi(void);
+extern "C" SEXP eigencore_cholmod_analyze(SEXP);
 extern "C" SEXP eigencore_dense_finite_symmetric(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen_dsyev(SEXP);
@@ -247,6 +252,11 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_block_golub_kahan_ritz", (DL_FUNC) &eigencore_block_golub_kahan_ritz, 5},
   {"eigencore_golub_kahan_ritz", (DL_FUNC) &eigencore_golub_kahan_ritz, 7},
   {"eigencore_dense_is_symmetric", (DL_FUNC) &eigencore_dense_is_symmetric, 2},
+  {"eigencore_dense_symmetric_inertia", (DL_FUNC) &eigencore_dense_symmetric_inertia, 3},
+  {"eigencore_tridiagonal_inertia", (DL_FUNC) &eigencore_tridiagonal_inertia, 4},
+  {"eigencore_simplicial_ldl_diagnostics", (DL_FUNC) &eigencore_simplicial_ldl_diagnostics, 4},
+  {"eigencore_cholmod_abi", (DL_FUNC) &eigencore_cholmod_abi, 0},
+  {"eigencore_cholmod_analyze", (DL_FUNC) &eigencore_cholmod_analyze, 1},
   {"eigencore_dense_finite_symmetric", (DL_FUNC) &eigencore_dense_finite_symmetric, 2},
   {"eigencore_dense_symmetric_eigen", (DL_FUNC) &eigencore_dense_symmetric_eigen, 2},
   {"eigencore_dense_symmetric_eigen_dsyev", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyev, 1},
