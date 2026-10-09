@@ -43,7 +43,7 @@ compose <- function(A, B, name = NULL) {
     NULL
   }
 
-  linear_operator(
+  native_algebra_operator(
     dim = c(A$dim[1L], B$dim[2L]),
     apply = function(X, alpha = 1, beta = 0, Y = NULL) {
       Z <- apply_operator(B, X)
@@ -66,7 +66,8 @@ compose <- function(A, B, name = NULL) {
     # Hermitian (cf. crossprod_operator() which always returns hermitian()).
     structure = general(),
     name = name %||% paste0("compose(", A$name, ",", B$name, ")"),
-    metadata = list(left = A, right = B, source = source, native = FALSE)
+    metadata = list(left = A, right = B, source = source, native = FALSE,
+                    algebra = "compose")
   )
 }
 
@@ -102,7 +103,7 @@ operator_sum <- function(..., name = NULL) {
     NULL
   }
 
-  linear_operator(
+  native_algebra_operator(
     dim = ops[[1L]]$dim,
     apply = function(X, alpha = 1, beta = 0, Y = NULL) {
       acc <- Reduce(`+`, lapply(ops, function(op) apply_operator(op, X)))
@@ -119,7 +120,8 @@ operator_sum <- function(..., name = NULL) {
     dtype = ops[[1L]]$dtype,
     structure = if (all(vapply(ops, function(op) identical(op$structure$kind, "hermitian"), logical(1)))) hermitian() else general(),
     name = name %||% "operator_sum",
-    metadata = list(terms = ops, source = source, native = FALSE)
+    metadata = list(terms = ops, source = source, native = FALSE,
+                    algebra = "sum")
   )
 }
 
@@ -148,7 +150,7 @@ operator_scale <- function(A, scalar, name = NULL) {
     source <- NULL
   }
 
-  linear_operator(
+  native_algebra_operator(
     dim = A$dim,
     apply = function(X, alpha = 1, beta = 0, Y = NULL) {
       apply_operator(A, X, alpha = alpha * scalar, beta = beta, Y = Y)
@@ -163,7 +165,8 @@ operator_scale <- function(A, scalar, name = NULL) {
     dtype = A$dtype,
     structure = A$structure,
     name = name %||% paste0(scalar, "*", A$name),
-    metadata = list(parent = A, scalar = scalar, source = source, native = FALSE)
+    metadata = list(parent = A, scalar = scalar, source = source, native = FALSE,
+                    algebra = "scale")
   )
 }
 
@@ -190,7 +193,7 @@ scale_rows <- function(A, weights, name = NULL) {
     source <- NULL
   }
 
-  linear_operator(
+  native_algebra_operator(
     dim = A$dim,
     apply = function(X, alpha = 1, beta = 0, Y = NULL) {
       out <- weights * apply_operator(A, X)
@@ -206,7 +209,8 @@ scale_rows <- function(A, weights, name = NULL) {
     dtype = A$dtype,
     structure = general(),
     name = name %||% paste0("scale_rows(", A$name, ")"),
-    metadata = list(parent = A, weights = weights, axis = "rows", source = source, native = FALSE)
+    metadata = list(parent = A, weights = weights, axis = "rows", source = source, native = FALSE,
+                    algebra = "scale_rows")
   )
 }
 
@@ -243,7 +247,7 @@ scale_cols <- function(A, weights, name = NULL) {
     source <- NULL
   }
 
-  linear_operator(
+  native_algebra_operator(
     dim = A$dim,
     apply = function(X, alpha = 1, beta = 0, Y = NULL) {
       apply_operator(A, weights * X, alpha = alpha, beta = beta, Y = Y)
@@ -259,7 +263,8 @@ scale_cols <- function(A, weights, name = NULL) {
     dtype = A$dtype,
     structure = general(),
     name = name %||% paste0("scale_cols(", A$name, ")"),
-    metadata = list(parent = A, weights = weights, axis = "cols", source = source, native = FALSE)
+    metadata = list(parent = A, weights = weights, axis = "cols", source = source, native = FALSE,
+                    algebra = "scale_cols")
   )
 }
 
@@ -359,7 +364,7 @@ center <- function(A, rows = FALSE, columns = TRUE, row_means = NULL,
     return(fused)
   }
 
-  linear_operator(
+  native_algebra_operator(
     dim = A$dim,
     apply = function(X, alpha = 1, beta = 0, Y = NULL) {
       out <- apply_operator(A, X)
@@ -395,7 +400,8 @@ center <- function(A, rows = FALSE, columns = TRUE, row_means = NULL,
       row_means = row_means,
       col_means = col_means,
       source = centered_source,
-      native = FALSE
+      native = FALSE,
+      algebra = "center"
     )
   )
 }
@@ -406,12 +412,7 @@ csc_centered_block_apply <- function(A, X, alpha = 1, beta = 0, Y = NULL,
                                      columns = TRUE, row_means = NULL,
                                      col_means = NULL) {
   X <- as.matrix(X)
-  if (is.null(Y)) {
-    out_nrow <- if (transpose) ncol(A) else nrow(A)
-    Y <- matrix(0, out_nrow, ncol(X))
-  } else {
-    Y <- as.matrix(Y)
-  }
+  Y <- block_apply_y(Y, beta)
   .Call(
     "eigencore_csc_centered_block_apply",
     methods::slot(A, "i"),
@@ -436,12 +437,7 @@ csc_centered_scaled_block_apply <- function(
     A, col_means, weights, X, alpha = 1, beta = 0, Y = NULL,
     transpose = FALSE) {
   X <- as.matrix(X)
-  if (is.null(Y)) {
-    out_nrow <- if (transpose) ncol(A) else nrow(A)
-    Y <- matrix(0, out_nrow, ncol(X))
-  } else {
-    Y <- as.matrix(Y)
-  }
+  Y <- block_apply_y(Y, beta)
   .Call(
     "eigencore_csc_centered_scaled_block_apply",
     methods::slot(A, "i"),
@@ -502,7 +498,7 @@ crossprod_operator <- function(A, name = NULL) {
   if (!is.null(fused)) {
     return(fused)
   }
-  linear_operator(
+  native_algebra_operator(
     dim = c(A$dim[2L], A$dim[2L]),
     apply = function(X, alpha = 1, beta = 0, Y = NULL) {
       Z <- apply_operator(A, X)
@@ -515,7 +511,8 @@ crossprod_operator <- function(A, name = NULL) {
     dtype = A$dtype,
     structure = hermitian(),
     name = name %||% paste0("crossprod(", A$name, ")"),
-    metadata = list(parent = A, fused = "crossprod", native = isTRUE(A$metadata$native))
+    metadata = list(parent = A, fused = "crossprod", native = isTRUE(A$metadata$native),
+                    algebra = "crossprod")
   )
 }
 
@@ -670,6 +667,256 @@ native_kernel_kind <- function(op) {
 #' @keywords internal
 has_native_kernel <- function(op) {
   !is.na(native_kernel_kind(op))
+}
+
+# Native composed operators (C52). Lazy algebra over operators that all have
+# native kernels (dense, CSC, centered / centered-scaled CSC, diagonal, and
+# earlier composites) is compiled into one native expression kernel
+# (src/native_operators.cpp): products, weighted sums, rank-one centering
+# terms and adjoints, with reusable workspace for intermediates. The operator
+# keeps its R apply closures for R-level callers (they call the kernel with
+# one .Call), and the kernel is attached to those closures so every
+# matrix-free native solver (Golub-Kahan, Arnoldi, block Lanczos) applies it
+# without crossing back into R. Such operators carry
+# metadata$storage == "native_composite" and metadata$native_composite (the
+# kernel). native_kernel_kind() stays NA for them: they plan onto the
+# matrix-free native paths, which is where the kernel removes the callbacks.
+# options(eigencore.native_composite = FALSE) disables the kernel.
+
+#' @keywords internal
+native_composite_enabled <- function() {
+  !identical(getOption("eigencore.native_composite", TRUE), FALSE)
+}
+
+#' @keywords internal
+native_composite_csc_spec <- function(x) {
+  list(
+    type = "csc",
+    i = methods::slot(x, "i"),
+    p = methods::slot(x, "p"),
+    x = methods::slot(x, "x"),
+    dim = methods::slot(x, "Dim")
+  )
+}
+
+#' @keywords internal
+#' Native composite spec of an operator, or NULL when some part has no
+#' native kernel. Leaves: dense double sources, dgCMatrix, centered and
+#' centered-scaled dgCMatrix, ddiMatrix; inner nodes: an existing composite's
+#' spec, or the lazy algebra recorded in metadata$algebra.
+native_composite_spec <- function(op) {
+  if (!inherits(op, "eigencore_operator") || !identical(op$dtype, "double")) {
+    return(NULL)
+  }
+  kernel <- op$metadata$native_composite %||% NULL
+  if (is.environment(kernel)) {
+    return(kernel$spec)
+  }
+  kind <- native_kernel_kind(op)
+  if (identical(kind, "dense")) {
+    source <- source_or_null(op)
+    if (!all(dim(source) == op$dim)) {
+      return(NULL)
+    }
+    return(list(type = "dense", x = source))
+  }
+  storage <- op$metadata$storage %||% NULL
+  if (identical(kind, "csc")) {
+    matrix <- op$metadata$matrix
+    if (!inherits(matrix, "dgCMatrix") || !all(dim(matrix) == op$dim)) {
+      return(NULL)
+    }
+    return(native_composite_csc_spec(matrix))
+  }
+  if (identical(kind, "centered_scaled_csc")) {
+    matrix <- op$metadata$base_matrix
+    if (!inherits(matrix, "dgCMatrix")) {
+      return(NULL)
+    }
+    spec <- native_composite_csc_spec(matrix)
+    spec$type <- "centered_scaled_csc"
+    spec$means <- as.numeric(op$metadata$col_means)
+    spec$weights <- as.numeric(op$metadata$weights)
+    return(spec)
+  }
+  if (identical(storage, "ddiMatrix")) {
+    matrix <- op$metadata$matrix
+    if (!inherits(matrix, "ddiMatrix")) {
+      return(NULL)
+    }
+    values <- if (identical(methods::slot(matrix, "diag"), "U")) {
+      rep(1, nrow(matrix))
+    } else {
+      as.numeric(methods::slot(matrix, "x"))
+    }
+    return(list(type = "diagonal", x = values))
+  }
+  if (identical(storage, "centered_dgCMatrix")) {
+    matrix <- op$metadata$base_matrix
+    if (!inherits(matrix, "dgCMatrix")) {
+      return(NULL)
+    }
+    return(native_composite_centered_spec(
+      native_composite_csc_spec(matrix), dim(matrix),
+      rows = op$metadata$rows, columns = op$metadata$columns,
+      row_means = op$metadata$row_means, col_means = op$metadata$col_means
+    ))
+  }
+  parent <- op$metadata$parent %||% NULL
+  if (identical(op$metadata$fused %||% NULL, "adjoint") &&
+      inherits(parent, "eigencore_operator") &&
+      all(rev(parent$dim) == op$dim)) {
+    # adjoint() view of a native leaf (e.g. "adjoint:dgCMatrix").
+    spec <- native_composite_spec(parent)
+    return(if (is.null(spec)) NULL else native_composite_adjoint_spec(spec))
+  }
+  NULL
+}
+
+#' @keywords internal
+#' A - 1 c^T - r 1^T (the centering convention of center(), whose row means
+#' already absorb the grand mean when both sides are centered).
+native_composite_centered_spec <- function(base, dim, rows, columns,
+                                           row_means, col_means) {
+  children <- list(base)
+  if (isTRUE(columns)) {
+    children[[length(children) + 1L]] <- list(
+      type = "rank1", u = rep(-1, dim[[1L]]), v = as.numeric(col_means)
+    )
+  }
+  if (isTRUE(rows)) {
+    children[[length(children) + 1L]] <- list(
+      type = "rank1", u = -as.numeric(row_means), v = rep(1, dim[[2L]])
+    )
+  }
+  if (length(children) == 1L) {
+    return(base)
+  }
+  list(type = "sum", children = children, weights = rep(1, length(children)))
+}
+
+#' @keywords internal
+native_composite_product_spec <- function(factors) {
+  children <- list()
+  for (factor in factors) {
+    if (identical(factor$type, "product")) {
+      children <- c(children, factor$children)
+    } else {
+      children[[length(children) + 1L]] <- factor
+    }
+  }
+  list(type = "product", children = children)
+}
+
+#' @keywords internal
+native_composite_adjoint_spec <- function(spec) {
+  if (identical(spec$type, "adjoint")) {
+    return(spec$child)
+  }
+  list(type = "adjoint", child = spec)
+}
+
+#' @keywords internal
+#' Spec of a lazy algebra node from its metadata (NULL when any operand has no
+#' native kernel).
+native_algebra_spec <- function(metadata, dim) {
+  algebra <- metadata$algebra %||% ""
+  spec_of <- native_composite_spec
+  switch(
+    algebra,
+    compose = {
+      left <- spec_of(metadata$left)
+      right <- spec_of(metadata$right)
+      if (is.null(left) || is.null(right)) NULL else
+        native_composite_product_spec(list(left, right))
+    },
+    sum = {
+      terms <- lapply(metadata$terms, spec_of)
+      if (!length(terms) || any(vapply(terms, is.null, logical(1)))) NULL else
+        list(type = "sum", children = terms, weights = rep(1, length(terms)))
+    },
+    scale = {
+      parent <- spec_of(metadata$parent)
+      if (is.null(parent)) NULL else
+        list(type = "sum", children = list(parent),
+             weights = as.numeric(metadata$scalar))
+    },
+    scale_rows = {
+      parent <- spec_of(metadata$parent)
+      if (is.null(parent)) NULL else native_composite_product_spec(list(
+        list(type = "diagonal", x = as.numeric(metadata$weights)), parent
+      ))
+    },
+    scale_cols = {
+      parent <- spec_of(metadata$parent)
+      if (is.null(parent)) NULL else native_composite_product_spec(list(
+        parent, list(type = "diagonal", x = as.numeric(metadata$weights))
+      ))
+    },
+    center = {
+      parent <- spec_of(metadata$parent)
+      if (is.null(parent)) NULL else native_composite_centered_spec(
+        parent, dim, rows = metadata$rows, columns = metadata$columns,
+        row_means = metadata$row_means, col_means = metadata$col_means
+      )
+    },
+    crossprod = {
+      parent <- spec_of(metadata$parent)
+      if (is.null(parent)) NULL else native_composite_product_spec(list(
+        native_composite_adjoint_spec(parent), parent
+      ))
+    },
+    adjoint = {
+      parent <- spec_of(metadata$parent)
+      if (is.null(parent)) NULL else native_composite_adjoint_spec(parent)
+    },
+    NULL
+  )
+}
+
+#' @keywords internal
+#' linear_operator() for a lazy algebra node. When every operand has a native
+#' kernel (and the node did not fold a dense source, which native solvers use
+#' directly), the node is compiled into a native composite kernel: the apply
+#' closures call it, and it is attached to them for the native solvers. The
+#' given R closures remain the semantics otherwise.
+native_algebra_operator <- function(dim, apply, apply_adjoint = NULL,
+                                    dtype = "double", structure = general(),
+                                    name = NULL, metadata = list()) {
+  spec <- NULL
+  if (identical(dtype, "double") && native_composite_enabled() &&
+      !is_dense_double_matrix(metadata$source %||% NULL)) {
+    spec <- tryCatch(
+      native_algebra_spec(metadata, dim),
+      error = function(e) NULL
+    )
+  }
+  kernel <- if (is.null(spec)) NULL else new_native_composite_kernel(spec)
+  if (is.null(kernel)) {
+    return(linear_operator(
+      dim = dim, apply = apply, apply_adjoint = apply_adjoint, dtype = dtype,
+      structure = structure, name = name, metadata = metadata
+    ))
+  }
+  native_apply <- function(X, alpha = 1, beta = 0, Y = NULL) {
+    native_composite_block_apply(kernel, X, alpha = alpha, beta = beta,
+                                 Y = Y, adjoint = FALSE)
+  }
+  native_apply_adjoint <- if (is.null(apply_adjoint)) {
+    NULL
+  } else {
+    function(X, alpha = 1, beta = 0, Y = NULL) {
+      native_composite_block_apply(kernel, X, alpha = alpha, beta = beta,
+                                   Y = Y, adjoint = TRUE)
+    }
+  }
+  metadata$storage <- "native_composite"
+  metadata$native_composite <- kernel
+  op <- linear_operator(
+    dim = dim, apply = native_apply, apply_adjoint = native_apply_adjoint,
+    dtype = dtype, structure = structure, name = name, metadata = metadata
+  )
+  attach_native_composite_kernel(op, kernel)
 }
 
 #' @keywords internal
@@ -886,7 +1133,7 @@ native_centered_sparse_operator_or_null <- function(A, rows, columns,
   } else {
     NULL
   }
-  linear_operator(
+  op <- linear_operator(
     dim = A$dim,
     apply = function(X, alpha = 1, beta = 0, Y = NULL) {
       csc_centered_block_apply(
@@ -927,6 +1174,14 @@ native_centered_sparse_operator_or_null <- function(A, rows, columns,
       column_centered_sum_squares = A$metadata$column_centered_sum_squares
     )
   )
+  # Matrix-free native solvers (no dedicated centered-CSC entry) apply it
+  # through the composite kernel instead of the per-apply R callback (C52).
+  spec <- if (native_composite_enabled()) native_composite_spec(op) else NULL
+  kernel <- if (is.null(spec)) NULL else new_native_composite_kernel(spec)
+  if (!is.null(kernel)) {
+    op <- attach_native_composite_kernel(op, kernel)
+  }
+  op
 }
 
 #' @keywords internal

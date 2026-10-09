@@ -327,6 +327,29 @@
   of its entries, so a sparse product is never densified. Otherwise the
   result is a lazy composition (e.g. a 3000 x 5 times 5 x 3000 dense
   composition: 0.12 s and 69 MB -> 0.001 s and no stored product).
+* Lazy compositions whose operands all have native kernels (`compose()`,
+  `crossprod_operator()`, operator sums and scalar multiples,
+  `scale_rows()`/`scale_cols()`, `center()`, `adjoint()`, over dense, CSC,
+  centered / centered-scaled CSC and diagonal operators, nested freely) are
+  compiled into one native composed-operator kernel
+  (`metadata$storage == "native_composite"`): product chains, weighted sums,
+  rank-one centering terms and adjoints, with reused buffers for
+  intermediates. R-level applies are one `.Call` instead of nested R
+  closures, and the matrix-free native solvers (Golub-Kahan, Arnoldi, block
+  Lanczos) apply the kernel directly instead of calling back into R; typed
+  work accounting is unchanged. The fused centered CSC operator gets the
+  same treatment. `options(eigencore.native_composite = FALSE)` restores
+  the R composition. Applying a 50000 x 2000 sparse-plus-scaled-low-rank sum
+  is 2-3x faster, and its rank-10 `svd_partial()` went from 3.5 s to 2.8 s
+  (single-threaded). A dense `compose(A, B)` of two 1500 x 1500 factors does
+  not speed up: its applies are memory-bound `dgemv`s either way. It still
+  plans onto the matrix-free Golub-Kahan cycle, which uses about 190
+  forward/adjoint pairs and runs about 3.5x slower than the implicit Gram
+  route used for the explicit product. Closing that gap needs an SVD
+  planner route for composites, which is not part of this change.
+* R-level dense, complex dense, CSC, diagonal and centered CSC block applies
+  no longer allocate a zero `Y` when `beta == 0`; the native entry points
+  allocate the output themselves.
 * Sparse tridiagonal shift-invert now parses and validates the three matrix
   bands once per solve and reuses that immutable representation for planning,
   shift perturbation, factorization, and certification. The native kernel

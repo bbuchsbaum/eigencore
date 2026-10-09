@@ -928,6 +928,11 @@ operator_kernel_reason <- function(op) {
     "built-in diagonal operator has native block apply"
   } else if (identical(storage, "complex_dense_matrix")) {
     "base complex dense source has native dense LAPACK decomposition kernels and native zgemm block apply"
+  } else if (identical(storage, "native_composite")) {
+    paste(
+      "lazy algebra over native operators has a native composed-operator",
+      "kernel; matrix-free native solvers apply it without R callbacks"
+    )
   } else if (isTRUE(op$metadata$native)) {
     "built-in dense operator has native block apply"
   } else {

@@ -22,6 +22,9 @@ extern "C" SEXP eigencore_csc_apply_repeat(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, S
 extern "C" SEXP eigencore_csc_centered_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_centered_scaled_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_diagonal_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_composite_operator_build(SEXP);
+extern "C" SEXP eigencore_composite_operator_dim(SEXP);
+extern "C" SEXP eigencore_composite_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_native_apply_noalloc_check(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_apply_int_guard_check();
 extern "C" SEXP eigencore_col_norms(SEXP);
@@ -151,6 +154,9 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_csc_centered_block_apply", (DL_FUNC) &eigencore_csc_centered_block_apply, 13},
   {"eigencore_csc_centered_scaled_block_apply", (DL_FUNC) &eigencore_csc_centered_scaled_block_apply, 11},
   {"eigencore_diagonal_block_apply", (DL_FUNC) &eigencore_diagonal_block_apply, 7},
+  {"eigencore_composite_operator_build", (DL_FUNC) &eigencore_composite_operator_build, 1},
+  {"eigencore_composite_operator_dim", (DL_FUNC) &eigencore_composite_operator_dim, 1},
+  {"eigencore_composite_block_apply", (DL_FUNC) &eigencore_composite_block_apply, 6},
   {"eigencore_native_apply_noalloc_check", (DL_FUNC) &eigencore_native_apply_noalloc_check, 4},
   {"eigencore_dense_apply_int_guard_check", (DL_FUNC) &eigencore_dense_apply_int_guard_check, 0},
   {"eigencore_col_norms", (DL_FUNC) &eigencore_col_norms, 1},
