@@ -17,7 +17,8 @@ eig_partial(
   seed = NULL,
   certify = TRUE,
   allow_dense_fallback = c("auto", "never", "always"),
-  initial_subspace = NULL
+  initial_subspace = NULL,
+  left_vectors = c("auto", "none", "compute")
 )
 ```
 
@@ -49,7 +50,21 @@ eig_partial(
 
 - maxit:
 
-  Optional iteration limit.
+  Optional iteration limit (`NULL` uses each route's default). It bounds
+  outer iterations, never the Krylov subspace size: thick-restart cycles
+  for (block, generalized, and shift-invert callback) Lanczos,
+  Krylov-Schur restarts for nonsymmetric Arnoldi (including shift-invert
+  Arnoldi), restart cycles for the reference Arnoldi, LOBPCG iterations,
+  and Lanczos steps for the unrestarted reference and native-kernel
+  shift-invert Lanczos routes. Dense direct routes ignore it. The
+  resolved limit is recorded in `plan$controls$iteration_limit` and
+  `plan$controls$iteration_limit_kind`. To set the subspace size (the
+  ARPACK `ncv`), use the method descriptor's `max_subspace`
+  ([`lanczos()`](https://bbuchsbaum.github.io/eigencore/reference/lanczos.md),
+  [`auto()`](https://bbuchsbaum.github.io/eigencore/reference/auto.md),
+  [`shift_invert()`](https://bbuchsbaum.github.io/eigencore/reference/shift_invert.md)).
+  A `lanczos(max_restarts =)` or `lobpcg(maxit =)` that disagrees with
+  `maxit` is an error.
 
 - vectors:
 
@@ -57,7 +72,8 @@ eig_partial(
 
 - seed:
 
-  Optional random seed for stochastic solver components.
+  Optional random seed for stochastic solver components. The global
+  random number stream is restored on exit.
 
 - certify:
 
@@ -92,6 +108,17 @@ eig_partial(
   decision. Diagnostics distinguish operator block calls, operator
   columns, and certification columns. `NULL` (the default) preserves the
   cold random start exactly.
+
+- left_vectors:
+
+  Left-eigenvector policy for nonsymmetric problems. `"auto"` (default)
+  computes and certifies left eigenvectors (and the biorthogonality) on
+  routes that support them, such as Krylov-Schur Arnoldi, and records
+  the reason when they are unavailable; `"none"` skips the left solve
+  and its certificate entirely (roughly halving the cost of a
+  nonsymmetric Arnoldi solve); `"compute"` is like `"auto"` but an error
+  when the route cannot return left eigenvectors. Hermitian problems are
+  unaffected.
 
 ## Value
 

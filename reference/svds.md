@@ -5,14 +5,25 @@ RSpectra-compatible SVD shim.
 ## Usage
 
 ``` r
-svds(A, k, nu = k, nv = k, opts = list(), ...)
+svds(
+  A,
+  k,
+  nu = k,
+  nv = k,
+  opts = list(),
+  ...,
+  Atrans = NULL,
+  dim = NULL,
+  args = NULL
+)
 ```
 
 ## Arguments
 
 - A:
 
-  Matrix or eigencore operator.
+  Matrix, eigencore operator, or a function `f(x, args)` returning
+  `A %*% x` (then `Atrans` and `dim` are required).
 
 - k:
 
@@ -20,21 +31,38 @@ svds(A, k, nu = k, nv = k, opts = list(), ...)
 
 - nu:
 
-  Number of left singular vectors requested.
+  Number of left singular vectors returned.
 
 - nv:
 
-  Number of right singular vectors requested.
+  Number of right singular vectors returned.
 
 - opts:
 
-  Compatibility options list; currently accepted for API compatibility
-  and not interpreted directly.
+  RSpectra options list. `tol`, `center` and `scale` are honoured
+  (`center`/`scale` are applied as operators, without densifying); `ncv`
+  is passed as `auto(max_subspace = ncv)` (used by the Golub-Kahan and
+  implicit-Gram Lanczos routes; the explicit Gram route has no Krylov
+  subspace). `maxitr` is accepted but not used, since
+  [`svd_partial()`](https://bbuchsbaum.github.io/eigencore/reference/svd_partial.md)
+  has no iteration limit yet; other keys raise a warning.
 
 - ...:
 
   Additional arguments passed to
   [`svd_partial()`](https://bbuchsbaum.github.io/eigencore/reference/svd_partial.md).
+
+- Atrans:
+
+  Function `f(x, args)` returning `t(A) %*% x` when `A` is a function.
+
+- dim:
+
+  Dimensions of `A` when `A` is a function.
+
+- args:
+
+  Extra argument passed to function inputs.
 
 ## Value
 

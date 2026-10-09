@@ -12,6 +12,8 @@
 <link href="../deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
 <script src="../deps/headroom-0.11.0/headroom.min.js"></script><script src="../deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="../deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="../deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="../deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="../deps/search-1.0.0/fuse.min.js"></script><script src="../deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="../pkgdown.js"></script><link href="../extra.css" rel="stylesheet">
 <script src="../extra.js"></script><meta property="og:title" content="PCA on sparse data without densifying">
+<link href="../albers.css" rel="stylesheet">
+<script>window.albersdownDefaults = window.albersdownDefaults || { family: "red", preset: "homage", style: "minimal" };</script><script src="../albers.js"></script>
 </head>
 <body>
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
@@ -145,12 +147,12 @@ exactly as you would the original matrix.</p>
 <span><span class="co">#&gt;   converged rank: 5 </span></span>
 <span><span class="co">#&gt;   method: native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary) </span></span>
 <span><span class="co">#&gt;   target: largest </span></span>
-<span><span class="co">#&gt;   max residual: 5.968399e-11 </span></span>
-<span><span class="co">#&gt;   max backward error: 1.040316e-11 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 3.552714e-15 </span></span>
-<span><span class="co">#&gt;   norm bound: frobenius_hutchinson_estimate </span></span>
-<span><span class="co">#&gt;   scale estimated: TRUE </span></span>
-<span><span class="co">#&gt;   certificate: failed</span></span></code></pre></div>
+<span><span class="co">#&gt;   max residual: 5.968391e-11 </span></span>
+<span><span class="co">#&gt;   max backward error: 1.267432e-10 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.332268e-15 </span></span>
+<span><span class="co">#&gt;   norm bound: two_norm_lower_bound </span></span>
+<span><span class="co">#&gt;   scale estimated: FALSE </span></span>
+<span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
 <div class="figure" style="text-align: center">
 <img src="sparse-pca_files/figure-html/first-scree-1.png" class="r-plt" alt="Scatter plot of all 500 singular values sorted descending in grey, with the top five highlighted in blue." width="92%"><p class="caption">
 The five largest singular values of the centered matrix (blue) against
@@ -164,24 +166,26 @@ latent factors.</p>
 <div class="section level2">
 <h2 id="read-the-certificate-on-a-composed-operator">Read the certificate on a composed operator<a class="anchor" aria-label="anchor" href="#read-the-certificate-on-a-composed-operator"></a>
 </h2>
-<p><code>fit$certificate$passed</code> is <code>FALSE</code> here, but
-look at why before treating that as a problem:</p>
+<p>The centered operator is never formed, yet its certificate can still
+pass:</p>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">fit</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">max_backward_error</span></span>
-<span><span class="co">#&gt; [1] 1.040316e-11</span></span>
+<code class="sourceCode R"><span><span class="va">fit</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
+<span><span class="co">#&gt; [1] TRUE</span></span>
+<span><span class="va">fit</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">max_backward_error</span></span>
+<span><span class="co">#&gt; [1] 1.267432e-10</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
-<span><span class="co">#&gt; [1] "frobenius_hutchinson_estimate"</span></span>
+<span><span class="co">#&gt; [1] "two_norm_lower_bound"</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">scale_is_estimate</span></span>
-<span><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
-<p>The residual is tiny — far below the <code>1e-8</code> tolerance.
-What’s withheld is the <em>scale</em>: computing an exact Frobenius norm
-bound for a centered operator would mean a second full pass over the
-data, so eigencore instead reports a stochastic (Hutchinson) estimate
-and refuses to mark the certificate <code>passed</code> while that
-estimate is the only evidence. This is the same certificate rule that
-<code><a href="../articles/certificates.html">vignette("certificates")</a></code> covers in detail — a composed
-operator trades the exact bound for an estimated one unless you supply
-norm metadata yourself, which the next section shows.</p>
+<span><span class="co">#&gt; [1] FALSE</span></span></code></pre></div>
+<p>The backward error divides each residual by a lower bound on
+<code>||A_c||_2</code> (<code>two_norm_lower_bound</code>): here the
+largest <code>||A_c v|| / ||v||</code> over the computed singular
+vectors, which for the leading triplets is essentially the exact norm. A
+lower bound in the denominator can only over-state the backward error,
+so the check is never optimistic, and it needs no second pass over the
+data. The same holds for operators without any norm metadata (a
+double-centered matrix or a hand-written callback);
+<code><a href="../articles/certificates.html">vignette("certificates")</a></code> covers the rule in detail.</p>
 </div>
 <div class="section level2">
 <h2 id="does-it-match-what-youd-get-by-densifying">Does it match what you’d get by densifying?<a class="anchor" aria-label="anchor" href="#does-it-match-what-youd-get-by-densifying"></a>
@@ -191,7 +195,7 @@ numerically indistinguishable from centering the dense matrix directly.
 Check it:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Extremes.html" class="external-link">max</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">abs</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="va">fit</span><span class="op">$</span><span class="va">d</span>, decreasing <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span> <span class="op">-</span> <span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="va">all_sv</span><span class="op">[</span><span class="fl">1</span><span class="op">:</span><span class="fl">5</span><span class="op">]</span>, decreasing <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1] 3.330669e-16</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] 5.551115e-16</span></span></code></pre></div>
 <p>The two agree to machine precision. <code>dense_centered</code> above
 was built only to draw the comparison plot and run this check — the
 eigencore computation itself never materialized it.</p>
@@ -214,7 +218,7 @@ already have:</p>
 <span><span class="va">fit_scaled</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span>
 <span><span class="va">fit_scaled</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
-<span><span class="co">#&gt; [1] "frobenius_metadata"</span></span>
+<span><span class="co">#&gt; [1] "two_norm_lower_bound"</span></span>
 <span><span class="va">fit_scaled</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">scale_is_estimate</span></span>
 <span><span class="co">#&gt; [1] FALSE</span></span></code></pre></div>
 <p><code><a href="../reference/center.html">center()</a></code> and <code><a href="../reference/scale_cols.html">scale_cols()</a></code> compose freely
@@ -222,9 +226,10 @@ because both return the same <code>eigencore_operator</code> type that
 every solver accepts — there’s no separate “scaled matrix” object to
 keep track of. For this column-centered CSC composition, eigencore also
 reuses the sparse column moments to compute the exact Frobenius norm
-<code>sum_j w_j^2 sum_i (A_ij - mean_j)^2</code>. The scaled solve can
-therefore pass its certificate without a stochastic scale estimate, even
-though the centered matrix itself is never formed.</p>
+<code>sum_j w_j^2 sum_i (A_ij - mean_j)^2</code>, kept as diagnostic
+metadata. The certificate itself scales by a lower bound on the 2-norm,
+so the scaled solve passes even though the centered matrix itself is
+never formed.</p>
 </div>
 <div class="section level2">
 <h2 id="what-did-the-planner-actually-do">What did the planner actually do?<a class="anchor" aria-label="anchor" href="#what-did-the-planner-actually-do"></a>
@@ -313,12 +318,13 @@ sparse matrix.</p>
 <span><span class="op">)</span></span>
 <span><span class="va">fit_mf</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/svd_partial.html">svd_partial</a></span><span class="op">(</span><span class="va">op</span>, rank <span class="op">=</span> <span class="fl">5</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="va">fit_mf</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
-<span><span class="co">#&gt; [1] "frobenius_hutchinson_estimate"</span></span></code></pre></div>
-<p>Without any norm metadata, this is another stochastic-estimate
-certificate. Supply the exact Frobenius norm — cheap to compute once for
-a sparse matrix — and the certificate can report
-<code>passed = TRUE</code> when its residual and orthogonality checks
-also meet tolerance:</p>
+<span><span class="co">#&gt; [1] "two_norm_lower_bound"</span></span></code></pre></div>
+<p>Even without any norm metadata the certificate scales by a 2-norm
+lower bound taken from the computed vectors, so it can pass. Norm
+metadata is still useful: an exact Frobenius norm gives a cheap
+structural floor (<code>||A||_F / sqrt(min(m, n))</code>) before any
+vector is computed, and <code>metadata$two_norm</code>, when you know
+it, makes the scale exact:</p>
 <div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">op_hinted</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/linear_operator.html">linear_operator</a></span><span class="op">(</span></span>
 <span>  dim <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/dim.html" class="external-link">dim</a></span><span class="op">(</span><span class="va">A</span><span class="op">)</span>,</span>
@@ -329,7 +335,9 @@ also meet tolerance:</p>
 <span><span class="op">)</span></span>
 <span><span class="va">fit_hinted</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/svd_partial.html">svd_partial</a></span><span class="op">(</span><span class="va">op_hinted</span>, rank <span class="op">=</span> <span class="fl">5</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="va">fit_hinted</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
-<span><span class="co">#&gt; [1] "frobenius_metadata"</span></span>
+<span><span class="co">#&gt; [1] "two_norm_lower_bound"</span></span>
+<span><span class="va">fit_hinted</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_source</span></span>
+<span><span class="co">#&gt; [1] "applied_vectors"</span></span>
 <span><span class="va">fit_hinted</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
 <p>Whether you reach for <code><a href="../reference/center.html">center()</a></code>/<code><a href="../reference/scale_cols.html">scale_cols()</a></code>
@@ -352,8 +360,8 @@ would defeat the entire point of using a sparse format.</p>
 <ul>
 <li>
 <code><a href="../articles/certificates.html">vignette("certificates")</a></code> — the deep dive on
-<code>passed</code>, <code>scale_is_estimate</code>, and what to do
-about a withheld certificate.</li>
+<code>passed</code>, <code>norm_bound_type</code>, and what to do when a
+certificate fails.</li>
 <li>
 <code><a href="../articles/eigencore.html">vignette("eigencore")</a></code> — the general get-started
 workflow: operators, problems, plans, and solves for both eigenproblems

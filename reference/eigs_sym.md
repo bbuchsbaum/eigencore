@@ -1,18 +1,33 @@
 # RSpectra-compatible symmetric eigen shim.
 
-RSpectra-compatible symmetric eigen shim.
+Mirrors
+[`RSpectra::eigs_sym()`](https://rdrr.io/pkg/RSpectra/man/eigs.html):
+only the `lower` (or upper) triangle of a dense or `Matrix` input is
+read, values are returned in decreasing order, and `sigma` requests the
+eigenvalues nearest the shift.
 
 ## Usage
 
 ``` r
-eigs_sym(A, k, which = "LA", opts = list(), ...)
+eigs_sym(
+  A,
+  k,
+  which = "LM",
+  sigma = NULL,
+  opts = list(),
+  lower = TRUE,
+  ...,
+  n = NULL,
+  args = NULL
+)
 ```
 
 ## Arguments
 
 - A:
 
-  Matrix or eigencore operator.
+  Matrix, eigencore operator, or a function `f(x, args)` returning
+  `A %*% x` (then `n` is required).
 
 - k:
 
@@ -20,17 +35,38 @@ eigs_sym(A, k, which = "LA", opts = list(), ...)
 
 - which:
 
-  RSpectra-style target selector.
+  RSpectra-style target selector (`"LM"`, `"SM"`, `"LA"`, `"SA"`,
+  `"BE"`).
+
+- sigma:
+
+  Optional shift; eigenvalues nearest `sigma` are returned.
 
 - opts:
 
-  Compatibility options list; currently accepted for API compatibility
-  and not interpreted directly.
+  RSpectra options list. `tol`, `ncv` (Krylov subspace size, passed as
+  `auto(max_subspace = ncv)`, or `lanczos(max_subspace = ncv)` when
+  `initvec` forces a Lanczos route), `maxitr` (passed as the iteration
+  limit `maxit`), `retvec` and `initvec` are honoured; other keys raise
+  a warning.
+
+- lower:
+
+  Whether to read the lower (`TRUE`) or upper (`FALSE`) triangle of a
+  matrix input.
 
 - ...:
 
   Additional arguments passed to
-  [`solve.eigencore_eigen_problem()`](https://bbuchsbaum.github.io/eigencore/reference/solve.eigencore_eigen_problem.md).
+  [`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md).
+
+- n:
+
+  Dimension of the operator when `A` is a function.
+
+- args:
+
+  Extra argument passed to a function `A`.
 
 ## Value
 

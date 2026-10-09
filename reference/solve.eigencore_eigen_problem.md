@@ -24,6 +24,7 @@ solve(
   certify = TRUE,
   allow_dense_fallback = c("auto", "never", "always"),
   initial_subspace = NULL,
+  left_vectors = c("auto", "none", "compute"),
   ...
 )
 ```
@@ -54,7 +55,8 @@ solve(
 
 - maxit:
 
-  Optional iteration limit.
+  Optional iteration (restart) limit; never the subspace size. See
+  [`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md).
 
 - vectors:
 
@@ -82,6 +84,11 @@ solve(
   because residual certification alone cannot establish that it contains
   the requested extremal eigenpairs. `NULL` (the default) preserves the
   cold random start exactly.
+
+- left_vectors:
+
+  Left-eigenvector policy (`"auto"`, `"none"`, `"compute"`); see
+  [`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md).
 
 - ...:
 

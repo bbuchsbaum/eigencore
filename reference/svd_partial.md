@@ -46,7 +46,8 @@ svd_partial(
 
 - seed:
 
-  Optional random seed for stochastic solver components.
+  Optional random seed for stochastic solver components. The global
+  random number stream is restored on exit.
 
 - certify:
 

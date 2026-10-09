@@ -10,7 +10,8 @@ lanczos(
   max_restarts = NULL,
   block = 1L,
   check_stride = 0L,
-  reorthogonalize = TRUE
+  reorthogonalize = TRUE,
+  completeness = NULL
 )
 ```
 
@@ -18,15 +19,20 @@ lanczos(
 
 - max_subspace:
 
-  Optional maximum active Krylov subspace size `m`. Must be at least
-  `k + 1`. The native thick-restart path keeps the active basis bounded
-  by this value across restart cycles.
+  Optional maximum active Krylov subspace size `m` (the ARPACK `ncv`).
+  Must be at least `k + 1` (`k + block` for block Lanczos). The native
+  thick-restart path keeps the active basis bounded by this value across
+  restart cycles; unrestarted reference paths build at most this many
+  Lanczos vectors. This is the only subspace-size control: the solve's
+  `maxit` argument is an iteration (restart) limit.
 
 - max_restarts:
 
   Optional non-negative integer giving the maximum number of
   thick-restart cycles allowed before stopping with whatever has
-  converged. Default `100L`.
+  converged. Default `100L`. Equivalent to the solve's `maxit` argument
+  on thick-restart routes; supplying both with different values is an
+  error.
 
 - block:
 
@@ -50,6 +56,25 @@ lanczos(
   Whether to apply full reorthogonalization. The native path always
   reorthogonalizes (DGKS x2) and ignores this flag; it is preserved for
   the R reference solver's public API.
+
+- completeness:
+
+  Target-completeness check run after a certified standard Hermitian
+  solve with a
+  [`largest()`](https://bbuchsbaum.github.io/eigencore/reference/largest.md),
+  [`smallest()`](https://bbuchsbaum.github.io/eigencore/reference/smallest.md)
+  or
+  [`largest_magnitude()`](https://bbuchsbaum.github.io/eigencore/reference/largest_magnitude.md)
+  target. `"probe"` runs a short block Lanczos process on the operator
+  deflated against the returned eigenvectors (from a fixed-seed start;
+  the global random stream is not touched) and, if it finds a
+  more-preferred eigenvalue outside the returned set (for example a
+  missed copy of a repeated eigenvalue), repairs the result with a
+  deflated complement solve. `"none"` skips it. `NULL` (default) uses
+  `getOption("eigencore.target_completeness", "probe")`. The outcome is
+  recorded in `certificate(fit)$target_completeness`; see the
+  "Certificates" vignette. The probe is probabilistic: it can prove a
+  set incomplete but not complete.
 
 ## Value
 

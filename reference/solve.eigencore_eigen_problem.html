@@ -7,7 +7,7 @@ eigendecomposition."><meta property="og:description" content="S3 method that run
 eigen_problem(). Most users call eig_partial(), which constructs the
 problem and dispatches here; call solve() directly when you want to build
 a problem once and reuse or inspect it. Returns a certified partial
-eigendecomposition."></head><body>
+eigendecomposition."><link href="../albers.css" rel="stylesheet"><script>window.albersdownDefaults = window.albersdownDefaults || { family: "red", preset: "homage", style: "minimal" };</script><script src="../albers.js"></script></head><body>
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
 
 
@@ -81,6 +81,7 @@ eigendecomposition.</p>
 <span>  certify <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  allow_dense_fallback <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"auto"</span>, <span class="st">"never"</span>, <span class="st">"always"</span><span class="op">)</span>,</span>
 <span>  initial_subspace <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  left_vectors <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"auto"</span>, <span class="st">"none"</span>, <span class="st">"compute"</span><span class="op">)</span>,</span>
 <span>  <span class="va">...</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -110,7 +111,8 @@ eigendecomposition.</p>
 
 
 <dt id="arg-maxit">maxit<a class="anchor" aria-label="anchor" href="#arg-maxit"></a></dt>
-<dd><p>Optional iteration limit.</p></dd>
+<dd><p>Optional iteration (restart) limit; never the subspace size.
+See <code><a href="eig_partial.html">eig_partial()</a></code>.</p></dd>
 
 
 <dt id="arg-vectors">vectors<a class="anchor" aria-label="anchor" href="#arg-vectors"></a></dt>
@@ -138,6 +140,11 @@ and a fresh current-operator certificate. An already-invariant supplied
 subspace is discarded to a cold start because residual certification alone
 cannot establish that it contains the requested extremal eigenpairs.
 <code>NULL</code> (the default) preserves the cold random start exactly.</p></dd>
+
+
+<dt id="arg-left-vectors">left_vectors<a class="anchor" aria-label="anchor" href="#arg-left-vectors"></a></dt>
+<dd><p>Left-eigenvector policy (<code>"auto"</code>, <code>"none"</code>,
+<code>"compute"</code>); see <code><a href="eig_partial.html">eig_partial()</a></code>.</p></dd>
 
 
 <dt id="arg--">...<a class="anchor" aria-label="anchor" href="#arg--"></a></dt>

@@ -80,12 +80,12 @@ fit
 #>   converged rank: 5 
 #>   method: native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary) 
 #>   target: largest 
-#>   max residual: 5.968399e-11 
-#>   max backward error: 1.040316e-11 
-#>   max orthogonality loss: 3.552714e-15 
-#>   norm bound: frobenius_hutchinson_estimate 
-#>   scale estimated: TRUE 
-#>   certificate: failed
+#>   max residual: 5.968391e-11 
+#>   max backward error: 1.267432e-10 
+#>   max orthogonality loss: 1.332268e-15 
+#>   norm bound: two_norm_lower_bound 
+#>   scale estimated: FALSE 
+#>   certificate: passed
 ```
 
 ![Scatter plot of all 500 singular values sorted descending in grey,
@@ -101,29 +101,30 @@ factors.
 
 ## Read the certificate on a composed operator
 
-`fit$certificate$passed` is `FALSE` here, but look at why before
-treating that as a problem:
+The centered operator is never formed, yet its certificate can still
+pass:
 
 ``` r
 
-fit$certificate$max_backward_error
-#> [1] 1.040316e-11
-fit$certificate$norm_bound_type
-#> [1] "frobenius_hutchinson_estimate"
-fit$certificate$scale_is_estimate
+fit$certificate$passed
 #> [1] TRUE
+fit$certificate$max_backward_error
+#> [1] 1.267432e-10
+fit$certificate$norm_bound_type
+#> [1] "two_norm_lower_bound"
+fit$certificate$scale_is_estimate
+#> [1] FALSE
 ```
 
-The residual is tiny — far below the `1e-8` tolerance. What’s withheld
-is the *scale*: computing an exact Frobenius norm bound for a centered
-operator would mean a second full pass over the data, so eigencore
-instead reports a stochastic (Hutchinson) estimate and refuses to mark
-the certificate `passed` while that estimate is the only evidence. This
-is the same certificate rule that
+The backward error divides each residual by a lower bound on `||A_c||_2`
+(`two_norm_lower_bound`): here the largest `||A_c v|| / ||v||` over the
+computed singular vectors, which for the leading triplets is essentially
+the exact norm. A lower bound in the denominator can only over-state the
+backward error, so the check is never optimistic, and it needs no second
+pass over the data. The same holds for operators without any norm
+metadata (a double-centered matrix or a hand-written callback);
 [`vignette("certificates")`](https://bbuchsbaum.github.io/eigencore/articles/certificates.md)
-covers in detail — a composed operator trades the exact bound for an
-estimated one unless you supply norm metadata yourself, which the next
-section shows.
+covers the rule in detail.
 
 ## Does it match what you’d get by densifying?
 
@@ -135,7 +136,7 @@ dense matrix directly. Check it:
 ``` r
 
 max(abs(sort(fit$d, decreasing = TRUE) - sort(all_sv[1:5], decreasing = TRUE)))
-#> [1] 3.330669e-16
+#> [1] 5.551115e-16
 ```
 
 The two agree to machine precision. `dense_centered` above was built
@@ -161,7 +162,7 @@ fit_scaled$d
 fit_scaled$certificate$passed
 #> [1] TRUE
 fit_scaled$certificate$norm_bound_type
-#> [1] "frobenius_metadata"
+#> [1] "two_norm_lower_bound"
 fit_scaled$certificate$scale_is_estimate
 #> [1] FALSE
 ```
@@ -173,9 +174,10 @@ compose freely because both return the same `eigencore_operator` type
 that every solver accepts — there’s no separate “scaled matrix” object
 to keep track of. For this column-centered CSC composition, eigencore
 also reuses the sparse column moments to compute the exact Frobenius
-norm `sum_j w_j^2 sum_i (A_ij - mean_j)^2`. The scaled solve can
-therefore pass its certificate without a stochastic scale estimate, even
-though the centered matrix itself is never formed.
+norm `sum_j w_j^2 sum_i (A_ij - mean_j)^2`, kept as diagnostic metadata.
+The certificate itself scales by a lower bound on the 2-norm, so the
+scaled solve passes even though the centered matrix itself is never
+formed.
 
 ## What did the planner actually do?
 
@@ -274,13 +276,14 @@ op <- linear_operator(
 )
 fit_mf <- svd_partial(op, rank = 5, target = largest())
 fit_mf$certificate$norm_bound_type
-#> [1] "frobenius_hutchinson_estimate"
+#> [1] "two_norm_lower_bound"
 ```
 
-Without any norm metadata, this is another stochastic-estimate
-certificate. Supply the exact Frobenius norm — cheap to compute once for
-a sparse matrix — and the certificate can report `passed = TRUE` when
-its residual and orthogonality checks also meet tolerance:
+Even without any norm metadata the certificate scales by a 2-norm lower
+bound taken from the computed vectors, so it can pass. Norm metadata is
+still useful: an exact Frobenius norm gives a cheap structural floor
+(`||A||_F / sqrt(min(m, n))`) before any vector is computed, and
+`metadata$two_norm`, when you know it, makes the scale exact:
 
 ``` r
 
@@ -293,7 +296,9 @@ op_hinted <- linear_operator(
 )
 fit_hinted <- svd_partial(op_hinted, rank = 5, target = largest())
 fit_hinted$certificate$norm_bound_type
-#> [1] "frobenius_metadata"
+#> [1] "two_norm_lower_bound"
+fit_hinted$certificate$norm_source
+#> [1] "applied_vectors"
 fit_hinted$certificate$passed
 #> [1] TRUE
 ```
@@ -317,8 +322,8 @@ would defeat the entire point of using a sparse format.
 ## Where to go next
 
 - [`vignette("certificates")`](https://bbuchsbaum.github.io/eigencore/articles/certificates.md)
-  — the deep dive on `passed`, `scale_is_estimate`, and what to do about
-  a withheld certificate.
+  — the deep dive on `passed`, `norm_bound_type`, and what to do when a
+  certificate fails.
 - [`vignette("eigencore")`](https://bbuchsbaum.github.io/eigencore/articles/eigencore.md)
   — the general get-started workflow: operators, problems, plans, and
   solves for both eigenproblems and SVD.

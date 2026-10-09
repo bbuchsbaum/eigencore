@@ -46,6 +46,8 @@ plan
 #>    - max_restarts : 100 
 #>    - check_stride : 0 
 #>    - reorthogonalize : TRUE 
+#>    - iteration_limit : 100 
+#>    - iteration_limit_kind : thick_restart_cycles 
 #>   fallback: dense oracle prototype if unsupported
 ```
 
@@ -98,7 +100,7 @@ data.frame(
   restarts = w$restarts
 )
 #>   complete solve_columns certificate_columns iterations restarts
-#> 1     TRUE           130                   2        110        4
+#> 1     TRUE           130                   2        109        4
 ```
 
 `complete = TRUE` means every logical counter is known. When it is
@@ -120,8 +122,10 @@ data.frame(
   origin = identity_record$origin,
   portable = identity_record$portable
 )
-#>                operator_id         revision  origin portable
-#> 1 builtin-e695432add8b2285 e695432add8b2285 builtin     TRUE
+#>                                operator_id                         revision
+#> 1 builtin-288629d1284ed966f630937f67db2bf8 288629d1284ed966f630937f67db2bf8
+#>    origin portable
+#> 1 builtin     TRUE
 ```
 
 For a callback, eigencore cannot infer whether two functions represent

@@ -1,5 +1,255 @@
 # Changelog
 
+## eigencore (development version)
+
+### Behaviour change: two-norm backward errors
+
+- Certificate backward errors now use the standard normwise 2-norm
+  definition,
+  `||A x - lambda B x|| / ((||A||_2 + |lambda| ||B||_2) ||x||)` for
+  eigenpairs and `sqrt(||A v - s u||^2 + ||A^H u - s v||^2) / ||A||_2`
+  for singular triplets, instead of dividing by Frobenius norms (up to
+  `sqrt(rank)` times larger, so certificates were correspondingly more
+  lenient). Reported backward errors are larger than before, and results
+  whose residuals only met the Frobenius-scaled tolerance now fail.
+- The denominator is exact where cheap (diagonal matrices, a full
+  computed spectrum, `metadata$two_norm`) and otherwise a lower bound on
+  `||A||_2`: the largest column norm, `||A x|| / ||x||` of the certified
+  vectors, or, only when it could flip a failing pair, a short
+  deterministic Lanczos estimate memoised per operator (it does not use
+  the random-number stream). A lower bound over-states the backward
+  error, so `passed` stays sound.
+- `norm_bound_type` values are now `"two_norm_exact"`,
+  `"two_norm_lower_bound"` and `"identity_exact"` (replacing
+  `frobenius_exact`, `frobenius_metadata` and
+  `frobenius_hutchinson_estimate`); new fields `norm_source` and
+  `norm_values` record where the scale came from. The stochastic
+  Hutchinson norm estimate is gone, so matrix-free operators without
+  norm metadata now certify (`scale_is_estimate` is always `FALSE` for
+  built-in certificates). The planner accordingly routes matrix-free
+  smallest and nearest (interior) SVD targets to the native matrix-free
+  Golub-Kahan routes without requiring `metadata$frobenius_norm` (the
+  plan control `requires_nonestimated_norm_scale` is now `FALSE`);
+  before, a callback operator without metadata got the largest-target
+  route or an unsupported-interior error. Native solvers use the same
+  lower bounds for their internal convergence scales; the implicit Gram
+  SVD kernel runs at `tol / 2` and, if the exact certificate still
+  fails, retries once at a tighter tolerance.
+- Certificates for complex eigenvectors of real sparse or matrix-free
+  operators apply the operator to real and imaginary parts instead of
+  densifying the source.
+
+### Correctness fixes
+
+- Wide matrices (`nrow < ncol`) with smallest or nearest singular-value
+  targets now run native Golub-Kahan on the adjoint view (sparse
+  transpose, dense transpose, or swapped callbacks; nothing is
+  densified) so the start vector lives in the small side. Starting in
+  the large side let its null space leak into the Krylov basis, and
+  condition numbers above ~3e4 stalled near 1e-5 backward error and came
+  back uncertified while the tall case certified. Certificates are still
+  computed on the original matrix.
+
+- The retained IRLBA/LBD Golub-Kahan native attempt is robust: its
+  augmented tail is seeded from the dominant Ritz residual (it
+  previously started from a rounding-noise residual column), and it
+  thick-restarts from the kept Ritz block instead of giving up when its
+  fixed basis fills. On a 320-case seeded sweep it now certifies every
+  case without fallback (before: 177 fallbacks, 67 of them uncertified).
+  Adaptive Golub-Kahan restarts from a fresh vector after an
+  invariant-subspace breakdown, so a converged warm start no longer
+  returns spurious zero singular values. Golub-Kahan norms use the BLAS
+  helper instead of `long double` accumulation.
+
+- Target completeness (C50): a single-vector Krylov solve could miss a
+  copy of an exactly repeated eigenvalue (spectrum `9, 9, 7, 7, 7`
+  returned as `9, 9, 7, 7, 5`) and still certify, because residuals
+  prove each pair but not the returned set. Certified Hermitian Krylov,
+  LOBPCG and edge shift-invert results (standard, and native generalized
+  SPD Lanczos in its transformed space) for
+  [`largest()`](https://bbuchsbaum.github.io/eigencore/reference/largest.md),
+  [`smallest()`](https://bbuchsbaum.github.io/eigencore/reference/smallest.md)
+  and
+  [`largest_magnitude()`](https://bbuchsbaum.github.io/eigencore/reference/largest_magnitude.md)
+  targets are now followed by a deflated complement probe: a short
+  native block Lanczos run on the operator restricted to the complement
+  of the returned vectors, from a fixed-seed start that leaves R’s
+  random stream untouched. An intruding eigenvalue triggers a deflated
+  complement solve and Rayleigh-Ritz merge, then a re-probe. The outcome
+  is recorded in `certificate$target_completeness` (`"probed"`,
+  `"repaired"`, `"failed"`, `"exact"`, `"not_checked"`) with details in
+  `certificate$completeness`; `"failed"` makes `passed` `FALSE`
+  (`residual_passed` keeps the residual verdict). Opt out with
+  `lanczos(completeness = "none")` or
+  `options(eigencore.target_completeness = "none")`. The probe is
+  probabilistic: it can prove a returned set incomplete but not
+  complete.
+
+- `center(rows = TRUE, columns = TRUE)` now double centers correctly.
+  Row means were taken from the uncentered matrix, so the grand mean was
+  subtracted twice on the dense, callback, and native CSC paths.
+
+- Column-centered `dgCMatrix` operators carry their exact Frobenius
+  norm, so their SVD certificates can pass instead of always reporting
+  an estimate.
+
+- Complex Frobenius norms no longer drop imaginary parts, and sparse
+  sources are no longer densified to compute a certificate norm.
+
+- Complex Hermitian eigenproblems and Hermitian-definite pencils use the
+  `zheev`-based kernels, so repeated eigenvalues keep an orthonormal
+  (B-orthonormal) eigenbasis.
+
+- `eig_full(A, B)` with a symmetric but indefinite or singular `B` falls
+  back to QZ instead of failing in `dpotrf` (unless
+  `structure = hermitian()` is requested explicitly).
+
+- The Gram SVD zero threshold is relative to the matrix scale instead of
+  `max(1, d)`, so tiny-norm matrices no longer return zero singular
+  values.
+
+- NA, NaN, and Inf matrix inputs are rejected when the operator is
+  built.
+
+- `k`/`rank` are validated once (whole number in `1..n`), eigenproblems
+  require a square operator, and `both_ends(k_low, k_high)` must match
+  `k`.
+
+- `seed =` in
+  [`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md)/[`svd_partial()`](https://bbuchsbaum.github.io/eigencore/reference/svd_partial.md)
+  restores the global random stream on exit.
+
+- [`shifted_tridiagonal_preconditioner()`](https://bbuchsbaum.github.io/eigencore/reference/shifted_tridiagonal_preconditioner.md)
+  accepts symmetric storage and reads the bands without an R-level loop.
+
+- Native kernels use 64-bit offsets for basis and certificate indexing,
+  so problems with more than 2^31 basis or vector entries no longer
+  overflow.
+
+- Block Lanczos and block Golub-Kahan always run two Cholesky-QR passes
+  (previously only for n \< 64), keeping new blocks orthonormal when the
+  residual block is ill-conditioned.
+
+- Scalar Lanczos and Golub-Kahan stop with a clear error on non-finite
+  values; NaN no longer passes the native symmetry and positive-diagonal
+  checks, and is no longer hidden in maximum backward-error summaries.
+
+- The native Gram SVD start vector is no longer an exact alternating
+  sign pattern (orthogonal to the constant vector), and its zero
+  threshold is scale invariant.
+
+### Iteration limits, subspace sizes and nonsymmetric targets
+
+- **Behaviour change:** `maxit` in
+  [`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md),
+  [`solve()`](https://rdrr.io/pkg/Matrix/man/solve-methods.html) and
+  [`plan_solver()`](https://bbuchsbaum.github.io/eigencore/reference/plan_solver.md)
+  is now what its documentation always said, an iteration limit. It used
+  to set the Krylov subspace size. It now caps thick-restart cycles
+  (scalar, block, generalized and shift-invert callback Lanczos),
+  Krylov-Schur restarts (nonsymmetric Arnoldi), restart cycles
+  (reference Arnoldi), LOBPCG iterations, and Lanczos steps on
+  unrestarted routes. The resolved limit is recorded in
+  `plan$controls$iteration_limit` and
+  `plan$controls$iteration_limit_kind`. To set the subspace size, use
+  `max_subspace` on the method descriptor:
+  [`lanczos()`](https://bbuchsbaum.github.io/eigencore/reference/lanczos.md),
+  [`golub_kahan()`](https://bbuchsbaum.github.io/eigencore/reference/golub_kahan.md),
+  the new `auto(max_subspace =)` (honoured by whichever Krylov route the
+  planner picks, including shift-invert and the SVD Golub-Kahan /
+  implicit-Gram routes), and the new `shift_invert(max_subspace =)`.
+  Code that passed `maxit = m` to get an `m`-dimensional subspace should
+  pass `method = auto(max_subspace = m)` or `lanczos(max_subspace = m)`
+  instead. If `lanczos(max_restarts =)` or `lobpcg(maxit =)` disagrees
+  with `maxit`, that is now an error.
+  [`lobpcg()`](https://bbuchsbaum.github.io/eigencore/reference/lobpcg.md)
+  now defaults to `maxit = NULL`, which means the solve’s `maxit` or the
+  `eigencore.lobpcg_maxit` option (200).
+- RSpectra shims: `opts$ncv` now maps to `auto(max_subspace = ncv)` (or
+  `lanczos(max_subspace = ncv)` with `initvec`), so the route is the
+  same as without it. In
+  [`eigs()`](https://bbuchsbaum.github.io/eigencore/reference/eigs.md)/[`eigs_sym()`](https://bbuchsbaum.github.io/eigencore/reference/eigs_sym.md),
+  `opts$maxitr` maps to `maxit` instead of being ignored.
+  [`svds()`](https://bbuchsbaum.github.io/eigencore/reference/svds.md)
+  still ignores `maxitr` and warns about it.
+- [`eigs()`](https://bbuchsbaum.github.io/eigencore/reference/eigs.md)
+  computes left eigenvectors only when asked, as
+  [`RSpectra::eigs()`](https://rdrr.io/pkg/RSpectra/man/eigs.html) does.
+  The new `left = FALSE` argument skips the adjoint Arnoldi solve and
+  its certificate, which roughly halves the cost.
+  [`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md)
+  and [`solve()`](https://rdrr.io/pkg/Matrix/man/solve-methods.html)
+  take a new `left_vectors = c("auto", "none", "compute")` argument. The
+  default `"auto"` keeps the two-sided certificate.
+- The default scalar thick-restart Lanczos subspace is now ARPACK-like
+  (`max(2k + 1, 20)`, capped at `n`) instead of `3k + 20`.
+- Thick-restart Lanczos and implicit-Gram SVD results are sorted by
+  target order. Previously values came back in lock order (for example
+  9, 7, 9).
+- Nonsymmetric
+  [`smallest_magnitude()`](https://bbuchsbaum.github.io/eigencore/reference/smallest_magnitude.md)
+  is supported. Dense and sparse inputs run through shift-invert Arnoldi
+  at `sigma = 0`. If `A` is singular, the shift is perturbed and the
+  change is recorded. Matrix-free operators use the Krylov-Schur
+  smallest-magnitude ranking directly.
+- Nonsymmetric `nearest(sigma)` and `shift_invert(sigma)` run
+  Krylov-Schur Arnoldi on a factorised `A - sigma I`: dense LAPACK QR,
+  sparse LU with AMD ordering, or a user `solve`. Eigenvalues are
+  recovered as `lambda = sigma + 1/theta`. Right and left residuals are
+  certified on the original `A`, and transposed solves reuse the forward
+  factorisation. As a result, `eigs(A, k, sigma =)` now works for
+  nonsymmetric `A` with a real `sigma`.
+- Factorization labels now match the code. Tridiagonal shift-invert and
+  metric solves use pivoted LU (`dgttrf`/`dgttrs`), so the labels
+  changed from `tridiagonal_thomas_*` to `tridiagonal_lu_*`, and
+  `native_sparse_tridiagonal_thomas` became
+  `native_sparse_tridiagonal_lu`. Shift-invert routes that run the
+  native thick-restart Lanczos callback are now labelled
+  `native thick-restart ... Lanczos shift-invert (... solve callback)`
+  instead of `reference ...`.
+
+### Multithreaded sparse kernels
+
+- Native sparse (`dgCMatrix`) products now run on OpenMP threads:
+  `A^T X` as a per-column gather, `A X` as a gather over a CSR copy (or
+  per-thread row slabs for tall matrices) built once per solve, the
+  centred and centred-scaled operators, and the implicit `A^T A` /
+  `A A^T` operators of sparse
+  [`svds()`](https://bbuchsbaum.github.io/eigencore/reference/svds.md) /
+  [`svd_partial()`](https://bbuchsbaum.github.io/eigencore/reference/svd_partial.md).
+  Sparse products are bitwise identical for every thread count. The
+  thread count is `getOption("eigencore.threads")`; the default is 1
+  under `R CMD check` or `_R_CHECK_LIMIT_CORES_`, otherwise
+  `OMP_NUM_THREADS` or the processor count capped at 8. Builds without
+  OpenMP (Apple clang) stay serial. See
+  [`?"eigencore-threads"`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md).
+- During a multithreaded sparse solve, a spinning-thread BLAS (OpenBLAS
+  pthreads, FlexiBLAS) is switched to one thread and restored
+  afterwards, and the Lanczos reorthogonalisation runs on eigencore’s
+  own OpenMP kernels, so BLAS and OpenMP threads do not compete. Results
+  with one and several threads agree to rounding.
+- Multi-column sparse products use row-major panels, and the
+  centred-scaled sparse operator no longer applies one column at a time.
+  R-level block applies no longer duplicate `Y` when `beta = 0` and
+  accept `Y = NULL`.
+
+### RSpectra compatibility
+
+- [`eigs()`](https://bbuchsbaum.github.io/eigencore/reference/eigs.md),
+  [`eigs_sym()`](https://bbuchsbaum.github.io/eigencore/reference/eigs_sym.md)
+  and
+  [`svds()`](https://bbuchsbaum.github.io/eigencore/reference/svds.md)
+  follow the RSpectra signatures: `sigma` (nearest eigenvalues),
+  function inputs (`n`/`args`, `Atrans`/`dim`), `eigs_sym(lower =)`
+  reading one triangle, default `which = "LM"` for
+  [`eigs_sym()`](https://bbuchsbaum.github.io/eigencore/reference/eigs_sym.md),
+  decreasing value order from
+  [`eigs_sym()`](https://bbuchsbaum.github.io/eigencore/reference/eigs_sym.md),
+  and `opts$tol`, `ncv`, `retvec`, `initvec`, `center`, `scale`. Unused
+  or unknown `opts` entries and unknown `which` codes are reported
+  instead of being ignored, `nu`/`nv` are honoured, and non-convergence
+  warns.
+
 ## eigencore 1.3.0 (2026-08-25)
 
 ### Certified positive-semidefinite geometry
@@ -184,6 +434,77 @@
 
 ### Performance
 
+- Operator identities and workflow tokens use a native 128-bit
+  structural hash over the data buffers instead of hashing
+  [`serialize()`](https://rdrr.io/r/base/serialize.html) output, about
+  10x faster (dense 1500 x 1500 source: 0.047 s -\> 0.005 s; 4000 x
+  4000: 0.54 s -\> 0.04 s). Equal values hash equal (`-0`/`0`, NaN
+  payloads), attributes count regardless of order, and digests are the
+  same across sessions and platforms. **Identity format change:**
+  built-in operator identities, plan tokens and restart-state tokens all
+  change value. Plans and restart states now record
+  `serialization$hash_format`; ones saved by an earlier version are
+  rejected with code `identity_format_changed` and a message asking to
+  re-plan, rather than a generic identity mismatch. PSD factors
+  ([`psd_factor()`](https://bbuchsbaum.github.io/eigencore/reference/psd_factor.md),
+  [`psd_gram_factor()`](https://bbuchsbaum.github.io/eigencore/reference/psd_gram_factor.md),
+  …) record the same `serialization$hash_format`; a factor persisted by
+  an earlier version fails with an `eigencore_psd_corrupt_state`
+  condition of code `identity_format_changed` asking to re-factor,
+  instead of a generic integrity-token error. The unused legacy FNV
+  entry point `eigencore_stable_raw_hash` is removed.
+- Dense matrix operator construction screens finiteness and symmetry in
+  one native pass instead of an R-level `all(is.finite())` plus a
+  separate symmetry scan (dense `Matrix` classes are no longer screened
+  twice).
+  [`as_operator()`](https://bbuchsbaum.github.io/eigencore/reference/as_operator.md)
+  at n = 4000: 0.17-0.21 s -\> 0.058 s;
+  [`plan_solver()`](https://bbuchsbaum.github.io/eigencore/reference/plan_solver.md):
+  0.20 s -\> 0.10 s (the rest is the identity hash). Errors and the
+  relative symmetry tolerance are unchanged.
+- [`compose()`](https://bbuchsbaum.github.io/eigencore/reference/compose.md),
+  [`crossprod_operator()`](https://bbuchsbaum.github.io/eigencore/reference/crossprod_operator.md)
+  and operator sums no longer form a dense product twice, and they
+  materialise a product only when it is cheap and memory-safe: always
+  for a product with at most 65,536 entries; a larger dense product only
+  when it holds no more entries than its factors (for
+  [`crossprod_operator()`](https://bbuchsbaum.github.io/eigencore/reference/crossprod_operator.md),
+  no more columns than rows) and costs at most 2^30 multiply-adds; a
+  larger sparse product only when a structural nonzero bound stays
+  within 4x the factors’ nonzeros and below a quarter of its entries, so
+  a sparse product is never densified. Otherwise the result is a lazy
+  composition (e.g. a 3000 x 5 times 5 x 3000 dense composition: 0.12 s
+  and 69 MB -\> 0.001 s and no stored product).
+- Lazy compositions whose operands all have native kernels
+  ([`compose()`](https://bbuchsbaum.github.io/eigencore/reference/compose.md),
+  [`crossprod_operator()`](https://bbuchsbaum.github.io/eigencore/reference/crossprod_operator.md),
+  operator sums and scalar multiples,
+  [`scale_rows()`](https://bbuchsbaum.github.io/eigencore/reference/scale_rows.md)/[`scale_cols()`](https://bbuchsbaum.github.io/eigencore/reference/scale_cols.md),
+  [`center()`](https://bbuchsbaum.github.io/eigencore/reference/center.md),
+  [`adjoint()`](https://bbuchsbaum.github.io/eigencore/reference/adjoint.md),
+  over dense, CSC, centered / centered-scaled CSC and diagonal
+  operators, nested freely) are compiled into one native
+  composed-operator kernel (`metadata$storage == "native_composite"`):
+  product chains, weighted sums, rank-one centering terms and adjoints,
+  with reused buffers for intermediates. R-level applies are one `.Call`
+  instead of nested R closures, and the matrix-free native solvers
+  (Golub-Kahan, Arnoldi, block Lanczos) apply the kernel directly
+  instead of calling back into R; typed work accounting is unchanged.
+  The fused centered CSC operator gets the same treatment.
+  `options(eigencore.native_composite = FALSE)` restores the R
+  composition. Applying a 50000 x 2000 sparse-plus-scaled-low-rank sum
+  is 2-3x faster, and its rank-10
+  [`svd_partial()`](https://bbuchsbaum.github.io/eigencore/reference/svd_partial.md)
+  went from 3.5 s to 2.8 s (single-threaded). A dense `compose(A, B)` of
+  two 1500 x 1500 factors does not speed up: its applies are
+  memory-bound `dgemv`s either way. It still plans onto the matrix-free
+  Golub-Kahan cycle, which uses about 190 forward/adjoint pairs and runs
+  about 3.5x slower than the implicit Gram route used for the explicit
+  product. Closing that gap needs an SVD planner route for composites,
+  which is not part of this change.
+- R-level dense, complex dense, CSC, diagonal and centered CSC block
+  applies no longer allocate a zero `Y` when `beta == 0`; the native
+  entry points allocate the output themselves.
 - Sparse tridiagonal shift-invert now parses and validates the three
   matrix bands once per solve and reuses that immutable representation
   for planning, shift perturbation, factorization, and certification.

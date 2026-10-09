@@ -85,11 +85,11 @@ unrounded measurements and reports the smallest value in each row.
 
 | case                  | lowest median | eigencore | RSpectra |   irlba | base R |
 |:----------------------|:--------------|----------:|---------:|--------:|-------:|
-| dense Hermitian       | RSpectra      |     5.163 |   0.4796 | not run |  1.978 |
-| sparse path Laplacian | eigencore     |     4.724 |   7.9280 | not run | 13.070 |
-| dense low-rank SVD    | RSpectra      |     5.061 |   0.2262 |  0.3762 |  1.620 |
-| tall sparse SVD       | RSpectra      |     2.824 |   0.3612 |  0.8060 |  1.851 |
-| wide sparse SVD       | RSpectra      |     2.963 |   0.4460 |  1.0780 |  2.897 |
+| dense Hermitian       | RSpectra      |     4.333 |   0.4784 | not run |  2.108 |
+| sparse path Laplacian | eigencore     |     5.390 |   7.8610 | not run | 13.860 |
+| dense low-rank SVD    | RSpectra      |     4.107 |   0.2579 |   5.981 |  1.719 |
+| tall sparse SVD       | RSpectra      |     2.655 |   0.3599 |  10.730 |  1.888 |
+| wide sparse SVD       | RSpectra      |     2.736 |   0.3884 |  10.690 |  3.288 |
 
 Median solver-call time in milliseconds from 3 iterations per method.
 {.table style="width:100%;"}
@@ -149,11 +149,11 @@ do not measure peak resident memory.
 
 | case                  | eigencore | RSpectra |   irlba | base R |
 |:----------------------|----------:|---------:|--------:|-------:|
-| dense Hermitian       |    2.5000 |  0.06661 | not run | 0.4240 |
-| sparse path Laplacian |    1.7390 |  0.01991 | not run | 3.1880 |
-| dense low-rank SVD    |    1.8020 |  0.09405 |  0.5606 | 0.5942 |
-| tall sparse SVD       |    0.2094 |  0.02502 |  0.1760 | 0.8979 |
-| wide sparse SVD       |    0.2190 |  0.02246 |  0.1542 | 0.9098 |
+| dense Hermitian       |   2.65500 |  0.06661 | not run | 0.4240 |
+| sparse path Laplacian |   1.81500 |  0.01991 | not run | 3.1880 |
+| dense low-rank SVD    |   1.28600 |  0.09405 |   2.763 | 0.5942 |
+| tall sparse SVD       |   0.05859 |  0.02502 |   4.967 | 0.8979 |
+| wide sparse SVD       |   0.05038 |  0.02246 |   4.500 | 0.9098 |
 
 Allocated memory in megabytes. {.table}
 
@@ -167,9 +167,9 @@ method or residual check.
 |:---|:--:|---:|---:|:---|
 | dense Hermitian | 3/3 | 2.77e-15 | 1.57e-11 | all pass |
 | sparse path Laplacian | 3/3 | 8.33e-15 | 8.45e-10 | all pass |
-| dense low-rank SVD | 4/4 | 1.33e-15 | 2.52e-15 | all pass |
-| tall sparse SVD | 4/4 | 3.36e-15 | 1.49e-10 | all pass |
-| wide sparse SVD | 4/4 | 3.94e-15 | 6.71e-10 | all pass |
+| dense low-rank SVD | 4/4 | 1.33e-15 | 5.88e-16 | all pass |
+| tall sparse SVD | 4/4 | 3.61e-15 | 1.10e-11 | all pass |
+| wide sparse SVD | 4/4 | 2.94e-15 | 6.71e-10 | all pass |
 
 Numerical checks across all methods in each case. {.table
 style="width:100%;"}

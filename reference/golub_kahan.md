@@ -12,7 +12,8 @@ golub_kahan(max_subspace = NULL, reorthogonalize = TRUE)
 
 - max_subspace:
 
-  Optional maximum Krylov subspace size.
+  Optional maximum Krylov subspace size (the ARPACK `ncv`); fixes the
+  subspace instead of the default adaptive growth.
 
 - reorthogonalize:
 

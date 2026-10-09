@@ -12,6 +12,8 @@
 <link href="../deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
 <script src="../deps/headroom-0.11.0/headroom.min.js"></script><script src="../deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="../deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="../deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="../deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="../deps/search-1.0.0/fuse.min.js"></script><script src="../deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="../pkgdown.js"></script><link href="../extra.css" rel="stylesheet">
 <script src="../extra.js"></script><meta property="og:title" content="Freeze and replay a solver decision">
+<link href="../albers.css" rel="stylesheet">
+<script>window.albersdownDefaults = window.albersdownDefaults || { family: "red", preset: "homage", style: "minimal" };</script><script src="../albers.js"></script>
 </head>
 <body>
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
@@ -122,6 +124,8 @@ choice.</p>
 <span><span class="co">#&gt;    - max_restarts : 100 </span></span>
 <span><span class="co">#&gt;    - check_stride : 0 </span></span>
 <span><span class="co">#&gt;    - reorthogonalize : TRUE </span></span>
+<span><span class="co">#&gt;    - iteration_limit : 100 </span></span>
+<span><span class="co">#&gt;    - iteration_limit_kind : thick_restart_cycles </span></span>
 <span><span class="co">#&gt;   fallback: dense oracle prototype if unsupported</span></span></code></pre></div>
 <p>Keep the distinction simple:</p>
 <table class="table">
@@ -192,7 +196,7 @@ means the same thing:</p>
 <span>  restarts <span class="op">=</span> <span class="va">w</span><span class="op">$</span><span class="va">restarts</span></span>
 <span><span class="op">)</span></span>
 <span><span class="co">#&gt;   complete solve_columns certificate_columns iterations restarts</span></span>
-<span><span class="co">#&gt; 1     TRUE           130                   2        110        4</span></span></code></pre></div>
+<span><span class="co">#&gt; 1     TRUE           130                   2        109        4</span></span></code></pre></div>
 <p><code>complete = TRUE</code> means every logical counter is known.
 When it is <code>FALSE</code>, an <code>NA</code> counter means unknown,
 not zero; compare only the phases that both routes report.</p>
@@ -211,8 +215,10 @@ when the matrix changes.</p>
 <span>  origin <span class="op">=</span> <span class="va">identity_record</span><span class="op">$</span><span class="va">origin</span>,</span>
 <span>  portable <span class="op">=</span> <span class="va">identity_record</span><span class="op">$</span><span class="va">portable</span></span>
 <span><span class="op">)</span></span>
-<span><span class="co">#&gt;                operator_id         revision  origin portable</span></span>
-<span><span class="co">#&gt; 1 builtin-e695432add8b2285 e695432add8b2285 builtin     TRUE</span></span></code></pre></div>
+<span><span class="co">#&gt;                                operator_id                         revision</span></span>
+<span><span class="co">#&gt; 1 builtin-288629d1284ed966f630937f67db2bf8 288629d1284ed966f630937f67db2bf8</span></span>
+<span><span class="co">#&gt;    origin portable</span></span>
+<span><span class="co">#&gt; 1 builtin     TRUE</span></span></code></pre></div>
 <p>For a callback, eigencore cannot infer whether two functions
 represent the same external data. Supply provenance only when your
 application can maintain that promise:</p>

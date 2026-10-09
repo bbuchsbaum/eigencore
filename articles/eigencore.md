@@ -31,10 +31,10 @@ fit
 #>   target: largest 
 #>   restart:thick_restart(in_native_loop)
 #>   locked: 5 
-#>   max residual: 1.67046e-07 
-#>   max backward error: 4.546939e-09 
-#>   max orthogonality loss: 1.776357e-15 
-#>   norm bound: frobenius_exact+identity_exact 
+#>   max residual: 6.259907e-11 
+#>   max backward error: 6.578934e-12 
+#>   max orthogonality loss: 8.881784e-16 
+#>   norm bound: two_norm_lower_bound+identity_exact 
 #>   scale estimated: FALSE 
 #>   certificate: passed
 ```
@@ -83,10 +83,10 @@ fit_gen
 #>   target: largest 
 #>   restart: lobpcg 
 #>   locked: 5 
-#>   max residual: 9.243565e-09 
-#>   max backward error: 7.47322e-11 
-#>   max orthogonality loss: 1.44329e-15 
-#>   norm bound: frobenius_exact+frobenius_exact 
+#>   max residual: 8.443488e-08 
+#>   max backward error: 6.274617e-09 
+#>   max orthogonality loss: 1.554312e-15 
+#>   norm bound: two_norm_lower_bound+two_norm_lower_bound 
 #>   scale estimated: FALSE 
 #>   certificate: passed
 ```
@@ -113,10 +113,10 @@ svd_fit
 #>   converged rank: 5 
 #>   method: native certified Gram SVD special case 
 #>   target: largest 
-#>   max residual: 1.359395e-15 
-#>   max backward error: 9.520164e-18 
+#>   max residual: 1.524207e-14 
+#>   max backward error: 5.667639e-16 
 #>   max orthogonality loss: 5.689893e-16 
-#>   norm bound: frobenius_exact 
+#>   norm bound: two_norm_lower_bound 
 #>   scale estimated: FALSE 
 #>   certificate: passed
 ```
@@ -149,11 +149,11 @@ res <- eigs_sym(A, k = 5, which = "LA")
 str(res, max.level = 1)
 #> List of 7
 #>  $ values     : num [1:5] 5.01 4.77 4.7 4.57 4.5
-#>  $ vectors    : num [1:200, 1:5] 0.0227 0.0103 0.0923 -0.1479 -0.0414 ...
+#>  $ vectors    : num [1:200, 1:5] -0.0227 -0.0103 -0.0923 0.1479 0.0414 ...
 #>  $ nconv      : int 5
 #>  $ niter      : int 60
 #>  $ nops       : int 62
-#>  $ certificate:List of 18
+#>  $ certificate:List of 24
 #>   ..- attr(*, "class")= chr "eigencore_certificate"
 #>  $ diagnostics:List of 21
 ```
@@ -165,13 +165,15 @@ res$certificate
 #>   passed: TRUE 
 #>   tolerance: 1e-08 
 #>   type: residual_backward_error 
-#>   norm bound: frobenius_exact+identity_exact 
+#>   norm bound: two_norm_lower_bound+identity_exact 
+#>   norm source: ritz+identity 
 #>   scale estimated: FALSE 
-#>   max residual: 2.074433e-09 
-#>   max backward error: 5.646539e-11 
+#>   max residual: 2.074432e-09 
+#>   max backward error: 2.070053e-10 
 #>   max orthogonality loss: 8.881784e-16 
 #>   orthogonality tolerance: 1.490116e-08 
-#>   orthogonality required: TRUE
+#>   orthogonality required: TRUE 
+#>   target completeness: probed
 ```
 
 [`eigs()`](https://bbuchsbaum.github.io/eigencore/reference/eigs.md),
@@ -255,6 +257,8 @@ plan
 #>    - max_restarts : 100 
 #>    - check_stride : 0 
 #>    - reorthogonalize : TRUE 
+#>    - iteration_limit : 100 
+#>    - iteration_limit_kind : thick_restart_cycles 
 #>   fallback: dense oracle prototype if unsupported
 ```
 

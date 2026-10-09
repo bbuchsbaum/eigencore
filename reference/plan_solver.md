@@ -29,11 +29,16 @@ serialization capability, and retained-memory metadata.
 
 The eigen and SVD methods accept their usual request and method
 arguments plus execution controls through `...`. Eigen plans freeze
-`tol`, `maxit`, `vectors`, `certify`, `allow_dense_fallback`, and an
-optional `initial_subspace`; SVD plans freeze `tol`, `vectors`,
-`certify`, and `allow_dense_fallback`. Use `solve(plan)` to execute
-those values or `solve(plan, replan = TRUE)` to make a fresh decision
-under current policy.
+`tol`, `maxit`, `vectors`, `left_vectors`, `certify`,
+`allow_dense_fallback`, and an optional `initial_subspace`; SVD plans
+freeze `tol`, `vectors`, `certify`, and `allow_dense_fallback`. The
+eigen `maxit` is resolved into the route's iteration limit (see
+[`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md))
+and recorded in `plan$controls$iteration_limit` /
+`plan$controls$iteration_limit_kind`; the Krylov subspace size is
+`plan$controls$max_subspace`. Use `solve(plan)` to execute those values
+or `solve(plan, replan = TRUE)` to make a fresh decision under current
+policy.
 
 ## Examples
 

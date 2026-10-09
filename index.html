@@ -16,6 +16,8 @@
 ">
 <meta property="og:description" content="Partial eigenvalue and singular-value computation in R with result certificates and inspectable solver plans.
 ">
+<link href="albers.css" rel="stylesheet">
+<script>window.albersdownDefaults = window.albersdownDefaults || { family: "red", preset: "homage", style: "minimal" };</script><script src="albers.js"></script>
 </head>
 <body>
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
@@ -78,7 +80,7 @@
 <p>eigencore focuses on three things:</p>
 <ol style="list-style-type: decimal">
 <li>
-<strong>Every result is checked.</strong> Each call returns residuals, a backward-error bound, orthogonality loss, and a single <code>passed</code>/<code>failed</code> flag. When a bound can only be estimated, the certificate says so instead of passing.</li>
+<strong>Every result is checked.</strong> Each call returns residuals, a backward-error bound, orthogonality loss, and a single <code>passed</code>/<code>failed</code> flag. The backward error uses the standard 2-norm definition with a denominator that never exceeds <code>||A||_2</code>, so a certificate can only over-state the error.</li>
 <li>
 <strong>Centering and scaling without densifying.</strong> Explicitly centering a sparse matrix for PCA can require a dense copy. eigencore solves the centered (or scaled, or composed) problem as an operator, without forming that copy.</li>
 <li>
@@ -110,13 +112,13 @@
 <span><span class="co">#&gt;   converged rank: 10</span></span>
 <span><span class="co">#&gt;   method: native certified Gram SVD special case</span></span>
 <span><span class="co">#&gt;   target: largest</span></span>
-<span><span class="co">#&gt;   max residual: 1.414065e-14</span></span>
-<span><span class="co">#&gt;   max backward error: 4.474206e-17</span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 1.554312e-15</span></span>
-<span><span class="co">#&gt;   norm bound: frobenius_exact</span></span>
+<span><span class="co">#&gt;   max residual: 1.736519e-14</span></span>
+<span><span class="co">#&gt;   max backward error: 1.007435e-15</span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.332268e-15</span></span>
+<span><span class="co">#&gt;   norm bound: two_norm_lower_bound</span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE</span></span>
 <span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
-<p>The printout names the kernel that ran, gives the worst residual, backward error, and orthogonality loss across the returned triplets, and shows the certificate passed with an exact norm bound. This problem uses the native certified Gram path; see <a href="#benchmarks">Benchmarks</a> for a reproducible timing on the development machine.</p>
+<p>The printout names the kernel that ran, gives the worst residual, backward error, and orthogonality loss across the returned triplets, and shows the certificate passed. The backward error divides by a lower bound on <code>||A||_2</code> (<code>two_norm_lower_bound</code>), so it can only over-state the true normwise backward error. This problem uses the native certified Gram path; see <a href="#benchmarks">Benchmarks</a> for a reproducible timing on the development machine.</p>
 <p><img src="reference/figures/README-scree-1.png" alt="The ten largest singular values highlighted in blue against the full 500-point singular spectrum of A in grey." width="100%"></p>
 </div>
 <div class="section level2">
@@ -129,24 +131,27 @@
 <span><span class="co">#&gt;   passed: TRUE</span></span>
 <span><span class="co">#&gt;   tolerance: 1e-08</span></span>
 <span><span class="co">#&gt;   type: residual_backward_error</span></span>
-<span><span class="co">#&gt;   norm bound: frobenius_exact</span></span>
+<span><span class="co">#&gt;   norm bound: two_norm_lower_bound</span></span>
+<span><span class="co">#&gt;   norm source: applied_vectors</span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE</span></span>
-<span><span class="co">#&gt;   max residual: 1.414065e-14</span></span>
-<span><span class="co">#&gt;   max backward error: 4.474206e-17</span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 1.554312e-15</span></span>
+<span><span class="co">#&gt;   max residual: 1.736519e-14</span></span>
+<span><span class="co">#&gt;   max backward error: 1.007435e-15</span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.332268e-15</span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08</span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE</span></span></code></pre></div>
-<p>When the check cannot be made exact, the certificate says so. For a <strong>column-centered</strong> sparse matrix the only cheap norm bound is a stochastic estimate, so eigencore returns the singular values but sets <code>passed = FALSE</code> and tells you why:</p>
+<p>The backward error is the standard normwise one, <code>max residual / ||A||_2</code> for an SVD and <code>||A x - lambda x|| / ((||A||_2 + |lambda|) ||x||)</code> for an eigenpair. The exact <code>||A||_2</code> is rarely available, so eigencore divides by a value that never exceeds it: the exact norm where it is cheap (diagonal matrices, a full computed spectrum), otherwise the largest of the column norms, the <code>||A x|| / ||x||</code> ratios of the returned vectors, and, only when that could change the verdict, a short deterministic Lanczos estimate. A smaller denominator makes the reported backward error larger, so <code>passed</code> is never optimistic. <code>norm_bound_type</code> says whether the scale was exact or a lower bound, and <code>norm_source</code> says where it came from.</p>
+<p>This also covers operators with no cheap norm at all, such as a <strong>double-centered</strong> sparse matrix, which eigencore never forms explicitly:</p>
 <div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">cen</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/svd_partial.html">svd_partial</a></span><span class="op">(</span><span class="fu"><a href="reference/center.html">center</a></span><span class="op">(</span><span class="va">A</span>, columns <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span>, rank <span class="op">=</span> <span class="fl">5</span>, target <span class="op">=</span> <span class="fu"><a href="reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span>
+<code class="sourceCode R"><span><span class="va">cen</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/svd_partial.html">svd_partial</a></span><span class="op">(</span><span class="fu"><a href="reference/center.html">center</a></span><span class="op">(</span><span class="va">A</span>, rows <span class="op">=</span> <span class="cn">TRUE</span>, columns <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span>, rank <span class="op">=</span> <span class="fl">5</span>,</span>
+<span>                    target <span class="op">=</span> <span class="fu"><a href="reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span>
 <span></span>
 <span><span class="va">cen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
-<span><span class="co">#&gt; [1] FALSE</span></span>
+<span><span class="co">#&gt; [1] TRUE</span></span>
 <span><span class="va">cen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
-<span><span class="co">#&gt; [1] "frobenius_hutchinson_estimate"</span></span>
-<span><span class="va">cen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">notes</span></span>
-<span><span class="co">#&gt; [1] "certificate scale uses a stochastic norm estimate; passed is withheld"</span></span></code></pre></div>
-<p>You decide whether an estimated bound is good enough for your analysis. The explicit flag lets downstream code distinguish an exact certificate from an estimate without inferring that distinction from solver convergence alone.</p>
+<span><span class="co">#&gt; [1] "two_norm_lower_bound"</span></span>
+<span><span class="va">cen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_source</span></span>
+<span><span class="co">#&gt; [1] "applied_vectors"</span></span></code></pre></div>
+<p>If a pair’s residual is not small relative to this scale, the certificate fails and <code>failed_indices</code> names the offending pairs; the explicit flag lets downstream code act on that without inferring it from solver convergence.</p>
 </div>
 <div class="section level2">
 <h2 id="certified-singular-psd-geometry">Certified singular PSD geometry<a class="anchor" aria-label="anchor" href="#certified-singular-psd-geometry"></a>
@@ -232,10 +237,10 @@
 <span><span class="co">#&gt;   target: smallest</span></span>
 <span><span class="co">#&gt;   restart: native_tridiagonal_shift_invert_lanczos</span></span>
 <span><span class="co">#&gt;   locked: 0</span></span>
-<span><span class="co">#&gt;   max residual: 7.236489e-10</span></span>
-<span><span class="co">#&gt;   max backward error: 2.089012e-12</span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 3.552714e-15</span></span>
-<span><span class="co">#&gt;   norm bound: frobenius_metadata+identity_exact</span></span>
+<span><span class="co">#&gt;   max residual: 9.364725e-10</span></span>
+<span><span class="co">#&gt;   max backward error: 3.823131e-10</span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 4.440892e-16</span></span>
+<span><span class="co">#&gt;   norm bound: two_norm_lower_bound+identity_exact</span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE</span></span>
 <span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
 <p>The planner selects a native tridiagonal shift-invert path and the resulting certificate passes. The exact spectrum is known in closed form, so the answer can also be checked directly:</p>

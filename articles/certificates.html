@@ -12,6 +12,8 @@
 <link href="../deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
 <script src="../deps/headroom-0.11.0/headroom.min.js"></script><script src="../deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="../deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="../deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="../deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="../deps/search-1.0.0/fuse.min.js"></script><script src="../deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="../pkgdown.js"></script><link href="../extra.css" rel="stylesheet">
 <script src="../extra.js"></script><meta property="og:title" content="Certificates: reading the numerical evidence">
+<link href="../albers.css" rel="stylesheet">
+<script>window.albersdownDefaults = window.albersdownDefaults || { family: "red", preset: "homage", style: "minimal" };</script><script src="../albers.js"></script>
 </head>
 <body>
     <a href="#main" class="visually-hidden-focusable">Skip to contents</a>
@@ -107,20 +109,23 @@ things they measure, and what to do when one of them fails.</p>
 <span><span class="co">#&gt;   passed: TRUE </span></span>
 <span><span class="co">#&gt;   tolerance: 1e-08 </span></span>
 <span><span class="co">#&gt;   type: residual_backward_error </span></span>
-<span><span class="co">#&gt;   norm bound: frobenius_exact+identity_exact </span></span>
+<span><span class="co">#&gt;   norm bound: two_norm_lower_bound+identity_exact </span></span>
+<span><span class="co">#&gt;   norm source: ritz+identity </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
-<span><span class="co">#&gt;   max residual: 1.67046e-07 </span></span>
-<span><span class="co">#&gt;   max backward error: 4.546939e-09 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 1.776357e-15 </span></span>
+<span><span class="co">#&gt;   max residual: 6.259907e-11 </span></span>
+<span><span class="co">#&gt;   max backward error: 6.578934e-12 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 8.881784e-16 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
-<span><span class="co">#&gt;   orthogonality required: TRUE</span></span></code></pre></div>
+<span><span class="co">#&gt;   orthogonality required: TRUE </span></span>
+<span><span class="co">#&gt;   target completeness: probed</span></span></code></pre></div>
 <p>The fields you act on, in order:</p>
 <ul>
 <li>
 <strong><code>passed</code></strong> — overall verdict.
 <code>TRUE</code> means every returned pair satisfies the checks
-required by this certificate type and the norm bound used to build the
-scale is exact, not estimated.</li>
+required by this certificate type. The backward-error scale is exact or
+a lower bound on the matrix 2-norm, never an estimate, so a pass is
+never optimistic (see “Norm bounds” below).</li>
 <li>
 <strong><code>tolerance</code></strong> — the user-requested
 tolerance. Defaults to <code>1e-8</code>.</li>
@@ -142,12 +147,13 @@ B-inner-product problems).</li>
 <strong><code>failed_indices</code></strong> — which pairs failed.
 Empty when <code>passed = TRUE</code>.</li>
 </ul>
-<p>Two more fields explain <em>how</em> the verdict was reached rather
-than what it is: <code>norm_bound_type</code> names the scale used to
-compute backward error, and <code>scale_is_estimate</code> flags when
-that scale is itself a stochastic estimate rather than an exact bound —
-the “Withheld” section below shows exactly what that means for
-<code>passed</code>. <code>certificate_type</code> and
+<p>Three more fields explain <em>how</em> the verdict was reached rather
+than what it is: <code>norm_bound_type</code> says whether the
+<code>||A||_2</code> (and <code>||B||_2</code>) value in the
+backward-error scale is exact or a lower bound, <code>norm_source</code>
+says where it came from, and <code>norm_values</code> holds the values
+used. <code>scale_is_estimate</code> is always <code>FALSE</code> for
+built-in certificates. <code>certificate_type</code> and
 <code>notes</code> carry provenance text for unusual states.
 <code><a href="../reference/certificate.html">?certificate</a></code> documents every field.</p>
 <p>The <code>max_*</code> fields are summaries. The certificate also
@@ -190,14 +196,23 @@ residual computed in a transformed problem space without saying so in
 large or small. Backward error is the residual divided by a scale that
 captures “how big could a perturbation of <code>A</code> (and
 <code>B</code>) be that <em>exactly</em> makes <code>(lambda, v)</code>
-an eigenpair?”:</p>
+an eigenpair?”. eigencore uses the standard normwise definition in the
+matrix 2-norm:</p>
 <blockquote>
-<p>eta_i = ||r_i|| / ( (||A|| + |lambda_i| ||B||) ||v_i|| ).</p>
+<p>eta_i = ||r_i|| / ( (||A||_2 + |lambda_i| ||B||_2) ||v_i|| ),</p>
 </blockquote>
-<p>A pair “converges” when <code>eta_i &lt;= tol</code>. This is the
-criterion eigencore uses internally; the tolerance you pass to
-<code>eig_partial(tol = ...)</code> is the backward-error tolerance, not
-the residual tolerance.</p>
+<p>and for a singular triplet
+<code>eta_i = sqrt(||A v - sigma u||^2 + ||A^T u - sigma v||^2) / ||A||_2</code>
+(unit vectors). A pair “converges” when <code>eta_i &lt;= tol</code>.
+The tolerance you pass to <code>eig_partial(tol = ...)</code> is this
+backward-error tolerance, not a residual tolerance.</p>
+<p><code>||A||_2</code> is rarely known exactly, so the denominator uses
+a value that never exceeds it. A smaller denominator can only make the
+reported <code>eta_i</code> larger than the true backward error, so a
+certificate that passes would also pass with the exact norm. (Before
+eigencore 1.4 the scale was the Frobenius norm, which can be up to
+<code>sqrt(rank)</code> times larger than <code>||A||_2</code> and made
+the check correspondingly more lenient.)</p>
 </div>
 <div class="section level3">
 <h3 id="orthogonality">3. Orthogonality<a class="anchor" aria-label="anchor" href="#orthogonality"></a>
@@ -229,9 +244,9 @@ the same ten eigenpairs of <code>A</code>, computed two ways:</p>
 <code class="sourceCode R"><span><span class="co"># Largest eigenvalues are well separated -&gt; easy, converges fast.</span></span>
 <span><span class="va">fit_pass</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">A</span>, k <span class="op">=</span> <span class="fl">10</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span>
 <span></span>
-<span><span class="co"># Smallest eigenvalues are densely clustered near 1 -&gt; a tight maxit</span></span>
+<span><span class="co"># Smallest eigenvalues are densely clustered near 1 -&gt; a tight maxit (restart)</span></span>
 <span><span class="co"># budget leaves them short of tolerance.</span></span>
-<span><span class="va">fit_fail</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">A</span>, k <span class="op">=</span> <span class="fl">10</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/smallest.html">smallest</a></span><span class="op">(</span><span class="op">)</span>, maxit <span class="op">=</span> <span class="fl">15</span><span class="op">)</span></span>
+<span><span class="va">fit_fail</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">A</span>, k <span class="op">=</span> <span class="fl">10</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/smallest.html">smallest</a></span><span class="op">(</span><span class="op">)</span>, maxit <span class="op">=</span> <span class="fl">4</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>largest_passed  <span class="op">=</span> <span class="va">fit_pass</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span>,</span>
 <span>  smallest_passed <span class="op">=</span> <span class="va">fit_fail</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span><span class="op">)</span></span>
@@ -251,13 +266,14 @@ it under a tight iteration budget (red, failed).
 <code class="sourceCode R"><span><span class="va">fit_pass</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span>
 <span><span class="va">fit_pass</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
-<span><span class="co">#&gt; [1] "frobenius_exact+identity_exact"</span></span>
+<span><span class="co">#&gt; [1] "two_norm_lower_bound+identity_exact"</span></span>
 <span><span class="va">fit_pass</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">scale_is_estimate</span></span>
 <span><span class="co">#&gt; [1] FALSE</span></span></code></pre></div>
-<p>This is the easy case. Every residual is below tolerance,
-orthogonality is near machine precision, and the norm bound used to
-scale the backward error is the <em>exact</em> Frobenius norm — no
-stochastic component.</p>
+<p>This is the easy case. Every residual is below tolerance and
+orthogonality is near machine precision. The scale is a lower bound on
+<code>||A||_2</code>, here the largest computed Ritz value
+(<code>norm_source</code> is <code>"ritz+identity"</code>), which for a
+largest-eigenvalue target is essentially the exact norm.</p>
 </div>
 <div class="section level3">
 <h3 id="failed-residual-too-large">Failed: residual too large<a class="anchor" aria-label="anchor" href="#failed-residual-too-large"></a>
@@ -265,16 +281,16 @@ stochastic component.</p>
 <p>The right-hand panel above is a genuine failure. The smallest
 eigenvalues of <code>A</code> sit in a dense cluster just above 1, so
 they need many more iterations than the well-separated largest ones.
-With <code>maxit = 15</code> the solver runs out of budget before any
-pair converges, and the verdict flips. The <code>failed_indices</code>
-slot tells you which Ritz pairs missed:</p>
+With <code>maxit = 4</code> the solver runs out of restart budget before
+all pairs converge, and the verdict flips. The
+<code>failed_indices</code> slot tells you which Ritz pairs missed:</p>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">fit_fail</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] FALSE</span></span>
 <span><span class="va">fit_fail</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">failed_indices</span></span>
 <span><span class="co">#&gt;  [1]  1  2  3  4  5  6  7  8  9 10</span></span>
 <span><span class="va">fit_fail</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">max_backward_error</span></span>
-<span><span class="co">#&gt; [1] 0.001240683</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] 0.004174378</span></span></code></pre></div>
 <p>You do not have to guess how far off it was, or whether it was
 inching toward convergence. The solver records a
 <code>convergence_history</code>; plotting the worst backward error per
@@ -285,7 +301,7 @@ budget drives it underneath.</p>
 <span><span class="va">fit_ok</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
 <div class="figure" style="text-align: center">
-<img src="certificates_files/figure-html/convergence-1.png" class="r-plt" alt="Line plot on a log scale of backward error versus restart number. The red maxit-15 curve plateaus above the tolerance line; the blue maxit-40 curve descends below it." width="92%"><p class="caption">
+<img src="certificates_files/figure-html/convergence-1.png" class="r-plt" alt="Line plot on a log scale of backward error versus restart number. The red maxit-4 curve plateaus above the tolerance line; the blue maxit-40 curve descends below it." width="92%"><p class="caption">
 Worst backward error per restart for the ten smallest eigenpairs. A
 tight budget (red) stalls above the tolerance; a generous one (blue)
 drives the error under the line and the certificate passes.
@@ -294,36 +310,59 @@ drives the error under the line and the certificate passes.
 <p>What to do: increase <code>maxit</code>, raise <code>tol</code>, or —
 when you suspect a clustered spectrum — request a larger <code>k</code>
 (so the cluster is fully covered by the returned basis) and slice
-afterwards. Here, lifting <code>maxit</code> from 15 to 40 is
-enough.</p>
+afterwards. Here, lifting <code>maxit</code> (the restart limit) from 4
+to 40 is enough.</p>
 </div>
 <div class="section level3">
-<h3 id="estimated-scale-passed-remains-false">Estimated scale: <code>passed</code> remains false<a class="anchor" aria-label="anchor" href="#estimated-scale-passed-remains-false"></a>
+<h3 id="norm-bounds-exact-or-a-lower-bound">Norm bounds: exact or a lower bound<a class="anchor" aria-label="anchor" href="#norm-bounds-exact-or-a-lower-bound"></a>
 </h3>
-<p><code>norm_bound_type</code> names what the certificate used as the
-scale in the backward-error ratio. The common values identify exact,
-metadata-derived, and estimated scales:</p>
+<p><code>norm_bound_type</code> says what kind of <code>||A||_2</code>
+value scaled the backward error, as <code>A</code> or <code>A+B</code>
+parts (<code>B = I</code> appears as <code>identity_exact</code>):</p>
 <ul>
 <li>
-<code>frobenius_exact</code> — the Frobenius norm of an explicit
-dense matrix.</li>
+<code>two_norm_exact</code> — the exact spectral norm: diagonal
+matrices (<code>max |d_i|</code>), a full computed Hermitian spectrum
+(<code><a href="../reference/eig_full.html">eig_full()</a></code> and dense solves that compute every
+eigenvalue), or a user-asserted <code>metadata$two_norm</code>.</li>
 <li>
-<code>frobenius_metadata</code> — exact Frobenius norm derived from
-sparse/diagonal metadata.</li>
-<li>
-<code>identity_exact</code> — the standard problem
-<code>B = I</code>.</li>
-<li>
-<code>frobenius_hutchinson_estimate</code> — a stochastic Hutchinson
-estimate, used for matrix-free operators that do not expose a norm.</li>
+<code>two_norm_lower_bound</code> — a value that never exceeds
+<code>||A||_2</code>.</li>
 </ul>
-<p>A matrix-free operator (one wrapped via
-<code><a href="../reference/linear_operator.html">linear_operator()</a></code> with no exact norm metadata) forces
-eigencore onto that last, stochastic estimate of <code>||A||</code>.
-Because the <em>denominator</em> of the backward-error ratio is then a
-sample, not a deterministic upper bound, the certificate sets
-<code>passed = FALSE</code> even if every sampled residual ratio is
-below <code>tol</code>. <code>scale_is_estimate</code> records why:</p>
+<p><code>norm_source</code> names where the value came from:</p>
+<ul>
+<li>
+<code>diagonal</code>, <code>full_spectrum</code>,
+<code>metadata</code>, <code>identity</code> — exact values.</li>
+<li>
+<code>column_norms</code> — the largest column norm
+<code>||A e_j||</code> (dense, sparse, tridiagonal storage; no operator
+applies).</li>
+<li>
+<code>applied_vectors</code> — the largest
+<code>||A x|| / ||x||</code> over the certified vectors, computed with
+the same operator applies as the residuals.</li>
+<li>
+<code>ritz</code> — the residual-corrected value
+<code>|lambda| ||B x|| / ||x|| - ||r|| / ||x||</code> when only residual
+norms are available.</li>
+<li>
+<code>frobenius_rank_bound</code> —
+<code>||A||_F / sqrt(min(m, n))</code> when an operator only carries
+Frobenius metadata.</li>
+<li>
+<code>lanczos</code> — a 24-step Lanczos estimate on <code>A</code>
+(Hermitian) or <code>A^T A</code>, verified as
+<code>||A y|| / ||y||</code> for its Ritz vector. It runs only when some
+pair fails with the cheaper bounds but could pass with a larger one,
+uses a fixed start vector (it never touches the R random-number stream),
+and is memoised per operator.</li>
+</ul>
+<p>Because every source is a lower bound, matrix-free operators certify
+like any other operator. A <code><a href="../reference/linear_operator.html">linear_operator()</a></code> with no norm
+metadata used to fall back to a stochastic Hutchinson estimate and
+withhold <code>passed</code>; it now certifies with the bound from its
+own vectors:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">2</span><span class="op">)</span></span>
 <span><span class="va">op</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/linear_operator.html">linear_operator</a></span><span class="op">(</span></span>
@@ -339,25 +378,27 @@ below <code>tol</code>. <code>scale_is_estimate</code> records why:</p>
 <span>  structure <span class="op">=</span> <span class="fu"><a href="../reference/hermitian.html">hermitian</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  name <span class="op">=</span> <span class="st">"matrix-free Hermitian wrapper"</span></span>
 <span><span class="op">)</span></span>
-<span><span class="va">fit_mf</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">op</span>, k <span class="op">=</span> <span class="fl">5</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="co"># The matrix-free path runs the reference Lanczos solver, which needs a</span></span>
+<span><span class="co"># larger subspace than the default to resolve this clustered spectrum.</span></span>
+<span><span class="va">fit_mf</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">op</span>, k <span class="op">=</span> <span class="fl">5</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span>,</span>
+<span>                      method <span class="op">=</span> <span class="fu"><a href="../reference/lanczos.html">lanczos</a></span><span class="op">(</span>max_subspace <span class="op">=</span> <span class="fl">100</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="va">fit_mf</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
-<span><span class="co">#&gt; [1] "frobenius_hutchinson_estimate+identity_exact"</span></span>
+<span><span class="co">#&gt; [1] "two_norm_lower_bound+identity_exact"</span></span>
+<span><span class="va">fit_mf</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_source</span></span>
+<span><span class="co">#&gt; [1] "applied_vectors+identity"</span></span>
 <span><span class="va">fit_mf</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">scale_is_estimate</span></span>
-<span><span class="co">#&gt; [1] TRUE</span></span>
-<span><span class="va">fit_mf</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] FALSE</span></span>
-<span><span class="va">fit_mf</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">notes</span></span>
-<span><span class="co">#&gt; [1] "certificate scale uses a stochastic norm estimate; passed is withheld"</span></span></code></pre></div>
-<p>eigencore does not have a deterministic Frobenius bound for this
-operator without paying for a full second pass over the matrix, so it
-uses a Hutchinson stochastic estimate. The result therefore reports
-<code>scale_is_estimate = TRUE</code> and keeps
-<code>passed = FALSE</code>, even when the sampled residual ratios are
-below the requested tolerance.</p>
-<p>What to do: if you need a hard <code>passed = TRUE</code>, switch to
-a problem class where eigencore can carry exact norm metadata (built-in
-dense / <code>dgCMatrix</code> / <code>ddiMatrix</code> operators), or
-refine with a deterministic verification pass.</p>
+<span><span class="va">fit_mf</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
+<span><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
+<p>A lower bound can be weak — for example <code>||A x|| / ||x||</code>
+for the <em>smallest</em> eigenvalues of an operator with no other
+information. Then the reported backward error over-states the true one
+and a pair may fail although it is accurate; the Lanczos refinement
+exists to close that gap before a pair is reported as failed. What to do
+if a pass matters and the bound is still weak: supply
+<code>metadata = list(two_norm = ...)</code> when you know
+<code>||A||_2</code>, or wrap a built-in dense / <code>dgCMatrix</code>
+/ <code>ddiMatrix</code> matrix.</p>
 </div>
 <div class="section level3">
 <h3 id="generalized-spd-b-orthogonality-matters">Generalized SPD: B-orthogonality matters<a class="anchor" aria-label="anchor" href="#generalized-spd-b-orthogonality-matters"></a>
@@ -373,9 +414,9 @@ B-orthogonality of the returned vectors.</p>
 <span><span class="va">fit_gen</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">A</span>, k <span class="op">=</span> <span class="fl">5</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span>, B <span class="op">=</span> <span class="va">B</span>,</span>
 <span>                       method <span class="op">=</span> <span class="fu"><a href="../reference/lobpcg.html">lobpcg</a></span><span class="op">(</span>maxit <span class="op">=</span> <span class="fl">200</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
-<span><span class="co">#&gt; [1] "frobenius_exact+frobenius_exact"</span></span>
+<span><span class="co">#&gt; [1] "two_norm_lower_bound+two_norm_lower_bound"</span></span>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">max_orthogonality_loss</span></span>
-<span><span class="co">#&gt; [1] 8.881784e-16</span></span>
+<span><span class="co">#&gt; [1] 2.442491e-15</span></span>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
 <p>If a B-orthogonality value comes back near machine precision, the
@@ -383,6 +424,86 @@ B-inner-product Cholesky-QR refinement inside the solver did its job. If
 it comes back loose (say, <code>1e-4</code>), increase
 <code>maxit</code> or lower <code>tol</code> — orthogonality loss is
 usually the first thing to surface in ill-conditioned-B problems.</p>
+</div>
+<div class="section level3">
+<h3 id="target-completeness-the-right-set-not-just-right-pairs">Target completeness: the right set, not just right pairs<a class="anchor" aria-label="anchor" href="#target-completeness-the-right-set-not-just-right-pairs"></a>
+</h3>
+<p>Residuals prove that each returned pair is an eigenpair. They cannot
+prove that the returned <em>set</em> is the one you asked for. A
+single-vector Krylov method sees, in exact arithmetic, only one
+direction of each eigenspace, so it can miss a copy of a repeated
+eigenvalue: for the spectrum <code>9, 9, 7, 7, 7, 5, ...</code> it may
+return <code>9, 9, 7, 7, 5</code>, and every one of those five pairs
+certifies.</p>
+<p>After a certified Hermitian Krylov solve with a
+<code><a href="../reference/largest.html">largest()</a></code>, <code><a href="../reference/smallest.html">smallest()</a></code> or
+<code><a href="../reference/largest_magnitude.html">largest_magnitude()</a></code> target, eigencore therefore runs a
+short <strong>deflated complement probe</strong>: a few block Lanczos
+steps on the operator restricted to the orthogonal complement of the
+returned vectors (B-orthogonal for generalized problems), from a
+fixed-seed start that does not touch R’s random-number stream. Any Ritz
+value of that restricted operator that lies beyond the least-preferred
+returned value (by more than the residual and tolerance margin) proves a
+more-preferred eigenvalue is missing. The solver then repairs the result
+with a deflated complement solve, merges the two sets by a Rayleigh-Ritz
+step, re-certifies and probes again.</p>
+<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">d</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">9</span>, <span class="fl">9</span>, <span class="fl">7</span>, <span class="fl">7</span>, <span class="fl">7</span>, <span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">5</span>, <span class="fl">0.1</span>, length.out <span class="op">=</span> <span class="fl">55</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">1001</span><span class="op">)</span></span>
+<span><span class="va">p</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/sample.html" class="external-link">sample</a></span><span class="op">(</span><span class="fl">60</span><span class="op">)</span></span>
+<span><span class="va">S</span> <span class="op">&lt;-</span> <span class="fu">Matrix</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/sparseMatrix.html" class="external-link">sparseMatrix</a></span><span class="op">(</span>i <span class="op">=</span> <span class="va">p</span>, j <span class="op">=</span> <span class="va">p</span>, x <span class="op">=</span> <span class="va">d</span><span class="op">)</span></span>
+<span><span class="va">bare</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">S</span>, k <span class="op">=</span> <span class="fl">5</span>, method <span class="op">=</span> <span class="fu"><a href="../reference/lanczos.html">lanczos</a></span><span class="op">(</span>completeness <span class="op">=</span> <span class="st">"none"</span><span class="op">)</span>, seed <span class="op">=</span> <span class="fl">1</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="fu"><a href="../reference/values.html">values</a></span><span class="op">(</span><span class="va">bare</span><span class="op">)</span>, decreasing <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
+<span><span class="co">#&gt; [1] 9 9 7 7 5</span></span>
+<span><span class="va">bare</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
+<span><span class="co">#&gt; [1] TRUE</span></span>
+<span><span class="va">fit_c</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">S</span>, k <span class="op">=</span> <span class="fl">5</span>, method <span class="op">=</span> <span class="fu"><a href="../reference/lanczos.html">lanczos</a></span><span class="op">(</span><span class="op">)</span>, seed <span class="op">=</span> <span class="fl">1</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="fu"><a href="../reference/values.html">values</a></span><span class="op">(</span><span class="va">fit_c</span><span class="op">)</span>, decreasing <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
+<span><span class="co">#&gt; [1] 9 9 7 7 7</span></span>
+<span><span class="va">fit_c</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">target_completeness</span></span>
+<span><span class="co">#&gt; [1] "repaired"</span></span>
+<span><span class="va">fit_c</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">completeness</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"steps"</span>, <span class="st">"operator_columns"</span>, <span class="st">"rounds"</span><span class="op">)</span><span class="op">]</span></span>
+<span><span class="co">#&gt; $steps</span></span>
+<span><span class="co">#&gt; [1] 10</span></span>
+<span><span class="co">#&gt; </span></span>
+<span><span class="co">#&gt; $operator_columns</span></span>
+<span><span class="co">#&gt; [1] 124</span></span>
+<span><span class="co">#&gt; </span></span>
+<span><span class="co">#&gt; $rounds</span></span>
+<span><span class="co">#&gt; [1] 1</span></span></code></pre></div>
+<p><code>certificate$target_completeness</code> is one of:</p>
+<ul>
+<li>
+<code>"probed"</code>: the probe found nothing beyond the returned
+edge;</li>
+<li>
+<code>"repaired"</code>: the probe found a missing value and the
+repaired set then probed clean;</li>
+<li>
+<code>"failed"</code>: an intruder remained after the repair budget
+(<code>options(eigencore.completeness_max_rounds = 3)</code>);
+<code>passed</code> is then <code>FALSE</code> even though every
+residual passes (<code>residual_passed</code> keeps that verdict,
+<code>target_passed</code> is <code>FALSE</code>);</li>
+<li>
+<code>"exact"</code>: a full-spectrum route (dense LAPACK,
+tridiagonal, analytic grid Laplacian) selected from every eigenvalue, so
+the set is complete by construction;</li>
+<li>
+<code>"not_checked"</code>: the probe did not apply (interior or
+both-ends targets, nonsymmetric problems, a residual certificate that
+already failed, <code>certify = FALSE</code>, or
+<code>completeness = "none"</code>).</li>
+</ul>
+<p>The probe is cheap (by default at most 8 steps of block size 2, set
+by the options <code>eigencore.completeness_probe_steps</code> and
+<code>eigencore.completeness_probe_block</code>) and is switched off
+with <code>lanczos(completeness = "none")</code> or
+<code>options(eigencore.target_completeness = "none")</code>. It is a
+probabilistic check: it can prove a set incomplete, not complete — an
+intruder whose Ritz value a short run does not resolve goes unnoticed.
+The deterministic answer is an eigenvalue-counting (inertia,
+<code>LDL'</code>) certificate, planned for a later release.</p>
 </div>
 </div>
 <div class="section level2">
@@ -393,7 +514,7 @@ usually the first thing to surface in ill-conditioned-B problems.</p>
 orthogonality measure. The eigencore shim
 (<code><a href="../reference/eigs_sym.html">eigencore::eigs_sym()</a></code>) returns the same RSpectra-shaped
 list with two added fields:</p>
-<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">res</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eigs_sym.html">eigs_sym</a></span><span class="op">(</span><span class="va">A</span>, k <span class="op">=</span> <span class="fl">5</span>, which <span class="op">=</span> <span class="st">"LA"</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">res</span><span class="op">)</span></span>
 <span><span class="co">#&gt; [1] "values"      "vectors"     "nconv"       "niter"       "nops"       </span></span>
@@ -403,13 +524,15 @@ list with two added fields:</p>
 <span><span class="co">#&gt;   passed: TRUE </span></span>
 <span><span class="co">#&gt;   tolerance: 1e-08 </span></span>
 <span><span class="co">#&gt;   type: residual_backward_error </span></span>
-<span><span class="co">#&gt;   norm bound: frobenius_exact+identity_exact </span></span>
+<span><span class="co">#&gt;   norm bound: two_norm_lower_bound+identity_exact </span></span>
+<span><span class="co">#&gt;   norm source: ritz+identity </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
-<span><span class="co">#&gt;   max residual: 2.683414e-08 </span></span>
-<span><span class="co">#&gt;   max backward error: 7.304167e-10 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 2.664535e-15 </span></span>
+<span><span class="co">#&gt;   max residual: 6.019888e-09 </span></span>
+<span><span class="co">#&gt;   max backward error: 6.007181e-10 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 2.677869e-15 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
-<span><span class="co">#&gt;   orthogonality required: TRUE</span></span></code></pre></div>
+<span><span class="co">#&gt;   orthogonality required: TRUE </span></span>
+<span><span class="co">#&gt;   target completeness: probed</span></span></code></pre></div>
 <p>Code already written against <code><a href="https://rdrr.io/pkg/RSpectra/man/eigs.html" class="external-link">RSpectra::eigs_sym()</a></code>
 ignores <code>certificate</code> and <code>diagnostics</code> silently;
 new code can opt in to certified results without changing call
@@ -431,31 +554,28 @@ sites.</p>
 </tr></thead>
 <tbody>
 <tr class="odd">
-<td>
-<code>passed = TRUE</code>,
-<code>scale_is_estimate = FALSE</code>
-</td>
-<td>All checks required by this certificate type passed with an exact
-scale.</td>
+<td><code>passed = TRUE</code></td>
+<td>All checks required by this certificate type passed; the 2-norm
+scale was exact or a lower bound, so the backward error is not
+under-stated.</td>
 <td>Use the values/vectors within the stated certificate scope.</td>
 </tr>
 <tr class="even">
 <td>
-<code>passed = FALSE</code>, <code>scale_is_estimate = FALSE</code>,
-<code>failed_indices</code> non-empty</td>
+<code>passed = FALSE</code>, <code>failed_indices</code>
+non-empty</td>
 <td>Some pairs hit <code>maxit</code> before converging.</td>
 <td>Increase <code>maxit</code>, raise <code>tol</code>, or request a
 wider <code>k</code>.</td>
 </tr>
 <tr class="odd">
 <td>
-<code>passed = FALSE</code>,
-<code>scale_is_estimate = TRUE</code>
-</td>
-<td>The backward-error scale is stochastic, so the certificate does not
-report a pass.</td>
-<td>Use a problem class with deterministic norm metadata, or run a
-verification pass.</td>
+<code>passed = FALSE</code>, <code>norm_bound_type</code> is
+<code>two_norm_lower_bound</code>, residuals tiny</td>
+<td>The norm lower bound may be weak (e.g. smallest targets of a
+matrix-free operator).</td>
+<td>Supply <code>metadata$two_norm</code> if <code>||A||_2</code> is
+known, or use a built-in matrix class.</td>
 </tr>
 <tr class="even">
 <td>
@@ -474,6 +594,17 @@ eigenvalues.</td>
 </tr>
 <tr class="even">
 <td>
+<code>passed = FALSE</code>, <code>residual_passed = TRUE</code>,
+<code>target_completeness = "failed"</code>
+</td>
+<td>Every pair is accurate, but a more-preferred eigenvalue (e.g. a
+missed copy of a repeated value) lies outside the returned set.</td>
+<td>Use a block method with a block at least the multiplicity
+(<code>lanczos(block = )</code>), raise
+<code>eigencore.completeness_max_rounds</code>, or a dense solve.</td>
+</tr>
+<tr class="odd">
+<td>
 <code>failed_indices</code> includes the last returned pairs</td>
 <td>Some trailing returned pairs exceed the tolerance.</td>
 <td>Inspect the spectral gap; a wider <code>k</code> may help when the
@@ -491,9 +622,9 @@ downstream analysis.</p>
 </h2>
 <ul>
 <li>
-<code><a href="../articles/sparse-pca.html">vignette("sparse-pca")</a></code> shows a realistic withheld
-certificate in context — centering a sparse matrix trades an exact norm
-bound for a stochastic one unless you supply metadata yourself.</li>
+<code><a href="../articles/sparse-pca.html">vignette("sparse-pca")</a></code> shows certificates for centered
+and scaled sparse operators in context, including operators that carry
+no norm metadata.</li>
 <li>
 <code><a href="../articles/eigencore.html">vignette("eigencore")</a></code> and
 <code><a href="../articles/generalized-eigenproblems.html">vignette("generalized-eigenproblems")</a></code> cover the workflows

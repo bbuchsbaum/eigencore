@@ -10,8 +10,9 @@ eigencore focuses on three things:
 
 1.  **Every result is checked.** Each call returns residuals, a
     backward-error bound, orthogonality loss, and a single
-    `passed`/`failed` flag. When a bound can only be estimated, the
-    certificate says so instead of passing.
+    `passed`/`failed` flag. The backward error uses the standard 2-norm
+    definition with a denominator that never exceeds `||A||_2`, so a
+    certificate can only over-state the error.
 2.  **Centering and scaling without densifying.** Explicitly centering a
     sparse matrix for PCA can require a dense copy. eigencore solves the
     centered (or scaled, or composed) problem as an operator, without
@@ -54,19 +55,21 @@ fit
 #>   converged rank: 10
 #>   method: native certified Gram SVD special case
 #>   target: largest
-#>   max residual: 1.414065e-14
-#>   max backward error: 4.474206e-17
-#>   max orthogonality loss: 1.554312e-15
-#>   norm bound: frobenius_exact
+#>   max residual: 1.736519e-14
+#>   max backward error: 1.007435e-15
+#>   max orthogonality loss: 1.332268e-15
+#>   norm bound: two_norm_lower_bound
 #>   scale estimated: FALSE
 #>   certificate: passed
 ```
 
 The printout names the kernel that ran, gives the worst residual,
 backward error, and orthogonality loss across the returned triplets, and
-shows the certificate passed with an exact norm bound. This problem uses
-the native certified Gram path; see [Benchmarks](#benchmarks) for a
-reproducible timing on the development machine.
+shows the certificate passed. The backward error divides by a lower
+bound on `||A||_2` (`two_norm_lower_bound`), so it can only over-state
+the true normwise backward error. This problem uses the native certified
+Gram path; see [Benchmarks](#benchmarks) for a reproducible timing on
+the development machine.
 
 ![The ten largest singular values highlighted in blue against the full
 500-point singular spectrum of A in
@@ -87,36 +90,50 @@ fit$certificate
 #>   passed: TRUE
 #>   tolerance: 1e-08
 #>   type: residual_backward_error
-#>   norm bound: frobenius_exact
+#>   norm bound: two_norm_lower_bound
+#>   norm source: applied_vectors
 #>   scale estimated: FALSE
-#>   max residual: 1.414065e-14
-#>   max backward error: 4.474206e-17
-#>   max orthogonality loss: 1.554312e-15
+#>   max residual: 1.736519e-14
+#>   max backward error: 1.007435e-15
+#>   max orthogonality loss: 1.332268e-15
 #>   orthogonality tolerance: 1.490116e-08
 #>   orthogonality required: TRUE
 ```
 
-When the check cannot be made exact, the certificate says so. For a
-**column-centered** sparse matrix the only cheap norm bound is a
-stochastic estimate, so eigencore returns the singular values but sets
-`passed = FALSE` and tells you why:
+The backward error is the standard normwise one,
+`max residual / ||A||_2` for an SVD and
+`||A x - lambda x|| / ((||A||_2 + |lambda|) ||x||)` for an eigenpair.
+The exact `||A||_2` is rarely available, so eigencore divides by a value
+that never exceeds it: the exact norm where it is cheap (diagonal
+matrices, a full computed spectrum), otherwise the largest of the column
+norms, the `||A x|| / ||x||` ratios of the returned vectors, and, only
+when that could change the verdict, a short deterministic Lanczos
+estimate. A smaller denominator makes the reported backward error
+larger, so `passed` is never optimistic. `norm_bound_type` says whether
+the scale was exact or a lower bound, and `norm_source` says where it
+came from.
+
+This also covers operators with no cheap norm at all, such as a
+**double-centered** sparse matrix, which eigencore never forms
+explicitly:
 
 ``` r
 
-cen <- svd_partial(center(A, columns = TRUE), rank = 5, target = largest())
+cen <- svd_partial(center(A, rows = TRUE, columns = TRUE), rank = 5,
+                    target = largest())
 
 cen$certificate$passed
-#> [1] FALSE
+#> [1] TRUE
 cen$certificate$norm_bound_type
-#> [1] "frobenius_hutchinson_estimate"
-cen$certificate$notes
-#> [1] "certificate scale uses a stochastic norm estimate; passed is withheld"
+#> [1] "two_norm_lower_bound"
+cen$certificate$norm_source
+#> [1] "applied_vectors"
 ```
 
-You decide whether an estimated bound is good enough for your analysis.
-The explicit flag lets downstream code distinguish an exact certificate
-from an estimate without inferring that distinction from solver
-convergence alone.
+If a pair’s residual is not small relative to this scale, the
+certificate fails and `failed_indices` names the offending pairs; the
+explicit flag lets downstream code act on that without inferring it from
+solver convergence.
 
 ## Certified singular PSD geometry
 
@@ -264,10 +281,10 @@ eig
 #>   target: smallest
 #>   restart: native_tridiagonal_shift_invert_lanczos
 #>   locked: 0
-#>   max residual: 7.236489e-10
-#>   max backward error: 2.089012e-12
-#>   max orthogonality loss: 3.552714e-15
-#>   norm bound: frobenius_metadata+identity_exact
+#>   max residual: 9.364725e-10
+#>   max backward error: 3.823131e-10
+#>   max orthogonality loss: 4.440892e-16
+#>   norm bound: two_norm_lower_bound+identity_exact
 #>   scale estimated: FALSE
 #>   certificate: passed
 ```
@@ -590,6 +607,10 @@ solver work.
   : Return retained-memory accounting.
 - [`work()`](https://bbuchsbaum.github.io/eigencore/reference/work.md) :
   Extract typed logical work diagnostics.
+- [`eigencore-threads`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md)
+  [`eigencore.threads`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md)
+  [`eigencore.csr_cache_mb`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md)
+  : Multithreading in eigencore's sparse kernels
 
 # Articles
 

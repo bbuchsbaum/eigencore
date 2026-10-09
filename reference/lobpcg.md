@@ -5,14 +5,16 @@ LOBPCG method descriptor.
 ## Usage
 
 ``` r
-lobpcg(maxit = 200L, preconditioner = NULL, constraints = NULL)
+lobpcg(maxit = NULL, preconditioner = NULL, constraints = NULL)
 ```
 
 ## Arguments
 
 - maxit:
 
-  Maximum LOBPCG iterations.
+  Maximum LOBPCG iterations. `NULL` (default) uses the solve's `maxit`
+  argument when given, else the `eigencore.lobpcg_maxit` option (200).
+  Supplying both this and a different solve-level `maxit` is an error.
 
 - preconditioner:
 

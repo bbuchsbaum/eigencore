@@ -215,3 +215,7 @@ solver work.
   : Return retained-memory accounting.
 - [`work()`](https://bbuchsbaum.github.io/eigencore/reference/work.md) :
   Extract typed logical work diagnostics.
+- [`eigencore-threads`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md)
+  [`eigencore.threads`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md)
+  [`eigencore.csr_cache_mb`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md)
+  : Multithreading in eigencore's sparse kernels

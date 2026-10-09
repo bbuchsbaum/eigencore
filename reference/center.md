@@ -46,3 +46,9 @@ center(
 ## Value
 
 An `eigencore_operator` representing the centered linear map.
+
+## Details
+
+`row_means` and `col_means` are means of the uncentered `A`. When both
+`rows` and `columns` are `TRUE` the result is double centered: the grand
+mean is added back so every row and column of the result has mean zero.
