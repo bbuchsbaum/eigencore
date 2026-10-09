@@ -7,7 +7,7 @@
 \method{solve}{eigencore_eigen_problem}(
   a,
   b,
-  k,
+  k = NULL,
   method = auto(),
   tol = 1e-08,
   maxit = NULL,
