@@ -632,9 +632,6 @@ inertia_count_at <- function(ctx, sigma, perturb = TRUE, pivot_tol = 0) {
   chosen <- list(below = t0$neg, zero = t0$zero, above = t0$pos,
                  delta = 0, reliable = r0, lo = t0, hi = t0)
   notes <- character()
-  if (!r0 && isTRUE(t0$exact)) {
-    r0 <- TRUE
-  }
   if (!r0 && isTRUE(perturb)) {
     for (rel in inertia_perturbation_steps()) {
       delta <- inertia_delta(ctx, sigma, rel)

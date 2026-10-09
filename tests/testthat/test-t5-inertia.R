@@ -413,10 +413,20 @@ test_that("nearest and largest_magnitude targets are verified by interval counts
   set.seed(8)
   d <- sort(stats::runif(200L, -4, 4))
   S <- t5_rotated_sparse(d, 82L)
+  # auto mode leaves interior (nearest) targets unchecked ...
   fit <- eig_partial(S, 5L, target = nearest(0.7), method = shift_invert(sigma = 0.7))
+  cert <- certificate(fit)
+  expect_identical(cert$target_completeness, "not_checked")
+  expect_match(cert$completeness$inertia_gate, "nearest")
+  # ... and counts them on request.
+  fit <- with_t5_completeness(
+    "inertia",
+    eig_partial(S, 5L, target = nearest(0.7), method = shift_invert(sigma = 0.7))
+  )
   cert <- certificate(fit)
   expect_identical(cert$target_completeness, "inertia_verified")
   expect_identical(cert$completeness$kind, "nearest")
+  expect_equal(sort(values(fit)), sort(d[order(abs(d - 0.7))][1:5]), tolerance = 1e-8)
   fit <- eig_partial(S, 4L, target = largest_magnitude(), method = lanczos())
   cert <- certificate(fit)
   expect_identical(cert$target_completeness, "inertia_verified")
@@ -476,4 +486,35 @@ test_that("internal interval counts reuse one context", {
     expect_identical(cost$source, "cholmod_analyze")
     expect_gt(cost$flops, 0)
   }
+})
+
+test_that("a count-proven gap is repaired even when the probe sees nothing", {
+  # Exact eigenpairs 9, 9, 7, 7, 5 of a spectrum 9, 9, 7, 7, 7, ...: every
+  # residual is tiny, the count proves a 7 is missing, and a one-step,
+  # one-column probe is too weak to show it, so the repair starts the
+  # deflated complement solve from a deterministic block.
+  n <- 60L
+  d <- c(9, 9, 7, 7, 7, seq(5, 0.1, length.out = n - 5L))
+  Q <- t5_orthogonal(n, 3L)
+  A <- Q %*% (d * t(Q))
+  A <- (A + t(A)) / 2
+  V <- Q[, c(1, 2, 3, 4, 6)]
+  vals <- d[c(1, 2, 3, 4, 6)]
+  op <- as_operator(A)
+  cert <- eigencore:::certify_eigen_operator(op, vals, V, tol = 1e-8)
+  expect_true(cert$passed)
+  problem <- list(A = op, metric = NULL, target = largest())
+  ctx <- eigencore:::inertia_context(op)
+  bare <- eigencore:::inertia_completeness_check(op, vals, cert$residuals,
+                                                 cert$orthogonality, largest(),
+                                                 ctx = ctx)
+  expect_identical(bare$status, "inertia_failed")
+  old <- options(eigencore.completeness_probe_steps = 1L,
+                 eigencore.completeness_probe_block = 1L)
+  on.exit(options(old), add = TRUE)
+  chk <- eigencore:::inertia_completeness_run(problem, vals, V, cert, tol = 1e-8,
+                                              ctx = ctx)
+  expect_identical(chk$status, "inertia_verified")
+  expect_true(chk$repaired)
+  expect_equal(sort(chk$values), c(7, 7, 7, 9, 9), tolerance = 1e-8)
 })

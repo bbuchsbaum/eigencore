@@ -60,7 +60,8 @@ eigenvalue outside the returned set (for example a missed copy of a
 repeated eigenvalue), repairs the result with a deflated complement
 solve; it is probabilistic (it can prove a set incomplete but not
 complete) and is the check for matrix-free operators. \code{"auto"} uses the
-inertia check when the matrix is explicit and its predicted
+inertia check for edge targets (not \code{nearest()}) when the matrix is
+explicit and its predicted
 factorisation time is at most
 \verb{max(getOption("eigencore.completeness_inertia_seconds", 0.5), getOption("eigencore.completeness_inertia_ratio", 1) * solve time)},
 and the probe otherwise. \code{"none"} skips the check. \code{NULL} (default) uses

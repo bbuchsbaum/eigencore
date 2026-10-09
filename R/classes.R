@@ -187,7 +187,8 @@ auto <- function(max_subspace = NULL) {
 #'   repeated eigenvalue), repairs the result with a deflated complement
 #'   solve; it is probabilistic (it can prove a set incomplete but not
 #'   complete) and is the check for matrix-free operators. `"auto"` uses the
-#'   inertia check when the matrix is explicit and its predicted
+#'   inertia check for edge targets (not `nearest()`) when the matrix is
+#'   explicit and its predicted
 #'   factorisation time is at most
 #'   `max(getOption("eigencore.completeness_inertia_seconds", 0.5),
 #'   getOption("eigencore.completeness_inertia_ratio", 1) * solve time)`,

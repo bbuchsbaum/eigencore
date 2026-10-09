@@ -29,9 +29,9 @@
   `Matrix::Cholesky_LDL_reference_factorization`. Generalized shift-invert
   also accepts a sparse, non-diagonal SPD `B`.
 * Deterministic target completeness (C50): for Hermitian problems with an
-  explicit matrix, the returned set of a certified `largest()`, `smallest()`,
-  `largest_magnitude()` or `nearest()` solve is now proved complete by
-  eigenvalue counting. Kahan's residual bound places every returned value
+  explicit matrix, the returned set of a certified `largest()`, `smallest()`
+  or `largest_magnitude()` solve (and, with `completeness = "inertia"`, a
+  `nearest()` solve) is now proved complete by eigenvalue counting. Kahan's residual bound places every returned value
   within `rho` of its own eigenvalue, and an inertia count beyond the
   returned edge equal to `k` gives `target_completeness = "inertia_verified"`;
   a count proving a missing value repairs the set (deflated complement

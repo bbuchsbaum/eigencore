@@ -7,8 +7,7 @@
 # These are the probe's regression tests, so the file pins the completeness
 # mode to "probe"; the default "auto" mode replaces the probe by the inertia
 # certificate when the matrix is explicit (tests in test-t5-inertia.R).
-.t4b_old_completeness <- options(eigencore.target_completeness = "probe")
-withr::defer(options(.t4b_old_completeness), testthat::teardown_env())
+withr::local_options(list(eigencore.target_completeness = "probe"))
 
 t4b_diag_sparse <- function(d, seed) {
   n <- length(d)

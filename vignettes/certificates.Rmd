@@ -372,7 +372,7 @@ it can miss a copy of a repeated eigenvalue: for the spectrum
 those five pairs certifies.
 
 After a certified Hermitian Krylov solve with a `largest()`, `smallest()` or
-`largest_magnitude()` target (and, for explicit matrices, `nearest()`),
+`largest_magnitude()` target (and, with `completeness = "inertia"`, `nearest()`),
 eigencore therefore checks the returned set. With an explicit dense or sparse
 matrix it *counts* eigenvalues (the next section); for a matrix-free operator,
 or when a factorisation would cost more than the solve, it runs a short
@@ -483,7 +483,7 @@ repair recovered it, and the repaired set was then counted complete.
   or `completeness = "none"`).
 
 The check is chosen by `lanczos(completeness = )` or
-`options(eigencore.target_completeness = )`: `"auto"` (the default) counts
+`options(eigencore.target_completeness = )`: `"auto"` (the default) counts edge targets
 when the matrix is explicit and the predicted factorisation time (from
 CHOLMOD's symbolic analysis, or \(n^3/3\) flops for dense) is at most
 `max(0.5 s, solve time)` (options `eigencore.completeness_inertia_seconds`
