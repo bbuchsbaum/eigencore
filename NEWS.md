@@ -19,8 +19,8 @@
   `eigs_sym(sigma = )`) factors `A - sigma B` with CHOLMOD \(LDL^T\)
   instead of `Matrix::lu`. Factor time / fill: random sparse n = 5000
   0.56 s / 1.1M vs 8.7 s / 8.5M; 2-D Laplacian n = 250000 1.7 s / 9.2M vs
-  about 420 s / 209M. `eigs_sym(S, 5, sigma = )` end to end: 9.1 s -> 0.85 s
-  and 427 s -> 6.7 s. The factor is validated (pivot growth, a probe solve's
+  about 420 s / 209M. `eigs_sym(S, 5, sigma = )` end to end: 9.1 s -> 0.72 s
+  and 427 s -> 5.1 s (RSpectra: 4.3 s and 3.2 s). The factor is validated (pivot growth, a probe solve's
   backward error, one step of iterative refinement when needed); otherwise
   the solve falls back to `Matrix::lu`, labels the result
   "(sparse LU solve callback)" and records a `factorization_unreliable`
