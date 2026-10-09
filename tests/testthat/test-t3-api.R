@@ -111,7 +111,7 @@ test_that("shift-invert Lanczos takes maxit as a restart limit", {
   S <- t3_sparse_sym(400, 0.01, 7)
   p <- plan_solver(eigen_problem(S, target = nearest(0.4)), k = 3L, maxit = 50L)
   expect_identical(p$method,
-                   "native thick-restart Hermitian Lanczos shift-invert (sparse LU solve callback)")
+                   "native thick-restart Hermitian Lanczos shift-invert (sparse LDL' solve callback)")
   expect_identical(p$controls$iteration_limit_kind, "thick_restart_cycles")
   expect_identical(p$controls$max_restarts, 50L)
   expect_identical(p$controls$max_subspace,
@@ -343,7 +343,7 @@ test_that("shift-invert and metric-solve labels name the real factorization", {
   S <- t3_sparse_sym(300, 0.02, 30)
   sfit <- eig_partial(S, 2, target = nearest(0.5))
   expect_identical(sfit$method,
-                   "native thick-restart Hermitian Lanczos shift-invert (sparse LU solve callback)")
+                   "native thick-restart Hermitian Lanczos shift-invert (sparse LDL' solve callback)")
   expect_identical(sfit$restart$kind, "native_thick_restart_shift_invert_callback")
 
   pre <- shifted_tridiagonal_preconditioner(T, shift = 0.1)

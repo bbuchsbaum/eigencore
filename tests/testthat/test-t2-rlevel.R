@@ -219,7 +219,7 @@ test_that("P7: sparse shift-invert runs the native thick-restart callback and ce
   S <- methods::as(methods::as(S, "generalMatrix"), "CsparseMatrix")
   sigma <- 200.3
   fit <- eig_partial(S, k = 6, target = nearest(sigma))
-  expect_identical(fit$method, "native thick-restart Hermitian Lanczos shift-invert (sparse LU solve callback)")
+  expect_identical(fit$method, "native thick-restart Hermitian Lanczos shift-invert (sparse LDL' solve callback)")
   expect_identical(fit$restart$kind, "native_thick_restart_shift_invert_callback")
   expect_true(fit$certificate$passed)
   dense <- eigen(as.matrix(S), symmetric = TRUE, only.values = TRUE)$values

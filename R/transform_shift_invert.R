@@ -213,10 +213,11 @@ shift_invert_plan_label <- function(problem, has_metric, is_hermitian,
       return(native_tridiagonal_generalized_shift_invert_label())
     }
     csc_available <- inherits(problem$A$metadata$matrix, "CsparseMatrix")
-    if ((is_native_csc || csc_available) && diagonal_metric) {
-      return("native thick-restart generalized SPD Lanczos shift-invert (sparse LU solve callback)")
+    sparse_metric <- identical(Bstorage, "dgCMatrix")
+    if ((is_native_csc || csc_available) && (diagonal_metric || sparse_metric)) {
+      return(shift_invert_sparse_label(generalized = TRUE))
     }
-    return("shift-invert requested (generalized SPD shift-invert requires dense A/B or sparse A with diagonal B)")
+    return("shift-invert requested (generalized SPD shift-invert requires dense A/B or sparse A with diagonal or sparse SPD B)")
   }
   if (!is.null(user_solve)) {
     return("native thick-restart Hermitian Lanczos shift-invert (user solve callback)")
@@ -227,12 +228,29 @@ shift_invert_plan_label <- function(problem, has_metric, is_hermitian,
     if (shift_invert_is_native_tridiagonal(problem)) {
       return(native_tridiagonal_shift_invert_label())
     }
-    return("native thick-restart Hermitian Lanczos shift-invert (sparse LU solve callback)")
+    return(shift_invert_sparse_label(generalized = FALSE))
   }
   if (is_dense_source) {
     return(native_dense_shift_invert_label())
   }
   "shift-invert requested (provide method$solve for matrix-free A)"
+}
+
+# Sparse Hermitian shift-invert labels. The planned route factors A - sigma B
+# with CHOLMOD simplicial LDL' ("sparse LDL' solve callback"); a result whose
+# LDL' factor was unreliable and that fell back to Matrix::lu reports the
+# "sparse LU solve callback" label instead.
+#' @keywords internal
+shift_invert_sparse_label <- function(generalized = FALSE, kind = c("ldl", "lu")) {
+  kind <- match.arg(kind)
+  paste0(
+    if (generalized) {
+      "native thick-restart generalized SPD Lanczos shift-invert"
+    } else {
+      "native thick-restart Hermitian Lanczos shift-invert"
+    },
+    if (identical(kind, "ldl")) " (sparse LDL' solve callback)" else " (sparse LU solve callback)"
+  )
 }
 
 #' @keywords internal
@@ -363,6 +381,8 @@ shift_invert_factorization_contract <- function(cache) {
     "user_supplied_solve"
   } else if (isTRUE(grepl("sparse_lu", label_kind, fixed = TRUE))) {
     "Matrix::lu_reference_factorization"
+  } else if (isTRUE(grepl("sparse_ldl", label_kind, fixed = TRUE))) {
+    "Matrix::Cholesky_LDL_reference_factorization"
   } else {
     "eigencore_reference_factorization"
   }
@@ -370,7 +390,8 @@ shift_invert_factorization_contract <- function(cache) {
     "native_factorized_apply_no_dense_fallback"
   } else if (external || identical(label_kind, "user_solve")) {
     "external_cache_user_owned_no_dense_fallback"
-  } else if (isTRUE(grepl("sparse_lu", label_kind, fixed = TRUE))) {
+  } else if (isTRUE(grepl("sparse_lu", label_kind, fixed = TRUE)) ||
+             isTRUE(grepl("sparse_ldl", label_kind, fixed = TRUE))) {
     "sparse_factorization_no_dense_rcond"
   } else {
     "reference_factorization_no_silent_densification"
@@ -540,6 +561,179 @@ shift_invert_solver_csc <- function(A, sigma, B = NULL) {
   )
 }
 
+# Sparse symmetric shift-invert solve through CHOLMOD simplicial LDL' of
+# M = A - sigma B (fill-reducing AMD ordering, symmetric storage: about half
+# the fill of the symmetric-pattern LU and an order of magnitude less on
+# random sparse and 2-D grid matrices). LDL' does not pivot, so the factor is
+# validated before use:
+#   * the factorisation must complete (an exactly zero pivot aborts it);
+#   * pivot growth || |L||D||L'| || / ||M|| must stay below 1 / sqrt(eps);
+#   * a deterministic probe solve must reach a normwise backward error
+#     <= shift_invert_ldl_tolerance(); if it only does so after one step of
+#     iterative refinement, every solve refines once.
+# Otherwise the LU path (Matrix::lu, partial pivoting) is used and the
+# reason is recorded (cache$ldl_fallback_reason). The factor's inertia
+# (eigenvalues of the pencil below / above sigma) is recorded for free.
+# The probe threshold: the eigenpairs of the solved operator are exact for a
+# perturbation of A - sigma B of relative size ~ the solve's backward error,
+# so it is kept two orders of magnitude below the certificate tolerance
+# (and at most 1e-10).
+#' @keywords internal
+shift_invert_ldl_tolerance <- function(tol = NULL) {
+  default <- if (is.null(tol) || !is.finite(tol)) 1e-12 else min(1e-10, 1e-2 * tol)
+  getOption("eigencore.shift_invert_ldl_tol", max(default, 4 * .Machine$double.eps))
+}
+
+#' @keywords internal
+shift_invert_solver_ldl <- function(A, sigma, B = NULL, tol = NULL) {
+  started <- proc.time()[["elapsed"]]
+  fallback <- function(reason) {
+    prep <- shift_invert_solver_csc(methods::as(A, "generalMatrix"), sigma, B = B)
+    prep$cache$ldl_fallback_reason <- reason
+    prep$cache$ldl_attempted <- TRUE
+    prep$ldl_fallback <- TRUE
+    prep
+  }
+  As <- Matrix::forceSymmetric(methods::as(A, "CsparseMatrix"), uplo = "U")
+  As <- methods::as(As, "CsparseMatrix")
+  n <- nrow(As)
+  B_identity <- is.null(B)
+  M <- if (B_identity) {
+    NULL
+  } else {
+    methods::as(Matrix::forceSymmetric(methods::as(As - sigma * B, "CsparseMatrix"),
+                                       uplo = "U"), "CsparseMatrix")
+  }
+  F <- tryCatch(
+    suppressWarnings(if (B_identity) {
+      Matrix::Cholesky(As, LDL = TRUE, super = FALSE, perm = TRUE, Imult = -sigma)
+    } else {
+      Matrix::Cholesky(M, LDL = TRUE, super = FALSE, perm = TRUE)
+    }),
+    error = function(e) e
+  )
+  if (inherits(F, "error")) {
+    return(fallback(paste0("CHOLMOD LDL' failed: ", conditionMessage(F))))
+  }
+  diag_info <- tryCatch(
+    .Call("eigencore_simplicial_ldl_diagnostics", methods::slot(F, "p"),
+          methods::slot(F, "i"), methods::slot(F, "x"), methods::slot(F, "nz"),
+          PACKAGE = "eigencore"),
+    error = function(e) NULL
+  )
+  if (is.null(diag_info)) {
+    return(fallback("CHOLMOD LDL' factor has non-finite or malformed entries"))
+  }
+  normA <- max(Matrix::colSums(abs(As)), 0)
+  normB <- if (B_identity) 1 else max(Matrix::colSums(abs(B)), 0)
+  scale <- max(normA + abs(sigma) * normB, .Machine$double.xmin)
+  growth <- max(diag_info[["growth"]], scale) / scale
+  if (!is.finite(growth) || growth > 1 / sqrt(.Machine$double.eps)) {
+    return(fallback(paste0("LDL' pivot growth ", format(growth, digits = 3),
+                           " exceeds 1/sqrt(eps)")))
+  }
+  apply_M <- if (B_identity) {
+    function(X) as.matrix(As %*% X) - sigma * X
+  } else {
+    function(X) as.matrix(M %*% X)
+  }
+  raw_solve <- function(X) {
+    Z <- Matrix::solve(F, X, system = "A")
+    if (inherits(Z, "Matrix")) as.matrix(Z) else Z
+  }
+  backward <- function(b, x) {
+    r <- b - apply_M(x)
+    max(abs(r)) / (scale * max(abs(x)) + max(abs(b)))
+  }
+  b <- completeness_probe_start(n, 1L, stream = 4242L)
+  x <- raw_solve(b)
+  eta <- backward(b, x)
+  refine <- FALSE
+  eta_refined <- NA_real_
+  probe_tol <- shift_invert_ldl_tolerance(tol)
+  if (!is.finite(eta) || eta > probe_tol) {
+    x2 <- x + raw_solve(b - apply_M(x))
+    eta_refined <- backward(b, x2)
+    if (is.finite(eta_refined) && eta_refined <= probe_tol) {
+      refine <- TRUE
+    } else {
+      return(fallback(paste0("LDL' probe solve backward error ",
+                             format(eta, digits = 3), " (", format(eta_refined, digits = 3),
+                             " after refinement) exceeds ", format(probe_tol, digits = 3))))
+    }
+  }
+  solve_fn <- if (refine) {
+    function(X) {
+      Z <- raw_solve(X)
+      Z + raw_solve(X - apply_M(Z))
+    }
+  } else {
+    raw_solve
+  }
+  tally <- list(ok = TRUE, neg = diag_info[["neg"]], zero = diag_info[["zero"]],
+                pos = diag_info[["pos"]], min_pivot = diag_info[["min_abs_pivot"]],
+                growth = growth * scale, scale = scale,
+                backward_bound = (max(methods::slot(F, "nz"), 1) + 3) *
+                  .Machine$double.eps * growth * scale)
+  inertia_reliable <- inertia_tally_reliable(tally)
+  list(
+    solve_fn = solve_fn,
+    label = "sparse_ldl",
+    factor = F,
+    M = M,
+    cache = list(
+      factorization = "Matrix::Cholesky(LDL = TRUE, super = FALSE)",
+      factorization_cached = TRUE,
+      factor_nnz = sum(as.numeric(methods::slot(F, "nz"))),
+      factorization_seconds = proc.time()[["elapsed"]] - started,
+      condition_estimate = diag_info[["min_abs_pivot"]] / max(diag_info[["max_abs_pivot"]],
+                                                              .Machine$double.xmin),
+      condition_estimate_type = "sparse_ldl_pivot_ratio",
+      condition_estimate_min_pivot = diag_info[["min_abs_pivot"]],
+      condition_estimate_max_pivot = diag_info[["max_abs_pivot"]],
+      near_singular = diag_info[["min_abs_pivot"]] <= sqrt(.Machine$double.eps) * scale,
+      pivot_growth = growth,
+      probe_backward_error = eta,
+      probe_tolerance = probe_tol,
+      probe_backward_error_refined = eta_refined,
+      iterative_refinement = refine,
+      inertia = c(below = diag_info[["neg"]], zero = diag_info[["zero"]],
+                  above = diag_info[["pos"]]),
+      inertia_reliable = inertia_reliable,
+      ldl_attempted = TRUE,
+      ldl_fallback_reason = NA_character_
+    )
+  )
+}
+
+# Sparse SPD metric B = P' L L' P (CHOLMOD, fill-reducing P): with R = L' P,
+# B = R'R, and the symmetric transform R (A - sigma B)^{-1} R' has the
+# eigenvalues 1 / (lambda - sigma) of the pencil; eigenvectors map back by
+# x = R^{-1} y.
+#' @keywords internal
+shift_invert_sparse_metric_factor <- function(B) {
+  Bs <- methods::as(Matrix::forceSymmetric(methods::as(B, "CsparseMatrix"), uplo = "U"),
+                    "CsparseMatrix")
+  FB <- tryCatch(
+    Matrix::Cholesky(Bs, LDL = FALSE, super = FALSE, perm = TRUE),
+    error = function(e) NULL
+  )
+  if (is.null(FB)) {
+    stop("generalized shift_invert() requires positive definite B.", call. = FALSE)
+  }
+  L <- methods::as(Matrix::expand1(FB, "L"), "CsparseMatrix")
+  P1 <- Matrix::expand1(FB, "P1")
+  Lt <- Matrix::t(L)
+  list(
+    kind = "sparse",
+    matrix_sparse = Bs,
+    to_rhs = function(X) as.matrix(Matrix::crossprod(P1, L %*% X)),
+    from_solution = function(X) as.matrix(Lt %*% (P1 %*% X)),
+    to_original = function(Y) as.matrix(Matrix::crossprod(P1, Matrix::solve(Lt, Y))),
+    factorization = "Matrix::Cholesky(B) (sparse LL')"
+  )
+}
+
 #' @keywords internal
 shift_invert_metric_factor <- function(Bop) {
   Bop <- as_operator(Bop)
@@ -586,15 +780,20 @@ shift_invert_metric_factor <- function(Bop) {
       factorization = "diagonal sqrt(B)"
     ))
   }
+  if (identical(Bstorage, "dgCMatrix") ||
+      inherits(Bop$metadata$matrix, "CsparseMatrix")) {
+    return(shift_invert_sparse_metric_factor(Bop$metadata$matrix))
+  }
   stop(
-    "generalized shift_invert() supports dense B or diagonal B only; ",
+    "generalized shift_invert() supports dense, diagonal or sparse SPD B only; ",
     "unsupported metric operators are rejected to avoid silent densification.",
     call. = FALSE
   )
 }
 
 #' @keywords internal
-prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL) {
+prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL,
+                                          tol = NULL) {
   Aop <- problem$A
   Bop <- problem$metric
   n <- Aop$dim[1L]
@@ -664,31 +863,34 @@ prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL) {
     NULL
   }
 
-  prep <- if (is.matrix(source_A) && is.double(source_A)) {
+  sparse_metric_ok <- is.null(metric_factor) ||
+    metric_factor$kind %in% c("diagonal", "sparse")
+  if (is.null(csc_A) &&
+      (inherits(source_A, "CsparseMatrix") || inherits(source_A, "dgCMatrix"))) {
+    csc_A <- source_A
+  }
+  prep <- if (is.matrix(source_A) && is.double(source_A) &&
+              (is.null(metric_factor) || !is.null(metric_factor$matrix_dense))) {
     shift_invert_solver_dense(
       source_A,
       sigma,
       B = metric_factor$matrix_dense %||% NULL
     )
-  } else if (!is.null(csc_A) && (is.null(metric_factor) || identical(metric_factor$kind, "diagonal"))) {
-    shift_invert_solver_csc(
-      methods::as(csc_A, "generalMatrix"),
+  } else if (!is.null(csc_A) && sparse_metric_ok) {
+    # Hermitian sparse: CHOLMOD LDL' (falls back to Matrix::lu internally
+    # when the unpivoted factor is unreliable).
+    shift_invert_solver_ldl(
+      csc_A,
       sigma,
-      B = metric_factor$matrix_sparse %||% NULL
-    )
-  } else if ((inherits(source_A, "CsparseMatrix") || inherits(source_A, "dgCMatrix")) &&
-      (is.null(metric_factor) || identical(metric_factor$kind, "diagonal"))) {
-    shift_invert_solver_csc(
-      source_A,
-      sigma,
-      B = metric_factor$matrix_sparse %||% NULL
+      B = metric_factor$matrix_sparse %||% NULL,
+      tol = tol
     )
   } else {
     stop(
       if (is.null(Bop)) {
         "shift_invert() supports dense double matrices and dgCMatrix/dsCMatrix sources, or a user-supplied solve operator."
       } else {
-        "generalized shift_invert() supports dense A/B or sparse A with diagonal B; unsupported combinations are rejected to avoid silent densification."
+        "generalized shift_invert() supports dense A/B or sparse A with diagonal or sparse SPD B; unsupported combinations are rejected to avoid silent densification."
       },
       call. = FALSE
     )
@@ -727,6 +929,7 @@ prepare_shift_invert_operator <- function(problem, sigma, user_solve = NULL) {
     operator = op,
     label_kind = label_kind,
     factorization_cache = cache,
+    ldl_fallback = isTRUE(prep$ldl_fallback),
     recover_vectors = if (is.null(metric_factor)) {
       function(Y) Y
     } else {
@@ -1464,7 +1667,8 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
     ))
   }
 
-  prep <- prepare_shift_invert_operator(problem, sigma, user_solve = method$solve)
+  prep <- prepare_shift_invert_operator(problem, sigma, user_solve = method$solve,
+                                        tol = tol)
   M <- prep$operator
   n <- M$dim[1L]
 
@@ -1597,7 +1801,22 @@ solve_shift_invert_hermitian <- function(problem, k, method, tol, maxit,
       )
     }
   )
+  ldl_fallback <- isTRUE(prep$ldl_fallback) &&
+    identical(plan$method, shift_invert_sparse_label(generalized = !is.null(Bop)))
+  if (ldl_fallback) {
+    result$method <- shift_invert_sparse_label(generalized = !is.null(Bop), kind = "lu")
+  }
   result <- finalize_workflow_result(result, plan)
+  if (ldl_fallback) {
+    reason <- prep$factorization_cache$ldl_fallback_reason %||% "LDL' factor unreliable"
+    result$fallback_reason <- new_fallback_reason(
+      "factorization_unreliable",
+      paste0("The sparse LDL' factorisation was not used (", reason,
+             "); the shifted operator was factorised with Matrix::lu."),
+      plan$method,
+      result$method
+    )
+  }
   class(result) <- "eigencore_eigen_result"
   result
 }
