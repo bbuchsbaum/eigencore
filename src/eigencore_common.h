@@ -1,9 +1,9 @@
 #ifndef EIGENCORE_COMMON_H
 #define EIGENCORE_COMMON_H
 
-#include <R.h>
-#include <Rinternals.h>
-#include <R_ext/BLAS.h>
+// C++ standard headers must come before R's headers: Rinternals.h defines
+// function-like macros such as length() that break libc++ headers (<chrono>
+// pulls in <locale>) on macOS when R's headers are seen first.
 #include <chrono>
 #include <cmath>
 #include <climits>
@@ -18,6 +18,9 @@
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+#include <R.h>
+#include <Rinternals.h>
+#include <R_ext/BLAS.h>
 
 // OpenMP helpers (P8). Every pragma in src/ goes through EIGENCORE_OMP so the
 // package compiles warning-free and runs serially where OpenMP is unavailable
