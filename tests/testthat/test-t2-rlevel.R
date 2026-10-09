@@ -76,7 +76,7 @@ test_that("P6: identity survives serialisation and solving leaves the plan bytes
   before <- serialize(plan, NULL, version = 3L)
   fit <- solve(plan)
   expect_true(fit$certificate$passed)
-  expect_identical(serialize(plan, NULL, version = 3L), before)
+  expect_same_bytes(serialize(plan, NULL, version = 3L), before)
   restored <- unserialize(before)
   expect_identical(operator_identity(restored), plan$operator_identity)
   expect_true(solve(restored)$certificate$passed)

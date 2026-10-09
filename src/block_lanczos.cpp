@@ -1212,8 +1212,6 @@ static int native_block_lanczos_run(
   double* AV = AV_storage.data();
   std::vector<double> Z_storage(eigencore_buffer_size(nb));
   double* Z = Z_storage.data();
-  std::vector<double> AZ_storage(eigencore_buffer_size(nb));
-  double* AZ = AZ_storage.data();
   std::vector<double> H_storage(eigencore_buffer_size(mm));
   double* H = H_storage.data();
   std::vector<double> S_selected_storage(eigencore_buffer_size(mm));

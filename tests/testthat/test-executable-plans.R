@@ -31,8 +31,8 @@ test_that("eigen and SVD plans are executable, frozen, and immutable", {
   eigen_fit <- solve(eigen_plan)
   svd_fit <- solve(svd_plan)
 
-  expect_identical(serialize(eigen_plan, NULL, version = 3L), eigen_before)
-  expect_identical(serialize(svd_plan, NULL, version = 3L), svd_before)
+  expect_same_bytes(serialize(eigen_plan, NULL, version = 3L), eigen_before)
+  expect_same_bytes(serialize(svd_plan, NULL, version = 3L), svd_before)
   expect_identical(eigen_fit$plan, eigen_plan)
   expect_identical(svd_fit$plan, svd_plan)
   expect_equal(values(eigen_fit), c(5, 4), tolerance = 1e-12)
@@ -121,7 +121,7 @@ test_that("replan is explicit and leaves the original plan unchanged", {
   expect_identical(replanned$method,
                    "native dense Hermitian LAPACK fallback")
   expect_false(identical(replanned$plan, plan))
-  expect_identical(serialize(plan, NULL, version = 3L), before)
+  expect_same_bytes(serialize(plan, NULL, version = 3L), before)
 })
 
 test_that("execution overrides and corrupt plans fail closed with typed codes", {

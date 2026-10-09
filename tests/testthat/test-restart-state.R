@@ -82,7 +82,7 @@ test_that("restart states have a frozen schema, immutable copies, and exact memo
 
   before <- serialize(state, NULL, version = 3L)
   basis_only <- restart_state(state, retention = "basis")
-  expect_identical(serialize(state, NULL, version = 3L), before)
+  expect_same_bytes(serialize(state, NULL, version = 3L), before)
   expect_null(basis_only$method_state)
   expect_lt(retained_bytes(basis_only), retained_bytes(state))
 
@@ -106,7 +106,7 @@ test_that("same-operator Lanczos reuses only a fitted start and certifies freshl
     retain_state = "same_operator"
   )
 
-  expect_identical(serialize(state, NULL, version = 3L), before)
+  expect_same_bytes(serialize(state, NULL, version = 3L), before)
   expect_true(certificate(second)$passed)
   expect_equal(values(second), values(first), tolerance = 1e-8)
   expect_identical(second$state_transition$relation, "same_operator")
