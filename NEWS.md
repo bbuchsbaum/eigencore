@@ -1,5 +1,26 @@
 # eigencore (development version)
 
+## SVD target completeness
+
+* SVD results now carry a target-completeness verdict, so
+  `certificate$passed` (residuals certified AND the returned triplets are
+  the requested set) can be TRUE for `svd_partial()`, `solve()` on SVD
+  plans and `svds()` (also with `nu = 0` / `nv = 0`). Dense LAPACK routes
+  and Gram routes that decompose the formed Gram matrix with LAPACK are
+  `"exact"`. Krylov routes (Golub-Kahan, retained/block Golub-Kahan,
+  randomized, implicit Gram, matrix-free, centred/scaled operators) are
+  checked by an inertia count on the augmented matrix `[0 A; A' 0]` when
+  `A` is an explicit matrix and the factorisation is cheap
+  (`"inertia_verified"` / `"inertia_failed"`; cost gate
+  `eigencore.svd_completeness_inertia_seconds` = 0.25 s and
+  `eigencore.svd_completeness_inertia_ratio` = 0.25 of the solve time), and
+  otherwise by the deflated-complement probe on the Gram operator `A'A`
+  (or `AA'`, smaller side) with a repair round when a missing value is
+  found (`"probed"` / `"repaired"` / `"failed"`). `nearest()` SVD targets
+  have no probe: matrix-free interior SVD results stay `"not_checked"`
+  (`passed = FALSE`, `residual_passed = TRUE`). Fixes oracle finding O8
+  (missing copies of repeated singular values).
+
 ## Interval targets and spectrum slicing
 
 * New `interval(a, b)` target: `eig_partial(A, target = interval(a, b))`

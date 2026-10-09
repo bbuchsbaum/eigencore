@@ -138,6 +138,8 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
     certify = certify
   )
   if (!is.null(fast)) {
+    fast <- require_verified_completeness(apply_svd_completeness(
+      fast, fast$plan, solve_seconds = proc.time()[["elapsed"]] - fast_started))
     work_values <- unclass(fast$work)
     work_values$total_seconds <- proc.time()[["elapsed"]] - fast_started
     fast$work <- new_typed_work_record(work_values)
@@ -556,6 +558,16 @@ execute_eigen_plan_dispatch <- function(plan, restart_preparation = NULL,
 
 #' @keywords internal
 execute_svd_plan <- function(plan) {
+  # SVD target completeness (R/completeness_svd.R): verify that the returned
+  # triplets are the requested set.
+  started <- proc.time()[["elapsed"]]
+  result <- execute_svd_plan_dispatch(plan)
+  apply_svd_completeness(result, plan,
+                         solve_seconds = proc.time()[["elapsed"]] - started)
+}
+
+#' @keywords internal
+execute_svd_plan_dispatch <- function(plan) {
   a <- plan$problem
   execution <- plan$execution
   rank <- plan$requested

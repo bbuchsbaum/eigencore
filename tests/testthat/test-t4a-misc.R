@@ -231,7 +231,10 @@ test_that("C51: matrix-free interior SVD without metadata routes natively and ce
   fit <- svd_partial(op, rank = 2L, target = nearest(2), tol = 1e-10,
                      seed = 52, allow_dense_fallback = "never")
   expect_identical(fit$method, eigencore:::native_matrix_free_interior_golub_kahan_label())
-  expect_true(fit$certificate$passed)
+  # Matrix-free nearest() SVD: no inertia count and no sound complement probe
+  # for an interior target, so only the residuals are certified.
+  expect_true(fit$certificate$residual_passed)
+  expect_false(fit$certificate$passed)
   oracle <- d[order(abs(d - 2))][1:2]
   expect_equal(sort(fit$d), sort(oracle), tolerance = 1e-9)
 })

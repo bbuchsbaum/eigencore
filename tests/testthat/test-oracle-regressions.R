@@ -154,13 +154,44 @@ test_that("O7 (known): both_ends / nearest on the reference Lanczos route miss c
   }
 })
 
-test_that("O8 (known): SVD routes miss copies of repeated singular values (case 215)", {
-  skip("known: O8 (no target-completeness check for SVD)")
+test_that("O8: SVD routes no longer miss copies of repeated singular values (case 215)", {
   set.seed(215)
   d <- sample(c(9, 7, 5, 3, 1), 20, replace = TRUE) + 1e-10 * rnorm(20)
   fit <- svd_partial(Matrix::Diagonal(x = d), rank = 6)
+  # The Golub-Kahan route finds one copy per singular value; the SVD
+  # completeness check (augmented inertia count, Gram complement probe)
+  # finds and repairs the missing copies.
+  expect_true(fit$certificate$passed)
+  expect_true(fit$certificate$target_completeness %in%
+                c("repaired", "inertia_verified", "probed", "exact"))
+  expect_equal(fit$d, sort(d, decreasing = TRUE)[1:6], tolerance = 1e-8)
+  # The probe alone (matrix-free evidence) repairs it as well.
+  withr::local_options(eigencore.target_completeness = "probe")
+  fit <- svd_partial(Matrix::Diagonal(x = d), rank = 6)
+  expect_true(fit$certificate$passed)
+  expect_equal(fit$d, sort(d, decreasing = TRUE)[1:6], tolerance = 1e-8)
+})
+
+test_that("O8: a matrix-free interior SVD that misses a repeated copy is not passed", {
+  A <- rbind(diag(c(10, 5, 1, 1, 0.1)), matrix(0, 3, 5))
+  op <- linear_operator(
+    dim = dim(A),
+    apply = function(X, alpha = 1, beta = 0, Y = NULL) alpha * (A %*% X),
+    apply_adjoint = function(X, alpha = 1, beta = 0, Y = NULL) alpha * (t(A) %*% X),
+    structure = general()
+  )
+  fit <- svd_partial(op, rank = 2L, target = nearest(0.9), tol = 1e-10,
+                     seed = 93, allow_dense_fallback = "never")
+  if (!isTRUE(all.equal(fit$d, c(1, 1), tolerance = 1e-8))) {
+    expect_false(fit$certificate$passed)
+  }
+  # With the explicit matrix the augmented inertia count decides it.
+  fit <- svd_partial(Matrix::Matrix(A, sparse = TRUE), rank = 2L,
+                     target = nearest(0.9), tol = 1e-10, seed = 93)
+  expect_true(fit$certificate$passed ||
+                !isTRUE(all.equal(fit$d, c(1, 1), tolerance = 1e-8)))
   if (isTRUE(fit$certificate$passed)) {
-    expect_equal(fit$d, sort(d, decreasing = TRUE)[1:6], tolerance = 1e-8)
+    expect_equal(fit$d, c(1, 1), tolerance = 1e-8)
   }
 })
 
