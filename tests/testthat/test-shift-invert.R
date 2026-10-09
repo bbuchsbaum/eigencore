@@ -73,7 +73,7 @@ test_that("auto nearest target preserves sparse shift-invert boundary labels", {
   fit <- eig_partial(A_csc, k = 4L, target = nearest(15.5))
   expected <- vals[order(abs(vals - 15.5))][1:4]
   expect_identical(fit$method,
-                   "reference Hermitian Lanczos shift-invert (sparse LU)")
+                   "native thick-restart Hermitian Lanczos shift-invert (sparse LU solve callback)")
   expect_equal(sort(values(fit)), sort(expected), tolerance = 1e-7)
   expect_identical(fit$transform$kind, "shift_invert")
   expect_equal(fit$transform$factorization_cache$contract$provider,
@@ -127,7 +127,7 @@ test_that("shift-invert handles a sparse CSC source via factorized solve", {
                      method = shift_invert(sigma = 15.5))
 
   expect_identical(fit$method,
-                   "reference Hermitian Lanczos shift-invert (sparse LU)")
+                   "native thick-restart Hermitian Lanczos shift-invert (sparse LU solve callback)")
   expected <- vals[order(abs(vals - 15.5))][1:4]
   expect_equal(sort(fit$values), sort(expected), tolerance = 1e-7)
   # The dsCMatrix source carries an exact Frobenius norm (Matrix::norm), so the
@@ -176,12 +176,12 @@ test_that("shift-invert uses native tridiagonal factorized Lanczos for sparse CS
                    eigencore:::native_tridiagonal_shift_invert_label())
   expect_equal(sort(fit$values), sort(expected), tolerance = 1e-7)
   expect_certificate_clean(fit)
-  expect_identical(fit$transform$label_kind, "tridiagonal_thomas_native")
+  expect_identical(fit$transform$label_kind, "tridiagonal_lu_native")
   cache <- fit$transform$factorization_cache
   expect_true(cache$native)
   # T2 (C21): pivoted tridiagonal LU replaced the unpivoted Thomas recurrence.
   expect_equal(cache$factorization, "LAPACK dgttrf/dgttrs")
-  expect_equal(cache$condition_estimate_type, "tridiagonal_thomas_pivot_ratio")
+  expect_equal(cache$condition_estimate_type, "tridiagonal_lu_pivot_ratio")
   expect_true(is.finite(cache$condition_estimate))
   expect_gt(cache$condition_estimate, 0)
   expect_identical(fit$restart$kind, "native_tridiagonal_shift_invert_lanczos")
@@ -203,7 +203,7 @@ test_that("shift-invert uses native tridiagonal factorized Lanczos for diagonal 
                    eigencore:::native_tridiagonal_shift_invert_label())
   expect_equal(sort(fit$values), c(4, 8), tolerance = 1e-10)
   expect_certificate_clean(fit)
-  expect_identical(fit$transform$label_kind, "tridiagonal_thomas_native")
+  expect_identical(fit$transform$label_kind, "tridiagonal_lu_native")
   expect_true(fit$transform$factorization_cache$native)
   expect_identical(fit$restart$kind, "native_tridiagonal_shift_invert_lanczos")
   expect_true(fit$restart$native)
@@ -223,7 +223,7 @@ test_that("shift-invert accepts a user-supplied solve operator", {
                      method = shift_invert(sigma = sigma, solve = user_solve))
 
   expect_identical(fit$method,
-                   "reference Hermitian Lanczos shift-invert (user solve)")
+                   "native thick-restart Hermitian Lanczos shift-invert (user solve callback)")
   expected <- vals[order(abs(vals - sigma))][1:2]
   expect_equal(sort(fit$values), sort(expected), tolerance = 1e-7)
   expect_equal(fit$transform$factorization_cache$factorization, "user_solve")
@@ -315,7 +315,7 @@ test_that("generalized shift-invert handles sparse A with diagonal B without den
   expect_equal(crossprod(fit$vectors, as.matrix(B) %*% fit$vectors), diag(3),
                tolerance = 1e-8)
   expect_equal(fit$transform$factorization_cache$label_kind,
-               "tridiagonal_thomas_generalized_native")
+               "tridiagonal_lu_generalized_native")
   expect_true(fit$transform$factorization_cache$native)
   expect_equal(fit$transform$factorization_cache$factorization,
                "LAPACK dgttrf/dgttrs + diagonal sqrt(B)")  # T2 (C21)
@@ -342,7 +342,7 @@ test_that("generalized shift-invert keeps non-tridiagonal sparse A reference-lab
 
   expect_identical(
     fit$method,
-    "reference generalized SPD Lanczos shift-invert (sparse LU)"
+    "native thick-restart generalized SPD Lanczos shift-invert (sparse LU solve callback)"
   )
   expect_equal(sort(fit$values), sort(expected), tolerance = 1e-6)
   expect_equal(fit$transform$factorization_cache$label_kind,
@@ -563,7 +563,7 @@ test_that("shift-invert recovers smallest eigenvalues of a 1D Laplacian", {
                    eigencore:::native_tridiagonal_shift_invert_label())
   expect_equal(sort(fit$values), sort(oracle), tolerance = 1e-6)
   expect_certificate_clean(fit)
-  expect_identical(fit$transform$label_kind, "tridiagonal_thomas_native")
+  expect_identical(fit$transform$label_kind, "tridiagonal_lu_native")
   expect_true(fit$restart$native)
   expect_true(fit$restart$factorization_native)
 })

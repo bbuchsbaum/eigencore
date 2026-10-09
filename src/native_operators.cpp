@@ -762,6 +762,7 @@ extern "C" int eigencore_r_operator_apply(void* impl,
 extern "C" SEXP eigencore_dense_block_apply(SEXP A_, SEXP X_, SEXP alpha_,
                                             SEXP beta_, SEXP Y_,
                                             SEXP transpose_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(X_) || !isReal(Y_)) {
     error("A, X, and Y must be double matrices");
   }
@@ -816,11 +817,13 @@ extern "C" SEXP eigencore_dense_block_apply(SEXP A_, SEXP X_, SEXP alpha_,
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_complex_block_apply(SEXP A_, SEXP X_, SEXP alpha_,
                                                     SEXP beta_, SEXP Y_,
                                                     SEXP adjoint_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isComplex(A_) || !isComplex(X_) || !isComplex(Y_)) {
     error("A, X, and Y must be complex matrices");
   }
@@ -872,10 +875,12 @@ extern "C" SEXP eigencore_dense_complex_block_apply(SEXP A_, SEXP X_, SEXP alpha
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_randomized_apply(SEXP A_, SEXP X_,
                                                  SEXP transpose_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(X_) || !isLogical(transpose_)) {
     error("invalid dense randomized apply inputs");
   }
@@ -916,9 +921,11 @@ extern "C" SEXP eigencore_dense_randomized_apply(SEXP A_, SEXP X_,
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_randomized_sketch(SEXP A_, SEXP cols_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
     error("invalid dense randomized sketch inputs");
   }
@@ -962,10 +969,12 @@ extern "C" SEXP eigencore_dense_randomized_sketch(SEXP A_, SEXP cols_) {
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_randomized_project_transposed(SEXP A_,
                                                               SEXP Q_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(Q_)) {
     error("invalid dense randomized projection inputs");
   }
@@ -995,6 +1004,7 @@ extern "C" SEXP eigencore_dense_randomized_project_transposed(SEXP A_,
   setAttrib(out_, install("transposed"), transposed_);
   UNPROTECT(2);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 static void dense_randomized_thin_qr(std::vector<double>& X, int rows, int cols) {
@@ -1047,15 +1057,24 @@ struct DenseRandomizedCertificate {
   double orth_u = 0.0;
   double orth_v = 0.0;
   double scale = 0.0;
+  double applied_bound = 0.0;
   bool passed = false;
 };
 
-static double dense_randomized_frobenius_norm(const double* A, int64_t len) {
-  double sum = 0.0;
-  for (int64_t pos = 0; pos < len; ++pos) {
-    sum += A[pos] * A[pos];
+// Largest column 2-norm: a structural lower bound on ||A||_2 (C12).
+static double dense_randomized_max_column_norm(const double* A, int m, int n) {
+  double best = 0.0;
+  for (int col = 0; col < n; ++col) {
+    const double* a = A + static_cast<int64_t>(col) * m;
+    double sum = 0.0;
+    for (int row = 0; row < m; ++row) {
+      sum += a[row] * a[row];
+    }
+    if (sum > best) {
+      best = sum;
+    }
   }
-  return std::sqrt(sum);
+  return std::sqrt(best);
 }
 
 static double dense_randomized_column_norm(const std::vector<double>& X,
@@ -1098,6 +1117,80 @@ static double dense_randomized_max_orthogonality(const std::vector<double>& X,
   return out;
 }
 
+// Residuals, spectral-norm lower bound, and backward errors for a randomized
+// SVD certificate. On entry AV = A V and ATU = A^T U, computed from A in this
+// call. The denominator is L = max(column bound, ||A v_j|| / ||v_j||,
+// ||A^T u_j|| / ||u_j||) <= ||A||_2, so the backward error over-estimates the
+// normwise one and `passed` stays sound (C12).
+static void randomized_certificate_finalize(DenseRandomizedCertificate& cert,
+                                            std::vector<double>& AV,
+                                            std::vector<double>& ATU,
+                                            const std::vector<double>& d,
+                                            const std::vector<double>& U,
+                                            const std::vector<double>& V,
+                                            int m, int n, int rank,
+                                            double column_bound,
+                                            double tol) {
+  double applied = 0.0;
+  for (int col = 0; col < rank; ++col) {
+    double* av = AV.data() + static_cast<int64_t>(col) * m;
+    double* atu = ATU.data() + static_cast<int64_t>(col) * n;
+    const double* u = U.data() + static_cast<int64_t>(col) * m;
+    const double* v = V.data() + static_cast<int64_t>(col) * n;
+    double av_sq = 0.0;
+    double u_sq = 0.0;
+    for (int row = 0; row < m; ++row) {
+      av_sq += av[row] * av[row];
+      u_sq += u[row] * u[row];
+    }
+    double atu_sq = 0.0;
+    double v_sq = 0.0;
+    for (int row = 0; row < n; ++row) {
+      atu_sq += atu[row] * atu[row];
+      v_sq += v[row] * v[row];
+    }
+    if (v_sq > 0.0) {
+      const double ratio = std::sqrt(av_sq / v_sq);
+      if (std::isfinite(ratio) && ratio > applied) applied = ratio;
+    }
+    if (u_sq > 0.0) {
+      const double ratio = std::sqrt(atu_sq / u_sq);
+      if (std::isfinite(ratio) && ratio > applied) applied = ratio;
+    }
+    for (int row = 0; row < m; ++row) {
+      av[row] -= d[static_cast<size_t>(col)] * u[row];
+    }
+    for (int row = 0; row < n; ++row) {
+      atu[row] -= d[static_cast<size_t>(col)] * v[row];
+    }
+    cert.left[static_cast<size_t>(col)] = dense_randomized_column_norm(AV, m, col);
+    cert.right[static_cast<size_t>(col)] = dense_randomized_column_norm(ATU, n, col);
+    cert.combined[static_cast<size_t>(col)] = std::sqrt(
+      cert.left[static_cast<size_t>(col)] * cert.left[static_cast<size_t>(col)] +
+      cert.right[static_cast<size_t>(col)] * cert.right[static_cast<size_t>(col)]
+    );
+  }
+  cert.applied_bound = applied;
+  cert.scale = std::max(column_bound, applied);
+  if (!(cert.scale >= 2.2204460492503131e-16)) {
+    cert.scale = 2.2204460492503131e-16;
+  }
+  bool all_converged = true;
+  for (int col = 0; col < rank; ++col) {
+    cert.backward[static_cast<size_t>(col)] =
+      cert.combined[static_cast<size_t>(col)] / cert.scale;
+    cert.converged[static_cast<size_t>(col)] =
+      cert.backward[static_cast<size_t>(col)] <= tol ? 1 : 0;
+    all_converged = all_converged && cert.converged[static_cast<size_t>(col)];
+  }
+  cert.orth_u = dense_randomized_max_orthogonality(U, m, rank);
+  cert.orth_v = dense_randomized_max_orthogonality(V, n, rank);
+  const double orth_tol = tol > std::sqrt(2.2204460492503131e-16)
+    ? tol
+    : std::sqrt(2.2204460492503131e-16);
+  cert.passed = all_converged && cert.orth_u <= orth_tol && cert.orth_v <= orth_tol;
+}
+
 static DenseRandomizedCertificate dense_randomized_certificate(
     const double* A,
     int m,
@@ -1113,10 +1206,7 @@ static DenseRandomizedCertificate dense_randomized_certificate(
   cert.combined.assign(static_cast<size_t>(rank), 0.0);
   cert.backward.assign(static_cast<size_t>(rank), 0.0);
   cert.converged.assign(static_cast<size_t>(rank), 0);
-  cert.scale = dense_randomized_frobenius_norm(A, static_cast<int64_t>(m) * n);
-  if (cert.scale < 2.2204460492503131e-16) {
-    cert.scale = 2.2204460492503131e-16;
-  }
+  const double column_bound = dense_randomized_max_column_norm(A, m, n);
 
   std::vector<double> AV(static_cast<size_t>(m) * static_cast<size_t>(rank), 0.0);
   std::vector<double> ATU(static_cast<size_t>(n) * static_cast<size_t>(rank), 0.0);
@@ -1135,36 +1225,8 @@ static DenseRandomizedCertificate dense_randomized_certificate(
                     &zero, ATU.data(), &n FCONE FCONE);
   }
 
-  bool all_converged = true;
-  for (int col = 0; col < rank; ++col) {
-    double* av = AV.data() + static_cast<int64_t>(col) * m;
-    double* atu = ATU.data() + static_cast<int64_t>(col) * n;
-    const double* u = U.data() + static_cast<int64_t>(col) * m;
-    const double* v = V.data() + static_cast<int64_t>(col) * n;
-    for (int row = 0; row < m; ++row) {
-      av[row] -= d[static_cast<size_t>(col)] * u[row];
-    }
-    for (int row = 0; row < n; ++row) {
-      atu[row] -= d[static_cast<size_t>(col)] * v[row];
-    }
-    cert.left[static_cast<size_t>(col)] = dense_randomized_column_norm(AV, m, col);
-    cert.right[static_cast<size_t>(col)] = dense_randomized_column_norm(ATU, n, col);
-    cert.combined[static_cast<size_t>(col)] = std::sqrt(
-      cert.left[static_cast<size_t>(col)] * cert.left[static_cast<size_t>(col)] +
-      cert.right[static_cast<size_t>(col)] * cert.right[static_cast<size_t>(col)]
-    );
-    cert.backward[static_cast<size_t>(col)] =
-      cert.combined[static_cast<size_t>(col)] / cert.scale;
-    cert.converged[static_cast<size_t>(col)] =
-      cert.backward[static_cast<size_t>(col)] <= tol ? 1 : 0;
-    all_converged = all_converged && cert.converged[static_cast<size_t>(col)];
-  }
-  cert.orth_u = dense_randomized_max_orthogonality(U, m, rank);
-  cert.orth_v = dense_randomized_max_orthogonality(V, n, rank);
-  const double orth_tol = tol > std::sqrt(2.2204460492503131e-16)
-    ? tol
-    : std::sqrt(2.2204460492503131e-16);
-  cert.passed = all_converged && cert.orth_u <= orth_tol && cert.orth_v <= orth_tol;
+  randomized_certificate_finalize(cert, AV, ATU, d, U, V, m, n, rank,
+                                  column_bound, tol);
   return cert;
 }
 
@@ -1252,12 +1314,19 @@ static DenseRandomizedCandidate dense_randomized_candidate(
   return candidate;
 }
 
-static double csc_randomized_frobenius_norm(const double* values, int nnz) {
-  double sum = 0.0;
-  for (int pos = 0; pos < nnz; ++pos) {
-    sum += values[pos] * values[pos];
+// Largest column 2-norm of a CSC matrix: a structural lower bound on ||A||_2.
+static double csc_randomized_max_column_norm(const CSCOperator& impl) {
+  double best = 0.0;
+  for (int col = 0; col < impl.cols; ++col) {
+    double sum = 0.0;
+    for (int pos = impl.col_ptr[col]; pos < impl.col_ptr[col + 1]; ++pos) {
+      sum += impl.values[pos] * impl.values[pos];
+    }
+    if (sum > best) {
+      best = sum;
+    }
   }
-  return std::sqrt(sum);
+  return std::sqrt(best);
 }
 
 static void csc_randomized_apply_block(const CSCOperator& impl,
@@ -1331,10 +1400,8 @@ static DenseRandomizedCertificate csc_randomized_certificate(
   cert.combined.assign(static_cast<size_t>(rank), 0.0);
   cert.backward.assign(static_cast<size_t>(rank), 0.0);
   cert.converged.assign(static_cast<size_t>(rank), 0);
-  cert.scale = csc_randomized_frobenius_norm(impl.values, nnz);
-  if (cert.scale < 2.2204460492503131e-16) {
-    cert.scale = 2.2204460492503131e-16;
-  }
+  (void)nnz;
+  const double column_bound = csc_randomized_max_column_norm(impl);
 
   std::vector<double> AV(static_cast<size_t>(m) * static_cast<size_t>(rank), 0.0);
   std::vector<double> ATU(static_cast<size_t>(n) * static_cast<size_t>(rank), 0.0);
@@ -1349,36 +1416,8 @@ static DenseRandomizedCertificate csc_randomized_certificate(
     );
   }
 
-  bool all_converged = true;
-  for (int col = 0; col < rank; ++col) {
-    double* av = AV.data() + static_cast<int64_t>(col) * m;
-    double* atu = ATU.data() + static_cast<int64_t>(col) * n;
-    const double* u = U.data() + static_cast<int64_t>(col) * m;
-    const double* v = V.data() + static_cast<int64_t>(col) * n;
-    for (int row = 0; row < m; ++row) {
-      av[row] -= d[static_cast<size_t>(col)] * u[row];
-    }
-    for (int row = 0; row < n; ++row) {
-      atu[row] -= d[static_cast<size_t>(col)] * v[row];
-    }
-    cert.left[static_cast<size_t>(col)] = dense_randomized_column_norm(AV, m, col);
-    cert.right[static_cast<size_t>(col)] = dense_randomized_column_norm(ATU, n, col);
-    cert.combined[static_cast<size_t>(col)] = std::sqrt(
-      cert.left[static_cast<size_t>(col)] * cert.left[static_cast<size_t>(col)] +
-      cert.right[static_cast<size_t>(col)] * cert.right[static_cast<size_t>(col)]
-    );
-    cert.backward[static_cast<size_t>(col)] =
-      cert.combined[static_cast<size_t>(col)] / cert.scale;
-    cert.converged[static_cast<size_t>(col)] =
-      cert.backward[static_cast<size_t>(col)] <= tol ? 1 : 0;
-    all_converged = all_converged && cert.converged[static_cast<size_t>(col)];
-  }
-  cert.orth_u = dense_randomized_max_orthogonality(U, m, rank);
-  cert.orth_v = dense_randomized_max_orthogonality(V, n, rank);
-  const double orth_tol = tol > std::sqrt(2.2204460492503131e-16)
-    ? tol
-    : std::sqrt(2.2204460492503131e-16);
-  cert.passed = all_converged && cert.orth_u <= orth_tol && cert.orth_v <= orth_tol;
+  randomized_certificate_finalize(cert, AV, ATU, d, U, V, m, n, rank,
+                                  column_bound, tol);
   return cert;
 }
 
@@ -1489,30 +1528,37 @@ static SEXP dense_randomized_certificate_pack(const DenseRandomizedCertificate& 
   SET_STRING_ELT(orth_names_, 1, mkChar("V"));
   setAttrib(orth_, R_NamesSymbol, orth_names_);
 
-  SEXP out_ = PROTECT(allocVector(VECSXP, 6));
+  SEXP out_ = PROTECT(allocVector(VECSXP, 8));
   SEXP scale_ = PROTECT(ScalarReal(cert.scale));
   SEXP passed_ = PROTECT(ScalarLogical(cert.passed));
+  SEXP norm_ = PROTECT(ScalarReal(cert.scale));
+  SEXP applied_ = PROTECT(ScalarReal(cert.applied_bound));
   SET_VECTOR_ELT(out_, 0, residuals_);
   SET_VECTOR_ELT(out_, 1, backward_);
   SET_VECTOR_ELT(out_, 2, orth_);
   SET_VECTOR_ELT(out_, 3, converged_);
   SET_VECTOR_ELT(out_, 4, scale_);
   SET_VECTOR_ELT(out_, 5, passed_);
-  SEXP names_ = PROTECT(allocVector(STRSXP, 6));
+  SET_VECTOR_ELT(out_, 6, norm_);
+  SET_VECTOR_ELT(out_, 7, applied_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 8));
   SET_STRING_ELT(names_, 0, mkChar("residuals"));
   SET_STRING_ELT(names_, 1, mkChar("backward_error"));
   SET_STRING_ELT(names_, 2, mkChar("orthogonality"));
   SET_STRING_ELT(names_, 3, mkChar("converged"));
   SET_STRING_ELT(names_, 4, mkChar("scale"));
   SET_STRING_ELT(names_, 5, mkChar("passed"));
+  SET_STRING_ELT(names_, 6, mkChar("norm_A"));
+  SET_STRING_ELT(names_, 7, mkChar("norm_A_applied_bound"));
   setAttrib(out_, R_NamesSymbol, names_);
-  UNPROTECT(13);
+  UNPROTECT(15);
   return out_;
 }
 
 extern "C" SEXP eigencore_dense_randomized_svd_controller(
     SEXP A_, SEXP rank_, SEXP oversample_, SEXP n_iter_, SEXP normalizer_,
     SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
     error("A must be a double matrix");
   }
@@ -1595,6 +1641,7 @@ extern "C" SEXP eigencore_dense_randomized_svd_controller(
   if (n_iter > 0 && !candidate.certificate.passed) {
     std::vector<double> Z(static_cast<size_t>(n) * static_cast<size_t>(q_cols), 0.0);
     for (int iter = 0; iter < n_iter; ++iter) {
+      eigencore_check_interrupt();
       t0 = native_timer_now();
       F77_CALL(dgemm)(&trans, &notrans, &n, &q_cols, &m,
                       &one, const_cast<double*>(A), &m, Q.data(), &m,
@@ -1677,11 +1724,13 @@ extern "C" SEXP eigencore_dense_randomized_svd_controller(
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(9);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_randomized_svd_controller(
     SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP rank_, SEXP oversample_,
     SEXP n_iter_, SEXP normalizer_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
     error("invalid CSC randomized controller inputs");
   }
@@ -1759,6 +1808,7 @@ extern "C" SEXP eigencore_csc_randomized_svd_controller(
   if (n_iter > 0 && !candidate.certificate.passed) {
     std::vector<double> Z(static_cast<size_t>(n) * static_cast<size_t>(q_cols), 0.0);
     for (int iter = 0; iter < n_iter; ++iter) {
+      eigencore_check_interrupt();
       t0 = native_timer_now();
       csc_randomized_apply_block(
         impl, EIGENCORE_TRANSPOSE_ADJOINT, q_cols, Q.data(), m, Z.data(), n,
@@ -1843,11 +1893,13 @@ extern "C" SEXP eigencore_csc_randomized_svd_controller(
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(9);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_block_apply(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
                                           SEXP X_, SEXP alpha_, SEXP beta_,
                                           SEXP Y_, SEXP transpose_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(X_) || !isReal(Y_)) {
     error("invalid CSC block apply inputs");
@@ -1905,11 +1957,13 @@ extern "C" SEXP eigencore_csc_block_apply(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_randomized_apply(SEXP i_, SEXP p_, SEXP x_,
                                                SEXP dim_, SEXP X_,
                                                SEXP transpose_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(X_) || !isLogical(transpose_)) {
     error("invalid CSC randomized apply inputs");
@@ -1954,10 +2008,12 @@ extern "C" SEXP eigencore_csc_randomized_apply(SEXP i_, SEXP p_, SEXP x_,
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_randomized_sketch(SEXP i_, SEXP p_, SEXP x_,
                                                 SEXP dim_, SEXP cols_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
     error("invalid CSC randomized sketch inputs");
   }
@@ -1996,10 +2052,12 @@ extern "C" SEXP eigencore_csc_randomized_sketch(SEXP i_, SEXP p_, SEXP x_,
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_randomized_project_transposed(
     SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP Q_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(Q_)) {
     error("invalid CSC randomized projection inputs");
@@ -2050,9 +2108,11 @@ extern "C" SEXP eigencore_csc_randomized_project_transposed(
   setAttrib(out_, install("transposed"), transposed_);
   UNPROTECT(2);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_column_moments(SEXP p_, SEXP x_, SEXP dim_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       LENGTH(dim_) != 2) {
     error("invalid CSC column-moment inputs");
@@ -2126,12 +2186,14 @@ extern "C" SEXP eigencore_csc_column_moments(SEXP p_, SEXP x_, SEXP dim_) {
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(6);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_centered_block_apply(
     SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP row_means_, SEXP col_means_,
     SEXP rows_, SEXP columns_, SEXP X_, SEXP alpha_, SEXP beta_, SEXP Y_,
     SEXP transpose_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(row_means_) || !isReal(col_means_) ||
       !isLogical(rows_) || !isLogical(columns_) ||
@@ -2249,11 +2311,13 @@ extern "C" SEXP eigencore_csc_centered_block_apply(
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_centered_scaled_block_apply(
     SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP col_means_, SEXP weights_,
     SEXP X_, SEXP alpha_, SEXP beta_, SEXP Y_, SEXP transpose_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
       !isReal(col_means_) || !isReal(weights_) || !isReal(X_) ||
       !isReal(alpha_) || !isReal(beta_) || !isReal(Y_) ||
@@ -2304,11 +2368,13 @@ extern "C" SEXP eigencore_csc_centered_scaled_block_apply(
   }
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_diagonal_block_apply(SEXP x_, SEXP dim_, SEXP unit_,
                                                SEXP X_, SEXP alpha_, SEXP beta_,
                                                SEXP Y_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(x_) || !isInteger(dim_) || !isLogical(unit_) ||
       !isReal(X_) || !isReal(Y_)) {
     error("invalid diagonal block apply inputs");
@@ -2347,10 +2413,12 @@ extern "C" SEXP eigencore_diagonal_block_apply(SEXP x_, SEXP dim_, SEXP unit_,
   }
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_native_apply_noalloc_check(SEXP kind_, SEXP A_,
                                                      SEXP X_, SEXP Y_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isString(kind_) || LENGTH(kind_) != 1 || !isReal(X_) || !isReal(Y_)) {
     error("invalid native no-allocation check inputs");
   }
@@ -2412,9 +2480,11 @@ extern "C" SEXP eigencore_native_apply_noalloc_check(SEXP kind_, SEXP A_,
     eigencore_apply_status_error("native no-allocation check apply", status);
   }
   return native_operator_workspace_counters(&workspace);
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_dense_apply_int_guard_check(void) {
+  EIGENCORE_ENTRY_BEGIN
   double scalar = 0.0;
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
 
@@ -2449,9 +2519,11 @@ extern "C" SEXP eigencore_dense_apply_int_guard_check(void) {
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(2);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_col_norms(SEXP X_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(X_)) {
     error("X must be a double matrix");
   }
@@ -2477,4 +2549,5 @@ extern "C" SEXP eigencore_col_norms(SEXP X_) {
   }
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }

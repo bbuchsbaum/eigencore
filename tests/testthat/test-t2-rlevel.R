@@ -164,18 +164,18 @@ test_that("P7: reference Lanczos certifies once instead of every iteration", {
   )
   fit <- eig_partial(op, k = 3, method = lanczos(), seed = 5)
   expect_match(fit$method, "reference Hermitian Lanczos")
-  # passed is withheld for a Hutchinson-estimated scale; every pair converges.
+  # The two-norm lower-bound scale (C12) lets a matrix-free certificate pass.
+  expect_true(fit$certificate$passed)
   expect_true(all(fit$certificate$converged))
   expect_equal(values(fit), d[1:3], tolerance = 1e-8)
-  # Lanczos steps + one Hutchinson norm estimate (<= 8 probes) + a single
-  # k-column certificate. The per-iteration certificate used to add k + 8
-  # applies for every step j >= k.
-  expect_lte(calls, fit$iterations + 8L + 2L)
-  # One k-column certificate plus the memoised norm probes.
-  expect_lte(as.integer(fit$work$certification_operator_columns), 3L + 8L)
+  # Lanczos steps + a single k-column certificate: the dominant Ritz values
+  # already give the norm bound, so no extra probes are needed. The
+  # per-iteration certificate used to add k + 8 applies for every step j >= k.
+  expect_lte(calls, fit$iterations + 2L)
+  expect_lte(as.integer(fit$work$certification_operator_columns), 3L)
 })
 
-test_that("P7: the Hutchinson norm estimate is memoised per operator", {
+test_that("P7/C12: the Krylov two-norm bound is memoised per operator", {
   calls <- 0L
   op <- linear_operator(
     dim = c(50, 50),
@@ -185,19 +185,26 @@ test_that("P7: the Hutchinson norm estimate is memoised per operator", {
     },
     structure = hermitian()
   )
-  first <- eigencore:::operator_norm_for_certificate_info(op)
+  # The pre-solve value needs no applies and no randomness.
+  info <- eigencore:::operator_norm_for_certificate_info(op)
+  expect_identical(calls, 0L)
+  expect_false(info$scale_is_estimate)
+  expect_identical(info$norm_bound_type, "two_norm_lower_bound")
+
+  first <- eigencore:::two_norm_krylov_bound(op)
   used <- calls
-  second <- eigencore:::operator_norm_for_certificate_info(op)
+  second <- eigencore:::two_norm_krylov_bound(op)
   expect_gt(used, 0L)
   expect_identical(calls, used)
   expect_identical(first, second)
-  expect_true(first$scale_is_estimate)
+  expect_lte(first$value, 50 * (1 + 1e-12))
+  expect_gt(first$value, 45)
 
   # A copy whose apply closure was replaced does not reuse the memo.
   other <- op
   other$apply <- function(X, alpha = 1, beta = 0, Y = NULL) alpha * (2 * X)
-  third <- eigencore:::operator_norm_for_certificate_info(other)
-  expect_equal(third$value, 2 * sqrt(50), tolerance = 1e-12)
+  third <- eigencore:::two_norm_krylov_bound(other)
+  expect_equal(third$value, 2, tolerance = 1e-12)
 })
 
 test_that("P7: sparse shift-invert runs the native thick-restart callback and certifies", {
@@ -208,7 +215,7 @@ test_that("P7: sparse shift-invert runs the native thick-restart callback and ce
   S <- methods::as(methods::as(S, "generalMatrix"), "CsparseMatrix")
   sigma <- 200.3
   fit <- eig_partial(S, k = 6, target = nearest(sigma))
-  expect_identical(fit$method, "reference Hermitian Lanczos shift-invert (sparse LU)")
+  expect_identical(fit$method, "native thick-restart Hermitian Lanczos shift-invert (sparse LU solve callback)")
   expect_identical(fit$restart$kind, "native_thick_restart_shift_invert_callback")
   expect_true(fit$certificate$passed)
   dense <- eigen(as.matrix(S), symmetric = TRUE, only.values = TRUE)$values
@@ -217,7 +224,9 @@ test_that("P7: sparse shift-invert runs the native thick-restart callback and ce
 
   # A subspace that cannot hold all wanted pairs at once is restarted rather
   # than returned unconverged.
-  tight <- eig_partial(S, k = 6, target = nearest(sigma), maxit = 8L)
+  tight <- eig_partial(S, k = 6, target = nearest(sigma),
+                       method = auto(max_subspace = 8L))
+  expect_equal(tight$plan$controls$max_subspace, 8L)
   expect_true(tight$certificate$passed)
   expect_equal(sort(values(tight)), sort(expected), tolerance = 1e-8)
 

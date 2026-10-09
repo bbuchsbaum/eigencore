@@ -8,6 +8,7 @@
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
 #include "eigencore_lapack_compat.h"
+#include "eigencore_common.h"
 #include "native_operators.h"
 #include "block_golub_kahan_basis.h"
 
@@ -261,6 +262,10 @@ void block_golub_kahan_basis_scratch_free(BlockGolubKahanBasisScratch* scratch) 
   scratch->transient = false;
 }
 
+BlockGolubKahanBasisScratch::~BlockGolubKahanBasisScratch() {
+  block_golub_kahan_basis_scratch_free(this);
+}
+
 int block_golub_kahan_basis_scratch_alloc(BlockGolubKahanBasisScratch* scratch,
                                                  int m,
                                                  int n,
@@ -438,6 +443,7 @@ int native_block_golub_kahan_basis_run_with_scratch(
   }
 
   while (active_v < max_subspace && last_v_cols > 0) {
+    eigencore_check_interrupt();
     const int accepted_u_start = active_u;
     const int accepted_u = block_accept_columns_blas3(
       AV + static_cast<int64_t>(last_v_start) * m, m, last_v_cols,
@@ -568,6 +574,7 @@ static SEXP block_golub_kahan_basis_pack(int n,
 extern "C" SEXP eigencore_block_golub_kahan_dense_basis(SEXP A_,
                                                         SEXP max_subspace_,
                                                         SEXP start_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double matrices");
   }
@@ -611,12 +618,14 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_basis(SEXP A_,
     n, m, max_subspace, V.data(), AV.data(),
     active_v, active_u, iterations, matvecs, ortho_passes, cached_start_used
   );
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_block_golub_kahan_dense_basis_cached(SEXP A_,
                                                                SEXP max_subspace_,
                                                                SEXP start_,
                                                                SEXP start_av_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_) || !isReal(start_av_)) {
     error("A, start, and start_av must be double matrices");
   }
@@ -665,12 +674,14 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_basis_cached(SEXP A_,
     n, m, max_subspace, V.data(), AV.data(),
     active_v, active_u, iterations, matvecs, ortho_passes, cached_start_used
   );
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_block_golub_kahan_csc_basis(SEXP i_, SEXP p_,
                                                       SEXP x_, SEXP dim_,
                                                       SEXP max_subspace_,
                                                       SEXP start_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) ||
       !isInteger(dim_) || !isReal(start_)) {
     error("invalid CSC block Golub-Kahan basis inputs");
@@ -715,6 +726,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_basis(SEXP i_, SEXP p_,
     n, m, max_subspace, V.data(), AV.data(),
     active_v, active_u, iterations, matvecs, ortho_passes, cached_start_used
   );
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_block_golub_kahan_csc_basis_cached(SEXP i_, SEXP p_,
@@ -722,6 +734,7 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_basis_cached(SEXP i_, SEXP p_,
                                                              SEXP max_subspace_,
                                                              SEXP start_,
                                                              SEXP start_av_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) ||
       !isInteger(dim_) || !isReal(start_) || !isReal(start_av_)) {
     error("invalid cached CSC block Golub-Kahan basis inputs");
@@ -771,4 +784,5 @@ extern "C" SEXP eigencore_block_golub_kahan_csc_basis_cached(SEXP i_, SEXP p_,
     n, m, max_subspace, V.data(), AV.data(),
     active_v, active_u, iterations, matvecs, ortho_passes, cached_start_used
   );
+  EIGENCORE_ENTRY_END
 }

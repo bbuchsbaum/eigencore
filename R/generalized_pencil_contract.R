@@ -120,10 +120,8 @@ certify_dense_generalized_pencil <- function(A, B, alpha, beta, vectors,
   generalized_pencil_certificate_from_residuals(
     pencil = pencil,
     residuals = residuals,
-    norm_A = matrix_norm(A),
-    norm_B = matrix_norm(B),
-    norm_bound_type = "frobenius_exact+frobenius_exact",
-    scale_is_estimate = FALSE,
+    A = A,
+    B = B,
     vectors = vectors,
     tol = tol
   )
@@ -187,26 +185,32 @@ certify_dense_generalized_pencil_left <- function(A, B, pencil,
   }
 
   left_residuals <- rep(Inf, k)
-  scale <- rep(Inf, k)
-  backward <- rep(Inf, k)
+  vec_norms <- col_norms(left_vectors)
+  free_A <- list()
+  free_B <- list()
   if (length(finite_idx)) {
     W <- left_vectors[, finite_idx, drop = FALSE]
-    residual_matrix <- Conj(t(A)) %*% W - sweep(
-      Conj(t(B)) %*% W,
+    AhW <- Conj(t(A)) %*% W
+    BhW <- Conj(t(B)) %*% W
+    residual_matrix <- AhW - sweep(
+      BhW,
       2L,
       Conj(pencil$values[finite_idx]),
       `*`
     )
     left_residuals[finite_idx] <- col_norms(residual_matrix)
-    scale[finite_idx] <- eigen_backward_scale(
-      matrix_norm(A),
-      matrix_norm(B),
-      pencil$values[finite_idx],
-      W
-    )
-    backward[finite_idx] <- left_residuals[finite_idx] /
-      pmax(scale[finite_idx], .Machine$double.eps)
+    # ||A^H w|| / ||w|| <= ||A||_2 and likewise for B (C12).
+    free_A <- list(bound_from_ratios(col_norms(AhW), vec_norms[finite_idx],
+                                     "applied_vectors"))
+    free_B <- list(bound_from_ratios(col_norms(BhW), vec_norms[finite_idx],
+                                     "applied_vectors"))
   }
+  norm <- eigen_two_norm_backward(
+    A, pencil$values, left_residuals, vec_norms, tol,
+    B = B, free_A = free_A, free_B = free_B, finite = pencil$finite
+  )
+  scale <- norm$scale
+  backward <- norm$backward
 
   biorthogonality <- certificate_gram(left_vectors, Bv)
   biorthogonality_loss <- numeric()
@@ -241,8 +245,9 @@ certify_dense_generalized_pencil_left <- function(A, B, pencil,
     scale = scale,
     notes = notes,
     certificate_type = "generalized_pencil_left_residual_biorthogonal_backward_error",
-    norm_bound_type = "frobenius_exact+frobenius_exact",
-    scale_is_estimate = FALSE,
+    norm_bound_type = norm$norm_bound_type,
+    norm_source = norm$norm_source,
+    norm_values = norm$norms,
     require_orthogonality = TRUE
   )
 
@@ -290,17 +295,11 @@ certify_generalized_pencil_operator <- function(Aop, Bop, alpha, beta, vectors,
   }
 
   residuals <- generalized_pencil_operator_residuals(Aop, Bop, pencil, vectors)
-  norm_A <- operator_norm_for_certificate_info(Aop)
-  norm_B <- operator_norm_for_certificate_info(Bop)
   generalized_pencil_certificate_from_residuals(
     pencil = pencil,
     residuals = residuals,
-    norm_A = norm_A$value,
-    norm_B = norm_B$value,
-    norm_bound_type = paste(c(norm_A$norm_bound_type, norm_B$norm_bound_type),
-                            collapse = "+"),
-    scale_is_estimate = isTRUE(norm_A$scale_is_estimate) ||
-      isTRUE(norm_B$scale_is_estimate),
+    A = Aop,
+    B = Bop,
     vectors = vectors,
     tol = tol
   )
@@ -319,19 +318,28 @@ generalized_pencil_validate_dimensions <- function(A, B, vectors, k) {
 #' @keywords internal
 generalized_pencil_dense_residuals <- function(A, B, pencil, vectors) {
   residuals <- rep(Inf, length(pencil$values))
+  av_norms <- rep(NA_real_, length(pencil$values))
+  bv_norms <- rep(NA_real_, length(pencil$values))
   if (any(pencil$finite)) {
     idx <- which(pencil$finite)
     V <- vectors[, idx, drop = FALSE]
+    Av <- A %*% V
     Bv <- B %*% V
-    residual_matrix <- A %*% V - sweep(Bv, 2L, pencil$values[idx], `*`)
+    residual_matrix <- Av - sweep(Bv, 2L, pencil$values[idx], `*`)
     residuals[idx] <- col_norms(residual_matrix)
+    av_norms[idx] <- col_norms(Av)
+    bv_norms[idx] <- col_norms(Bv)
   }
+  attr(residuals, "av_norms") <- av_norms
+  attr(residuals, "bv_norms") <- bv_norms
   residuals
 }
 
 #' @keywords internal
 generalized_pencil_operator_residuals <- function(Aop, Bop, pencil, vectors) {
   residuals <- rep(Inf, length(pencil$values))
+  av_norms <- rep(NA_real_, length(pencil$values))
+  bv_norms <- rep(NA_real_, length(pencil$values))
   if (any(pencil$finite)) {
     idx <- which(pencil$finite)
     V <- vectors[, idx, drop = FALSE]
@@ -339,7 +347,11 @@ generalized_pencil_operator_residuals <- function(Aop, Bop, pencil, vectors) {
     Bv <- generalized_pencil_apply_for_residual(Bop, V)
     residual_matrix <- Av - sweep(Bv, 2L, pencil$values[idx], `*`)
     residuals[idx] <- col_norms(residual_matrix)
+    av_norms[idx] <- col_norms(Av)
+    bv_norms[idx] <- col_norms(Bv)
   }
+  attr(residuals, "av_norms") <- av_norms
+  attr(residuals, "bv_norms") <- bv_norms
   residuals
 }
 
@@ -363,35 +375,35 @@ generalized_pencil_apply_for_residual <- function(op, vectors) {
 
 #' @keywords internal
 generalized_pencil_certificate_from_residuals <- function(pencil, residuals,
-                                                          norm_A, norm_B,
-                                                          norm_bound_type,
-                                                          scale_is_estimate,
-                                                          vectors, tol) {
-  scale <- rep(Inf, length(pencil$values))
-  backward <- rep(Inf, length(pencil$values))
-  if (any(pencil$finite)) {
-    idx <- which(pencil$finite)
-    scale[idx] <- eigen_backward_scale(
-      norm_A,
-      norm_B,
-      pencil$values[idx],
-      vectors[, idx, drop = FALSE]
-    )
-    backward[idx] <- residuals[idx] / pmax(scale[idx], .Machine$double.eps)
-  }
-  converged <- pencil$finite & backward <= tol
+                                                          A, B, vectors, tol) {
+  # Backward error ||A x - lambda B x|| / ((||A||_2 + |lambda| ||B||_2) ||x||)
+  # for finite pairs, with spectral-norm lower bounds for A and B (C12). The
+  # alpha/beta classification above keeps its own (LAPACK one-norm) contract.
+  vec_norms <- col_norms(vectors)
+  av_norms <- attr(residuals, "av_norms") %||% rep(NA_real_, length(residuals))
+  bv_norms <- attr(residuals, "bv_norms") %||% rep(NA_real_, length(residuals))
+  residuals <- as.numeric(residuals)
+  norm <- eigen_two_norm_backward(
+    A, pencil$values, residuals, vec_norms, tol,
+    B = B,
+    free_A = list(bound_from_ratios(av_norms, vec_norms, "applied_vectors")),
+    free_B = list(bound_from_ratios(bv_norms, vec_norms, "applied_vectors")),
+    finite = pencil$finite
+  )
+  converged <- pencil$finite & norm$backward <= tol
   notes <- generalized_pencil_certificate_notes(pencil)
   new_certificate(
     tol = tol,
     residuals = residuals,
-    backward_error = backward,
+    backward_error = norm$backward,
     orthogonality = numeric(),
     converged = converged,
-    scale = scale,
+    scale = norm$scale,
     notes = notes,
     certificate_type = "generalized_pencil_right_residual_backward_error",
-    norm_bound_type = norm_bound_type,
-    scale_is_estimate = isTRUE(scale_is_estimate),
+    norm_bound_type = norm$norm_bound_type,
+    norm_source = norm$norm_source,
+    norm_values = norm$norms,
     require_orthogonality = FALSE
   )
 }

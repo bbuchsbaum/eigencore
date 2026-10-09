@@ -78,67 +78,113 @@ native_implicit_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
   }
   max_restarts <- as.integer(max_restarts)
 
-  # Locking inside the kernel uses tol * (1 + theta) * ||v||, matching the
-  # package's tol * max(|value|, 1) convention: theta = sigma^2, so the
-  # implied singular residual bound is ~ tol * sigma * ||A|| for the dominant
-  # triplets. The exact original-coordinate certificate below is the
-  # authoritative pass/fail decision.
-  start <- matrix(stats::rnorm(outer * block), nrow = outer, ncol = block)
-  iter <- if (is_csc) {
-    .Call(
-      "eigencore_normal_thick_restart_lanczos_csc",
-      methods::slot(A, "i"),
-      methods::slot(A, "p"),
-      methods::slot(A, "x"),
-      methods::slot(A, "Dim"),
-      as.integer(side),
-      as.integer(rank),
-      as.integer(m_max),
-      as.integer(block),
-      1L,  # largest eigenvalues of the normal operator
-      as.numeric(tol),
-      max_restarts,
-      0.0,
-      start,
-      PACKAGE = "eigencore"
-    )
-  } else {
-    .Call(
-      "eigencore_normal_thick_restart_lanczos_dense",
-      A,
-      as.integer(side),
-      as.integer(rank),
-      as.integer(m_max),
-      as.integer(block),
-      1L,
-      as.numeric(tol),
-      max_restarts,
-      0.0,
-      start,
-      PACKAGE = "eigencore"
-    )
+  # Locking inside the kernel uses tol * (||A^T A|| + theta) * ||v|| with
+  # theta = sigma^2. The recovered triplet then has a right residual of about
+  # r_normal / sigma, i.e. an SVD backward error of roughly
+  # kernel_tol * (sigma_max / sigma + sigma / sigma_max) against ||A||_2
+  # (the certificate's normwise 2-norm definition, C12). That factor is ~2 for
+  # a flat top spectrum, so the kernel first runs at tol / 2; if the exact
+  # certificate still fails, one tighter run (sized from the observed
+  # amplification, warm-started from the top Ritz vectors) follows. The exact
+  # original-coordinate certificate is the authoritative pass/fail decision.
+  run_kernel <- function(kernel_tol, start) {
+    iter <- if (is_csc) {
+      .Call(
+        "eigencore_normal_thick_restart_lanczos_csc",
+        methods::slot(A, "i"),
+        methods::slot(A, "p"),
+        methods::slot(A, "x"),
+        methods::slot(A, "Dim"),
+        as.integer(side),
+        as.integer(rank),
+        as.integer(m_max),
+        as.integer(block),
+        1L,  # largest eigenvalues of the normal operator
+        as.numeric(kernel_tol),
+        max_restarts,
+        0.0,
+        start,
+        PACKAGE = "eigencore"
+      )
+    } else {
+      .Call(
+        "eigencore_normal_thick_restart_lanczos_dense",
+        A,
+        as.integer(side),
+        as.integer(rank),
+        as.integer(m_max),
+        as.integer(block),
+        1L,
+        as.numeric(kernel_tol),
+        max_restarts,
+        0.0,
+        start,
+        PACKAGE = "eigencore"
+      )
+    }
+    lambda <- iter$values
+    W <- iter$vectors
+    # The thick-restart kernel returns pairs in lock order; singular values are
+    # reported in decreasing order (C44).
+    if (length(lambda) > 1L && is.unsorted(rev(lambda))) {
+      perm <- order(lambda, decreasing = TRUE)
+      lambda <- lambda[perm]
+      W <- W[, perm, drop = FALSE]
+      if (length(iter$residuals) == length(perm)) {
+        iter$residuals <- iter$residuals[perm]
+      }
+    }
+    sigma <- sqrt(pmax(lambda, 0))
+    zero_tol <- gram_svd_zero_tolerance(sigma, tol)
+    inv_sigma <- ifelse(sigma > zero_tol, 1 / sigma, 0)
+
+    # Recover the opposite factor, then certify with fresh forward AND adjoint
+    # applies in original coordinates (certify_svd_operator); the product used
+    # to form u (or v) is not reused as a cached side of the certificate (C13).
+    if (side == 0L) {
+      v <- W
+      u <- as.matrix(A %*% v)
+      for (j in seq_along(inv_sigma)) u[, j] <- u[, j] * inv_sigma[[j]]
+    } else {
+      u <- W
+      v <- as.matrix(Matrix::crossprod(A, u))
+      for (j in seq_along(inv_sigma)) v[, j] <- v[, j] * inv_sigma[[j]]
+    }
+    cert <- certify_svd_operator(op, sigma, u, v, tol = tol)
+    list(iter = iter, lambda = lambda, W = W, sigma = sigma,
+         zero_tol = zero_tol, u = u, v = v, cert = cert,
+         kernel_tol = kernel_tol)
   }
 
-  lambda <- iter$values
-  W <- iter$vectors
-  sigma <- sqrt(pmax(lambda, 0))
-  zero_tol <- gram_svd_zero_tolerance(sigma, tol)
-  inv_sigma <- ifelse(sigma > zero_tol, 1 / sigma, 0)
-
-  # Recover the opposite factor, then certify with fresh forward AND adjoint
-  # applies in original coordinates (certify_svd_operator); the product used
-  # to form u (or v) is not reused as a cached side of the certificate (C13).
-  if (side == 0L) {
-    v <- W
-    u <- as.matrix(A %*% v)
-    for (j in seq_along(inv_sigma)) u[, j] <- u[, j] * inv_sigma[[j]]
-  } else {
-    u <- W
-    v <- as.matrix(Matrix::crossprod(A, u))
-    for (j in seq_along(inv_sigma)) v[, j] <- v[, j] * inv_sigma[[j]]
+  first_tol <- tol / 2
+  run <- run_kernel(
+    first_tol,
+    matrix(stats::rnorm(outer * block), nrow = outer, ncol = block)
+  )
+  total_iterations <- run$iter$iterations %||% NA_integer_
+  total_matvecs <- run$iter$matvecs %||% NA_integer_
+  retried <- FALSE
+  be <- run$cert$backward_error
+  if (!isTRUE(run$cert$passed) && isTRUE(run$cert$orthogonality_passed) &&
+      length(be) && all(is.finite(be)) && max(be) > tol) {
+    # Observed amplification max(be) / kernel_tol; aim for half the tolerance.
+    retry_tol <- max(first_tol * min(0.5, 0.5 * tol / max(be)), tol * 1e-4)
+    retry <- run_kernel(retry_tol, run$W[, seq_len(block), drop = FALSE])
+    retried <- TRUE
+    total_iterations <- total_iterations + (retry$iter$iterations %||% NA_integer_)
+    total_matvecs <- total_matvecs + (retry$iter$matvecs %||% NA_integer_)
+    if (isTRUE(retry$cert$passed) ||
+        max(retry$cert$backward_error) <= max(be)) {
+      run <- retry
+    }
   }
-
-  cert <- certify_svd_operator(op, sigma, u, v, tol = tol)
+  iter <- run$iter
+  lambda <- run$lambda
+  sigma <- run$sigma
+  zero_tol <- run$zero_tol
+  u <- run$u
+  v <- run$v
+  cert <- run$cert
 
   u_out <- u
   v_out <- v
@@ -160,8 +206,8 @@ native_implicit_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     backward_error = cert$backward_error,
     orthogonality = cert$orthogonality,
     certificate = cert,
-    iterations = iter$iterations %||% NA_integer_,
-    matvecs = iter$matvecs %||% NA_integer_,
+    iterations = total_iterations,
+    matvecs = total_matvecs,
     stage_seconds = iter$stage_seconds %||% numeric(),
     restart = list(
       kind = "implicit_gram_thick_restart_lanczos",
@@ -181,7 +227,9 @@ native_implicit_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
       normal_residuals = iter$residuals,
       zero_singular_threshold = zero_tol,
       zero_singular_completion = any(sigma <= zero_tol),
-      certified_in_original_coordinates = TRUE
+      certified_in_original_coordinates = TRUE,
+      kernel_tol = run$kernel_tol,
+      tightened_kernel_retry = retried
     )
   )
 }

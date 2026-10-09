@@ -13,13 +13,18 @@ lanczos(
 )
 }
 \arguments{
-\item{max_subspace}{Optional maximum active Krylov subspace size \code{m}. Must
-be at least \code{k + 1}. The native thick-restart path keeps the active
-basis bounded by this value across restart cycles.}
+\item{max_subspace}{Optional maximum active Krylov subspace size \code{m} (the
+ARPACK \code{ncv}). Must be at least \code{k + 1} (\code{k + block} for block Lanczos).
+The native thick-restart path keeps the active basis bounded by this
+value across restart cycles; unrestarted reference paths build at most
+this many Lanczos vectors. This is the only subspace-size control: the
+solve's \code{maxit} argument is an iteration (restart) limit.}
 
 \item{max_restarts}{Optional non-negative integer giving the maximum
 number of thick-restart cycles allowed before stopping with whatever
-has converged. Default \code{100L}.}
+has converged. Default \code{100L}. Equivalent to the solve's \code{maxit}
+argument on thick-restart routes; supplying both with different values
+is an error.}
 
 \item{block}{Native block size. \code{1L} selects the scalar path; for a
 matrix-free operator this remains the reference Hermitian Lanczos

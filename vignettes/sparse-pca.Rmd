@@ -159,14 +159,14 @@ fit$certificate$norm_bound_type
 fit$certificate$scale_is_estimate
 ```
 
-The backward error divides each residual by `||A_c||_F`, and for a
-column-centered CSC matrix that norm follows exactly from the sparse column
-moments eigencore already computed when it built the operator:
-`||A_c||_F^2 = sum_j sum_i (A_ij - mean_j)^2`. No second pass over the data
-and no stochastic estimate is needed. Operators without such metadata (for
-example a double-centered matrix or a hand-written callback) fall back to a
-Hutchinson estimate, and then `passed` is withheld; `vignette("certificates")`
-covers that rule in detail.
+The backward error divides each residual by a lower bound on `||A_c||_2`
+(`two_norm_lower_bound`): here the largest `||A_c v|| / ||v||` over the
+computed singular vectors, which for the leading triplets is essentially the
+exact norm. A lower bound in the denominator can only over-state the backward
+error, so the check is never optimistic, and it needs no second pass over the
+data. The same holds for operators without any norm metadata (a
+double-centered matrix or a hand-written callback); `vignette("certificates")`
+covers the rule in detail.
 
 ## Does it match what you'd get by densifying?
 
@@ -203,10 +203,10 @@ fit_scaled$certificate$scale_is_estimate
 `eigencore_operator` type that every solver accepts — there's no separate
 "scaled matrix" object to keep track of. For this column-centered CSC
 composition, eigencore also reuses the sparse column moments to compute the
-exact Frobenius norm
-`sum_j w_j^2 sum_i (A_ij - mean_j)^2`. The scaled solve can therefore pass its
-certificate without a stochastic scale estimate, even though the centered
-matrix itself is never formed.
+exact Frobenius norm `sum_j w_j^2 sum_i (A_ij - mean_j)^2`, kept as
+diagnostic metadata. The certificate itself scales by a lower bound on the
+2-norm, so the scaled solve passes even though the centered matrix itself is
+never formed.
 
 ## What did the planner actually do?
 
@@ -302,10 +302,11 @@ fit_mf <- svd_partial(op, rank = 5, target = largest())
 fit_mf$certificate$norm_bound_type
 ```
 
-Without any norm metadata, this is another stochastic-estimate certificate.
-Supply the exact Frobenius norm — cheap to compute once for a sparse
-matrix — and the certificate can report `passed = TRUE` when its residual and
-orthogonality checks also meet tolerance:
+Even without any norm metadata the certificate scales by a 2-norm lower bound
+taken from the computed vectors, so it can pass. Norm metadata is still
+useful: an exact Frobenius norm gives a cheap structural floor
+(`||A||_F / sqrt(min(m, n))`) before any vector is computed, and
+`metadata$two_norm`, when you know it, makes the scale exact:
 
 ```{r matrix-free-hint}
 op_hinted <- linear_operator(
@@ -317,6 +318,7 @@ op_hinted <- linear_operator(
 )
 fit_hinted <- svd_partial(op_hinted, rank = 5, target = largest())
 fit_hinted$certificate$norm_bound_type
+fit_hinted$certificate$norm_source
 fit_hinted$certificate$passed
 ```
 
@@ -335,8 +337,8 @@ would defeat the entire point of using a sparse format.
 
 ## Where to go next
 
-- `vignette("certificates")` — the deep dive on `passed`, `scale_is_estimate`,
-  and what to do about a withheld certificate.
+- `vignette("certificates")` — the deep dive on `passed`, `norm_bound_type`,
+  and what to do when a certificate fails.
 - `vignette("eigencore")` — the general get-started workflow: operators,
   problems, plans, and solves for both eigenproblems and SVD.
 - `vignette("generalized-eigenproblems")` — problems of the form

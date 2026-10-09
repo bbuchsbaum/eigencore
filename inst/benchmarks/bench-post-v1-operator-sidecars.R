@@ -274,7 +274,7 @@ fused_sparse_pca_case <- function() {
       cert <- fit$certificate
       restart <- fit$restart %||% list()
       controls <- fit$plan$controls %||% list()
-      identical(cert$norm_bound_type, "frobenius_metadata") &&
+      identical(cert$norm_bound_type, "two_norm_lower_bound") &&
         identical(cert$scale_is_estimate, FALSE) &&
         isTRUE(restart$fused_centered_scaled_csc) &&
         identical(restart$operator_storage, "centered_scaled_dgCMatrix") &&

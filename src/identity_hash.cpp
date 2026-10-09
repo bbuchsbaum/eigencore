@@ -33,6 +33,8 @@
 #include <R.h>
 #include <Rinternals.h>
 
+#include "eigencore_common.h"
+
 #include <algorithm>
 #include <cinttypes>
 #include <cstdint>
@@ -201,7 +203,7 @@ void hash_serialized(StreamHash& h, SEXP x) {
   SEXP version = PROTECT(Rf_ScalarInteger(3));
   SEXP call = PROTECT(Rf_lang4(Rf_install("serialize"), x, R_NilValue, version));
   SET_TAG(CDR(CDR(CDR(call))), Rf_install("version"));
-  SEXP raw = PROTECT(Rf_eval(call, R_BaseEnv));
+  SEXP raw = PROTECT(eigencore_unwind_protect([&] { return Rf_eval(call, R_BaseEnv); }));
   h.bytes(RAW(raw), static_cast<std::size_t>(XLENGTH(raw)));
   UNPROTECT(3);
 }
@@ -307,6 +309,7 @@ void hash_node(StreamHash& h, SEXP x) {
 }  // namespace
 
 extern "C" SEXP eigencore_identity_hash(SEXP x) {
+  EIGENCORE_ENTRY_BEGIN
   StreamHash h;
   h.word(kNodeTag | (kFormatVersion << 16));
   hash_node(h, x);
@@ -315,4 +318,5 @@ extern "C" SEXP eigencore_identity_hash(SEXP x) {
   char output[33];
   std::snprintf(output, sizeof(output), "%016" PRIx64 "%016" PRIx64, out[0], out[1]);
   return Rf_mkString(output);
+  EIGENCORE_ENTRY_END
 }

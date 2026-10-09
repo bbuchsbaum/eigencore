@@ -23,9 +23,13 @@ Plan a solver for a problem.
 \details{
 The eigen and SVD methods accept their usual request and method
 arguments plus execution controls through \code{...}. Eigen plans freeze
-\code{tol}, \code{maxit}, \code{vectors}, \code{certify}, \code{allow_dense_fallback}, and an
-optional \code{initial_subspace}; SVD plans freeze \code{tol}, \code{vectors}, \code{certify},
-and \code{allow_dense_fallback}. Use \code{solve(plan)} to execute those values or
+\code{tol}, \code{maxit}, \code{vectors}, \code{left_vectors}, \code{certify},
+\code{allow_dense_fallback}, and an optional \code{initial_subspace}; SVD plans
+freeze \code{tol}, \code{vectors}, \code{certify}, and \code{allow_dense_fallback}. The
+eigen \code{maxit} is resolved into the route's iteration limit (see
+\code{\link[=eig_partial]{eig_partial()}}) and recorded in \code{plan$controls$iteration_limit} /
+\code{plan$controls$iteration_limit_kind}; the Krylov subspace size is
+\code{plan$controls$max_subspace}. Use \code{solve(plan)} to execute those values or
 \code{solve(plan, replan = TRUE)} to make a fresh decision under current
 policy.
 }

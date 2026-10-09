@@ -344,8 +344,8 @@ generalized_lanczos_reference_contract <- function(rows) {
       isTRUE(nzchar(row$metric_solve_label))
     metric_boundary_gate <- if (isTRUE(native_metric_expected)) {
       isTRUE(row$metric_solve_native) &&
-        identical(row$metric_solve_kind, "native_sparse_tridiagonal_thomas") &&
-        identical(row$metric_factorization, "tridiagonal_thomas")
+        identical(row$metric_solve_kind, "native_sparse_tridiagonal_lu") &&
+        identical(row$metric_factorization, "tridiagonal_lu")
     } else {
       !isTRUE(row$metric_solve_native) &&
         identical(row$metric_solve_kind, "sparse_cholesky") &&

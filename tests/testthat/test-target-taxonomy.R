@@ -61,7 +61,10 @@ test_that("complex dense Hermitian inputs use native dense complex certification
   expect_true(is.complex(fit$vectors))
   expect_equal(fit$diagnostics$method, eigencore:::native_dense_complex_hermitian_label())
   expect_true(fit$certificate$passed)
-  expect_equal(fit$certificate$norm_bound_type, "frobenius_exact")
+  # All eigenvalues are computed, so max |lambda| is ||A||_2 exactly (C12).
+  expect_equal(fit$certificate$norm_bound_type, "two_norm_exact+identity_exact")
+  expect_equal(unname(fit$certificate$norm_values[["A"]]), norm(A, "2"),
+               tolerance = 1e-12)
   expect_lt(fit$certificate$max_orthogonality_loss, 1e-10)
 })
 
@@ -89,7 +92,8 @@ test_that("complex dense SVD inputs use native dense complex certification", {
   expect_true(is.complex(fit$v))
   expect_equal(fit$diagnostics$method, eigencore:::native_dense_complex_svd_label())
   expect_true(fit$certificate$passed)
-  expect_equal(fit$certificate$norm_bound_type, "frobenius_exact")
+  expect_equal(fit$certificate$norm_bound_type, "two_norm_lower_bound")
+  expect_lte(fit$certificate$norm_values[["A"]], 2 * (1 + 1e-12))
   expect_lt(fit$certificate$max_orthogonality_loss, 1e-10)
 })
 
@@ -121,9 +125,11 @@ test_that("complex ABI contract matches dense and operator certificate semantics
   expect_equal(eigencore:::certificate_gram(eig$vectors),
                Conj(t(eig$vectors)) %*% eig$vectors)
 
+  # Pre-solve two-norm value: the largest column norm, a lower bound (C12).
   norm_info <- eigencore:::operator_norm_for_certificate_info(op)
-  expect_equal(norm_info$value, sqrt(sum(Mod(A)^2)))
-  expect_equal(norm_info$norm_bound_type, "frobenius_exact")
+  expect_equal(norm_info$value, max(sqrt(colSums(Mod(A)^2))))
+  expect_lte(norm_info$value, norm(A, "2"))
+  expect_equal(norm_info$norm_bound_type, "two_norm_lower_bound")
   expect_false(norm_info$scale_is_estimate)
 
   dense_cert <- eigencore:::certify_eigen(A, eig$values, eig$vectors, tol = 1e-10)
@@ -132,7 +138,7 @@ test_that("complex ABI contract matches dense and operator certificate semantics
   )
   expect_true(dense_cert$passed)
   expect_true(operator_cert$passed)
-  expect_equal(operator_cert$norm_bound_type, "frobenius_exact+identity_exact")
+  expect_equal(operator_cert$norm_bound_type, "two_norm_lower_bound+identity_exact")
   expect_false(operator_cert$scale_is_estimate)
   expect_equal(operator_cert$residuals, dense_cert$residuals, tolerance = 1e-12)
   expect_equal(operator_cert$backward_error, dense_cert$backward_error,
@@ -144,7 +150,7 @@ test_that("complex ABI contract matches dense and operator certificate semantics
   )
   expect_true(dense_svd_cert$passed)
   expect_true(operator_svd_cert$passed)
-  expect_equal(operator_svd_cert$norm_bound_type, "frobenius_exact")
+  expect_equal(operator_svd_cert$norm_bound_type, "two_norm_lower_bound")
   expect_false(operator_svd_cert$scale_is_estimate)
   expect_equal(operator_svd_cert$residuals$combined,
                dense_svd_cert$residuals$combined,

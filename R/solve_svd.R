@@ -204,18 +204,9 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
     }
 
     cert <- if (isTRUE(certify) && identical(vectors, "both")) {
-      new_certificate(
-        tol = tol,
-        residuals = list(
-          left = native$diagnostics$left,
-          right = native$diagnostics$right,
-          combined = native$diagnostics$combined
-        ),
-        backward_error = native$diagnostics$backward_error,
-        orthogonality = native$diagnostics$orthogonality,
-        converged = native$diagnostics$converged,
-        scale = native$diagnostics$scale,
-        norm_bound_type = "frobenius_exact"
+      svd_certificate_from_native_diagnostics(
+        op, native$d, native$diagnostics, tol,
+        u = native$u, v = native$v
       )
     } else {
       empty_certificate(tol, note = "both left and right vectors are required for full SVD certification")
@@ -314,18 +305,9 @@ try_svd_partial_native_gram_fastpath <- function(A, rank, target, method, tol,
   }
 
   cert <- if (isTRUE(certify) && identical(vectors, "both")) {
-    new_certificate(
-      tol = tol,
-      residuals = list(
-        left = native$diagnostics$left,
-        right = native$diagnostics$right,
-        combined = native$diagnostics$combined
-      ),
-      backward_error = native$diagnostics$backward_error,
-      orthogonality = native$diagnostics$orthogonality,
-      converged = native$diagnostics$converged,
-      scale = native$diagnostics$scale,
-      norm_bound_type = "frobenius_exact"
+    svd_certificate_from_native_diagnostics(
+      op, native$d, native$diagnostics, tol,
+      u = native$u, v = native$v
     )
   } else {
     empty_certificate(tol, note = "both left and right vectors are required for full SVD certification")
@@ -543,7 +525,8 @@ solve_svd_implicit_gram <- function(a, rank, tol, vectors, certify, plan) {
     rank = rank,
     target = a$target,
     tol = tol,
-    vectors = if (isTRUE(certify)) "both" else vectors
+    vectors = if (isTRUE(certify)) "both" else vectors,
+    max_subspace = plan$controls$max_subspace
   )
   cert <- if (isTRUE(certify)) {
     iter$certificate

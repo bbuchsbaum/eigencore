@@ -4,7 +4,19 @@
 \alias{auto}
 \title{Automatic solver choice.}
 \usage{
-auto()
+auto(max_subspace = NULL)
+}
+\arguments{
+\item{max_subspace}{Optional maximum Krylov subspace size (the ARPACK
+\code{ncv}). When the planner selects a restarted Krylov route (thick-restart
+or block Lanczos, Krylov-Schur Arnoldi, shift-invert Lanczos or Arnoldi,
+Golub-Kahan, or implicit-Gram Lanczos for SVD) this caps the active
+basis; it is capped at the problem dimension and must leave room for the
+wanted pairs (at least \code{k + 1}, \code{k + block} for block Lanczos). Routes
+without a Krylov basis (dense LAPACK, explicit Gram SVD, LOBPCG) ignore
+it. \code{NULL} (default) uses the route's own default. The solve's \code{maxit}
+argument is the iteration (restart) limit and never changes the
+subspace size.}
 }
 \value{
 An \code{eigencore_method} descriptor that lets the planner choose a

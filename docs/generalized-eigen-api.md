@@ -163,9 +163,9 @@ changes the implementation boundary:
 - `reference generalized SPD B-orthogonal Lanczos refinement`
 - `native dense generalized SPD shift-invert (factorized Lanczos)`
 - `native tridiagonal generalized SPD shift-invert (factorized Lanczos)`
-- `reference generalized SPD Lanczos shift-invert (user solve)`
-- `reference generalized SPD Lanczos shift-invert (dense QR)`
-- `reference generalized SPD Lanczos shift-invert (sparse LU)`
+- `native thick-restart generalized SPD Lanczos shift-invert (user solve callback)`
+- `native thick-restart generalized SPD Lanczos shift-invert (dense QR solve callback)`
+- `native thick-restart generalized SPD Lanczos shift-invert (sparse LU solve callback)`
 - `native transformed sparse general-pencil Arnoldi (diagonal B)`
 - `unsupported sparse general-pencil partial solver`
 
@@ -233,11 +233,11 @@ norm-scaled policy.
 ## Certificate Scale And Provenance
 
 Generalized certificates use the shared backward-error scale
-`(||A|| + |lambda| ||B||) ||v||`. Dense native and dense LAPACK-backed paths
-use exact Frobenius scale metadata. Operator and sparse paths may combine exact
-and estimated norm bounds; if any part of the scale is estimated,
-`scale_is_estimate = TRUE` withholds `passed` even when residual convergence is
-numerically small. Factorized, transformed, Matrix-backed, and user-solve paths
+`(||A||_2 + |lambda| ||B||_2) ||v||` with values that are exact or lower bounds
+on the 2-norms (column norms, `||A x|| / ||x||` and `||B x|| / ||x||` of the
+certified vectors, or a short Lanczos estimate). A lower bound over-states the
+backward error, so `passed` stays sound; stochastic estimates are never used.
+The alpha/beta classification keeps its own one-norm policy. Factorized, transformed, Matrix-backed, and user-solve paths
 must preserve their provenance in `plan`, `method`, `restart`, `transform`, or
 certificate notes.
 

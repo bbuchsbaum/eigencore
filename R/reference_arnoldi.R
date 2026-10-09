@@ -33,6 +33,15 @@ reference_arnoldi_target_supported <- function(target) {
 }
 
 #' @keywords internal
+#' Targets the native Krylov-Schur kernel ranks directly: the reference set
+#' plus smallest magnitude (C41; converges slowly when the wanted values are
+#' interior in modulus -- `nearest(0)` via shift-invert is the fast route).
+native_arnoldi_target_supported <- function(target) {
+  kind <- if (inherits(target, "eigencore_target")) target$kind else "largest"
+  reference_arnoldi_target_supported(target) || identical(kind, "smallest_magnitude")
+}
+
+#' @keywords internal
 # For real operators A and A^T share the same eigenvalues, so the same target
 # works for both the forward and adjoint solves.  For complex operators the
 # adjoint eigenvalues are the conjugates of A's eigenvalues, which would
@@ -97,7 +106,8 @@ normalize_left_eigenvectors <- function(left_vectors, right_vectors) {
 arnoldi_left_eigen_contract <- function(op, values, right_vectors, target,
                                         tol = 1e-8, maxit = NULL,
                                         max_restarts = 0L,
-                                        extraction = "projected_ritz") {
+                                        extraction = "projected_ritz",
+                                        krylov_schur_maxit = native_krylov_schur_default_maxit()) {
   if (is.null(right_vectors)) {
     return(list(
       supported = FALSE,
@@ -143,7 +153,8 @@ arnoldi_left_eigen_contract <- function(op, values, right_vectors, target,
         target_values = if (identical(op$dtype, "complex")) Conj(values) else values,
         # Biorthogonality error scales like (left residual) / (eigenvalue
         # gap), so converge the adjoint Ritz pairs two digits beyond `tol`.
-        krylov_schur_tol = max(tol * 1e-2, 100 * .Machine$double.eps)
+        krylov_schur_tol = max(tol * 1e-2, 100 * .Machine$double.eps),
+        krylov_schur_maxit = krylov_schur_maxit
       )
     } else {
       reference_arnoldi_general(
@@ -580,7 +591,7 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
       call. = FALSE
     )
   }
-  if (!reference_arnoldi_target_supported(target)) {
+  if (!native_arnoldi_target_supported(target)) {
     stop("native Arnoldi currently supports largest/smallest real-part and largest-magnitude targets.",
          call. = FALSE)
   }

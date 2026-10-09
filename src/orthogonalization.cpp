@@ -96,6 +96,7 @@ static void symmetrize_full(double* A, int n) {
 }
 
 extern "C" SEXP eigencore_mgs2(SEXP X_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(X_)) {
     error("X must be a double matrix");
   }
@@ -175,9 +176,11 @@ extern "C" SEXP eigencore_mgs2(SEXP X_, SEXP tol_) {
 
   UNPROTECT(9);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_cholqr2(SEXP X_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(X_)) {
     error("X must be a double matrix");
   }
@@ -257,9 +260,11 @@ extern "C" SEXP eigencore_cholqr2(SEXP X_) {
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(6);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_b_cholqr2(SEXP X_, SEXP B_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(X_) || !isReal(B_)) {
     error("X and B must be double matrices");
   }
@@ -351,9 +356,11 @@ extern "C" SEXP eigencore_b_cholqr2(SEXP X_, SEXP B_) {
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(7);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_diagonal_b_cholqr2(SEXP X_, SEXP diag_, SEXP unit_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(X_) || !isReal(diag_)) {
     error("X and diagonal values must be double");
   }
@@ -472,9 +479,11 @@ extern "C" SEXP eigencore_diagonal_b_cholqr2(SEXP X_, SEXP diag_, SEXP unit_) {
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(7);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_reorthogonalize_against(SEXP X_, SEXP Q_, SEXP passes_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(X_) || !isReal(Q_) || !isInteger(passes_)) {
     error("X, Q, and passes must be double, double, and integer");
   }
@@ -520,9 +529,11 @@ extern "C" SEXP eigencore_reorthogonalize_against(SEXP X_, SEXP Q_, SEXP passes_
 
   UNPROTECT(2);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_basis_workspace_create(SEXP rows_, SEXP basis_cols_, SEXP block_cols_) {
+  EIGENCORE_ENTRY_BEGIN
   const int64_t rows = static_cast<int64_t>(asReal(rows_));
   const int64_t basis_cols = static_cast<int64_t>(asReal(basis_cols_));
   const int64_t block_cols = static_cast<int64_t>(asReal(block_cols_));
@@ -530,7 +541,12 @@ extern "C" SEXP eigencore_basis_workspace_create(SEXP rows_, SEXP basis_cols_, S
     error("workspace dimensions must be non-negative");
   }
 
-  BasisWorkspace* workspace = new BasisWorkspace;
+  // Create the external pointer (with its finalizer) first so the workspace
+  // is owned by R from the moment it exists and cannot leak on an error.
+  SEXP ptr_ = PROTECT(R_MakeExternalPtr(nullptr, install("eigencore_basis_workspace"), R_NilValue));
+  R_RegisterCFinalizerEx(ptr_, basis_workspace_finalizer, TRUE);
+  BasisWorkspace* workspace = new BasisWorkspace();
+  R_SetExternalPtrAddr(ptr_, workspace);
   workspace->rows = rows;
   workspace->basis_cols = basis_cols;
   workspace->block_cols = block_cols;
@@ -542,20 +558,19 @@ extern "C" SEXP eigencore_basis_workspace_create(SEXP rows_, SEXP basis_cols_, S
   if (coeff_len > 0) {
     workspace->coeff = static_cast<double*>(std::calloc(static_cast<size_t>(coeff_len), sizeof(double)));
     if (workspace->coeff == nullptr) {
-      delete workspace;
       error("failed to allocate basis workspace coefficient buffer");
     }
     workspace->allocation_count = 1;
     workspace->bytes_allocated = coeff_len * static_cast<int64_t>(sizeof(double));
   }
 
-  SEXP ptr_ = PROTECT(R_MakeExternalPtr(workspace, install("eigencore_basis_workspace"), R_NilValue));
-  R_RegisterCFinalizerEx(ptr_, basis_workspace_finalizer, TRUE);
   UNPROTECT(1);
   return ptr_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_basis_workspace_info(SEXP workspace_) {
+  EIGENCORE_ENTRY_BEGIN
   BasisWorkspace* workspace = basis_workspace_from_xptr(workspace_);
   SEXP out_ = PROTECT(allocVector(VECSXP, 5));
   SET_VECTOR_ELT(out_, 0, ScalarReal(static_cast<double>(workspace->rows)));
@@ -572,11 +587,13 @@ extern "C" SEXP eigencore_basis_workspace_info(SEXP workspace_) {
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(2);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_reorthogonalize_against_workspace(SEXP X_, SEXP Q_,
                                                             SEXP passes_,
                                                             SEXP workspace_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isReal(X_) || !isReal(Q_) || !isInteger(passes_)) {
     error("X, Q, and passes must be double, double, and integer");
   }
@@ -624,4 +641,5 @@ extern "C" SEXP eigencore_reorthogonalize_against_workspace(SEXP X_, SEXP Q_,
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }

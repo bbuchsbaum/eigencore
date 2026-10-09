@@ -308,7 +308,10 @@ eig_full_certificate <- function(A, B, values, vecs, vectors, tol, general) {
   if (isTRUE(general)) {
     certify_dense_general_eigen(A, values, vecs, tol = tol)
   } else {
-    certify_eigen(A, values, vecs, B = B, tol = tol)
+    # All eigenvalues are computed, so for B = NULL max|lambda| is ||A||_2
+    # exactly (up to rounding) and the certificate scale is exact (C12).
+    certify_eigen(A, values, vecs, B = B, tol = tol,
+                  full_spectrum = if (is.null(B)) values)
   }
 }
 

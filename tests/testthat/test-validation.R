@@ -29,7 +29,8 @@ test_that("dense and operator certificates use the same eigen scale for explicit
 
   expect_equal(op$backward_error, dense$backward_error, tolerance = 1e-14)
   expect_equal(op$scale, dense$scale, tolerance = 1e-14)
-  expect_equal(op$norm_bound_type, "frobenius_exact+identity_exact")
+  expect_equal(op$norm_bound_type, "two_norm_lower_bound+identity_exact")
+  expect_equal(unname(op$norm_values[["A"]]), 4)
   expect_false(op$scale_is_estimate)
 })
 
@@ -41,7 +42,8 @@ test_that("dense and operator certificates use the same SVD scale for explicit o
 
   expect_equal(op$backward_error, dense$backward_error, tolerance = 1e-14)
   expect_equal(op$scale, dense$scale, tolerance = 1e-14)
-  expect_equal(op$norm_bound_type, "frobenius_exact")
+  expect_equal(op$norm_bound_type, "two_norm_lower_bound")
+  expect_equal(unname(op$norm_values[["A"]]), 4)
   expect_false(op$scale_is_estimate)
 })
 
@@ -52,7 +54,7 @@ test_that("built-in CSC and diagonal operator certificates use native diagnostic
   diag_cert <- eigencore:::certify_eigen_operator(as_operator(A), vals, vecs)
 
   expect_true(diag_cert$passed)
-  expect_equal(diag_cert$norm_bound_type, "frobenius_metadata+identity_exact")
+  expect_equal(diag_cert$norm_bound_type, "two_norm_exact+identity_exact")
   expect_equal(diag_cert$residuals, c(0, 0), tolerance = 1e-14)
 
   S <- Matrix::sparseMatrix(i = c(1, 2, 3), j = c(1, 2, 3), x = c(6, 4, 2), dims = c(3, 3))
@@ -61,7 +63,7 @@ test_that("built-in CSC and diagonal operator certificates use native diagnostic
 
   expect_equal(csc_cert$residuals, dense_cert$residuals, tolerance = 1e-14)
   expect_equal(csc_cert$backward_error, dense_cert$backward_error, tolerance = 1e-14)
-  expect_equal(csc_cert$norm_bound_type, "frobenius_metadata+identity_exact")
+  expect_equal(csc_cert$norm_bound_type, "two_norm_lower_bound+identity_exact")
 })
 
 test_that("built-in CSC and diagonal SVD certificates use native diagnostics", {
@@ -70,7 +72,7 @@ test_that("built-in CSC and diagonal SVD certificates use native diagnostics", {
   diag_cert <- eigencore:::certify_svd_operator(as_operator(D), s$d[1:2], s$u[, 1:2], s$v[, 1:2])
 
   expect_true(diag_cert$passed)
-  expect_equal(diag_cert$norm_bound_type, "frobenius_metadata")
+  expect_equal(diag_cert$norm_bound_type, "two_norm_exact")
   expect_equal(diag_cert$residuals$combined, c(0, 0), tolerance = 1e-14)
 
   S <- Matrix::sparseMatrix(i = c(1, 2, 3, 4), j = c(1, 2, 3, 4), x = c(8, 5, 2, 1), dims = c(4, 4))
@@ -80,10 +82,10 @@ test_that("built-in CSC and diagonal SVD certificates use native diagnostics", {
 
   expect_equal(csc_cert$residuals$combined, dense_cert$residuals$combined, tolerance = 1e-14)
   expect_equal(csc_cert$backward_error, dense_cert$backward_error, tolerance = 1e-14)
-  expect_equal(csc_cert$norm_bound_type, "frobenius_metadata")
+  expect_equal(csc_cert$norm_bound_type, "two_norm_lower_bound")
 })
 
-test_that("matrix-free stochastic norm estimates withhold passed certificates", {
+test_that("matrix-free certificates use two-norm lower bounds instead of estimates", {
   vals <- c(4, 2, 1)
   op <- linear_operator(
     dim = c(3, 3),
@@ -100,16 +102,20 @@ test_that("matrix-free stochastic norm estimates withhold passed certificates", 
     structure = hermitian()
   )
 
+  # No norm metadata: the scale is max ||A x|| / ||x|| over the certified
+  # vectors, a lower bound on ||A||_2, so the backward error is an upper bound
+  # and the certificate may pass (C12).
   cert <- eigencore:::certify_eigen_operator(op, vals[1:2], diag(3)[, 1:2])
 
-  expect_equal(cert$norm_bound_type, "frobenius_hutchinson_estimate+identity_exact")
-  expect_true(cert$scale_is_estimate)
+  expect_equal(cert$norm_bound_type, "two_norm_lower_bound+identity_exact")
+  expect_equal(cert$norm_source, "applied_vectors+identity")
+  expect_false(cert$scale_is_estimate)
   expect_true(all(cert$converged))
-  expect_false(cert$passed)
-  expect_match(cert$notes, "stochastic norm estimate")
+  expect_true(cert$passed)
+  expect_false(any(grepl("stochastic", cert$notes)))
 })
 
-test_that("stochastic norm estimates never produce passed certificates across certificate entry points", {
+test_that("certificate entry points report lower-bound norms, never stochastic estimates", {
   direct <- eigencore:::new_certificate(
     tol = 1e-8,
     residuals = c(0, 0),
@@ -141,10 +147,10 @@ test_that("stochastic norm estimates never produce passed certificates across ce
   s <- svd(diag(vals), nu = 2, nv = 2)
   svd_cert <- eigencore:::certify_svd_operator(op, s$d[1:2], s$u[, 1:2], s$v[, 1:2])
   expect_true(all(svd_cert$converged))
-  expect_equal(svd_cert$norm_bound_type, "frobenius_hutchinson_estimate")
-  expect_true(svd_cert$scale_is_estimate)
-  expect_false(svd_cert$passed)
-  expect_match(svd_cert$notes, "stochastic norm estimate")
+  expect_equal(svd_cert$norm_bound_type, "two_norm_lower_bound")
+  expect_equal(unname(svd_cert$norm_values[["A"]]), 4)
+  expect_false(svd_cert$scale_is_estimate)
+  expect_true(svd_cert$passed)
 
   Bop <- linear_operator(
     dim = c(3, 3),
@@ -168,10 +174,10 @@ test_that("stochastic norm estimates never produce passed certificates across ce
     Bop = Bop
   )
   expect_true(all(residual_cert$converged))
-  expect_equal(residual_cert$norm_bound_type, "frobenius_exact+frobenius_hutchinson_estimate")
-  expect_true(residual_cert$scale_is_estimate)
-  expect_false(residual_cert$passed)
-  expect_match(residual_cert$notes, "stochastic norm estimate")
+  expect_equal(residual_cert$norm_bound_type, "two_norm_lower_bound+two_norm_lower_bound")
+  expect_equal(unname(residual_cert$norm_values), c(4, 1))
+  expect_false(residual_cert$scale_is_estimate)
+  expect_true(residual_cert$passed)
 })
 
 test_that("native column norms preserve certificate residual formulas", {
@@ -249,8 +255,8 @@ test_that("complex matrix-free operators certify exactly with explicit norm meta
   expect_true(eig_cert$passed)
   expect_true(svd_cert$passed)
   expect_identical(eig_cert$certificate_type, "right_residual_backward_error")
-  expect_identical(eig_cert$norm_bound_type, "frobenius_metadata")
-  expect_identical(svd_cert$norm_bound_type, "frobenius_metadata")
+  expect_identical(eig_cert$norm_bound_type, "two_norm_lower_bound+identity_exact")
+  expect_identical(svd_cert$norm_bound_type, "two_norm_lower_bound")
   expect_false(eig_cert$scale_is_estimate)
   expect_false(svd_cert$scale_is_estimate)
   expect_gt(calls$apply, 0L)
@@ -289,7 +295,11 @@ test_that("native dense eigen certificate diagnostics match R formula contract",
 
   standard <- eigencore:::native_dense_eigen_certificate(A, values, vectors, tol = tol)
   residuals <- eigencore:::dense_eigen_residuals(A, values, vectors)
-  scale <- eigencore:::eigen_backward_scale(norm(A, type = "F"), 1, values, vectors)
+  # Two-norm lower bound (C12): max(largest column norm, ||A x|| / ||x||).
+  norm_lower <- max(sqrt(colSums(A^2)), sqrt(colSums((A %*% vectors)^2)))
+  expect_equal(standard$norm_A, norm_lower, tolerance = 1e-12)
+  expect_lte(standard$norm_A, norm(A, "2") * (1 + 1e-12))
+  scale <- eigencore:::eigen_backward_scale(norm_lower, 1, values, vectors)
 
   expect_equal(standard$residuals, residuals, tolerance = 1e-12)
   expect_equal(standard$scale, scale, tolerance = 1e-12)
@@ -299,7 +309,9 @@ test_that("native dense eigen certificate diagnostics match R formula contract",
 
   generalized <- eigencore:::native_dense_eigen_certificate(A, values, vectors, B = B, tol = tol)
   generalized_residuals <- eigencore:::dense_eigen_residuals(A, values, vectors, B = B)
-  generalized_scale <- eigencore:::eigen_backward_scale(norm(A, type = "F"), norm(B, type = "F"), values, vectors)
+  norm_lower_B <- max(sqrt(colSums(B^2)), sqrt(colSums((B %*% vectors)^2)))
+  expect_equal(generalized$norm_B, norm_lower_B, tolerance = 1e-12)
+  generalized_scale <- eigencore:::eigen_backward_scale(norm_lower, norm_lower_B, values, vectors)
 
   expect_equal(generalized$residuals, generalized_residuals, tolerance = 1e-12)
   expect_equal(generalized$scale, generalized_scale, tolerance = 1e-12)
@@ -354,7 +366,7 @@ test_that("operator generalized eigen certificates use dense native diagnostics 
   )
 
   expect_true(cert$passed)
-  expect_equal(cert$norm_bound_type, "frobenius_exact+frobenius_exact")
+  expect_equal(cert$norm_bound_type, "two_norm_lower_bound+two_norm_lower_bound")
   expect_equal(cert$residuals, eigencore:::dense_eigen_residuals(A, values, vectors, B = B),
                tolerance = 1e-12)
   expect_lt(cert$max_orthogonality_loss, 1e-10)
@@ -419,7 +431,10 @@ test_that("native dense SVD certificate diagnostics match R formula contract", {
   tol <- 1e-8
   diag <- eigencore:::native_dense_svd_certificate(A, d, u, v, tol = tol)
   residuals <- eigencore:::dense_svd_residuals(A, d, u, v)
-  scale <- eigencore:::svd_backward_scale(norm(A, type = "F"), d)
+  norm_lower <- max(sqrt(colSums(A^2)), sqrt(colSums((A %*% v)^2)),
+                    sqrt(colSums(crossprod(A, u)^2)))
+  expect_equal(diag$norm_A, norm_lower, tolerance = 1e-12)
+  scale <- eigencore:::svd_backward_scale(norm_lower, d)
 
   expect_equal(diag$left, residuals$left, tolerance = 1e-12)
   expect_equal(diag$right, residuals$right, tolerance = 1e-12)

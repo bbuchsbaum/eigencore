@@ -108,7 +108,11 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
                                 initial_subspace = NULL,
                                 prepared_restart = NULL) {
   controls <- plan$controls %||% list()
-  method_maxit <- controls$max_subspace %||%
+  # `maxit` is the solve-level iteration limit (C15). The planner resolved it
+  # into controls$max_restarts (thick-restart routes) or capped
+  # controls$max_subspace (unrestarted reference routes); the Krylov
+  # subspace size comes only from controls$max_subspace / max_subspace.
+  method_subspace <- controls$max_subspace %||%
     if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$max_subspace else NULL
   method_reorth <- controls$reorthogonalize %||%
     if (inherits(method, "eigencore_method") && identical(method$kind, "lanczos")) method$reorthogonalize else TRUE
@@ -201,7 +205,7 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
       k = k,
       target = a$target,
       tol = tol,
-      maxit = maxit %||% method_maxit,
+      maxit = method_subspace,
       vectors = vectors,
       block = method_block,
       max_restarts = method_max_restarts
@@ -213,7 +217,7 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
       k = k,
       target = a$target,
       tol = tol,
-      maxit = maxit %||% method_maxit,
+      maxit = method_subspace,
       vectors = vectors,
       reorthogonalize = method_reorth
     )
@@ -224,7 +228,7 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
         k = k,
         target = a$target,
         tol = tol,
-        maxit = maxit %||% method_maxit,
+        maxit = method_subspace,
         block = method_block,
         max_restarts = method_max_restarts,
         vectors = vectors,
@@ -241,7 +245,7 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
         k = k,
         target = a$target,
         tol = tol,
-        maxit = maxit %||% method_maxit,
+        maxit = method_subspace,
         max_restarts = method_max_restarts,
         vectors = vectors,
         start = start_block,
@@ -254,7 +258,7 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
       k = k,
       target = a$target,
       tol = tol,
-      maxit = maxit %||% method_maxit,
+      maxit = method_subspace,
       vectors = vectors,
       reorthogonalize = method_reorth,
       start = start_block
@@ -378,31 +382,61 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
   } else {
     max(k + 8L, 2L * k + 4L)
   }
-  method_maxit <- maxit %||% controls$max_subspace %||% default_maxit
+  # Subspace size from the plan only; the solve-level `maxit` (an iteration
+  # limit, C15) was resolved into controls$krylov_schur_max_iterations
+  # (native Krylov-Schur restarts) or controls$max_restarts (reference
+  # Arnoldi restart cycles) by the planner.
+  method_subspace <- controls$max_subspace %||% default_maxit
   method_max_restarts <- controls$max_restarts %||% 0L
+  ks_max_iterations <- controls$krylov_schur_max_iterations %||%
+    native_krylov_schur_default_maxit()
   method_extraction <- controls$arnoldi_extraction %||%
     if (refined_native_path) "refined_ritz" else "projected_ritz"
-  arnoldi_solver <- if (native_path) native_arnoldi_general else reference_arnoldi_general
-  iter <- arnoldi_solver(
-    a$A,
-    k = k,
-    target = a$target,
-    tol = tol,
-    maxit = method_maxit,
-    max_restarts = method_max_restarts,
-    vectors = vectors,
-    extraction = method_extraction
-  )
-  left_contract <- arnoldi_left_eigen_contract(
-    a$A,
-    iter$values,
-    iter$vectors,
-    target = a$target,
-    tol = tol,
-    maxit = method_maxit,
-    max_restarts = method_max_restarts,
-    extraction = method_extraction
-  )
+  left_policy <- plan$execution$left_vectors %||% "auto"
+  iter <- if (native_path) {
+    native_arnoldi_general(
+      a$A,
+      k = k,
+      target = a$target,
+      tol = tol,
+      maxit = method_subspace,
+      max_restarts = method_max_restarts,
+      vectors = vectors,
+      extraction = method_extraction,
+      krylov_schur_maxit = ks_max_iterations
+    )
+  } else {
+    reference_arnoldi_general(
+      a$A,
+      k = k,
+      target = a$target,
+      tol = tol,
+      maxit = method_subspace,
+      max_restarts = method_max_restarts,
+      vectors = vectors,
+      extraction = method_extraction
+    )
+  }
+  left_contract <- if (identical(left_policy, "none")) {
+    list(supported = FALSE, skipped = TRUE,
+         reason = "not requested (left_vectors = \"none\")")
+  } else {
+    arnoldi_left_eigen_contract(
+      a$A,
+      iter$values,
+      iter$vectors,
+      target = a$target,
+      tol = tol,
+      maxit = method_subspace,
+      max_restarts = method_max_restarts,
+      extraction = method_extraction,
+      krylov_schur_maxit = ks_max_iterations
+    )
+  }
+  if (identical(left_policy, "compute") && !isTRUE(left_contract$supported)) {
+    stop("left_vectors = \"compute\" but left eigenvectors are unavailable on ",
+         plan$method, ": ", left_contract$reason, call. = FALSE)
+  }
   warning_msg <- if (matrix_free_native_path && isTRUE(iter$certificate$passed)) {
     "using native matrix-free Arnoldi callback cycle with native Ritz extraction; right residuals certified"
   } else if (matrix_free_native_path) {
@@ -432,7 +466,7 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
       "left eigenvectors computed from adjoint Arnoldi; left residuals or biorthogonality did not pass certificate",
       sep = "; "
     )
-  } else {
+  } else if (!isTRUE(left_contract$skipped)) {
     warning_msg <- paste(
       warning_msg,
       paste0("left eigenvectors unavailable: ", left_contract$reason),
@@ -520,7 +554,9 @@ solve_eigen_sparse_general_pencil_arnoldi <- function(a, k, method, tol, maxit,
                                                       vectors, certify, plan) {
   controls <- plan$controls %||% list()
   Cop <- sparse_general_pencil_transformed_operator(a$A, a$metric)
-  method_maxit <- maxit %||% controls$max_subspace %||%
+  # `maxit` (iteration limit) is already resolved into
+  # controls$krylov_schur_max_iterations by the planner (C15).
+  method_subspace <- controls$max_subspace %||%
     sparse_general_pencil_default_max_subspace(a$A$dim[[1L]], k)
   method_max_restarts <- controls$max_restarts %||% 5L
   method_extraction <- controls$arnoldi_extraction %||% "refined_ritz"
@@ -530,10 +566,12 @@ solve_eigen_sparse_general_pencil_arnoldi <- function(a, k, method, tol, maxit,
     k = k,
     target = a$target,
     tol = tol,
-    maxit = method_maxit,
+    maxit = method_subspace,
     max_restarts = method_max_restarts,
     vectors = TRUE,
-    extraction = method_extraction
+    extraction = method_extraction,
+    krylov_schur_maxit = controls$krylov_schur_max_iterations %||%
+      native_krylov_schur_default_maxit()
   )
   vals <- iter$values
   vecs_for_cert <- iter$vectors
@@ -707,7 +745,8 @@ solve_eigen_native_dense_hermitian <- function(a, k, tol, vectors, certify,
     vecs <- if (vectors) eig$vectors[, idx, drop = FALSE] else NULL
   }
   cert <- if (certify && !is.null(vecs)) {
-    certify_eigen(A, vals, vecs, tol = tol)
+    certify_eigen(A, vals, vecs, tol = tol,
+                  full_spectrum = if (!selected_range) eig$values)
   } else {
     empty_certificate(tol, note = "vectors not returned; residual certificate not computed")
   }

@@ -33,7 +33,12 @@ the adjoint operator.}
 
 \item{name}{Optional operator label used in plans and diagnostics.}
 
-\item{metadata}{Optional list of implementation metadata.}
+\item{metadata}{Optional list of implementation metadata. Certificates
+read two optional entries, trusted as given: \code{two_norm}, the exact
+spectral norm \verb{||A||_2} (makes the certificate scale exact), and
+\code{frobenius_norm}, whose \verb{||A||_F / sqrt(min(dim))} gives a structural
+lower bound on \verb{||A||_2}. Without them certificates use lower bounds from
+the computed vectors.}
 
 \item{operator_id}{Optional non-empty character identity for a logical
 callback-operator lineage. Supply together with \code{revision}.}

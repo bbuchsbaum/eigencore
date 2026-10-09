@@ -6,12 +6,31 @@
 #' @param B Optional metric matrix or operator for generalized problems.
 #' @param method Solver method descriptor.
 #' @param tol Convergence and certification tolerance.
-#' @param maxit Optional iteration limit.
+#' @param maxit Optional iteration limit (`NULL` uses each route's default).
+#'   It bounds outer iterations, never the Krylov subspace size: thick-restart
+#'   cycles for (block, generalized, and shift-invert callback) Lanczos,
+#'   Krylov-Schur restarts for nonsymmetric Arnoldi (including shift-invert
+#'   Arnoldi), restart cycles for the reference Arnoldi, LOBPCG iterations,
+#'   and Lanczos steps for the unrestarted reference and native-kernel
+#'   shift-invert Lanczos routes. Dense direct routes ignore it. The resolved
+#'   limit is recorded in `plan$controls$iteration_limit` and
+#'   `plan$controls$iteration_limit_kind`. To set the subspace size (the
+#'   ARPACK `ncv`), use the method descriptor's `max_subspace`
+#'   ([lanczos()], [auto()], [shift_invert()]). A `lanczos(max_restarts =)` or
+#'   `lobpcg(maxit =)` that disagrees with `maxit` is an error.
 #' @param vectors Whether to compute vectors.
 #' @param seed Optional random seed for stochastic solver components. The
 #'   global random number stream is restored on exit.
 #' @param certify Whether to compute certification diagnostics.
 #' @param allow_dense_fallback Dense fallback policy.
+#' @param left_vectors Left-eigenvector policy for nonsymmetric problems.
+#'   `"auto"` (default) computes and certifies left eigenvectors (and the
+#'   biorthogonality) on routes that support them, such as Krylov-Schur
+#'   Arnoldi, and records the reason when they are unavailable; `"none"` skips
+#'   the left solve and its certificate entirely (roughly halving the cost of a
+#'   nonsymmetric Arnoldi solve); `"compute"` is like `"auto"` but an error
+#'   when the route cannot return left eigenvectors. Hermitian problems are
+#'   unaffected.
 #' @param initial_subspace Optional numeric matrix of starting directions
 #'   (a warm start). Supported on standard real Hermitian Lanczos paths: the
 #'   native paths for explicit dense double or `dgCMatrix` operators, the native
@@ -51,8 +70,10 @@ eig_partial <- function(A, k, target = largest(), B = NULL, method = auto(),
                         tol = 1e-8, maxit = NULL, vectors = TRUE, seed = NULL,
                         certify = TRUE,
                         allow_dense_fallback = c("auto", "never", "always"),
-                        initial_subspace = NULL) {
+                        initial_subspace = NULL,
+                        left_vectors = c("auto", "none", "compute")) {
   allow_dense_fallback <- match.arg(allow_dense_fallback)
+  left_vectors <- match.arg(left_vectors)
   if (!is.null(seed)) {
     seed_state <- saved_random_seed()
     on.exit(restore_random_seed(seed_state), add = TRUE)
@@ -62,7 +83,7 @@ eig_partial <- function(A, k, target = largest(), B = NULL, method = auto(),
                      transform = if (is_transform_method(method)) method else NULL)
   solve(P, k = k, method = method, tol = tol, maxit = maxit, vectors = vectors,
         certify = certify, allow_dense_fallback = allow_dense_fallback,
-        initial_subspace = initial_subspace)
+        initial_subspace = initial_subspace, left_vectors = left_vectors)
 }
 
 #' Compute a partial singular-value decomposition.
@@ -135,10 +156,13 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
 #' @param k Number of eigenpairs to compute.
 #' @param method Solver method descriptor.
 #' @param tol Convergence and certification tolerance.
-#' @param maxit Optional iteration limit.
+#' @param maxit Optional iteration (restart) limit; never the subspace size.
+#'   See [eig_partial()].
 #' @param vectors Whether to compute vectors.
 #' @param certify Whether to compute certification diagnostics.
 #' @param allow_dense_fallback Dense fallback policy.
+#' @param left_vectors Left-eigenvector policy (`"auto"`, `"none"`,
+#'   `"compute"`); see [eig_partial()].
 #' @param initial_subspace Optional numeric matrix of starting directions
 #'   (a warm start). Supported on standard real Hermitian Lanczos paths —
 #'   native dense double / `dgCMatrix`, native matrix-free callbacks for
@@ -158,8 +182,11 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
                                           maxit = NULL, vectors = TRUE,
                                           certify = TRUE,
                                           allow_dense_fallback = c("auto", "never", "always"),
-                                          initial_subspace = NULL, ...) {
+                                          initial_subspace = NULL,
+                                          left_vectors = c("auto", "none", "compute"),
+                                          ...) {
   allow_dense_fallback <- match.arg(allow_dense_fallback)
+  left_vectors <- match.arg(left_vectors)
   plan <- plan_solver(
     a,
     k = k,
@@ -169,7 +196,8 @@ solve.eigencore_eigen_problem <- function(a, b, k, method = auto(), tol = 1e-8,
     vectors = vectors,
     certify = certify,
     allow_dense_fallback = allow_dense_fallback,
-    initial_subspace = initial_subspace
+    initial_subspace = initial_subspace,
+    left_vectors = left_vectors
   )
   solve(plan)
 }
@@ -318,6 +346,7 @@ replan_eigencore_plan <- function(plan) {
     args$k <- plan$requested
     args$maxit <- execution$maxit
     args$initial_subspace <- execution$initial_subspace
+    args$left_vectors <- execution$left_vectors %||% "auto"
   } else {
     args$rank <- plan$requested
   }
@@ -350,6 +379,14 @@ execute_eigen_plan <- function(plan, restart_preparation = NULL) {
     validate_initial_subspace_plan_support(a, plan)
   }
   if (is_transform_method(a$transform)) {
+    if (identical(a$transform$kind, "shift_invert") &&
+        plan$method %in% shift_invert_arnoldi_labels()) {
+      return(solve_shift_invert_general(
+        a, k = k, method = a$transform, tol = tol, vectors = vectors,
+        certify = certify, plan = plan,
+        left_vectors = execution$left_vectors %||% "auto"
+      ))
+    }
     if (identical(a$transform$kind, "shift_invert")) {
       return(solve_shift_invert_hermitian(
         a, k = k, method = a$transform, tol = tol,

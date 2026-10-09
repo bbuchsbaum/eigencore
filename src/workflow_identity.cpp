@@ -4,10 +4,12 @@
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
+#include "eigencore_common.h"
 
 extern "C" SEXP eigencore_stable_raw_hash(SEXP raw_) {
+  EIGENCORE_ENTRY_BEGIN
   if (TYPEOF(raw_) != RAWSXP) {
-    Rf_error("eigencore_stable_raw_hash requires a raw vector");
+    error("eigencore_stable_raw_hash requires a raw vector");
   }
 
   const Rbyte* bytes = RAW(raw_);
@@ -22,4 +24,5 @@ extern "C" SEXP eigencore_stable_raw_hash(SEXP raw_) {
   char output[17];
   std::snprintf(output, sizeof(output), "%016" PRIx64, hash);
   return Rf_mkString(output);
+  EIGENCORE_ENTRY_END
 }

@@ -106,8 +106,9 @@ cert
 The fields you act on, in order:
 
 - **`passed`** — overall verdict. `TRUE` means every returned pair satisfies
-  the checks required by this certificate type and the norm bound used to
-  build the scale is exact, not estimated.
+  the checks required by this certificate type. The backward-error scale is
+  exact or a lower bound on the matrix 2-norm, never an estimate, so a pass
+  is never optimistic (see "Norm bounds" below).
 - **`tolerance`** — the user-requested tolerance. Defaults to `1e-8`.
 - **`max_residual`** — the worst absolute residual `||A v - lambda v||` (or
   `||A v - lambda B v||` for generalized problems) across the returned basis.
@@ -118,12 +119,13 @@ The fields you act on, in order:
   `|V* B V - I|` in B-inner-product problems).
 - **`failed_indices`** — which pairs failed. Empty when `passed = TRUE`.
 
-Two more fields explain *how* the verdict was reached rather than what it
-is: `norm_bound_type` names the scale used to compute backward error, and
-`scale_is_estimate` flags when that scale is itself a stochastic estimate
-rather than an exact bound — the "Withheld" section below shows exactly
-what that means for `passed`. `certificate_type` and `notes` carry
-provenance text for unusual states. `?certificate` documents every field.
+Three more fields explain *how* the verdict was reached rather than what it
+is: `norm_bound_type` says whether the `||A||_2` (and `||B||_2`) value in the
+backward-error scale is exact or a lower bound, `norm_source` says where it
+came from, and `norm_values` holds the values used. `scale_is_estimate` is
+always `FALSE` for built-in certificates. `certificate_type` and `notes`
+carry provenance text for unusual states. `?certificate` documents every
+field.
 
 The `max_*` fields are summaries. The certificate also keeps the underlying
 *per-pair* vectors (`cert$backward_error`, `cert$converged`), so you can see at
@@ -153,13 +155,22 @@ saying so in `certificate_type`.
 Absolute residuals can be misleading when the operator's norm is large or
 small. Backward error is the residual divided by a scale that captures
 "how big could a perturbation of `A` (and `B`) be that *exactly* makes
-`(lambda, v)` an eigenpair?":
+`(lambda, v)` an eigenpair?". eigencore uses the standard normwise definition
+in the matrix 2-norm:
 
-> eta_i  =  ||r_i||  /  ( (||A|| + |lambda_i| ||B||) ||v_i|| ).
+> eta_i  =  ||r_i||  /  ( (||A||_2 + |lambda_i| ||B||_2) ||v_i|| ),
 
-A pair "converges" when `eta_i <= tol`. This is the criterion eigencore uses
-internally; the tolerance you pass to `eig_partial(tol = ...)` is the
-backward-error tolerance, not the residual tolerance.
+and for a singular triplet `eta_i = sqrt(||A v - sigma u||^2 + ||A^T u - sigma
+v||^2) / ||A||_2` (unit vectors). A pair "converges" when `eta_i <= tol`. The
+tolerance you pass to `eig_partial(tol = ...)` is this backward-error
+tolerance, not a residual tolerance.
+
+`||A||_2` is rarely known exactly, so the denominator uses a value that never
+exceeds it. A smaller denominator can only make the reported `eta_i` larger
+than the true backward error, so a certificate that passes would also pass
+with the exact norm. (Before eigencore 1.4 the scale was the Frobenius norm,
+which can be up to `sqrt(rank)` times larger than `||A||_2` and made the check
+correspondingly more lenient.)
 
 ### 3. Orthogonality
 
@@ -187,9 +198,9 @@ of `A`, computed two ways:
 # Largest eigenvalues are well separated -> easy, converges fast.
 fit_pass <- eig_partial(A, k = 10, target = largest())
 
-# Smallest eigenvalues are densely clustered near 1 -> a tight maxit
+# Smallest eigenvalues are densely clustered near 1 -> a tight maxit (restart)
 # budget leaves them short of tolerance.
-fit_fail <- eig_partial(A, k = 10, target = smallest(), maxit = 15)
+fit_fail <- eig_partial(A, k = 10, target = smallest(), maxit = 4)
 
 c(largest_passed  = fit_pass$certificate$passed,
   smallest_passed = fit_fail$certificate$passed)
@@ -199,7 +210,7 @@ c(largest_passed  = fit_pass$certificate$passed,
 op <- par(mfrow = c(1, 2))
 ylim <- c(1e-16, 1e-1)
 plot_backward_error(fit_pass$certificate, main = "largest(): passed", ylim = ylim)
-plot_backward_error(fit_fail$certificate, main = "smallest(), maxit = 15: failed", ylim = ylim)
+plot_backward_error(fit_fail$certificate, main = "smallest(), maxit = 4: failed", ylim = ylim)
 par(op)
 ```
 
@@ -211,16 +222,17 @@ fit_pass$certificate$norm_bound_type
 fit_pass$certificate$scale_is_estimate
 ```
 
-This is the easy case. Every residual is below tolerance, orthogonality is
-near machine precision, and the norm bound used to scale the backward error
-is the *exact* Frobenius norm — no stochastic component.
+This is the easy case. Every residual is below tolerance and orthogonality is
+near machine precision. The scale is a lower bound on `||A||_2`, here the
+largest computed Ritz value (`norm_source` is `"ritz+identity"`), which for a
+largest-eigenvalue target is essentially the exact norm.
 
 ### Failed: residual too large
 
 The right-hand panel above is a genuine failure. The smallest eigenvalues of
 `A` sit in a dense cluster just above 1, so they need many more iterations than
-the well-separated largest ones. With `maxit = 15` the solver runs out of
-budget before any pair converges, and the verdict flips. The `failed_indices`
+the well-separated largest ones. With `maxit = 4` the solver runs out of
+restart budget before all pairs converge, and the verdict flips. The `failed_indices`
 slot tells you which Ritz pairs missed:
 
 ```{r failed}
@@ -239,7 +251,7 @@ fit_ok <- eig_partial(A, k = 10, target = smallest(), maxit = 40)
 fit_ok$certificate$passed
 ```
 
-```{r convergence, echo = FALSE, fig.cap = "Worst backward error per restart for the ten smallest eigenpairs. A tight budget (red) stalls above the tolerance; a generous one (blue) drives the error under the line and the certificate passes.", fig.alt = "Line plot on a log scale of backward error versus restart number. The red maxit-15 curve plateaus above the tolerance line; the blue maxit-40 curve descends below it."}
+```{r convergence, echo = FALSE, fig.cap = "Worst backward error per restart for the ten smallest eigenpairs. A tight budget (red) stalls above the tolerance; a generous one (blue) drives the error under the line and the certificate passes.", fig.alt = "Line plot on a log scale of backward error versus restart number. The red maxit-4 curve plateaus above the tolerance line; the blue maxit-40 curve descends below it."}
 h_fail <- diagnostics(fit_fail)$convergence_history
 h_ok   <- diagnostics(fit_ok)$convergence_history
 tol <- fit_fail$certificate$tolerance
@@ -251,7 +263,7 @@ tryCatch({
        xlab = "restart", ylab = "max backward error (log scale)")
   lines(h_ok$restart, h_ok$max_backward_error, lwd = 2, col = ec_blue)
   abline(h = tol, col = ec_tol, lty = 2, lwd = 2)
-  legend("right", c("maxit = 15 (failed)", "maxit = 40 (passed)", "tolerance"),
+  legend("right", c("maxit = 4 (failed)", "maxit = 40 (passed)", "tolerance"),
          col = c(ec_red, ec_blue, ec_tol), lwd = 2, lty = c(1, 1, 2),
          bty = "n", cex = 0.9, inset = 0.02)
 }, finally = par(op))
@@ -259,27 +271,41 @@ tryCatch({
 
 What to do: increase `maxit`, raise `tol`, or — when you suspect a clustered
 spectrum — request a larger `k` (so the cluster is fully covered by the
-returned basis) and slice afterwards. Here, lifting `maxit` from 15 to 40 is
+returned basis) and slice afterwards. Here, lifting `maxit` (the restart limit) from 4 to 40 is
 enough.
 
-### Estimated scale: `passed` remains false
+### Norm bounds: exact or a lower bound
 
-`norm_bound_type` names what the certificate used as the scale in the
-backward-error ratio. The common values identify exact, metadata-derived, and
-estimated scales:
+`norm_bound_type` says what kind of `||A||_2` value scaled the backward error,
+as `A` or `A+B` parts (`B = I` appears as `identity_exact`):
 
-- `frobenius_exact` — the Frobenius norm of an explicit dense matrix.
-- `frobenius_metadata` — exact Frobenius norm derived from sparse/diagonal
-  metadata.
-- `identity_exact` — the standard problem `B = I`.
-- `frobenius_hutchinson_estimate` — a stochastic Hutchinson estimate, used
-  for matrix-free operators that do not expose a norm.
+- `two_norm_exact` — the exact spectral norm: diagonal matrices
+  (`max |d_i|`), a full computed Hermitian spectrum (`eig_full()` and dense
+  solves that compute every eigenvalue), or a user-asserted
+  `metadata$two_norm`.
+- `two_norm_lower_bound` — a value that never exceeds `||A||_2`.
 
-A matrix-free operator (one wrapped via `linear_operator()` with no exact norm
-metadata) forces eigencore onto that last, stochastic estimate of `||A||`.
-Because the *denominator* of the backward-error ratio is then a sample, not a
-deterministic upper bound, the certificate sets `passed = FALSE` even if every
-sampled residual ratio is below `tol`. `scale_is_estimate` records why:
+`norm_source` names where the value came from:
+
+- `diagonal`, `full_spectrum`, `metadata`, `identity` — exact values.
+- `column_norms` — the largest column norm `||A e_j||` (dense, sparse,
+  tridiagonal storage; no operator applies).
+- `applied_vectors` — the largest `||A x|| / ||x||` over the certified vectors,
+  computed with the same operator applies as the residuals.
+- `ritz` — the residual-corrected value `|lambda| ||B x|| / ||x|| - ||r|| /
+  ||x||` when only residual norms are available.
+- `frobenius_rank_bound` — `||A||_F / sqrt(min(m, n))` when an operator only
+  carries Frobenius metadata.
+- `lanczos` — a 24-step Lanczos estimate on `A` (Hermitian) or `A^T A`,
+  verified as `||A y|| / ||y||` for its Ritz vector. It runs only when some
+  pair fails with the cheaper bounds but could pass with a larger one, uses a
+  fixed start vector (it never touches the R random-number stream), and is
+  memoised per operator.
+
+Because every source is a lower bound, matrix-free operators certify like any
+other operator. A `linear_operator()` with no norm metadata used to fall back
+to a stochastic Hutchinson estimate and withhold `passed`; it now certifies
+with the bound from its own vectors:
 
 ```{r withheld}
 set.seed(2)
@@ -296,22 +322,23 @@ op <- linear_operator(
   structure = hermitian(),
   name = "matrix-free Hermitian wrapper"
 )
-fit_mf <- eig_partial(op, k = 5, target = largest())
+# The matrix-free path runs the reference Lanczos solver, which needs a
+# larger subspace than the default to resolve this clustered spectrum.
+fit_mf <- eig_partial(op, k = 5, target = largest(),
+                      method = lanczos(max_subspace = 100))
 fit_mf$certificate$norm_bound_type
+fit_mf$certificate$norm_source
 fit_mf$certificate$scale_is_estimate
 fit_mf$certificate$passed
-fit_mf$certificate$notes
 ```
 
-eigencore does not have a deterministic Frobenius bound for this operator
-without paying for a full second pass over the matrix, so it uses a Hutchinson
-stochastic estimate. The result therefore reports `scale_is_estimate = TRUE`
-and keeps `passed = FALSE`, even when the sampled residual ratios are below the
-requested tolerance.
-
-What to do: if you need a hard `passed = TRUE`, switch to a problem class
-where eigencore can carry exact norm metadata (built-in dense / `dgCMatrix`
-/ `ddiMatrix` operators), or refine with a deterministic verification pass.
+A lower bound can be weak — for example `||A x|| / ||x||` for the *smallest*
+eigenvalues of an operator with no other information. Then the reported
+backward error over-states the true one and a pair may fail although it is
+accurate; the Lanczos refinement exists to close that gap before a pair is
+reported as failed. What to do if a pass matters and the bound is still weak:
+supply `metadata = list(two_norm = ...)` when you know `||A||_2`, or wrap a
+built-in dense / `dgCMatrix` / `ddiMatrix` matrix.
 
 ### Generalized SPD: B-orthogonality matters
 
@@ -356,9 +383,9 @@ without changing call sites.
 
 | You see                             | What it means                                                            | What to do                                                |
 |-------------------------------------|--------------------------------------------------------------------------|-----------------------------------------------------------|
-| `passed = TRUE`, `scale_is_estimate = FALSE` | All checks required by this certificate type passed with an exact scale. | Use the values/vectors within the stated certificate scope. |
-| `passed = FALSE`, `scale_is_estimate = FALSE`, `failed_indices` non-empty | Some pairs hit `maxit` before converging.                                  | Increase `maxit`, raise `tol`, or request a wider `k`.    |
-| `passed = FALSE`, `scale_is_estimate = TRUE` | The backward-error scale is stochastic, so the certificate does not report a pass. | Use a problem class with deterministic norm metadata, or run a verification pass. |
+| `passed = TRUE` | All checks required by this certificate type passed; the 2-norm scale was exact or a lower bound, so the backward error is not under-stated. | Use the values/vectors within the stated certificate scope. |
+| `passed = FALSE`, `failed_indices` non-empty | Some pairs hit `maxit` before converging.                                  | Increase `maxit`, raise `tol`, or request a wider `k`.    |
+| `passed = FALSE`, `norm_bound_type` is `two_norm_lower_bound`, residuals tiny | The norm lower bound may be weak (e.g. smallest targets of a matrix-free operator). | Supply `metadata$two_norm` if `||A||_2` is known, or use a built-in matrix class. |
 | `max_orthogonality_loss` near `sqrt(eps)` but residuals tiny | Iterative drift; clustered eigenvalues at risk of duplicates.             | Increase `maxit`; check whether there are repeated eigenvalues. |
 | `failed_indices` includes the first returned pairs | Some leading returned pairs exceed the tolerance. | Inspect `convergence_history`; increase `maxit` if the errors are still declining. |
 | `failed_indices` includes the last returned pairs | Some trailing returned pairs exceed the tolerance. | Inspect the spectral gap; a wider `k` may help when the target boundary cuts through a cluster. |
@@ -369,8 +396,7 @@ with the solver plan and the requirements of your downstream analysis.
 
 ## Where to go next
 
-- `vignette("sparse-pca")` shows a realistic withheld certificate in
-  context — centering a sparse matrix trades an exact norm bound for a
-  stochastic one unless you supply metadata yourself.
+- `vignette("sparse-pca")` shows certificates for centered and scaled sparse
+  operators in context, including operators that carry no norm metadata.
 - `vignette("eigencore")` and `vignette("generalized-eigenproblems")` cover
   the workflows that produce the certificates read here.

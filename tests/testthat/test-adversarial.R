@@ -424,12 +424,16 @@ test_that("native Arnoldi restart budget is wired and keeps best attempt", {
     # Krylov-Schur certifies this bidiagonal at 1e-12 on the first attempt;
     # an unattainable tolerance keeps every attempt uncertified.
     tol = 1e-16,
-    maxit = 8L,
+    # maxit is an iteration limit (C15); the Krylov subspace size is set on
+    # the method descriptor.
+    method = auto(max_subspace = 8L),
     seed = 1,
     allow_dense_fallback = "never"
   )
 
   history <- fit$restart$attempt_history
+  expect_equal(fit$plan$controls$max_subspace, 8L)
+  expect_equal(history$max_subspace[[1L]], 8L)
   finite_errors <- history$max_backward_error[is.finite(history$max_backward_error)]
 
   expect_equal(fit$plan$method, eigencore:::native_refined_arnoldi_label())

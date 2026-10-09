@@ -44,6 +44,20 @@ static double block_orthogonality_loss_dsyrk(const double* X, int rows, int k) {
   return loss;
 }
 
+// Largest column 2-norm of a CSC matrix: a structural lower bound on ||A||_2.
+static double csc_max_column_norm(const int* Ap, const double* Ax, int n) {
+  double best = 0.0;
+  for (int col = 0; col < n; ++col) {
+    long double sum = 0.0L;
+    for (int idx = Ap[col]; idx < Ap[col + 1]; ++idx) {
+      sum += static_cast<long double>(Ax[idx]) * Ax[idx];
+    }
+    const double value = sqrt(static_cast<double>(sum));
+    if (value > best) best = value;
+  }
+  return best;
+}
+
 // Exact two-sided SVD certificate in ORIGINAL coordinates for a CSC matrix A
 // and candidate triplets (d, U, V):
 //   left_j  = ||A v_j   - d_j u_j||,   right_j = ||A^T u_j - d_j v_j||,
@@ -60,14 +74,19 @@ static void csc_two_sided_svd_certificate(const int* Ai, const int* Ap,
                                           const double* V,
                                           const double* av_known,
                                           const double* atu_known,
-                                          double scale_value,
+                                          double norm_lower,
                                           double tol, double* left,
                                           double* right, double* combined,
                                           double* backward, int* converged,
-                                          double* orth_u, double* orth_v) {
+                                          double* orth_u, double* orth_v,
+                                          double* scale,
+                                          double* norm_out,
+                                          double* applied_out) {
   if (k <= 0) {
     *orth_u = 0.0;
     *orth_v = 0.0;
+    *norm_out = norm_lower;
+    *applied_out = 0.0;
     return;
   }
   CSCOperator impl = {m, n, Ai, Ap, Ax};
@@ -87,6 +106,11 @@ static void csc_two_sided_svd_certificate(const int* Ai, const int* Ap,
                         atu_work.data(), n, nullptr);
     atu = atu_work.data();
   }
+  // Spectral-norm lower bound for the backward-error denominator (C12):
+  // L = max(norm_lower, ||A v_j|| / ||v_j||, ||A^T u_j|| / ||u_j||), each term
+  // <= ||A||_2, so the reported backward error over-estimates the normwise
+  // one and `converged` stays sound.
+  double applied = 0.0;
   for (int col = 0; col < k; ++col) {
     const double sigma = d[col];
     const double* av_col = av + static_cast<int64_t>(col) * m;
@@ -95,24 +119,49 @@ static void csc_two_sided_svd_certificate(const int* Ai, const int* Ap,
     const double* v_col = V + static_cast<int64_t>(col) * n;
     long double left_sum = 0.0L;
     long double right_sum = 0.0L;
+    long double av_sum = 0.0L;
+    long double atu_sum = 0.0L;
+    long double u_sum = 0.0L;
+    long double v_sum = 0.0L;
     for (int row = 0; row < m; ++row) {
       const double residual = av_col[row] - sigma * u_col[row];
       left_sum += static_cast<long double>(residual) * residual;
+      av_sum += static_cast<long double>(av_col[row]) * av_col[row];
+      u_sum += static_cast<long double>(u_col[row]) * u_col[row];
     }
     for (int row = 0; row < n; ++row) {
       const double residual = atu_col[row] - sigma * v_col[row];
       right_sum += static_cast<long double>(residual) * residual;
+      atu_sum += static_cast<long double>(atu_col[row]) * atu_col[row];
+      v_sum += static_cast<long double>(v_col[row]) * v_col[row];
+    }
+    const double v_norm = sqrt(static_cast<double>(v_sum));
+    const double u_norm = sqrt(static_cast<double>(u_sum));
+    if (v_norm > 0.0) {
+      const double ratio = sqrt(static_cast<double>(av_sum)) / v_norm;
+      if (R_FINITE(ratio) && ratio > applied) applied = ratio;
+    }
+    if (u_norm > 0.0) {
+      const double ratio = sqrt(static_cast<double>(atu_sum)) / u_norm;
+      if (R_FINITE(ratio) && ratio > applied) applied = ratio;
     }
     const double l = sqrt(static_cast<double>(left_sum));
     const double r = sqrt(static_cast<double>(right_sum));
-    const double c = sqrt(l * l + r * r);
-    const double be = c / scale_value;
     left[col] = l;
     right[col] = r;
-    combined[col] = c;
+    combined[col] = sqrt(l * l + r * r);
+  }
+  const double lower = (R_FINITE(norm_lower) && norm_lower > 0.0) ? norm_lower : 0.0;
+  const double norm_used = lower > applied ? lower : applied;
+  const double scale_value = norm_used > DBL_EPSILON ? norm_used : DBL_EPSILON;
+  for (int col = 0; col < k; ++col) {
+    const double be = combined[col] / scale_value;
+    scale[col] = scale_value;
     backward[col] = be;
     converged[col] = (R_FINITE(be) && be <= tol) ? TRUE : FALSE;
   }
+  *norm_out = norm_used;
+  *applied_out = applied;
   *orth_u = block_orthogonality_loss_dsyrk(U, m, k);
   *orth_v = block_orthogonality_loss_dsyrk(V, n, k);
 }
@@ -146,6 +195,7 @@ static void accumulate_sparse_gram_upper(int dim, int count, const int* ptr,
     panel_cols = 0;
   };
   for (int j = 0; j < count; ++j) {
+    if ((j & 63) == 0) eigencore_check_interrupt();
     const int start = ptr[j];
     const int end = ptr[j + 1];
     const int nnz = end - start;
@@ -352,7 +402,7 @@ static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
   if (m < 2 || rank < 1 || rank > m) {
     return 0;
   }
-  int max_steps = std::max(43, 6 * rank + 13);
+  int max_steps = std::max(53, 6 * rank + 23);
   if (max_steps > m) {
     max_steps = m;
   }
@@ -382,6 +432,7 @@ static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
 
   int active = 0;
   for (int step = 0; step < max_steps; ++step) {
+    eigencore_check_interrupt();
     const double* q = Q.data() + static_cast<int64_t>(step) * m;
     csc_left_normal_apply_vec(Ai, Ap, Ax, m, n, q, z.data(), tmp_n.data());
 
@@ -448,7 +499,12 @@ static int csc_implicit_left_normal_lanczos_attempt(const int* Ai,
   }
 
   std::vector<double> Gu_exact(static_cast<size_t>(m), 0.0);
-  const double scale_value_native = norm_A > DBL_EPSILON ? norm_A : DBL_EPSILON;
+  // Spectral-norm lower bound (C12): the caller's structural bound or the
+  // top Ritz singular value of the normal operator, whichever is larger.
+  const double top_sigma = theta[static_cast<size_t>(active - 1)] > 0.0 ?
+    sqrt(theta[static_cast<size_t>(active - 1)]) : 0.0;
+  const double norm_lower = norm_A > top_sigma ? norm_A : top_sigma;
+  const double scale_value_native = norm_lower > DBL_EPSILON ? norm_lower : DBL_EPSILON;
   double native_max_backward = 0.0;
   for (int out_col = 0; out_col < rank; ++out_col) {
     const int src_col = active - 1 - out_col;
@@ -510,7 +566,7 @@ static int csc_implicit_right_normal_lanczos_attempt(const int* Ai,
   if (n < 2 || rank < 1 || rank > n) {
     return 0;
   }
-  int max_steps = std::max(38, 6 * rank + 8);
+  int max_steps = std::max(48, 6 * rank + 18);
   if (max_steps > n) {
     max_steps = n;
   }
@@ -543,6 +599,7 @@ static int csc_implicit_right_normal_lanczos_attempt(const int* Ai,
   int active = 0;
   double final_beta = 0.0;
   for (int step = 0; step < max_steps; ++step) {
+    eigencore_check_interrupt();
     const double* q = Q.data() + static_cast<int64_t>(step) * n;
     csc_right_normal_apply_vec(Ai, Ap, Ax, m, n, q, z.data(), tmp_m.data());
 
@@ -609,7 +666,12 @@ static int csc_implicit_right_normal_lanczos_attempt(const int* Ai,
     return 0;
   }
 
-  const double scale_value_native = norm_A > DBL_EPSILON ? norm_A : DBL_EPSILON;
+  // Spectral-norm lower bound (C12): the caller's structural bound or the
+  // top Ritz singular value of the normal operator, whichever is larger.
+  const double top_sigma = theta[static_cast<size_t>(active - 1)] > 0.0 ?
+    sqrt(theta[static_cast<size_t>(active - 1)]) : 0.0;
+  const double norm_lower = norm_A > top_sigma ? norm_A : top_sigma;
+  const double scale_value_native = norm_lower > DBL_EPSILON ? norm_lower : DBL_EPSILON;
   double native_max_backward = 0.0;
   for (int out_col = 0; out_col < rank; ++out_col) {
     const int src_col = active - 1 - out_col;
@@ -658,7 +720,7 @@ static int gram_krylov_left_normal_attempt(const double* gram,
   if (m < 2 || rank < 1 || rank > m) {
     return 0;
   }
-  int max_steps = std::max(45, 6 * rank + 15);
+  int max_steps = std::max(55, 6 * rank + 25);
   if (max_steps > m) {
     max_steps = m;
   }
@@ -689,6 +751,7 @@ static int gram_krylov_left_normal_attempt(const double* gram,
   const double zero = 0.0;
   int active = 0;
   for (int step = 0; step < max_steps; ++step) {
+    eigencore_check_interrupt();
     const double* q = Q.data() + static_cast<int64_t>(step) * m;
     F77_CALL(dgemv)(&trans_N, &m, &m, &one, gram, &m, q, &inc_one,
                     &zero, z.data(), &inc_one FCONE);
@@ -752,7 +815,12 @@ static int gram_krylov_left_normal_attempt(const double* gram,
   }
 
   std::vector<double> Gu(static_cast<size_t>(m), 0.0);
-  const double scale_value = norm_A > DBL_EPSILON ? norm_A : DBL_EPSILON;
+  // Spectral-norm lower bound (C12): the caller's structural bound or the
+  // top Ritz singular value of the normal operator, whichever is larger.
+  const double top_sigma = theta[static_cast<size_t>(active - 1)] > 0.0 ?
+    sqrt(theta[static_cast<size_t>(active - 1)]) : 0.0;
+  const double norm_lower = norm_A > top_sigma ? norm_A : top_sigma;
+  const double scale_value = norm_lower > DBL_EPSILON ? norm_lower : DBL_EPSILON;
   double max_backward = 0.0;
   for (int out_col = 0; out_col < rank; ++out_col) {
     const int src_col = active - 1 - out_col;
@@ -839,6 +907,7 @@ static int gram_top_subspace_attempt(const double* gram,
   const double zero = 0.0;
   const int max_iter = 8;
   for (int iter = 0; iter < max_iter; ++iter) {
+    eigencore_check_interrupt();
     F77_CALL(dgemm)(&trans_N, &trans_N, &m, &subspace, &m,
                     &one, gram, &m, Q.data(), &m,
                     &zero, Z.data(), &m FCONE FCONE);
@@ -892,7 +961,12 @@ static int gram_top_subspace_attempt(const double* gram,
   F77_CALL(dgemm)(&trans_N, &trans_N, &m, &rank, &m,
                   &one, gram, &m, U, &m,
                   &zero, GU.data(), &m FCONE FCONE);
-  const double scale_value = norm_A > DBL_EPSILON ? norm_A : DBL_EPSILON;
+  // Spectral-norm lower bound (C12): the caller's structural bound or the
+  // top Ritz singular value of the normal operator, whichever is larger.
+  const double top_sigma = theta[static_cast<size_t>(subspace - 1)] > 0.0 ?
+    sqrt(theta[static_cast<size_t>(subspace - 1)]) : 0.0;
+  const double norm_lower = norm_A > top_sigma ? norm_A : top_sigma;
+  const double scale_value = norm_lower > DBL_EPSILON ? norm_lower : DBL_EPSILON;
   double max_backward = 0.0;
   for (int col = 0; col < rank; ++col) {
     const double lambda = values[col] > 0.0 ? values[col] : 0.0;
@@ -919,6 +993,7 @@ static int gram_top_subspace_attempt(const double* gram,
 
 extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
                                             SEXP dim_, SEXP rank_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_)) {
     error("invalid CSC inputs");
   }
@@ -949,6 +1024,9 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   }
   const double norm_A = sqrt(frob2 > 0.0 ? frob2 : 0.0);
   const double scale_value = norm_A > DBL_EPSILON ? norm_A : DBL_EPSILON;
+  // Opt-in candidate attempts judge themselves against a spectral-norm lower
+  // bound (C12), like the final certificate.
+  const double norm_lower_A = csc_max_column_norm(Ap, Ax, n);
 
   std::vector<double> values(static_cast<size_t>(rank), 0.0);
   SEXP u_ = PROTECT(allocMatrix(REALSXP, m, rank));
@@ -967,7 +1045,7 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   if (attempt_implicit_lanczos && m <= 128 && rank <= 16) {
     stage_timer = native_timer_now();
     used_implicit_lanczos = csc_implicit_left_normal_lanczos_attempt(
-      Ai, Ap, Ax, m, n, rank, tol, norm_A, values.data(), REAL(u_),
+      Ai, Ap, Ax, m, n, rank, tol, norm_lower_A, values.data(), REAL(u_),
       &implicit_lanczos_iterations, &implicit_lanczos_max_backward_error
     );
     stage_eigensolve_seconds = native_timer_elapsed(stage_timer);
@@ -986,13 +1064,13 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
     const int attempt_subspace_eigensolve = asLogical(subspace_option_) == TRUE;
     if (attempt_gram_krylov && m <= 90 && rank <= 8) {
       used_gram_krylov = gram_krylov_left_normal_attempt(
-        gram.data(), m, rank, tol, norm_A, values.data(), REAL(u_),
+        gram.data(), m, rank, tol, norm_lower_A, values.data(), REAL(u_),
         &gram_krylov_iterations, &subspace_max_backward_error
       );
     }
     if (!used_gram_krylov && attempt_subspace_eigensolve && m <= 128 && rank <= 16) {
       used_subspace_eigensolve = gram_top_subspace_attempt(
-        gram.data(), m, rank, tol, norm_A, values.data(), REAL(u_),
+        gram.data(), m, rank, tol, norm_lower_A, values.data(), REAL(u_),
         &subspace_max_backward_error
       );
     }
@@ -1168,16 +1246,16 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   SEXP converged_ = PROTECT(allocVector(LGLSXP, rank));
   SEXP scale_ = PROTECT(allocVector(REALSXP, rank));
   SEXP orth_ = PROTECT(allocVector(REALSXP, 2));
-  for (int col = 0; col < rank; ++col) {
-    REAL(scale_)[col] = scale_value;
-  }
   // Certify in original coordinates: both residuals from A itself and the
   // orthogonality of the returned U and V (never inferred from the Gram).
+  double cert_norm_A = 0.0;
+  double cert_applied_bound = 0.0;
   csc_two_sided_svd_certificate(
     Ai, Ap, Ax, m, n, rank, REAL(d_), REAL(u_), REAL(v_),
-    nullptr, atu_form.data(), scale_value, tol,
+    nullptr, atu_form.data(), csc_max_column_norm(Ap, Ax, n), tol,
     REAL(left_), REAL(right_), REAL(combined_), REAL(backward_),
-    LOGICAL(converged_), REAL(orth_), REAL(orth_) + 1
+    LOGICAL(converged_), REAL(orth_), REAL(orth_) + 1,
+    REAL(scale_), &cert_norm_A, &cert_applied_bound
   );
   SEXP orth_names_ = PROTECT(allocVector(STRSXP, 2));
   SET_STRING_ELT(orth_names_, 0, mkChar("U"));
@@ -1185,7 +1263,7 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   setAttrib(orth_, R_NamesSymbol, orth_names_);
   stage_diagnostics_seconds = native_timer_elapsed(stage_timer);
 
-  SEXP diagnostics_ = PROTECT(allocVector(VECSXP, 7));
+  SEXP diagnostics_ = PROTECT(allocVector(VECSXP, 9));
   SET_VECTOR_ELT(diagnostics_, 0, left_);
   SET_VECTOR_ELT(diagnostics_, 1, right_);
   SET_VECTOR_ELT(diagnostics_, 2, combined_);
@@ -1193,7 +1271,9 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   SET_VECTOR_ELT(diagnostics_, 4, orth_);
   SET_VECTOR_ELT(diagnostics_, 5, converged_);
   SET_VECTOR_ELT(diagnostics_, 6, scale_);
-  SEXP diag_names_ = PROTECT(allocVector(STRSXP, 7));
+  SET_VECTOR_ELT(diagnostics_, 7, ScalarReal(cert_norm_A));
+  SET_VECTOR_ELT(diagnostics_, 8, ScalarReal(cert_applied_bound));
+  SEXP diag_names_ = PROTECT(allocVector(STRSXP, 9));
   SET_STRING_ELT(diag_names_, 0, mkChar("left"));
   SET_STRING_ELT(diag_names_, 1, mkChar("right"));
   SET_STRING_ELT(diag_names_, 2, mkChar("combined"));
@@ -1201,6 +1281,8 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   SET_STRING_ELT(diag_names_, 4, mkChar("orthogonality"));
   SET_STRING_ELT(diag_names_, 5, mkChar("converged"));
   SET_STRING_ELT(diag_names_, 6, mkChar("scale"));
+  SET_STRING_ELT(diag_names_, 7, mkChar("norm_A"));
+  SET_STRING_ELT(diag_names_, 8, mkChar("norm_A_applied_bound"));
   setAttrib(diagnostics_, R_NamesSymbol, diag_names_);
 
   SEXP stage_ = PROTECT(allocVector(REALSXP, 4));
@@ -1250,6 +1332,7 @@ extern "C" SEXP eigencore_csc_left_gram_svd(SEXP i_, SEXP p_, SEXP x_,
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(22);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 static SEXP eigencore_csc_right_gram_svd_impl(
@@ -1291,6 +1374,9 @@ static SEXP eigencore_csc_right_gram_svd_impl(
   }
   const double norm_A = sqrt(frob2 > 0.0 ? frob2 : 0.0);
   const double scale_value = norm_A > DBL_EPSILON ? norm_A : DBL_EPSILON;
+  // Opt-in candidate attempts judge themselves against a spectral-norm lower
+  // bound (C12), like the final certificate.
+  const double norm_lower_A = csc_max_column_norm(Ap, Ax, n);
 
   std::vector<double> gram;
   std::vector<double> values_work(static_cast<size_t>(n), 0.0);
@@ -1307,7 +1393,7 @@ static SEXP eigencore_csc_right_gram_svd_impl(
   if (attempt_implicit_lanczos && n <= 128 && rank <= 16) {
     stage_timer = native_timer_now();
     used_implicit_lanczos = csc_implicit_right_normal_lanczos_attempt(
-      Ai, Ap, Ax, m, n, rank, tol, norm_A, values_work.data(), REAL(v_),
+      Ai, Ap, Ax, m, n, rank, tol, norm_lower_A, values_work.data(), REAL(v_),
       &implicit_lanczos_iterations, &implicit_lanczos_max_backward_error
     );
     stage_eigensolve_seconds += native_timer_elapsed(stage_timer);
@@ -1424,16 +1510,16 @@ static SEXP eigencore_csc_right_gram_svd_impl(
   SEXP converged_ = PROTECT(allocVector(LGLSXP, rank));
   SEXP scale_ = PROTECT(allocVector(REALSXP, rank));
   SEXP orth_ = PROTECT(allocVector(REALSXP, 2));
-  for (int col = 0; col < rank; ++col) {
-    REAL(scale_)[col] = scale_value;
-  }
   // Certify in original coordinates: both residuals from A itself and the
   // orthogonality of the returned U and V (never inferred from the Gram).
+  double cert_norm_A = 0.0;
+  double cert_applied_bound = 0.0;
   csc_two_sided_svd_certificate(
     Ai, Ap, Ax, m, n, rank, REAL(d_), REAL(u_), REAL(v_),
-    av_form.data(), nullptr, scale_value, tol,
+    av_form.data(), nullptr, csc_max_column_norm(Ap, Ax, n), tol,
     REAL(left_), REAL(right_), REAL(combined_), REAL(backward_),
-    LOGICAL(converged_), REAL(orth_), REAL(orth_) + 1
+    LOGICAL(converged_), REAL(orth_), REAL(orth_) + 1,
+    REAL(scale_), &cert_norm_A, &cert_applied_bound
   );
   SEXP orth_names_ = PROTECT(allocVector(STRSXP, 2));
   SET_STRING_ELT(orth_names_, 0, mkChar("U"));
@@ -1479,7 +1565,7 @@ static SEXP eigencore_csc_right_gram_svd_impl(
     }
   }
 
-  SEXP diagnostics_ = PROTECT(allocVector(VECSXP, 7));
+  SEXP diagnostics_ = PROTECT(allocVector(VECSXP, 9));
   SET_VECTOR_ELT(diagnostics_, 0, left_);
   SET_VECTOR_ELT(diagnostics_, 1, right_);
   SET_VECTOR_ELT(diagnostics_, 2, combined_);
@@ -1487,7 +1573,9 @@ static SEXP eigencore_csc_right_gram_svd_impl(
   SET_VECTOR_ELT(diagnostics_, 4, orth_);
   SET_VECTOR_ELT(diagnostics_, 5, converged_);
   SET_VECTOR_ELT(diagnostics_, 6, scale_);
-  SEXP diag_names_ = PROTECT(allocVector(STRSXP, 7));
+  SET_VECTOR_ELT(diagnostics_, 7, ScalarReal(cert_norm_A));
+  SET_VECTOR_ELT(diagnostics_, 8, ScalarReal(cert_applied_bound));
+  SEXP diag_names_ = PROTECT(allocVector(STRSXP, 9));
   SET_STRING_ELT(diag_names_, 0, mkChar("left"));
   SET_STRING_ELT(diag_names_, 1, mkChar("right"));
   SET_STRING_ELT(diag_names_, 2, mkChar("combined"));
@@ -1495,6 +1583,8 @@ static SEXP eigencore_csc_right_gram_svd_impl(
   SET_STRING_ELT(diag_names_, 4, mkChar("orthogonality"));
   SET_STRING_ELT(diag_names_, 5, mkChar("converged"));
   SET_STRING_ELT(diag_names_, 6, mkChar("scale"));
+  SET_STRING_ELT(diag_names_, 7, mkChar("norm_A"));
+  SET_STRING_ELT(diag_names_, 8, mkChar("norm_A_applied_bound"));
   setAttrib(diagnostics_, R_NamesSymbol, diag_names_);
 
   SEXP stage_ = PROTECT(allocVector(REALSXP, 4));
@@ -1546,10 +1636,12 @@ static SEXP eigencore_csc_right_gram_svd_impl(
 
 extern "C" SEXP eigencore_csc_right_gram_svd(SEXP i_, SEXP p_, SEXP x_,
                                              SEXP dim_, SEXP rank_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   return eigencore_csc_right_gram_svd_impl(
     i_, p_, x_, dim_, rank_, tol_, TRUE,
     0.0, 0.0, 0.0, 0.0, R_PosInf, 0
   );
+  EIGENCORE_ENTRY_END
 }
 
 static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
@@ -1648,35 +1740,46 @@ static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
     }
   }
 
-  SEXP cert_ = PROTECT(allocVector(VECSXP, 18));
+  // Norm provenance (C12): the denominator is max(largest column norm,
+  // ||A v_j|| / ||v_j||, ||A^T u_j|| / ||u_j||), a lower bound on ||A||_2.
+  const double cert_norm_A = asReal(VECTOR_ELT(diagnostics_, 7));
+  const double cert_applied = asReal(VECTOR_ELT(diagnostics_, 8));
+  SEXP norm_values_ = PROTECT(ScalarReal(cert_norm_A));
+  SEXP norm_values_names_ = PROTECT(mkString("A"));
+  setAttrib(norm_values_, R_NamesSymbol, norm_values_names_);
+  SEXP cert_ = PROTECT(allocVector(VECSXP, 20));
   SET_VECTOR_ELT(cert_, 0, ScalarLogical(all_converged && orth_passed));
   SET_VECTOR_ELT(cert_, 1, ScalarReal(tol));
   SET_VECTOR_ELT(cert_, 2, ScalarReal(orth_tol));
   SET_VECTOR_ELT(cert_, 3, ScalarLogical(TRUE));
   SET_VECTOR_ELT(cert_, 4, mkString("residual_backward_error"));
-  SET_VECTOR_ELT(cert_, 5, mkString("frobenius_exact"));
-  SET_VECTOR_ELT(cert_, 6, ScalarLogical(FALSE));
-  SET_VECTOR_ELT(cert_, 7, ScalarReal(max_backward));
-  SET_VECTOR_ELT(cert_, 8, ScalarReal(max_residual));
-  SET_VECTOR_ELT(cert_, 9, ScalarReal(max_orth));
-  SET_VECTOR_ELT(cert_, 10, ScalarLogical(orth_passed));
-  SET_VECTOR_ELT(cert_, 11, failed_);
-  SET_VECTOR_ELT(cert_, 12, scale_);
-  SET_VECTOR_ELT(cert_, 13, allocVector(STRSXP, 0));
-  SET_VECTOR_ELT(cert_, 14, residuals_);
-  SET_VECTOR_ELT(cert_, 15, backward_);
-  SET_VECTOR_ELT(cert_, 16, orth_);
-  SET_VECTOR_ELT(cert_, 17, converged_);
-  SEXP cert_names_ = PROTECT(allocVector(STRSXP, 18));
+  SET_VECTOR_ELT(cert_, 5, mkString("two_norm_lower_bound"));
+  SET_VECTOR_ELT(cert_, 6, mkString(cert_applied >= cert_norm_A ?
+                                    "applied_vectors" : "column_norms"));
+  SET_VECTOR_ELT(cert_, 7, norm_values_);
+  SET_VECTOR_ELT(cert_, 8, ScalarLogical(FALSE));
+  SET_VECTOR_ELT(cert_, 9, ScalarReal(max_backward));
+  SET_VECTOR_ELT(cert_, 10, ScalarReal(max_residual));
+  SET_VECTOR_ELT(cert_, 11, ScalarReal(max_orth));
+  SET_VECTOR_ELT(cert_, 12, ScalarLogical(orth_passed));
+  SET_VECTOR_ELT(cert_, 13, failed_);
+  SET_VECTOR_ELT(cert_, 14, scale_);
+  SET_VECTOR_ELT(cert_, 15, allocVector(STRSXP, 0));
+  SET_VECTOR_ELT(cert_, 16, residuals_);
+  SET_VECTOR_ELT(cert_, 17, backward_);
+  SET_VECTOR_ELT(cert_, 18, orth_);
+  SET_VECTOR_ELT(cert_, 19, converged_);
+  SEXP cert_names_ = PROTECT(allocVector(STRSXP, 20));
   const char* cert_names[] = {
     "passed", "tolerance", "orthogonality_tolerance",
     "orthogonality_required", "certificate_type", "norm_bound_type",
+    "norm_source", "norm_values",
     "scale_is_estimate", "max_backward_error", "max_residual",
     "max_orthogonality_loss", "orthogonality_passed", "failed_indices",
     "scale", "notes", "residuals", "backward_error", "orthogonality",
     "converged"
   };
-  for (int i = 0; i < 18; ++i) SET_STRING_ELT(cert_names_, i, mkChar(cert_names[i]));
+  for (int i = 0; i < 20; ++i) SET_STRING_ELT(cert_names_, i, mkChar(cert_names[i]));
   setAttrib(cert_, R_NamesSymbol, cert_names_);
   SEXP cert_class_ = PROTECT(allocVector(STRSXP, 1));
   SET_STRING_ELT(cert_class_, 0, mkChar("eigencore_certificate"));
@@ -1822,13 +1925,14 @@ static SEXP eigencore_csc_gram_svd_fast_result_from_native(SEXP native_,
   SET_STRING_ELT(out_class_, 0, mkChar("eigencore_svd_result"));
   setAttrib(out_, R_ClassSymbol, out_class_);
 
-  UNPROTECT(17);
+  UNPROTECT(19);
   return out_;
 }
 
 extern "C" SEXP eigencore_csc_left_gram_svd_fast_result(SEXP i_, SEXP p_, SEXP x_,
                                                         SEXP dim_, SEXP rank_,
                                                         SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   SEXP native_ = PROTECT(eigencore_csc_left_gram_svd(i_, p_, x_, dim_, rank_, tol_));
   SEXP out_ = eigencore_csc_gram_svd_fast_result_from_native(
     native_,
@@ -1840,11 +1944,13 @@ extern "C" SEXP eigencore_csc_left_gram_svd_fast_result(SEXP i_, SEXP p_, SEXP x
   );
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }
 
 extern "C" SEXP eigencore_csc_right_gram_svd_fast_result(SEXP i_, SEXP p_, SEXP x_,
                                                          SEXP dim_, SEXP rank_,
                                                          SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
   SEXP native_ = PROTECT(eigencore_csc_right_gram_svd(i_, p_, x_, dim_, rank_, tol_));
   SEXP out_ = eigencore_csc_gram_svd_fast_result_from_native(
     native_,
@@ -1856,4 +1962,5 @@ extern "C" SEXP eigencore_csc_right_gram_svd_fast_result(SEXP i_, SEXP p_, SEXP 
   );
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
 }

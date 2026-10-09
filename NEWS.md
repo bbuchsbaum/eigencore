@@ -1,5 +1,34 @@
 # eigencore (development version)
 
+## Behaviour change: two-norm backward errors
+
+* Certificate backward errors now use the standard normwise 2-norm
+  definition, `||A x - lambda B x|| / ((||A||_2 + |lambda| ||B||_2) ||x||)`
+  for eigenpairs and `sqrt(||A v - s u||^2 + ||A^H u - s v||^2) / ||A||_2`
+  for singular triplets, instead of dividing by Frobenius norms (up to
+  `sqrt(rank)` times larger, so certificates were correspondingly more
+  lenient). Reported backward errors are larger than before, and results
+  whose residuals only met the Frobenius-scaled tolerance now fail.
+* The denominator is exact where cheap (diagonal matrices, a full computed
+  spectrum, `metadata$two_norm`) and otherwise a lower bound on `||A||_2`:
+  the largest column norm, `||A x|| / ||x||` of the certified vectors, or,
+  only when it could flip a failing pair, a short deterministic Lanczos
+  estimate memoised per operator (it does not use the random-number stream).
+  A lower bound over-states the backward error, so `passed` stays sound.
+* `norm_bound_type` values are now `"two_norm_exact"`,
+  `"two_norm_lower_bound"` and `"identity_exact"` (replacing
+  `frobenius_exact`, `frobenius_metadata` and
+  `frobenius_hutchinson_estimate`); new fields `norm_source` and
+  `norm_values` record where the scale came from. The stochastic Hutchinson
+  norm estimate is gone, so matrix-free operators without norm metadata now
+  certify (`scale_is_estimate` is always `FALSE` for built-in
+  certificates). Native solvers use the same lower bounds for their internal
+  convergence scales; the implicit Gram SVD kernel runs at `tol / 2` and,
+  if the exact certificate still fails, retries once at a tighter tolerance.
+* Certificates for complex eigenvectors of real sparse or matrix-free
+  operators apply the operator to real and imaginary parts instead of
+  densifying the source.
+
 ## Correctness fixes
 
 * `center(rows = TRUE, columns = TRUE)` now double centers correctly. Row
@@ -35,6 +64,57 @@
 * The native Gram SVD start vector is no longer an exact alternating sign
   pattern (orthogonal to the constant vector), and its zero threshold is
   scale invariant.
+
+## Iteration limits, subspace sizes and nonsymmetric targets
+
+* **Behaviour change:** `maxit` in `eig_partial()`, `solve()` and
+  `plan_solver()` is now what its documentation always said, an iteration
+  limit. It used to set the Krylov subspace size. It now caps thick-restart
+  cycles (scalar, block, generalized and shift-invert callback Lanczos),
+  Krylov-Schur restarts (nonsymmetric Arnoldi), restart cycles (reference
+  Arnoldi), LOBPCG iterations, and Lanczos steps on unrestarted routes. The
+  resolved limit is recorded in `plan$controls$iteration_limit` and
+  `plan$controls$iteration_limit_kind`. To set the subspace size, use
+  `max_subspace` on the method descriptor: `lanczos()`, `golub_kahan()`, the
+  new `auto(max_subspace =)` (honoured by whichever Krylov route the planner
+  picks, including shift-invert and the SVD Golub-Kahan / implicit-Gram
+  routes), and the new `shift_invert(max_subspace =)`. Code that passed
+  `maxit = m` to get an `m`-dimensional subspace should pass
+  `method = auto(max_subspace = m)` or `lanczos(max_subspace = m)` instead.
+  If `lanczos(max_restarts =)` or `lobpcg(maxit =)` disagrees with `maxit`,
+  that is now an error. `lobpcg()` now defaults to `maxit = NULL`, which
+  means the solve's `maxit` or the `eigencore.lobpcg_maxit` option (200).
+* RSpectra shims: `opts$ncv` now maps to `auto(max_subspace = ncv)` (or
+  `lanczos(max_subspace = ncv)` with `initvec`), so the route is the same as
+  without it. In `eigs()`/`eigs_sym()`, `opts$maxitr` maps to `maxit` instead
+  of being ignored. `svds()` still ignores `maxitr` and warns about it.
+* `eigs()` computes left eigenvectors only when asked, as `RSpectra::eigs()`
+  does. The new `left = FALSE` argument skips the adjoint Arnoldi solve and
+  its certificate, which roughly halves the cost. `eig_partial()` and
+  `solve()` take a new `left_vectors = c("auto", "none", "compute")`
+  argument. The default `"auto"` keeps the two-sided certificate.
+* The default scalar thick-restart Lanczos subspace is now ARPACK-like
+  (`max(2k + 1, 20)`, capped at `n`) instead of `3k + 20`.
+* Thick-restart Lanczos and implicit-Gram SVD results are sorted by target
+  order. Previously values came back in lock order (for example 9, 7, 9).
+* Nonsymmetric `smallest_magnitude()` is supported. Dense and sparse inputs
+  run through shift-invert Arnoldi at `sigma = 0`. If `A` is singular, the
+  shift is perturbed and the change is recorded. Matrix-free operators use
+  the Krylov-Schur smallest-magnitude ranking directly.
+* Nonsymmetric `nearest(sigma)` and `shift_invert(sigma)` run Krylov-Schur
+  Arnoldi on a factorised `A - sigma I`: dense LAPACK QR, sparse LU with
+  AMD ordering, or a user `solve`. Eigenvalues are recovered as
+  `lambda = sigma + 1/theta`. Right and left residuals are certified on the
+  original `A`, and transposed solves reuse the forward factorisation. As a
+  result, `eigs(A, k, sigma =)` now works for nonsymmetric `A` with a real
+  `sigma`.
+* Factorization labels now match the code. Tridiagonal shift-invert and
+  metric solves use pivoted LU (`dgttrf`/`dgttrs`), so the labels changed
+  from `tridiagonal_thomas_*` to `tridiagonal_lu_*`, and
+  `native_sparse_tridiagonal_thomas` became `native_sparse_tridiagonal_lu`.
+  Shift-invert routes that run the native thick-restart Lanczos callback are
+  now labelled `native thick-restart ... Lanczos shift-invert (... solve
+  callback)` instead of `reference ...`.
 
 ## RSpectra compatibility
 

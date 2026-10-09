@@ -378,7 +378,7 @@ test_that("smallest matrix-free SVD promotion requires exact norm metadata", {
     fit$method,
     eigencore:::native_matrix_free_smallest_golub_kahan_label()
   )
-  expect_identical(fit$certificate$norm_bound_type, "frobenius_metadata")
+  expect_identical(fit$certificate$norm_bound_type, "two_norm_lower_bound")
   expect_false(fit$certificate$scale_is_estimate)
   expect_true(fit$restart$matrix_free)
   expect_true(fit$restart$native_callback)
@@ -438,7 +438,7 @@ test_that("interior matrix-free SVD promotion requires exact norm metadata", {
   )
   expect_true(fit$plan$controls$requires_nonestimated_norm_scale)
   expect_true(fit$plan$controls$full_subspace_interior)
-  expect_identical(fit$certificate$norm_bound_type, "frobenius_metadata")
+  expect_identical(fit$certificate$norm_bound_type, "two_norm_lower_bound")
   expect_false(fit$certificate$scale_is_estimate)
   expect_equal(fit$restart$final_max_subspace, min(dim(A)))
   expect_equal(fit$d, c(1, 0.2), tolerance = 1e-12)
@@ -455,7 +455,7 @@ test_that("complex dense SVD uses native dense complex certification", {
   expect_true(is.complex(fit$u))
   expect_true(is.complex(fit$v))
   expect_true(fit$certificate$passed)
-  expect_identical(fit$certificate$norm_bound_type, "frobenius_exact")
+  expect_identical(fit$certificate$norm_bound_type, "two_norm_lower_bound")
   expect_lt(fit$certificate$max_orthogonality_loss, 1e-10)
 })
 
@@ -531,7 +531,7 @@ test_that("wide sparse Gram SVD uses native CSC left-Gram kernel", {
   expect_true(is.infinite(fit$restart$native_gram_subspace_max_backward_error))
   expect_false(fit$restart$normal_operator_implicit)
   expect_true(fit$restart$materialized_gram)
-  expect_identical(fit$certificate$norm_bound_type, "frobenius_exact")
+  expect_identical(fit$certificate$norm_bound_type, "two_norm_lower_bound")
   expect_true(all(c("gram", "eigensolve", "vector_form", "diagnostics") %in%
                     names(fit$stage_seconds)))
   expect_true(all(is.finite(fit$stage_seconds)))
@@ -705,16 +705,19 @@ test_that("retained IRLBA LBD native core certifies or falls back honestly", {
   expect_equal(fit$restart$irlba_lbd_retained_from_scout, 5L)
   expect_equal(fit$restart$irlba_lbd_retained_padding, 2L)
   expect_equal(fit$restart$irlba_lbd_residual_augmented_cols, 1L)
-  expect_equal(fit$restart$irlba_lbd_augmented_tail_steps, 32L)
-  expect_equal(fit$restart$irlba_lbd_augmented_basis_cols, 38L)
-  expect_equal(fit$restart$irlba_lbd_augmented_small_svds, 3L)
+  # Pinned internal counts (C42). The native attempt certificate now scales
+  # by a two-norm lower bound (C12), which is stricter than the former
+  # Frobenius scale, so the augmented recurrence runs two more steps.
+  expect_equal(fit$restart$irlba_lbd_augmented_tail_steps, 34L)
+  expect_equal(fit$restart$irlba_lbd_augmented_basis_cols, 40L)
+  expect_equal(fit$restart$irlba_lbd_augmented_small_svds, 5L)
   expect_equal(fit$restart$irlba_lbd_augmented_cached_aq_cols,
                fit$restart$irlba_lbd_augmented_basis_cols)
   expect_true("certificate_passed" %in% names(fit$restart$attempt_history))
   expect_true("converged_count" %in% names(fit$restart$attempt_history))
   expect_true("leading_converged_count" %in% names(fit$restart$attempt_history))
   expect_true(tail(fit$restart$attempt_history$certificate_passed, 1L))
-  expect_equal(fit$restart$attempt_history$iterations, c(30L, 31L, 32L))
+  expect_equal(fit$restart$attempt_history$iterations, 30:34)
   expect_equal(tail(fit$restart$attempt_history$converged_count, 1L), 5L)
   expect_equal(tail(fit$restart$attempt_history$leading_converged_count, 1L), 5L)
   expect_true(any(
@@ -757,21 +760,25 @@ test_that("retained IRLBA benchmark candidate avoids repeated fixed-work native 
   expect_equal(fit$restart$irlba_lbd_retained_fixed_work_attempts, 0L)
   expect_equal(fit$restart$irlba_lbd_scout_matvecs, 24L)
   expect_lt(fit$restart$irlba_lbd_retained_matvecs, 136L)
-  expect_equal(fit$restart$irlba_lbd_augmented_tail_steps, 30L)
-  expect_equal(fit$restart$irlba_lbd_augmented_basis_cols, 36L)
+  # Pinned internal counts (C42), updated for the two-norm attempt
+  # certificate (C12): the first attempt no longer passes under the stricter
+  # scale, and the recurrence certifies two steps later.
+  expect_equal(fit$restart$irlba_lbd_augmented_tail_steps, 32L)
+  expect_equal(fit$restart$irlba_lbd_augmented_basis_cols, 38L)
   expect_equal(fit$restart$irlba_lbd_augmented_restart_cycles, 8L)
   expect_equal(fit$restart$irlba_lbd_augmented_kept_vectors, 5L)
-  expect_equal(fit$restart$irlba_lbd_augmented_small_svds, 1L)
-  expect_equal(fit$restart$irlba_lbd_augmented_cached_aq_cols, 36L)
+  expect_equal(fit$restart$irlba_lbd_augmented_small_svds, 3L)
+  expect_equal(fit$restart$irlba_lbd_augmented_cached_aq_cols, 38L)
   expect_true(fit$restart$irlba_lbd_augmented_reduces_from_scratch_work)
   expect_gt(fit$restart$irlba_lbd_augmented_matvec_savings, 0L)
   expect_true(is.finite(fit$restart$irlba_lbd_augmented_min_cheap_residual))
   expect_true("certificate_passed" %in% names(fit$restart$attempt_history))
   expect_true("converged_count" %in% names(fit$restart$attempt_history))
   expect_true("leading_converged_count" %in% names(fit$restart$attempt_history))
-  expect_true(fit$restart$attempt_history$certificate_passed[[1L]])
-  expect_equal(fit$restart$attempt_history$converged_count[[1L]], 5L)
-  expect_equal(fit$restart$attempt_history$leading_converged_count[[1L]], 5L)
+  expect_true(tail(fit$restart$attempt_history$certificate_passed, 1L))
+  expect_false(fit$restart$attempt_history$certificate_passed[[1L]])
+  expect_equal(tail(fit$restart$attempt_history$converged_count, 1L), 5L)
+  expect_equal(tail(fit$restart$attempt_history$leading_converged_count, 1L), 5L)
   expect_equal(
     fit$matvecs,
     fit$restart$irlba_lbd_scout_matvecs +
@@ -1321,7 +1328,12 @@ test_that("failed tall implicit right-normal candidate retries explicit Gram", {
   old_options <- options(eigencore.csc_right_normal_lanczos_attempt = TRUE)
   on.exit(options(old_options), add = TRUE)
   set.seed(1907)
-  M <- Matrix::rsparsematrix(600L, 90L, density = 0.03)
+  # A nearly flat singular spectrum (sigma in [0.9, 1]) leaves the bounded
+  # implicit candidate unconverged, which exercises the explicit-Gram retry.
+  U <- qr.Q(qr(matrix(rnorm(600 * 90), 600)))
+  V <- qr.Q(qr(matrix(rnorm(90 * 90), 90)))
+  d <- 1 - 0.1 * seq(0, 1, length.out = 90)
+  M <- Matrix::Matrix(U %*% (d * t(V)), sparse = TRUE)
 
   fit <- svd_partial(M, rank = 5L, target = largest(), tol = 1e-8, seed = 1907)
 

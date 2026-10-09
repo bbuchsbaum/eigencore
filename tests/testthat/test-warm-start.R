@@ -349,23 +349,23 @@ test_that("matrix-free warm start is consumed, certified, and cheaper than cold"
   truth <- sort(eigen(A, symmetric = TRUE)$values, decreasing = TRUE)[seq_len(k)]
   op <- matrix_free_hermitian(A)
 
-  cold <- eig_partial(op, k = k, target = largest(), method = lanczos(),
-                      maxit = n, seed = 12)
+  cold <- eig_partial(op, k = k, target = largest(), method = lanczos(max_subspace = n),
+                      seed = 12)
   expect_identical(cold$method,
                    "reference Hermitian Lanczos (prototype/oracle fallback)")
   expect_identical(cold$start_source, "cold")
   expect_equal(sort(values(cold), decreasing = TRUE), truth, tolerance = 1e-7)
 
   # NULL is regression-identical to cold on the matrix-free path too.
-  cold2 <- eig_partial(op, k = k, target = largest(), method = lanczos(),
-                       maxit = n, seed = 12, initial_subspace = NULL)
+  cold2 <- eig_partial(op, k = k, target = largest(), method = lanczos(max_subspace = n),
+                       seed = 12, initial_subspace = NULL)
   expect_equal(values(cold), values(cold2))
   expect_equal(cold$matvecs, cold2$matvecs)
 
   # A perturbed previous-solve basis models a changed-operator continuation.
   warm_basis <- warm_from_truth(A, k, noise = 1e-3, seed = 19L)
-  warm <- eig_partial(op, k = k, target = largest(), method = lanczos(),
-                      maxit = n, seed = 12, initial_subspace = warm_basis)
+  warm <- eig_partial(op, k = k, target = largest(), method = lanczos(max_subspace = n),
+                      seed = 12, initial_subspace = warm_basis)
   expect_identical(warm$method,
                    "reference Hermitian Lanczos (prototype/oracle fallback)")
   expect_identical(warm$start_source, "user_supplied")
@@ -390,8 +390,8 @@ test_that("matrix-free warm start accepts a perturbed continuation basis", {
   truth <- sort(eigen(A, symmetric = TRUE)$values, decreasing = TRUE)[seq_len(k)]
   op <- matrix_free_hermitian(A)
   warm <- warm_from_truth(A, k, noise = 1e-2)
-  fit <- eig_partial(op, k = k, target = largest(), method = lanczos(),
-                     maxit = n, seed = 4, initial_subspace = warm)
+  fit <- eig_partial(op, k = k, target = largest(), method = lanczos(max_subspace = n),
+                     seed = 4, initial_subspace = warm)
   expect_equal(sort(values(fit), decreasing = TRUE), truth, tolerance = 1e-7)
   cert <- certificate(fit)
   expect_true(all(cert$converged))

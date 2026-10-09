@@ -15,6 +15,7 @@
   certify = TRUE,
   allow_dense_fallback = c("auto", "never", "always"),
   initial_subspace = NULL,
+  left_vectors = c("auto", "none", "compute"),
   ...
 )
 }
@@ -29,7 +30,8 @@
 
 \item{tol}{Convergence and certification tolerance.}
 
-\item{maxit}{Optional iteration limit.}
+\item{maxit}{Optional iteration (restart) limit; never the subspace size.
+See \code{\link[=eig_partial]{eig_partial()}}.}
 
 \item{vectors}{Whether to compute vectors.}
 
@@ -49,6 +51,9 @@ and a fresh current-operator certificate. An already-invariant supplied
 subspace is discarded to a cold start because residual certification alone
 cannot establish that it contains the requested extremal eigenpairs.
 \code{NULL} (the default) preserves the cold random start exactly.}
+
+\item{left_vectors}{Left-eigenvector policy (\code{"auto"}, \code{"none"},
+\code{"compute"}); see \code{\link[=eig_partial]{eig_partial()}}.}
 
 \item{...}{Reserved for future solver options.}
 }
