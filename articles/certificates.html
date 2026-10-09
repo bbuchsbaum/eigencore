@@ -112,9 +112,9 @@ things they measure, and what to do when one of them fails.</p>
 <span><span class="co">#&gt;   norm bound: two_norm_lower_bound+identity_exact </span></span>
 <span><span class="co">#&gt;   norm source: ritz+identity </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
-<span><span class="co">#&gt;   max residual: 6.259907e-11 </span></span>
-<span><span class="co">#&gt;   max backward error: 6.578934e-12 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 8.881784e-16 </span></span>
+<span><span class="co">#&gt;   max residual: 5.624867e-11 </span></span>
+<span><span class="co">#&gt;   max backward error: 5.911531e-12 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.332268e-15 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE </span></span>
 <span><span class="co">#&gt;   target completeness: probed</span></span></code></pre></div>
@@ -290,7 +290,7 @@ all pairs converge, and the verdict flips. The
 <span><span class="va">fit_fail</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">failed_indices</span></span>
 <span><span class="co">#&gt;  [1]  1  2  3  4  5  6  7  8  9 10</span></span>
 <span><span class="va">fit_fail</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">max_backward_error</span></span>
-<span><span class="co">#&gt; [1] 0.004174378</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] 0.004080102</span></span></code></pre></div>
 <p>You do not have to guess how far off it was, or whether it was
 inching toward convergence. The solver records a
 <code>convergence_history</code>; plotting the worst backward error per
@@ -416,7 +416,7 @@ B-orthogonality of the returned vectors.</p>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
 <span><span class="co">#&gt; [1] "two_norm_lower_bound+two_norm_lower_bound"</span></span>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">max_orthogonality_loss</span></span>
-<span><span class="co">#&gt; [1] 2.442491e-15</span></span>
+<span><span class="co">#&gt; [1] 8.881784e-16</span></span>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
 <p>If a B-orthogonality value comes back near machine precision, the
@@ -529,7 +529,7 @@ list with two added fields:</p>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   max residual: 6.019888e-09 </span></span>
 <span><span class="co">#&gt;   max backward error: 6.007181e-10 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 2.677869e-15 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.110223e-15 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE </span></span>
 <span><span class="co">#&gt;   target completeness: probed</span></span></code></pre></div>

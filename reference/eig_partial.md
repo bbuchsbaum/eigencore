@@ -34,7 +34,11 @@ eig_partial(
 
 - target:
 
-  Eigencore eigenvalue target descriptor.
+  Eigencore eigenvalue target descriptor. With
+  `method = shift_invert(sigma)` it defaults to `nearest(sigma)`; other
+  targets (except
+  [`smallest_magnitude()`](https://bbuchsbaum.github.io/eigencore/reference/smallest_magnitude.md)
+  with `sigma = 0`) are an error.
 
 - B:
 

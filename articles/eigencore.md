@@ -31,9 +31,9 @@ fit
 #>   target: largest 
 #>   restart:thick_restart(in_native_loop)
 #>   locked: 5 
-#>   max residual: 6.259907e-11 
-#>   max backward error: 6.578934e-12 
-#>   max orthogonality loss: 8.881784e-16 
+#>   max residual: 5.624867e-11 
+#>   max backward error: 5.911531e-12 
+#>   max orthogonality loss: 1.332268e-15 
 #>   norm bound: two_norm_lower_bound+identity_exact 
 #>   scale estimated: FALSE 
 #>   certificate: passed
@@ -84,8 +84,8 @@ fit_gen
 #>   restart: lobpcg 
 #>   locked: 5 
 #>   max residual: 8.443488e-08 
-#>   max backward error: 6.274617e-09 
-#>   max orthogonality loss: 1.554312e-15 
+#>   max backward error: 6.274618e-09 
+#>   max orthogonality loss: 8.881784e-16 
 #>   norm bound: two_norm_lower_bound+two_norm_lower_bound 
 #>   scale estimated: FALSE 
 #>   certificate: passed
@@ -113,9 +113,9 @@ svd_fit
 #>   converged rank: 5 
 #>   method: native certified Gram SVD special case 
 #>   target: largest 
-#>   max residual: 1.524207e-14 
-#>   max backward error: 5.667639e-16 
-#>   max orthogonality loss: 5.689893e-16 
+#>   max residual: 1.651108e-14 
+#>   max backward error: 6.13951e-16 
+#>   max orthogonality loss: 6.661338e-16 
 #>   norm bound: two_norm_lower_bound 
 #>   scale estimated: FALSE 
 #>   certificate: passed
@@ -169,8 +169,8 @@ res$certificate
 #>   norm source: ritz+identity 
 #>   scale estimated: FALSE 
 #>   max residual: 2.074432e-09 
-#>   max backward error: 2.070053e-10 
-#>   max orthogonality loss: 8.881784e-16 
+#>   max backward error: 2.070054e-10 
+#>   max orthogonality loss: 5.551115e-16 
 #>   orthogonality tolerance: 1.490116e-08 
 #>   orthogonality required: TRUE 
 #>   target completeness: probed

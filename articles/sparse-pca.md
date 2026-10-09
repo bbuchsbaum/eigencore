@@ -80,9 +80,9 @@ fit
 #>   converged rank: 5 
 #>   method: native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary) 
 #>   target: largest 
-#>   max residual: 5.968391e-11 
+#>   max residual: 5.968392e-11 
 #>   max backward error: 1.267432e-10 
-#>   max orthogonality loss: 1.332268e-15 
+#>   max orthogonality loss: 1.776357e-15 
 #>   norm bound: two_norm_lower_bound 
 #>   scale estimated: FALSE 
 #>   certificate: passed
@@ -136,7 +136,7 @@ dense matrix directly. Check it:
 ``` r
 
 max(abs(sort(fit$d, decreasing = TRUE) - sort(all_sv[1:5], decreasing = TRUE)))
-#> [1] 5.551115e-16
+#> [1] 6.106227e-16
 ```
 
 The two agree to machine precision. `dense_centered` above was built

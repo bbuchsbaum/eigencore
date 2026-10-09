@@ -32,9 +32,9 @@ cert
 #>   norm bound: two_norm_lower_bound+identity_exact 
 #>   norm source: ritz+identity 
 #>   scale estimated: FALSE 
-#>   max residual: 6.259907e-11 
-#>   max backward error: 6.578934e-12 
-#>   max orthogonality loss: 8.881784e-16 
+#>   max residual: 5.624867e-11 
+#>   max backward error: 5.911531e-12 
+#>   max orthogonality loss: 1.332268e-15 
 #>   orthogonality tolerance: 1.490116e-08 
 #>   orthogonality required: TRUE 
 #>   target completeness: probed
@@ -202,7 +202,7 @@ fit_fail$certificate$passed
 fit_fail$certificate$failed_indices
 #>  [1]  1  2  3  4  5  6  7  8  9 10
 fit_fail$certificate$max_backward_error
-#> [1] 0.004174378
+#> [1] 0.004080102
 ```
 
 You do not have to guess how far off it was, or whether it was inching
@@ -323,7 +323,7 @@ fit_gen <- eig_partial(A, k = 5, target = largest(), B = B,
 fit_gen$certificate$norm_bound_type
 #> [1] "two_norm_lower_bound+two_norm_lower_bound"
 fit_gen$certificate$max_orthogonality_loss
-#> [1] 2.442491e-15
+#> [1] 8.881784e-16
 fit_gen$certificate$passed
 #> [1] TRUE
 ```
@@ -435,7 +435,7 @@ res$certificate
 #>   scale estimated: FALSE 
 #>   max residual: 6.019888e-09 
 #>   max backward error: 6.007181e-10 
-#>   max orthogonality loss: 2.677869e-15 
+#>   max orthogonality loss: 1.110223e-15 
 #>   orthogonality tolerance: 1.490116e-08 
 #>   orthogonality required: TRUE 
 #>   target completeness: probed
