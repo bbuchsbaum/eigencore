@@ -2,9 +2,9 @@
 #include <new>
 #include <stdexcept>
 #include <vector>
+#include "eigencore_common.h"
 #include <R.h>
 #include <Rinternals.h>
-#include "eigencore_common.h"
 
 // Self-test hooks for the C10/P16 error/interrupt plumbing in
 // eigencore_common.h. Each mode raises one kind of failure while a tracked C++

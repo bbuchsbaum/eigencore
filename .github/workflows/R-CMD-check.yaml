@@ -47,3 +47,32 @@ jobs:
         with:
           upload-snapshots: true
           build_args: 'c("--no-manual","--compact-vignettes=gs+qpdf")'
+
+      # testthat's check reporter prints nothing when a native crash kills the
+      # test process, so on failure re-run each test file in its own R process
+      # against the package R CMD check installed, and report which one dies.
+      - name: Locate failing or crashing test file
+        if: failure()
+        shell: Rscript {0}
+        run: |
+          lib <- normalizePath(file.path("check", "eigencore.Rcheck"), mustWork = FALSE)
+          if (!dir.exists(file.path(lib, "eigencore"))) quit(status = 0)
+          rscript <- file.path(R.home("bin"), "Rscript")
+          files <- sort(list.files("tests/testthat", "^test-.*[.]R$", full.names = TRUE))
+          for (f in files) {
+            script <- tempfile(fileext = ".R")
+            writeLines(c(
+              sprintf(".libPaths(c(%s, .libPaths()))", deparse(lib)),
+              "suppressMessages(library(testthat))",
+              sprintf(paste0("r <- as.data.frame(test_file(%s, reporter = 'silent', ",
+                             "package = 'eigencore', load_package = 'installed'))"),
+                      deparse(normalizePath(f))),
+              "cat('failed', sum(r$failed), 'errors', sum(r$error), '\\n')"
+            ), script)
+            out <- suppressWarnings(system2(rscript, script, stdout = TRUE, stderr = TRUE))
+            status <- attr(out, "status")
+            if (is.null(status)) status <- 0L
+            cat(sprintf("%-40s status=%s %s\n", basename(f), status,
+                        paste(utils::tail(out, 1), collapse = "")))
+            if (status != 0L) cat(utils::tail(out, 40), sep = "\n")
+          }

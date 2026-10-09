@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <memory>
 #include <new>
 #include <stdexcept>
 #ifdef _OPENMP

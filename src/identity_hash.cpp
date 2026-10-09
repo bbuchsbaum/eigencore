@@ -37,8 +37,8 @@
 #include <cstring>
 #include <utility>
 #include <vector>
-
 #include "eigencore_common.h"
+
 
 namespace {
 

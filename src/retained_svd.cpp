@@ -4,12 +4,12 @@
 #include <cstring>
 #include <utility>
 #include <vector>
+#include "eigencore_common.h"
 #include <R.h>
 #include <Rinternals.h>
 #include <R_ext/BLAS.h>
 #include <R_ext/Lapack.h>
 #include "eigencore_lapack_compat.h"
-#include "eigencore_common.h"
 #include "native_operators.h"
 #include "certificates.h"
 #include "golub_kahan_ritz.h"

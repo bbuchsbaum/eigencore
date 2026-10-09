@@ -5,6 +5,7 @@
 #include <climits>
 #include <memory>
 #include <vector>
+#include "eigencore_common.h"
 #include <R.h>
 #include <Rversion.h>
 #include <Rinternals.h>
@@ -13,7 +14,6 @@
 #include <R_ext/Lapack.h>
 #include "eigencore_lapack_compat.h"
 #include <R_ext/Random.h>
-#include "eigencore_common.h"
 #include "native_operators.h"
 
 // CSC structure validation for every native entry point that dereferences
@@ -388,7 +388,6 @@ static int g_eigencore_threads = 1;
 // getOption("eigencore.csr_cache_mb", 4096).
 static const double kEigencoreDefaultCsrCacheMb = 4096.0;
 static double g_eigencore_csr_cache_bytes = kEigencoreDefaultCsrCacheMb * 1048576.0;
-static const int kEigencoreMaxThreads = 256;
 
 static int eigencore_processor_count() {
 #ifdef _OPENMP
@@ -400,6 +399,8 @@ static int eigencore_processor_count() {
 }
 
 #ifdef _OPENMP
+static const int kEigencoreMaxThreads = 256;
+
 static int eigencore_sanitize_thread_count(double value, int fallback) {
   if (!R_FINITE(value) || value < 1.0) {
     return fallback;
