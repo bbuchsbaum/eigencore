@@ -3,7 +3,6 @@
 #include <R_ext/Rdynload.h>
 
 extern "C" SEXP eigencore_dense_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
-extern "C" SEXP eigencore_stable_raw_hash(SEXP);
 extern "C" SEXP eigencore_identity_hash(SEXP);
 extern "C" SEXP eigencore_unwind_selftest(SEXP);
 extern "C" SEXP eigencore_dense_complex_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -17,6 +16,9 @@ extern "C" SEXP eigencore_csc_randomized_sketch(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_randomized_project_transposed(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_randomized_svd_controller(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_column_moments(SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_set_default_threads(SEXP);
+extern "C" SEXP eigencore_thread_info(void);
+extern "C" SEXP eigencore_csc_apply_repeat(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_centered_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_centered_scaled_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_diagonal_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -104,6 +106,7 @@ extern "C" SEXP eigencore_bidiagonal_svd(SEXP, SEXP);
 extern "C" SEXP eigencore_block_golub_kahan_ritz(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_ritz(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_is_symmetric(SEXP, SEXP);
+extern "C" SEXP eigencore_dense_finite_symmetric(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen_dsyev(SEXP);
 extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevd(SEXP);
@@ -128,7 +131,6 @@ extern "C" SEXP eigencore_dense_complex_generalized_svd(SEXP, SEXP);
 extern "C" SEXP eigencore_tridiagonal_solve(SEXP, SEXP, SEXP, SEXP);
 
 static const R_CallMethodDef CallEntries[] = {
-  {"eigencore_stable_raw_hash", (DL_FUNC) &eigencore_stable_raw_hash, 1},
   {"eigencore_identity_hash", (DL_FUNC) &eigencore_identity_hash, 1},
   {"eigencore_unwind_selftest", (DL_FUNC) &eigencore_unwind_selftest, 1},
   {"eigencore_dense_block_apply", (DL_FUNC) &eigencore_dense_block_apply, 6},
@@ -143,6 +145,9 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_csc_randomized_project_transposed", (DL_FUNC) &eigencore_csc_randomized_project_transposed, 5},
   {"eigencore_csc_randomized_svd_controller", (DL_FUNC) &eigencore_csc_randomized_svd_controller, 9},
   {"eigencore_csc_column_moments", (DL_FUNC) &eigencore_csc_column_moments, 3},
+  {"eigencore_set_default_threads", (DL_FUNC) &eigencore_set_default_threads, 1},
+  {"eigencore_thread_info", (DL_FUNC) &eigencore_thread_info, 0},
+  {"eigencore_csc_apply_repeat", (DL_FUNC) &eigencore_csc_apply_repeat, 12},
   {"eigencore_csc_centered_block_apply", (DL_FUNC) &eigencore_csc_centered_block_apply, 13},
   {"eigencore_csc_centered_scaled_block_apply", (DL_FUNC) &eigencore_csc_centered_scaled_block_apply, 11},
   {"eigencore_diagonal_block_apply", (DL_FUNC) &eigencore_diagonal_block_apply, 7},
@@ -230,6 +235,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_block_golub_kahan_ritz", (DL_FUNC) &eigencore_block_golub_kahan_ritz, 5},
   {"eigencore_golub_kahan_ritz", (DL_FUNC) &eigencore_golub_kahan_ritz, 7},
   {"eigencore_dense_is_symmetric", (DL_FUNC) &eigencore_dense_is_symmetric, 2},
+  {"eigencore_dense_finite_symmetric", (DL_FUNC) &eigencore_dense_finite_symmetric, 2},
   {"eigencore_dense_symmetric_eigen", (DL_FUNC) &eigencore_dense_symmetric_eigen, 2},
   {"eigencore_dense_symmetric_eigen_dsyev", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyev, 1},
   {"eigencore_dense_symmetric_eigen_dsyevd", (DL_FUNC) &eigencore_dense_symmetric_eigen_dsyevd, 1},

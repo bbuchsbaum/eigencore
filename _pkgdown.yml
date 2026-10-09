@@ -133,6 +133,7 @@ reference:
   - restart_state
   - retained_bytes
   - work
+  - eigencore-threads
 articles:
 - title: Get started
   navbar: ~

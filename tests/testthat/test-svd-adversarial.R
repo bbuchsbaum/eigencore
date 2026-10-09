@@ -336,7 +336,7 @@ test_that("smallest tall sparse CSC SVD uses native Gram production boundary", {
   expect_certificate_clean(fit)
 })
 
-test_that("smallest matrix-free SVD promotion requires exact norm metadata", {
+test_that("smallest matrix-free SVD routes natively with or without norm metadata", {
   A <- rbind(diag(c(10, 5, 2, 1, 0.4, 0.1)), matrix(0, 2, 6))
   make_op <- function(metadata = list()) {
     linear_operator(
@@ -360,10 +360,13 @@ test_that("smallest matrix-free SVD promotion requires exact norm metadata", {
     svd_problem(make_op(), target = smallest()),
     rank = 2L
   )
+  # C51: two-norm lower-bound certificates let a metadata-free callback
+  # operator certify, so the Frobenius-metadata gate is gone.
   expect_identical(
     no_metadata_plan$method,
-    eigencore:::native_matrix_free_golub_kahan_label()
+    eigencore:::native_matrix_free_smallest_golub_kahan_label()
   )
+  expect_false(no_metadata_plan$controls$requires_nonestimated_norm_scale)
 
   fit <- svd_partial(
     make_op(metadata = list(frobenius_norm = norm(A, "F"))),
@@ -382,12 +385,12 @@ test_that("smallest matrix-free SVD promotion requires exact norm metadata", {
   expect_false(fit$certificate$scale_is_estimate)
   expect_true(fit$restart$matrix_free)
   expect_true(fit$restart$native_callback)
-  expect_true(fit$plan$controls$requires_nonestimated_norm_scale)
+  expect_false(fit$plan$controls$requires_nonestimated_norm_scale)
   expect_equal(fit$d, c(0.1, 0.4), tolerance = 1e-12)
   expect_certificate_clean(fit)
 })
 
-test_that("interior matrix-free SVD promotion requires exact norm metadata", {
+test_that("interior matrix-free SVD routes natively with or without norm metadata", {
   A <- rbind(diag(c(10, 5, 1, 0.2, 0.1)), matrix(0, 3, 5))
   make_op <- function(metadata = list()) {
     linear_operator(
@@ -407,17 +410,21 @@ test_that("interior matrix-free SVD promotion requires exact norm metadata", {
     )
   }
 
-  expect_error(
-    svd_partial(
-      make_op(),
-      rank = 2L,
-      target = nearest(0.8),
-      tol = 1e-10,
-      seed = 93,
-      allow_dense_fallback = "never"
-    ),
-    "Interior SVD target nearest\\(0.8\\) is not supported by native matrix-free Golub-Kahan callback"
+  # C51: no Frobenius metadata is needed any more.
+  bare <- svd_partial(
+    make_op(),
+    rank = 2L,
+    target = nearest(0.8),
+    tol = 1e-10,
+    seed = 93,
+    allow_dense_fallback = "never"
   )
+  expect_identical(
+    bare$method,
+    eigencore:::native_matrix_free_interior_golub_kahan_label()
+  )
+  expect_equal(bare$d, c(1, 0.2), tolerance = 1e-12)
+  expect_certificate_clean(bare)
 
   fit <- svd_partial(
     make_op(metadata = list(frobenius_norm = norm(A, "F"))),
@@ -436,7 +443,7 @@ test_that("interior matrix-free SVD promotion requires exact norm metadata", {
     fit$plan$controls$svd_target_boundary,
     "native full-subspace interior SVD boundary"
   )
-  expect_true(fit$plan$controls$requires_nonestimated_norm_scale)
+  expect_false(fit$plan$controls$requires_nonestimated_norm_scale)
   expect_true(fit$plan$controls$full_subspace_interior)
   expect_identical(fit$certificate$norm_bound_type, "two_norm_lower_bound")
   expect_false(fit$certificate$scale_is_estimate)

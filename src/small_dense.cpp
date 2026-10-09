@@ -1069,6 +1069,76 @@ extern "C" SEXP eigencore_dense_is_symmetric(SEXP A_, SEXP tol_) {
   EIGENCORE_ENTRY_END
 }
 
+// One pass over a double matrix returning c(all_finite, is_symmetric), with
+// the same semantics as eigencore_dense_is_symmetric: symmetric means square,
+// every entry finite, and max |a_ij - a_ji| <= tol * max |a_ij| (relative to
+// the largest entry, no floor at 1). The pair (a_ij, a_ji) is read in
+// cache-sized tiles so the transposed access stays local; each entry is read
+// exactly once. Non-finite entries are detected via x * 0 (NaN unless x is
+// finite) accumulated into one sum, which keeps the inner loop branch-free.
+extern "C" SEXP eigencore_dense_finite_symmetric(SEXP A_, SEXP tol_) {
+  EIGENCORE_ENTRY_BEGIN
+  if (!isReal(A_)) {
+    error("eigencore_dense_finite_symmetric expects a double matrix");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  const double* A = REAL(A_);
+  const R_xlen_t len = XLENGTH(A_);
+  const double tol0 = asReal(tol_);
+  const double tol = (R_FINITE(tol0) && tol0 >= 0.0) ? tol0 : sqrt(DBL_EPSILON);
+  bool square = false;
+  int64_t n = 0;
+  if (dimA != R_NilValue && LENGTH(dimA) == 2) {
+    n = INTEGER(dimA)[0];
+    square = (n == INTEGER(dimA)[1]);
+  }
+  double nonfinite = 0.0;
+  bool symmetric = false;
+  if (!square) {
+    for (R_xlen_t i = 0; i < len; ++i) {
+      nonfinite += A[i] * 0.0;
+    }
+  } else {
+    const int64_t B = 64;
+    double scale = 0.0;
+    double maxdiff = 0.0;
+    for (int64_t jb = 0; jb < n; jb += B) {
+      const int64_t jend = (jb + B < n) ? jb + B : n;
+      for (int64_t ib = 0; ib <= jb; ib += B) {
+        const int64_t iend = (ib + B < n) ? ib + B : n;
+        for (int64_t j = jb; j < jend; ++j) {
+          const int64_t ilim = (ib == jb) ? j : iend;
+          const double* colj = A + j * n;
+          for (int64_t i = ib; i < ilim; ++i) {
+            const double a = colj[i];
+            const double b = A[j + i * n];
+            nonfinite += a * 0.0 + b * 0.0;
+            const double fa = fabs(a);
+            const double fb = fabs(b);
+            const double d = fabs(a - b);
+            scale = fa > scale ? fa : scale;
+            scale = fb > scale ? fb : scale;
+            maxdiff = d > maxdiff ? d : maxdiff;
+          }
+          if (ib == jb) {
+            const double djj = colj[j];
+            nonfinite += djj * 0.0;
+            const double fd = fabs(djj);
+            scale = fd > scale ? fd : scale;
+          }
+        }
+      }
+    }
+    symmetric = !ISNAN(nonfinite) && maxdiff <= tol * scale;
+  }
+  SEXP out = PROTECT(allocVector(LGLSXP, 2));
+  LOGICAL(out)[0] = ISNAN(nonfinite) ? FALSE : TRUE;
+  LOGICAL(out)[1] = symmetric ? TRUE : FALSE;
+  UNPROTECT(1);
+  return out;
+  EIGENCORE_ENTRY_END
+}
+
 // Selected dense symmetric eigenpairs via dsyevr RANGE = 'I': the k largest
 // (target_kind 1, returned descending) or k smallest (target_kind 2,
 // ascending) algebraic eigenvalues. With vectors = FALSE no eigenvectors are

@@ -734,16 +734,19 @@ plan_solver.eigencore_svd_problem <- function(
   is_native_matrix_free_gk <- native_matrix_free_golub_kahan_available(problem$A)
   is_smallest_svd_target <- svd_target_is_smallest(problem$target)
   is_interior_svd_target <- svd_target_is_interior(problem$target)
-  has_exact_operator_scale <- operator_has_nonestimated_norm_provenance(problem$A)
+  # C51: matrix-free smallest/interior SVD used to require exact Frobenius
+  # metadata, because a certificate without an exact norm could never pass.
+  # Certificates now scale by a certified two-norm lower bound (see
+  # certificate_norms.R), so a plain apply/apply_adjoint operator can certify.
   chosen <- if (inherits(method, "eigencore_method") && method$kind != "auto") {
     if (identical(method$kind, "golub_kahan")) {
       if (is_smallest_svd_target && is_native_csc) {
         native_smallest_golub_kahan_label()
-      } else if (is_smallest_svd_target && is_native_matrix_free_gk && has_exact_operator_scale) {
+      } else if (is_smallest_svd_target && is_native_matrix_free_gk) {
         native_matrix_free_smallest_golub_kahan_label()
       } else if (is_interior_svd_target && is_native_csc) {
         native_interior_golub_kahan_label()
-      } else if (is_interior_svd_target && is_native_matrix_free_gk && has_exact_operator_scale) {
+      } else if (is_interior_svd_target && is_native_matrix_free_gk) {
         native_matrix_free_interior_golub_kahan_label()
       } else if (is_native_csc || is_dense_source) {
         "native prototype Golub-Kahan"
@@ -771,11 +774,11 @@ plan_solver.eigencore_svd_problem <- function(
     native_retained_golub_kahan_diagnostic_label()
   } else if (is_smallest_svd_target && is_native_csc && !is.null(problem$A$apply_adjoint)) {
     native_smallest_golub_kahan_label()
-  } else if (is_smallest_svd_target && is_native_matrix_free_gk && has_exact_operator_scale) {
+  } else if (is_smallest_svd_target && is_native_matrix_free_gk) {
     native_matrix_free_smallest_golub_kahan_label()
   } else if (is_interior_svd_target && is_native_csc && !is.null(problem$A$apply_adjoint)) {
     native_interior_golub_kahan_label()
-  } else if (is_interior_svd_target && is_native_matrix_free_gk && has_exact_operator_scale) {
+  } else if (is_interior_svd_target && is_native_matrix_free_gk) {
     native_matrix_free_interior_golub_kahan_label()
   } else if (is_native_csc && !is.null(problem$A$apply_adjoint)) {
     "native prototype Golub-Kahan"
@@ -1391,11 +1394,6 @@ svd_native_iterative_plan <- function(method_label) {
 }
 
 #' @keywords internal
-operator_has_nonestimated_norm_provenance <- function(op) {
-  !is.null(op$metadata$frobenius_norm) || !is.null(source_or_null(op))
-}
-
-#' @keywords internal
 svd_target_plan_controls <- function(problem, chosen) {
   target <- problem$target %||% largest()
   kind <- svd_target_kind(target)
@@ -1629,28 +1627,26 @@ svd_plan_controls <- function(problem, rank, method, chosen) {
       )
     }
     if (identical(chosen, native_matrix_free_smallest_golub_kahan_label())) {
-      controls$promotion_status <- "production_smallest_exact_norm_callback"
+      controls$promotion_status <- "production_smallest_callback"
       controls$promotion_gate <- "post_v1_svd_smallest_surface"
       controls$promotion_gate_issue <- "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
       controls$closed_decision_issue <- "bd-01KTEH6862GB19JJWX2M3FQP6T"
-      controls$requires_nonestimated_norm_scale <- TRUE
+      controls$requires_nonestimated_norm_scale <- FALSE
       controls$promotion_requires <- c(
-        "operator supplies exact Frobenius norm metadata",
-        "exact two-sided certificate passes with scale_is_estimate = FALSE",
+        "exact two-sided certificate passes against a certified two-norm lower bound (scale_is_estimate = FALSE)",
         "nearest/interior SVD remains a separate future-scope boundary"
       )
     }
     if (identical(chosen, native_matrix_free_interior_golub_kahan_label())) {
-      controls$promotion_status <- "production_interior_exact_norm_callback_full_subspace"
+      controls$promotion_status <- "production_interior_callback_full_subspace"
       controls$promotion_gate <- "post_v1_svd_interior_surface"
       controls$promotion_gate_issue <- "bd-01KTE8G6RYE4RD5F6CN7SNKKC6"
       controls$closed_decision_issue <- "bd-01KTEH6862GB19JJWX2M3FQP6T"
-      controls$requires_nonestimated_norm_scale <- TRUE
+      controls$requires_nonestimated_norm_scale <- FALSE
       controls$full_subspace_interior <- TRUE
       controls$promotion_requires <- c(
-        "operator supplies exact Frobenius norm metadata",
         "native Golub-Kahan reaches the full smaller subspace",
-        "exact two-sided certificate passes with scale_is_estimate = FALSE"
+        "exact two-sided certificate passes against a certified two-norm lower bound (scale_is_estimate = FALSE)"
       )
     }
     if (!is.null(requested_max_subspace)) {
