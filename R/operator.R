@@ -147,16 +147,27 @@ as_operator.eigencore_operator <- function(x, ...) {
 
 #' @export
 as_operator.matrix <- function(x, ...) {
-  stop_if_nonfinite_input(x)
   if (is.complex(x)) {
+    stop_if_nonfinite_input(x)
     return(complex_dense_matrix_as_operator(x))
   }
+  # Only numeric input was ever screened for non-finite entries (logical /
+  # character matrices are coerced below); keep that contract.
+  screen_finite <- is.numeric(x)
   # Assigning storage.mode unconditionally forces a full copy of an
   # already-double matrix (copy-on-modify), which dominates operator
   # construction for large dense inputs.
   if (storage.mode(x) != "double") {
     storage.mode(x) <- "double"
   }
+  # One native pass decides finiteness and (relative-tolerance) symmetry;
+  # an R-level all(is.finite(x)) plus a separate symmetry scan used to
+  # dominate plan-time cost for large dense input.
+  flags <- dense_finite_symmetric(x)
+  if (screen_finite && !flags[[1L]]) {
+    stop("Matrix input contains NA, NaN, or Inf entries.", call. = FALSE)
+  }
+  symmetric <- flags[[2L]]
   dim_x <- dim(x)
   linear_operator(
     dim = dim_x,
@@ -167,7 +178,7 @@ as_operator.matrix <- function(x, ...) {
       dense_block_apply(x, X, alpha = alpha, beta = beta, Y = Y, transpose = TRUE)
     },
     dtype = "double",
-    structure = if (is_square_symmetric(x)) hermitian() else general(),
+    structure = if (symmetric) hermitian() else general(),
     name = "dense_matrix",
     metadata = list(source = x, native = TRUE)
   )
@@ -176,6 +187,15 @@ as_operator.matrix <- function(x, ...) {
 #' @export
 as_operator.default <- function(x, ...) {
   stop_if_complex_matrix_input(x)
+  if (inherits(x, "denseMatrix")) {
+    # Dense Matrix classes become a base double matrix whose finiteness and
+    # symmetry as_operator.matrix() screens in one native pass; screening
+    # the x slot here as well would add another full pass.
+    converted <- native_matrix_storage(x)
+    if (is.matrix(converted)) {
+      return(as_operator.matrix(converted))
+    }
+  }
   stop_if_nonfinite_input(x)
   if (inherits(x, "ddiMatrix")) {
     return(diagonal_matrix_as_operator(x))
@@ -598,6 +618,13 @@ operator_source_matrix <- function(A) {
     return(as.matrix(src))
   }
   as.matrix(A)
+}
+
+#' @keywords internal
+#' Finiteness and symmetry of a double matrix in one native pass: returns
+#' c(all_finite, is_symmetric) with the semantics of is_square_symmetric().
+dense_finite_symmetric <- function(x, tol = sqrt(.Machine$double.eps)) {
+  .Call("eigencore_dense_finite_symmetric", x, as.numeric(tol), PACKAGE = "eigencore")
 }
 
 #' @keywords internal

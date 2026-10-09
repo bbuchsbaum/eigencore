@@ -26,8 +26,8 @@ eigencore_session_id <- local({
 # across sessions and platforms. Closures, environments and external pointers
 # have no value-level fast path and are digested through serialize() as
 # before. Changing this algorithm changes every persisted token, so bump
-# identity_hash_format(); plans and restart states record it and are rejected
-# with a "re-plan" message when it differs.
+# identity_hash_format(); plans, restart states and PSD factors record it and
+# are rejected with a "re-plan" / "re-factor" message when it differs.
 #' @keywords internal
 stable_raw_hash <- function(x) {
   .Call("eigencore_identity_hash", x, PACKAGE = "eigencore")
@@ -46,6 +46,8 @@ identity_hash_format_message <- function(kind = "plan") {
     "its operator identity and integrity tokens can no longer be verified. ",
     if (identical(kind, "plan")) {
       "Re-plan from the original problem."
+    } else if (identical(kind, "PSD factor")) {
+      "Re-factor from the original matrix to obtain a new PSD factor."
     } else {
       "Re-plan and re-solve from the original problem to obtain a new restart state."
     }

@@ -712,7 +712,7 @@ solve_svd_golub_kahan <- function(a, rank, method, tol, vectors, certify, plan) 
     }
   } else if (identical(plan$method, native_matrix_free_smallest_golub_kahan_label())) {
     if (isTRUE(iter$restart$converged)) {
-      "using native certified smallest matrix-free Golub-Kahan callback SVD with exact norm metadata; residuals certified"
+      "using native certified smallest matrix-free Golub-Kahan callback SVD; residuals certified"
     } else {
       "using native certified smallest matrix-free Golub-Kahan callback SVD; adaptive subspace budget exhausted before full certification"
     }
@@ -724,7 +724,7 @@ solve_svd_golub_kahan <- function(a, rank, method, tol, vectors, certify, plan) 
     }
   } else if (identical(plan$method, native_matrix_free_interior_golub_kahan_label())) {
     if (isTRUE(iter$restart$converged)) {
-      "using native full-subspace interior matrix-free Golub-Kahan SVD with exact norm metadata; residuals certified"
+      "using native full-subspace interior matrix-free Golub-Kahan SVD; residuals certified"
     } else {
       "using native full-subspace interior matrix-free Golub-Kahan SVD; full subspace did not meet the requested certificate tolerance"
     }

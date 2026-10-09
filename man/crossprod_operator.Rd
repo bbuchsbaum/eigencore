@@ -17,3 +17,14 @@ A Hermitian \code{eigencore_operator} representing \verb{A^* A}.
 \description{
 Create A^* A as an operator.
 }
+\details{
+For a built-in explicit \code{A}, \verb{A^* A} is formed once and wrapped as
+a native explicit operator (\code{metadata$materialized_crossprod}) only when
+that is cheap and memory-safe: always when it has at most 65,536
+entries; for a larger dense \code{A} only when \code{A} has no more columns than
+rows and forming it costs at most 2^30 multiply-adds; for a larger
+sparse \code{A} only when a structural bound on its nonzeros stays within
+four times \code{nnz(A)} and below a quarter of its entries (a sparse
+cross-product is never densified). Otherwise the result is lazy and
+applies \code{A} then its adjoint.
+}
