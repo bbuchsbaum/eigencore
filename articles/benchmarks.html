@@ -84,427 +84,1668 @@
 
     
     
-<p>This is a pkgdown-only article, not a CRAN vignette: it runs
-<code><a href="https://bench.r-lib.org/reference/mark.html" class="external-link">bench::mark()</a></code> at build time and is intentionally excluded
-from <code>R CMD check</code> (see <code>vignettes/articles/</code> in
-<code>.Rbuildignore</code>).</p>
-<script>document.addEventListener("DOMContentLoaded",function(){document.body.classList.remove("palette-red","palette-lapis","palette-ochre","palette-teal","palette-green","palette-violet","preset-homage","preset-interaction","preset-study","preset-structural","preset-adobe","preset-midnight");document.body.classList.add("palette-lapis","preset-homage");});</script><p>This vignette runs five small eigenvalue and SVD cases with
-eigencore, <code>RSpectra</code>, <code>irlba</code>, and base R. The
-matrices are intentionally small and each method is timed three times so
-the article remains practical to rebuild. Results describe one render on
-one machine; they are not evidence of package rankings or scaling
-behavior.</p>
-<div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://bbuchsbaum.github.io/eigencore/">eigencore</a></span><span class="op">)</span></span></code></pre></div>
-<div class="section level2">
-<h2 id="what-is-included">What is included?<a class="anchor" aria-label="anchor" href="#what-is-included"></a>
+<p>This is a pkgdown-only article, not a CRAN vignette. It performs
+<strong>no timing at build time</strong>: every number below is read
+from result directories stored in the repository under
+<code>inst/benchmarks/results/</code>, produced by the benchmark suite
+<code>inst/benchmarks/run-suite.R</code>. Rebuilding the site never
+changes a number; adding a result directory does.</p>
+<script>document.addEventListener("DOMContentLoaded",function(){document.body.classList.remove("palette-red","palette-lapis","palette-ochre","palette-teal","palette-green","palette-violet","preset-homage","preset-interaction","preset-study","preset-structural","preset-adobe","preset-midnight");document.body.classList.add("palette-lapis","preset-homage");});</script><div class="section level2">
+<h2 id="what-is-measured-and-why">What is measured and why<a class="anchor" aria-label="anchor" href="#what-is-measured-and-why"></a>
 </h2>
-<p>Dense and sparse inputs exercise different code paths, and SVD has
-different comparison methods than Hermitian eigenproblems. The smoke
-suite covers these five cases:</p>
-<div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">benchmark_regimes</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
-<span>  regime <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span></span>
-<span>    <span class="st">"dense Hermitian"</span>,</span>
-<span>    <span class="st">"sparse path Laplacian"</span>,</span>
-<span>    <span class="st">"dense low-rank SVD"</span>,</span>
-<span>    <span class="st">"tall sparse SVD"</span>,</span>
-<span>    <span class="st">"wide sparse SVD"</span></span>
-<span>  <span class="op">)</span>,</span>
-<span>  input <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"120 x 120 dense"</span>, <span class="st">"300 x 300 dgCMatrix"</span>, <span class="st">"180 x 70 dense"</span>,</span>
-<span>            <span class="st">"320 x 60 dgCMatrix"</span>, <span class="st">"60 x 320 dgCMatrix"</span><span class="op">)</span>,</span>
-<span>  compared_methods <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"eigencore, RSpectra, base"</span>,</span>
-<span>                       <span class="st">"eigencore, RSpectra, base"</span>,</span>
-<span>                       <span class="st">"eigencore, RSpectra, irlba, base"</span>,</span>
-<span>                       <span class="st">"eigencore, RSpectra, irlba, base"</span>,</span>
-<span>                       <span class="st">"eigencore, RSpectra, irlba, base"</span><span class="op">)</span></span>
-<span><span class="op">)</span></span>
-<span><span class="fu">knitr</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/knitr/man/kable.html" class="external-link">kable</a></span><span class="op">(</span><span class="va">benchmark_regimes</span><span class="op">)</span></span></code></pre></div>
+<p>Each <strong>case</strong> is a deterministic problem (fixed
+generator and seed) with a wanted set: the <code>k</code> largest or
+smallest eigenvalues, the <code>k</code> eigenvalues of largest modulus,
+the <code>k</code> eigenvalues nearest a shift, the <code>k</code>
+largest singular triplets, or the full spectrum. Every
+<strong>method</strong> (eigencore, RSpectra, irlba, PRIMME when
+installed, and dense base R/LAPACK where it fits in memory) is run on
+the same matrix with the same requested tolerance
+(<code>tol = 1e-8</code>) and, for each case and method, the suite
+records:</p>
+<ul>
+<li>
+<strong>wall time</strong>: one untimed warm-up call, then the
+median and minimum over <code>reps</code> timed calls (5 in the standard
+profile). eigencore’s time always includes building its certificate; the
+other packages do no certification.</li>
+<li>
+<strong>operator applications</strong> (<code>matvecs</code>): the
+hardware-independent work each package reports about itself: eigencore’s
+<code><a href="../reference/work.html">work()</a></code> record
+(<code>operator_columns + adjoint_columns</code> of the solve phase),
+RSpectra’s <code>nops</code>, irlba’s <code>mprod</code>, PRIMME’s
+<code>numMatvecs</code>. For shift-invert cases an application is a
+linear solve. eigencore’s explicit-Gram SVD paths do not apply the
+operator column by column, so they report no comparable count.</li>
+<li>
+<strong>memory</strong>: peak resident-set growth of the process
+during the warm-up call (Linux, via <code>VmHWM</code>), which includes
+C/C++ heaps, and the R heap high-water mark. Both are in
+<code>results.csv</code>; neither is a cross-package claim.</li>
+<li>
+<strong>accuracy</strong>, computed by the suite itself for every
+method’s output, defined in the next section, plus eigencore’s own
+certificate verdict.</li>
+</ul>
+<p>Threads are a property of the run: each thread setting runs in a
+fresh R process with <code>OPENBLAS_NUM_THREADS</code>,
+<code>OMP_NUM_THREADS</code>, and
+<code>options(eigencore.threads)</code> all set to the same value, so “4
+threads” means the whole process (BLAS, LAPACK and eigencore’s OpenMP
+kernels) had four. RSpectra and irlba are effectively single-threaded on
+sparse inputs, so their 4-thread rows mostly measure noise.</p>
+</div>
+<div class="section level2">
+<h2 id="the-independent-accuracy-check">The independent accuracy check<a class="anchor" aria-label="anchor" href="#the-independent-accuracy-check"></a>
+</h2>
+<p>The suite does not trust any solver’s own residuals. For every
+returned pair it recomputes</p>
+<ul>
+<li>the residual <code>A x - lambda B x</code> (<code>B = I</code> for
+standard problems), and for SVDs both sides,
+<code>sqrt(||A v - sigma u||^2 + ||A' u - sigma v||^2)</code>;</li>
+<li>the <strong>normwise 2-norm backward error</strong>
+<code>||r|| / ((||A||_2 + |lambda| ||B||_2) ||x||)</code> (SVD:
+<code>/ ||A||_2</code>). This is the definition eigencore’s own
+certificates use since the C12 change, but the suite divides by a
+<em>high-accuracy</em> <code>||A||_2</code>: exact when the spectrum is
+known or a dense factorisation is affordable, otherwise a converged
+Golub-Kahan-Lanczos estimate with full reorthogonalisation, computed
+once per case and cached. (eigencore’s certificate divides by a value
+that never exceeds <code>||A||_2</code>, so its own number can only be
+larger.)</li>
+<li>the orthogonality loss <code>max |X' X - I|</code>
+(<code>X' B X - I</code> for generalized problems, <code>U</code> and
+<code>V</code> for SVDs);</li>
+<li>the <strong>value error</strong> against a trusted reference: the
+analytic spectrum (Laplacians, finite-element pencils, matrices built as
+<code>Q diag(values) Q'</code>), dense LAPACK when feasible, or else a
+tight iterative reference: RSpectra at <code>tol = 1e-13</code> asking
+for <code>k + 10</code> and <code>k + 20</code> values with large
+subspaces, and eigencore at <code>tol = 1e-12</code>. Each candidate is
+verified with the independent backward error, and among the accurate
+ones the set reaching furthest into the target wins (a value with a tiny
+backward error is a genuine eigenvalue, so a set that reaches further
+cannot be wrong where a shorter one may have skipped values).
+Disagreement between candidates is stored in <code>cases.csv</code>. The
+error is scaled like the backward error:
+<code>|lambda - lambda_ref| / (||A||_2 + |lambda_ref| ||B||_2)</code>.</li>
+<li>whether the method returned the <strong>requested target
+set</strong> (<code>target_ok</code>): <code>k</code> values, each
+matched to a distinct reference value within a gap-aware tolerance, and
+every matched reference value inside the wanted set (ties at the
+boundary, such as repeated eigenvalues and conjugate pairs, count as
+inside). A small backward error does not imply the right target set: a
+Krylov method can converge accurately to the wrong eigenvalues, or
+return one copy of a repeated eigenvalue and skip the other.</li>
+</ul>
+<p>In the tables below a time is marked † when the method did
+<strong>not</strong> return the wanted set, and ‡ when its independent
+backward error exceeds <code>1e-6</code>. Such times are not comparable
+with correct ones.</p>
+</div>
+<div class="section level2">
+<h2 id="result-sets">Result sets<a class="anchor" aria-label="anchor" href="#result-sets"></a>
+</h2>
 <table class="table">
+<caption>Environment of each stored result set (one column per
+run).</caption>
 <colgroup>
-<col width="29%">
-<col width="26%">
-<col width="44%">
+<col width="8%">
+<col width="45%">
+<col width="45%">
 </colgroup>
 <thead><tr class="header">
-<th align="left">regime</th>
-<th align="left">input</th>
-<th align="left">compared_methods</th>
+<th align="left"></th>
+<th align="left">20261009-3d7cb0dd-standard</th>
+<th align="left">20261009-3d7cb0dd-scaling</th>
 </tr></thead>
 <tbody>
 <tr class="odd">
-<td align="left">dense Hermitian</td>
-<td align="left">120 x 120 dense</td>
-<td align="left">eigencore, RSpectra, base</td>
+<td align="left">run</td>
+<td align="left">20261009-3d7cb0dd-standard</td>
+<td align="left">20261009-3d7cb0dd-scaling</td>
 </tr>
 <tr class="even">
-<td align="left">sparse path Laplacian</td>
-<td align="left">300 x 300 dgCMatrix</td>
-<td align="left">eigencore, RSpectra, base</td>
+<td align="left">date</td>
+<td align="left">2026-10-09T19:28:29Z</td>
+<td align="left">2026-10-09T19:48:13Z</td>
 </tr>
 <tr class="odd">
-<td align="left">dense low-rank SVD</td>
-<td align="left">180 x 70 dense</td>
-<td align="left">eigencore, RSpectra, irlba, base</td>
+<td align="left">machine</td>
+<td align="left">3d7cb0dd</td>
+<td align="left">3d7cb0dd</td>
 </tr>
 <tr class="even">
-<td align="left">tall sparse SVD</td>
-<td align="left">320 x 60 dgCMatrix</td>
-<td align="left">eigencore, RSpectra, irlba, base</td>
+<td align="left">cpu</td>
+<td align="left">Intel(R) Xeon(R) Processor @ 2.10GHz (4 logical / 4
+physical cores, 15.7 GB)</td>
+<td align="left">Intel(R) Xeon(R) Processor @ 2.10GHz (4 logical / 4
+physical cores, 15.7 GB)</td>
 </tr>
 <tr class="odd">
-<td align="left">wide sparse SVD</td>
-<td align="left">60 x 320 dgCMatrix</td>
-<td align="left">eigencore, RSpectra, irlba, base</td>
+<td align="left">R</td>
+<td align="left">4.3.3 (2024-02-29)</td>
+<td align="left">4.3.3 (2024-02-29)</td>
+</tr>
+<tr class="even">
+<td align="left">platform</td>
+<td align="left">x86_64-pc-linux-gnu</td>
+<td align="left">x86_64-pc-linux-gnu</td>
+</tr>
+<tr class="odd">
+<td align="left">BLAS</td>
+<td align="left">OpenBLAS (libopenblasp-r0.3.26.so)</td>
+<td align="left">OpenBLAS (libopenblasp-r0.3.26.so)</td>
+</tr>
+<tr class="even">
+<td align="left">eigencore</td>
+<td align="left">1.3.0 @ bf11055cbd</td>
+<td align="left">1.3.0 @ bf11055cbd</td>
+</tr>
+<tr class="odd">
+<td align="left">competitors</td>
+<td align="left">RSpectra 0.16.1, irlba 2.3.5.1</td>
+<td align="left">RSpectra 0.16.1, irlba 2.3.5.1</td>
+</tr>
+<tr class="even">
+<td align="left">threads</td>
+<td align="left">1,4</td>
+<td align="left">1,4</td>
+</tr>
+<tr class="odd">
+<td align="left">blas_threads</td>
+<td align="left">1:1 4:4</td>
+<td align="left">1:1 4:4</td>
+</tr>
+<tr class="even">
+<td align="left">reps</td>
+<td align="left">5</td>
+<td align="left">3</td>
+</tr>
+<tr class="odd">
+<td align="left">load_start_end</td>
+<td align="left">1.77 / 7.56</td>
+<td align="left">10.89 / 11.75</td>
+</tr>
+<tr class="even">
+<td align="left">wall</td>
+<td align="left">1070 s</td>
+<td align="left">2674 s</td>
 </tr>
 </tbody>
 </table>
-<p>Base R supplies the dense reference values. For sparse matrices it
-converts the input with <code><a href="https://rdrr.io/r/base/matrix.html" class="external-link">as.matrix()</a></code>, so its timing and
-memory results apply only to these small cases. <code>irlba</code>
-appears only in the SVD cases.</p>
-</div>
-<div class="section level2">
-<h2 id="what-is-recorded">What is recorded?<a class="anchor" aria-label="anchor" href="#what-is-recorded"></a>
-</h2>
-<p>Each row records four things:</p>
-<ul>
-<li>median elapsed time from <code><a href="https://bench.r-lib.org/reference/mark.html" class="external-link">bench::mark()</a></code>;</li>
-<li>allocated memory reported by <code>bench</code>;</li>
-<li>relative error against a dense base truth for the requested
-values;</li>
-<li>an explicit residual/backward-error check on the returned
-vectors.</li>
-</ul>
-<p>For eigencore, the planner label identifies the implementation used
-in each case.</p>
-</div>
-<div class="section level2">
-<h2 id="results-from-this-render">Results from this render<a class="anchor" aria-label="anchor" href="#results-from-this-render"></a>
-</h2>
-<div class="section level3">
-<h3 id="elapsed-time">Elapsed time<a class="anchor" aria-label="anchor" href="#elapsed-time"></a>
-</h3>
-<p>The entries are median solver-call milliseconds; lower values are
-better. An eigencore solver call includes its native certificate. The
-external calls do not, and the shared residual check used elsewhere in
-this vignette runs after the timer. These smoke timings therefore
-describe call overhead, not a common time-to-certified-answer. The
-installed benchmark scripts report both raw solver time and a common
-eigencore-certified total. The <code>lowest_median</code> column is
-selected from unrounded measurements and reports the smallest value in
-each row.</p>
-<table style="width:100%;" class="table">
-<caption>Median solver-call time in milliseconds from 3 iterations per
-method.</caption>
+<table class="table">
+<caption>Cases of the standard profile.</caption>
 <colgroup>
-<col width="31%">
-<col width="20%">
-<col width="14%">
-<col width="12%">
-<col width="11%">
+<col width="8%">
+<col width="23%">
+<col width="2%">
+<col width="55%">
 <col width="10%">
 </colgroup>
 <thead><tr class="header">
 <th align="left">case</th>
-<th align="left">lowest median</th>
-<th align="right">eigencore</th>
-<th align="right">RSpectra</th>
-<th align="right">irlba</th>
-<th align="right">base R</th>
+<th align="left">generator</th>
+<th align="left">nnz</th>
+<th align="left">reference values</th>
+<th align="left">||A||_2</th>
 </tr></thead>
 <tbody>
 <tr class="odd">
-<td align="left">dense Hermitian</td>
-<td align="left">RSpectra</td>
-<td align="right">4.333</td>
-<td align="right">0.4784</td>
-<td align="right">not run</td>
-<td align="right">2.108</td>
+<td align="left">sym_sparse_n20000_LA_k10</td>
+<td align="left">random sparse symmetric, n=20000, ~5 nnz/row, N(0,1)
+values</td>
+<td align="left">99,998</td>
+<td align="left">certified iterative: RSpectra(k=30, tol=1e-13),
+independent backward error 1.6e-14; candidates RSpectra(k=20, tol=1e-13)
+(bwd 7.4e-15), RSpectra(k=30, tol=1e-13) (bwd 1.6e-14), eigencore(k=20,
+tol=1e-12) (bwd 6.5e-13); max top-k disagreement 1.6e-14</td>
+<td align="left">Golub-Kahan-Lanczos (44 steps, full reorth.)</td>
 </tr>
 <tr class="even">
-<td align="left">sparse path Laplacian</td>
-<td align="left">eigencore</td>
-<td align="right">5.390</td>
-<td align="right">7.8610</td>
-<td align="right">not run</td>
-<td align="right">13.860</td>
+<td align="left">sym_sparse_n20000_SA_k10</td>
+<td align="left">random sparse symmetric, n=20000, ~5 nnz/row, N(0,1)
+values</td>
+<td align="left">99,998</td>
+<td align="left">certified iterative: RSpectra(k=30, tol=1e-13),
+independent backward error 1.2e-14; candidates RSpectra(k=20, tol=1e-13)
+(bwd 6.7e-15), RSpectra(k=30, tol=1e-13) (bwd 1.2e-14), eigencore(k=20,
+tol=1e-12) (bwd 6.5e-13); max top-k disagreement 9.9e-15</td>
+<td align="left">Golub-Kahan-Lanczos (44 steps, full reorth.)</td>
 </tr>
 <tr class="odd">
-<td align="left">dense low-rank SVD</td>
-<td align="left">RSpectra</td>
-<td align="right">4.107</td>
-<td align="right">0.2579</td>
-<td align="right">5.981</td>
-<td align="right">1.719</td>
+<td align="left">nonsym_sparse_n20000_LM_k6</td>
+<td align="left">random sparse nonsymmetric, n=20000, ~5 nnz/row, N(0,1)
+values</td>
+<td align="left">100,000</td>
+<td align="left">certified iterative: RSpectra(k=16, tol=1e-13),
+independent backward error 9.4e-14; candidates RSpectra(k=16, tol=1e-13)
+(bwd 9.4e-14), RSpectra(k=26, tol=1e-13) (bwd 2.1e-14), eigencore(k=16,
+tol=1e-12) (bwd 2.4e-13); max top-k disagreement 3.8e-01</td>
+<td align="left">Golub-Kahan-Lanczos (60 steps, full reorth.)</td>
 </tr>
 <tr class="even">
-<td align="left">tall sparse SVD</td>
-<td align="left">RSpectra</td>
-<td align="right">2.655</td>
-<td align="right">0.3599</td>
-<td align="right">10.730</td>
-<td align="right">1.888</td>
+<td align="left">svd_sparse_50000x2000_k20</td>
+<td align="left">random sparse 50000 x 2000, density 0.002, N(0,1)
+values</td>
+<td align="left">200,000</td>
+<td align="left">dense LAPACK eigen() of the Gram matrix (top singular
+values)</td>
+<td align="left">exact (dense Gram eigen)</td>
 </tr>
 <tr class="odd">
-<td align="left">wide sparse SVD</td>
-<td align="left">RSpectra</td>
-<td align="right">2.736</td>
-<td align="right">0.3884</td>
-<td align="right">10.690</td>
-<td align="right">3.288</td>
+<td align="left">svd_sparse_50000x20000_k20</td>
+<td align="left">random sparse 50000 x 20000, density 0.0005, N(0,1)
+values</td>
+<td align="left">500,000</td>
+<td align="left">certified iterative: RSpectra(k=30, tol=1e-13),
+independent backward error 4.6e-14; candidates RSpectra(k=30, tol=1e-13)
+(bwd 4.6e-14), RSpectra(k=40, tol=1e-13) (bwd 2.4e-14), eigencore(k=30,
+tol=1e-12) (bwd 8.9e-13); max top-k disagreement 8.4e-15</td>
+<td align="left">Golub-Kahan-Lanczos (36 steps, full reorth.)</td>
+</tr>
+<tr class="even">
+<td align="left">dense_sym_n1500_LA_k10</td>
+<td align="left">dense symmetric crossprod(X)/n, X 1500 x 1500
+N(0,1)</td>
+<td align="left">2,250,000</td>
+<td align="left">dense LAPACK eigen()</td>
+<td align="left">exact (dense eigen)</td>
+</tr>
+<tr class="odd">
+<td align="left">eig_full_n1500_vectors</td>
+<td align="left">dense symmetric crossprod(X)/n, X 1500 x 1500
+N(0,1)</td>
+<td align="left">2,250,000</td>
+<td align="left">dense LAPACK eigen()</td>
+<td align="left">exact (dense eigen)</td>
+</tr>
+<tr class="even">
+<td align="left">eig_full_n1500_values</td>
+<td align="left">dense symmetric crossprod(X)/n, X 1500 x 1500
+N(0,1)</td>
+<td align="left">2,250,000</td>
+<td align="left">dense LAPACK eigen()</td>
+<td align="left">exact (dense eigen)</td>
+</tr>
+<tr class="odd">
+<td align="left">shift_invert_lap2d_g100_sigma4.01_k6</td>
+<td align="left">2-D 5-point Dirichlet Laplacian, 100 x 100 grid
+(n=10000); analytic spectrum, repeated eigenvalues</td>
+<td align="left">49,600</td>
+<td align="left">analytic spectrum</td>
+<td align="left">exact (analytic spectrum)</td>
+</tr>
+<tr class="even">
+<td align="left">generalized_fem2d_g50_SA_k6</td>
+<td align="left">generalized SPD FEM pencil (Q1 stiffness/mass), 50 x 50
+grid (n=2500); analytic spectrum</td>
+<td align="left">21,904</td>
+<td align="left">analytic spectrum</td>
+<td align="left">Golub-Kahan-Lanczos (80 steps, full reorth.)</td>
+</tr>
+<tr class="odd">
+<td align="left">pca_centered_50000x1000_k10</td>
+<td align="left">random sparse 50000 x 1000, density 0.01, Exp(1)
+values</td>
+<td align="left">500,000</td>
+<td align="left">dense LAPACK eigen() of the Gram matrix (top singular
+values)</td>
+<td align="left">exact (dense Gram eigen)</td>
+</tr>
+<tr class="even">
+<td align="left">banded_lap1d_n20000_SA_k8</td>
+<td align="left">1-D Dirichlet Laplacian (tridiagonal), n=20000;
+analytic spectrum</td>
+<td align="left">59,998</td>
+<td align="left">analytic spectrum</td>
+<td align="left">exact (analytic spectrum)</td>
+</tr>
+<tr class="odd">
+<td align="left">laplacian2d_g150_SA_k10</td>
+<td align="left">2-D 5-point Dirichlet Laplacian, 150 x 150 grid
+(n=22500); analytic spectrum, repeated eigenvalues</td>
+<td align="left">111,900</td>
+<td align="left">analytic spectrum</td>
+<td align="left">exact (analytic spectrum)</td>
+</tr>
+<tr class="even">
+<td align="left">powerlaw_dense_n2000_LA_k10</td>
+<td align="left">dense symmetric Q diag(j^-1) Q’, n=2000; analytic
+spectrum</td>
+<td align="left">4,000,000</td>
+<td align="left">analytic spectrum</td>
+<td align="left">exact (analytic spectrum)</td>
+</tr>
+<tr class="odd">
+<td align="left">clustered_dense_n2000_LA_k10</td>
+<td align="left">dense symmetric, n=2000, top spectrum 1 (x3),
+1-1e-6..3e-6, 0.9 (x2), 0.85, 0.8, bulk U(0,0.7); analytic</td>
+<td align="left">4,000,000</td>
+<td align="left">analytic spectrum</td>
+<td align="left">exact (analytic spectrum)</td>
+</tr>
+<tr class="even">
+<td align="left">lowrank_noise_5000x500_k10</td>
+<td align="left">dense 5000 x 500, rank-12 signal (s = 10..0.83) + 0.01
+N(0,1) noise</td>
+<td align="left">2,500,000</td>
+<td align="left">dense LAPACK eigen() of the Gram matrix (top singular
+values)</td>
+<td align="left">exact (dense Gram eigen)</td>
 </tr>
 </tbody>
 </table>
-<p>In this render, eigencore recorded the lowest median in <strong>1 of
-5</strong> cases. The result is mixed, and the sub-millisecond rows are
-especially sensitive to setup overhead and run-to-run noise.</p>
 </div>
+<div class="section level2">
+<h2 id="standard-profile-results">Standard profile results<a class="anchor" aria-label="anchor" href="#standard-profile-results"></a>
+</h2>
 <div class="section level3">
-<h3 id="why-can-larger-cases-look-different">Why can larger cases look different?<a class="anchor" aria-label="anchor" href="#why-can-larger-cases-look-different"></a>
+<h3 id="sparse-symmetric-extreme-eigenvalues">Sparse symmetric, extreme eigenvalues<a class="anchor" aria-label="anchor" href="#sparse-symmetric-extreme-eigenvalues"></a>
 </h3>
-<p>The smoke cases above are small enough that fixed work matters:
-dispatch, result construction, certification, and the dense eigensolve
-for a bounded Gram matrix can be a substantial fraction of total time.
-They are useful for checking behavior, but they are poor evidence about
-scaling.</p>
-<p>For a highly rectangular sparse SVD, eigencore can form the smaller
-Gram problem and certify the resulting triplets in the original
-coordinates. If the smaller dimension stays bounded while the long
-dimension grows, the Gram eigensolve retains the same dimension while
-iterative methods perform more expensive matrix-vector products. A
-crossover is therefore plausible. The installed large endpoint cases
-show that eigencore can win in this regime, but those endpoints do not
-locate a crossover because their dimensions, density, rank, and random
-fixture all change together. The controlled mode of
-<code>bench-svd-gram-cutoff.R</code> fixes the small side, rank,
-density, and a nested sparse fixture while varying only the long side,
-and reports raw solver and common certified-total ratios separately.</p>
-<p>In the 2026-07-15 installed five-iteration sweep with small side 90,
-the certified-total ratio crossed above one by long side 5,000 in both
-orientations. The raw-call ratio crossed there for the wide case and by
-25,000 for the tall case. These are machine-specific release
-measurements, not a universal crossover constant.</p>
-<p>This does not mean that increasing either matrix dimension helps. The
-current planner limits the smaller dimension to 512 for tall matrices
-and 1024 for wide matrices, and also checks aspect ratio, requested-rank
-fraction, and a memory budget. The repository’s cutoff evidence is mixed
-outside the core regime: increasing the smaller side can remove the
-advantage, particularly for tall matrices. The current full endpoint
-cases are <code>100000 x 500</code> and its transpose; see the <a href="https://github.com/bbuchsbaum/eigencore/blob/main/docs/v1-benchmark-manifest.md" class="external-link">benchmark
-manifest</a> for the installed evidence and exact commands.</p>
-<p>The larger benchmark scripts pass the requested tolerance to RSpectra
-and irlba, then recompute eigencore certificates for all external
-results. They retain both raw solver time and common time through
-certification. A row that still fails the requested certificate is
-excluded from time-to-certified-answer claims rather than being treated
-as a slow certified result.</p>
-</div>
-<div class="section level3">
-<h3 id="allocated-memory">Allocated memory<a class="anchor" aria-label="anchor" href="#allocated-memory"></a>
-</h3>
-<p>These values are megabytes allocated during the timed expression.
-They do not measure peak resident memory.</p>
 <table class="table">
-<caption>Allocated memory in megabytes.</caption>
-<thead><tr class="header">
-<th align="left">case</th>
-<th align="right">eigencore</th>
-<th align="right">RSpectra</th>
-<th align="right">irlba</th>
-<th align="right">base R</th>
-</tr></thead>
-<tbody>
-<tr class="odd">
-<td align="left">dense Hermitian</td>
-<td align="right">2.65500</td>
-<td align="right">0.06661</td>
-<td align="right">not run</td>
-<td align="right">0.4240</td>
-</tr>
-<tr class="even">
-<td align="left">sparse path Laplacian</td>
-<td align="right">1.81500</td>
-<td align="right">0.01991</td>
-<td align="right">not run</td>
-<td align="right">3.1880</td>
-</tr>
-<tr class="odd">
-<td align="left">dense low-rank SVD</td>
-<td align="right">1.28600</td>
-<td align="right">0.09405</td>
-<td align="right">2.763</td>
-<td align="right">0.5942</td>
-</tr>
-<tr class="even">
-<td align="left">tall sparse SVD</td>
-<td align="right">0.05859</td>
-<td align="right">0.02502</td>
-<td align="right">4.967</td>
-<td align="right">0.8979</td>
-</tr>
-<tr class="odd">
-<td align="left">wide sparse SVD</td>
-<td align="right">0.05038</td>
-<td align="right">0.02246</td>
-<td align="right">4.500</td>
-<td align="right">0.9098</td>
-</tr>
-</tbody>
-</table>
-</div>
-<div class="section level3">
-<h3 id="numerical-checks">Numerical checks<a class="anchor" aria-label="anchor" href="#numerical-checks"></a>
-</h3>
-<p>The summary below reports the largest error observed across the
-methods in each case. Timing should be ignored for any case that has a
-failed method or residual check.</p>
-<table style="width:100%;" class="table">
-<caption>Numerical checks across all methods in each case.</caption>
 <colgroup>
-<col width="23%">
-<col width="20%">
-<col width="20%">
-<col width="20%">
+<col width="19%">
+<col width="6%">
+<col width="7%">
+<col width="7%">
+<col width="3%">
 <col width="16%">
-</colgroup>
-<thead><tr class="header">
-<th align="left">case</th>
-<th align="center">methods completed</th>
-<th align="right">max relative error</th>
-<th align="right">max backward error</th>
-<th align="left">residual checks</th>
-</tr></thead>
-<tbody>
-<tr class="odd">
-<td align="left">dense Hermitian</td>
-<td align="center">3/3</td>
-<td align="right">2.77e-15</td>
-<td align="right">1.57e-11</td>
-<td align="left">all pass</td>
-</tr>
-<tr class="even">
-<td align="left">sparse path Laplacian</td>
-<td align="center">3/3</td>
-<td align="right">8.33e-15</td>
-<td align="right">8.45e-10</td>
-<td align="left">all pass</td>
-</tr>
-<tr class="odd">
-<td align="left">dense low-rank SVD</td>
-<td align="center">4/4</td>
-<td align="right">1.33e-15</td>
-<td align="right">5.88e-16</td>
-<td align="left">all pass</td>
-</tr>
-<tr class="even">
-<td align="left">tall sparse SVD</td>
-<td align="center">4/4</td>
-<td align="right">3.61e-15</td>
-<td align="right">1.10e-11</td>
-<td align="left">all pass</td>
-</tr>
-<tr class="odd">
-<td align="left">wide sparse SVD</td>
-<td align="center">4/4</td>
-<td align="right">2.94e-15</td>
-<td align="right">6.71e-10</td>
-<td align="left">all pass</td>
-</tr>
-</tbody>
-</table>
-</div>
-<div class="section level3">
-<h3 id="eigencore-planner-paths">Eigencore planner paths<a class="anchor" aria-label="anchor" href="#eigencore-planner-paths"></a>
-</h3>
-<table class="table">
-<colgroup>
-<col width="23%">
-<col width="68%">
+<col width="12%">
+<col width="8%">
+<col width="8%">
 <col width="7%">
 </colgroup>
 <thead><tr class="header">
 <th align="left">case</th>
-<th align="left">planner label</th>
-<th align="left">status</th>
+<th align="left">threads</th>
+<th align="left">eigencore</th>
+<th align="left">RSpectra</th>
+<th align="left">base</th>
+<th align="left">eigencore / RSpectra</th>
+<th align="left">matvecs ec / RS</th>
+<th align="left">bwd err ec</th>
+<th align="left">bwd err RS</th>
+<th align="left">certified</th>
 </tr></thead>
 <tbody>
 <tr class="odd">
-<td align="left">dense Hermitian</td>
-<td align="left">native dense Hermitian LAPACK fallback</td>
-<td align="left">ok</td>
+<td align="left">sym_sparse_n20000_LA_k10</td>
+<td align="left">1</td>
+<td align="left">278 ms</td>
+<td align="left">219 ms</td>
+<td align="left">n/a</td>
+<td align="left">1.27</td>
+<td align="left">268 / 230</td>
+<td align="left">9.3e-09</td>
+<td align="left">2.4e-09</td>
+<td align="left">yes</td>
 </tr>
 <tr class="even">
-<td align="left">sparse path Laplacian</td>
-<td align="left">native tridiagonal Hermitian shift-invert (factorized
-Lanczos)</td>
-<td align="left">ok</td>
+<td align="left">sym_sparse_n20000_LA_k10</td>
+<td align="left">4</td>
+<td align="left">6.53 s</td>
+<td align="left">267 ms</td>
+<td align="left">n/a</td>
+<td align="left">24.48</td>
+<td align="left">268 / 230</td>
+<td align="left">9.3e-09</td>
+<td align="left">2.4e-09</td>
+<td align="left">yes</td>
 </tr>
 <tr class="odd">
-<td align="left">dense low-rank SVD</td>
-<td align="left">native certified Gram SVD special case</td>
-<td align="left">ok</td>
+<td align="left">sym_sparse_n20000_SA_k10</td>
+<td align="left">1</td>
+<td align="left">375 ms</td>
+<td align="left">206 ms</td>
+<td align="left">n/a</td>
+<td align="left">1.82</td>
+<td align="left">348 / 236</td>
+<td align="left">6.3e-09</td>
+<td align="left">4.4e-09</td>
+<td align="left">yes</td>
 </tr>
 <tr class="even">
-<td align="left">tall sparse SVD</td>
-<td align="left">native certified Gram SVD special case</td>
-<td align="left">ok</td>
-</tr>
-<tr class="odd">
-<td align="left">wide sparse SVD</td>
-<td align="left">native certified Gram SVD special case</td>
-<td align="left">ok</td>
+<td align="left">sym_sparse_n20000_SA_k10</td>
+<td align="left">4</td>
+<td align="left">312 ms</td>
+<td align="left">221 ms</td>
+<td align="left">n/a</td>
+<td align="left">1.41</td>
+<td align="left">305 / 236</td>
+<td align="left">5.2e-09</td>
+<td align="left">4.4e-09</td>
+<td align="left">yes</td>
 </tr>
 </tbody>
 </table>
 </div>
+<div class="section level3">
+<h3 id="sparse-nonsymmetric-largest-modulus">Sparse nonsymmetric, largest modulus<a class="anchor" aria-label="anchor" href="#sparse-nonsymmetric-largest-modulus"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="18%">
+<col width="5%">
+<col width="10%">
+<col width="10%">
+<col width="3%">
+<col width="14%">
+<col width="10%">
+<col width="10%">
+<col width="10%">
+<col width="6%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="left">threads</th>
+<th align="left">eigencore</th>
+<th align="left">RSpectra</th>
+<th align="left">base</th>
+<th align="left">eigencore / RSpectra</th>
+<th align="left">matvecs ec / RS</th>
+<th align="left">bwd err ec</th>
+<th align="left">bwd err RS</th>
+<th align="left">certified</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">nonsym_sparse_n20000_LM_k6</td>
+<td align="left">1</td>
+<td align="left">4.75 s†</td>
+<td align="left">2.51 s†</td>
+<td align="left">n/a</td>
+<td align="left">1.89</td>
+<td align="left">6576 / 3947</td>
+<td align="left">2.6e-09 (miss)</td>
+<td align="left">2.6e-09 (miss)</td>
+<td align="left">yes</td>
+</tr>
+<tr class="even">
+<td align="left">nonsym_sparse_n20000_LM_k6</td>
+<td align="left">4</td>
+<td align="left">9.70 s†</td>
+<td align="left">2.22 s†</td>
+<td align="left">n/a</td>
+<td align="left">4.37</td>
+<td align="left">6576 / 3947</td>
+<td align="left">2.6e-09 (miss)</td>
+<td align="left">2.6e-09 (miss)</td>
+<td align="left">yes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="sparse-svd">Sparse SVD<a class="anchor" aria-label="anchor" href="#sparse-svd"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="20%">
+<col width="5%">
+<col width="7%">
+<col width="6%">
+<col width="5%">
+<col width="3%">
+<col width="15%">
+<col width="11%">
+<col width="8%">
+<col width="8%">
+<col width="7%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="left">threads</th>
+<th align="left">eigencore</th>
+<th align="left">RSpectra</th>
+<th align="left">irlba</th>
+<th align="left">base</th>
+<th align="left">eigencore / RSpectra</th>
+<th align="left">matvecs ec / RS</th>
+<th align="left">bwd err ec</th>
+<th align="left">bwd err RS</th>
+<th align="left">certified</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">svd_sparse_50000x2000_k20</td>
+<td align="left">1</td>
+<td align="left">195 ms</td>
+<td align="left">136 ms</td>
+<td align="left">919 ms</td>
+<td align="left">n/a</td>
+<td align="left">1.43</td>
+<td align="left">- / 486</td>
+<td align="left">8.3e-10</td>
+<td align="left">1.8e-09</td>
+<td align="left">yes</td>
+</tr>
+<tr class="even">
+<td align="left">svd_sparse_50000x2000_k20</td>
+<td align="left">4</td>
+<td align="left">8.96 s</td>
+<td align="left">132 ms</td>
+<td align="left">780 ms</td>
+<td align="left">n/a</td>
+<td align="left">67.94</td>
+<td align="left">- / 486</td>
+<td align="left">8.3e-10</td>
+<td align="left">1.8e-09</td>
+<td align="left">yes</td>
+</tr>
+<tr class="odd">
+<td align="left">svd_sparse_50000x20000_k20</td>
+<td align="left">1</td>
+<td align="left">1.13 s</td>
+<td align="left">750 ms</td>
+<td align="left">2.22 s</td>
+<td align="left">n/a</td>
+<td align="left">1.51</td>
+<td align="left">- / 602</td>
+<td align="left">2.3e-10</td>
+<td align="left">7.1e-09</td>
+<td align="left">yes</td>
+</tr>
+<tr class="even">
+<td align="left">svd_sparse_50000x20000_k20</td>
+<td align="left">4</td>
+<td align="left">13.9 s</td>
+<td align="left">762 ms</td>
+<td align="left">2.45 s</td>
+<td align="left">n/a</td>
+<td align="left">18.22</td>
+<td align="left">- / 602</td>
+<td align="left">2.3e-10</td>
+<td align="left">7.1e-09</td>
+<td align="left">yes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="dense-symmetric-partial">Dense symmetric, partial<a class="anchor" aria-label="anchor" href="#dense-symmetric-partial"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="18%">
+<col width="6%">
+<col width="7%">
+<col width="7%">
+<col width="5%">
+<col width="16%">
+<col width="12%">
+<col width="8%">
+<col width="8%">
+<col width="7%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="left">threads</th>
+<th align="left">eigencore</th>
+<th align="left">RSpectra</th>
+<th align="left">base</th>
+<th align="left">eigencore / RSpectra</th>
+<th align="left">matvecs ec / RS</th>
+<th align="left">bwd err ec</th>
+<th align="left">bwd err RS</th>
+<th align="left">certified</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">dense_sym_n1500_LA_k10</td>
+<td align="left">1</td>
+<td align="left">198 ms</td>
+<td align="left">74 ms</td>
+<td align="left">682 ms</td>
+<td align="left">2.66</td>
+<td align="left">182 / 169</td>
+<td align="left">6.1e-09</td>
+<td align="left">1.2e-09</td>
+<td align="left">yes</td>
+</tr>
+<tr class="even">
+<td align="left">dense_sym_n1500_LA_k10</td>
+<td align="left">4</td>
+<td align="left">186 ms</td>
+<td align="left">68 ms</td>
+<td align="left">596 ms</td>
+<td align="left">2.74</td>
+<td align="left">182 / 169</td>
+<td align="left">6.6e-09</td>
+<td align="left">1.2e-09</td>
+<td align="left">yes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="full-dense-eigendecomposition">Full dense eigendecomposition<a class="anchor" aria-label="anchor" href="#full-dense-eigendecomposition"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="33%">
+<col width="11%">
+<col width="14%">
+<col width="10%">
+<col width="15%">
+<col width="14%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="left">threads</th>
+<th align="left">eigencore</th>
+<th align="left">base</th>
+<th align="left">bwd err ec</th>
+<th align="left">certified</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">eig_full_n1500_vectors</td>
+<td align="left">1</td>
+<td align="left">858 ms</td>
+<td align="left">700 ms</td>
+<td align="left">2.0e-15</td>
+<td align="left">yes</td>
+</tr>
+<tr class="even">
+<td align="left">eig_full_n1500_vectors</td>
+<td align="left">4</td>
+<td align="left">481 ms</td>
+<td align="left">386 ms</td>
+<td align="left">1.8e-15</td>
+<td align="left">yes</td>
+</tr>
+<tr class="odd">
+<td align="left">eig_full_n1500_values</td>
+<td align="left">1</td>
+<td align="left">328 ms</td>
+<td align="left">349 ms</td>
+<td align="left">-</td>
+<td align="left">-</td>
+</tr>
+<tr class="even">
+<td align="left">eig_full_n1500_values</td>
+<td align="left">4</td>
+<td align="left">157 ms</td>
+<td align="left">140 ms</td>
+<td align="left">-</td>
+<td align="left">-</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="interior-eigenvalues-by-shift-invert">Interior eigenvalues by shift-invert<a class="anchor" aria-label="anchor" href="#interior-eigenvalues-by-shift-invert"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="26%">
+<col width="5%">
+<col width="7%">
+<col width="6%">
+<col width="3%">
+<col width="15%">
+<col width="11%">
+<col width="7%">
+<col width="7%">
+<col width="7%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="left">threads</th>
+<th align="left">eigencore</th>
+<th align="left">RSpectra</th>
+<th align="left">base</th>
+<th align="left">eigencore / RSpectra</th>
+<th align="left">matvecs ec / RS</th>
+<th align="left">bwd err ec</th>
+<th align="left">bwd err RS</th>
+<th align="left">certified</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">shift_invert_lap2d_g100_sigma4.01_k6</td>
+<td align="left">1</td>
+<td align="left">971 ms</td>
+<td align="left">41 ms</td>
+<td align="left">n/a</td>
+<td align="left">23.79</td>
+<td align="left">45 / 41</td>
+<td align="left">2.2e-16</td>
+<td align="left">6.4e-14</td>
+<td align="left">yes</td>
+</tr>
+<tr class="even">
+<td align="left">shift_invert_lap2d_g100_sigma4.01_k6</td>
+<td align="left">4</td>
+<td align="left">1.10 s</td>
+<td align="left">39 ms</td>
+<td align="left">n/a</td>
+<td align="left">28.00</td>
+<td align="left">45 / 41</td>
+<td align="left">2.2e-16</td>
+<td align="left">6.4e-14</td>
+<td align="left">yes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="generalized-symmetric-definite">Generalized symmetric-definite<a class="anchor" aria-label="anchor" href="#generalized-symmetric-definite"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="21%">
+<col width="6%">
+<col width="7%">
+<col width="6%">
+<col width="5%">
+<col width="16%">
+<col width="12%">
+<col width="8%">
+<col width="8%">
+<col width="7%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="left">threads</th>
+<th align="left">eigencore</th>
+<th align="left">RSpectra</th>
+<th align="left">base</th>
+<th align="left">eigencore / RSpectra</th>
+<th align="left">matvecs ec / RS</th>
+<th align="left">bwd err ec</th>
+<th align="left">bwd err RS</th>
+<th align="left">certified</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">generalized_fem2d_g50_SA_k6</td>
+<td align="left">1</td>
+<td align="left">182 ms</td>
+<td align="left">686 ms</td>
+<td align="left">6.68 s</td>
+<td align="left">0.27</td>
+<td align="left">- / 1042</td>
+<td align="left">8.1e-09</td>
+<td align="left">6.0e-11</td>
+<td align="left">yes</td>
+</tr>
+<tr class="even">
+<td align="left">generalized_fem2d_g50_SA_k6</td>
+<td align="left">4</td>
+<td align="left">187 ms</td>
+<td align="left">580 ms</td>
+<td align="left">4.62 s</td>
+<td align="left">0.32</td>
+<td align="left">- / 1042</td>
+<td align="left">8.1e-09</td>
+<td align="left">6.0e-11</td>
+<td align="left">yes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="centred-sparse-pca-implicit-centring">Centred sparse PCA (implicit centring)<a class="anchor" aria-label="anchor" href="#centred-sparse-pca-implicit-centring"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="20%">
+<col width="5%">
+<col width="7%">
+<col width="6%">
+<col width="5%">
+<col width="3%">
+<col width="15%">
+<col width="11%">
+<col width="8%">
+<col width="8%">
+<col width="7%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="left">threads</th>
+<th align="left">eigencore</th>
+<th align="left">RSpectra</th>
+<th align="left">irlba</th>
+<th align="left">base</th>
+<th align="left">eigencore / RSpectra</th>
+<th align="left">matvecs ec / RS</th>
+<th align="left">bwd err ec</th>
+<th align="left">bwd err RS</th>
+<th align="left">certified</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">pca_centered_50000x1000_k10</td>
+<td align="left">1</td>
+<td align="left">1.31 s</td>
+<td align="left">288 ms</td>
+<td align="left">508 ms</td>
+<td align="left">n/a</td>
+<td align="left">4.54</td>
+<td align="left">570 / 330</td>
+<td align="left">6.2e-10</td>
+<td align="left">6.1e-09</td>
+<td align="left">yes</td>
+</tr>
+<tr class="even">
+<td align="left">pca_centered_50000x1000_k10</td>
+<td align="left">4</td>
+<td align="left">1.41 s</td>
+<td align="left">346 ms</td>
+<td align="left">511 ms</td>
+<td align="left">n/a</td>
+<td align="left">4.07</td>
+<td align="left">570 / 330</td>
+<td align="left">6.2e-10</td>
+<td align="left">6.1e-09</td>
+<td align="left">yes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="banded-1-d-laplacian-smallest">Banded (1-D Laplacian), smallest<a class="anchor" aria-label="anchor" href="#banded-1-d-laplacian-smallest"></a>
+</h3>
+<table style="width:100%;" class="table">
+<colgroup>
+<col width="19%">
+<col width="6%">
+<col width="7%">
+<col width="11%">
+<col width="3%">
+<col width="15%">
+<col width="12%">
+<col width="8%">
+<col width="8%">
+<col width="7%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="left">threads</th>
+<th align="left">eigencore</th>
+<th align="left">RSpectra</th>
+<th align="left">base</th>
+<th align="left">eigencore / RSpectra</th>
+<th align="left">matvecs ec / RS</th>
+<th align="left">bwd err ec</th>
+<th align="left">bwd err RS</th>
+<th align="left">certified</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">banded_lap1d_n20000_SA_k8</td>
+<td align="left">1</td>
+<td align="left">56 ms</td>
+<td align="left">6.59 s†</td>
+<td align="left">n/a</td>
+<td align="left">0.01</td>
+<td align="left">39 / 12020</td>
+<td align="left">1.2e-10</td>
+<td align="left">- (miss)</td>
+<td align="left">yes</td>
+</tr>
+<tr class="even">
+<td align="left">banded_lap1d_n20000_SA_k8</td>
+<td align="left">4</td>
+<td align="left">78 ms</td>
+<td align="left">6.62 s†</td>
+<td align="left">n/a</td>
+<td align="left">0.01</td>
+<td align="left">39 / 12020</td>
+<td align="left">1.2e-10</td>
+<td align="left">- (miss)</td>
+<td align="left">yes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="d-laplacian-smallest-repeated-eigenvalues">2-D Laplacian, smallest (repeated eigenvalues)<a class="anchor" aria-label="anchor" href="#d-laplacian-smallest-repeated-eigenvalues"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="16%">
+<col width="5%">
+<col width="10%">
+<col width="10%">
+<col width="3%">
+<col width="14%">
+<col width="11%">
+<col width="10%">
+<col width="10%">
+<col width="6%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="left">threads</th>
+<th align="left">eigencore</th>
+<th align="left">RSpectra</th>
+<th align="left">base</th>
+<th align="left">eigencore / RSpectra</th>
+<th align="left">matvecs ec / RS</th>
+<th align="left">bwd err ec</th>
+<th align="left">bwd err RS</th>
+<th align="left">certified</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">laplacian2d_g150_SA_k10</td>
+<td align="left">1</td>
+<td align="left">1.20 s†</td>
+<td align="left">6.68 s†</td>
+<td align="left">n/a</td>
+<td align="left">0.18</td>
+<td align="left">1214 / 6488</td>
+<td align="left">5.5e-09 (miss)</td>
+<td align="left">3.1e-13 (miss)</td>
+<td align="left">yes</td>
+</tr>
+<tr class="even">
+<td align="left">laplacian2d_g150_SA_k10</td>
+<td align="left">4</td>
+<td align="left">34.0 s†</td>
+<td align="left">6.59 s†</td>
+<td align="left">n/a</td>
+<td align="left">5.16</td>
+<td align="left">1260 / 6488</td>
+<td align="left">2.7e-09 (miss)</td>
+<td align="left">3.1e-13 (miss)</td>
+<td align="left">yes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="power-law-spectrum">Power-law spectrum<a class="anchor" aria-label="anchor" href="#power-law-spectrum"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="21%">
+<col width="6%">
+<col width="7%">
+<col width="6%">
+<col width="5%">
+<col width="16%">
+<col width="12%">
+<col width="8%">
+<col width="8%">
+<col width="7%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="left">threads</th>
+<th align="left">eigencore</th>
+<th align="left">RSpectra</th>
+<th align="left">base</th>
+<th align="left">eigencore / RSpectra</th>
+<th align="left">matvecs ec / RS</th>
+<th align="left">bwd err ec</th>
+<th align="left">bwd err RS</th>
+<th align="left">certified</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">powerlaw_dense_n2000_LA_k10</td>
+<td align="left">1</td>
+<td align="left">139 ms</td>
+<td align="left">31 ms</td>
+<td align="left">1.42 s</td>
+<td align="left">4.48</td>
+<td align="left">66 / 40</td>
+<td align="left">2.7e-16</td>
+<td align="left">7.7e-13</td>
+<td align="left">yes</td>
+</tr>
+<tr class="even">
+<td align="left">powerlaw_dense_n2000_LA_k10</td>
+<td align="left">4</td>
+<td align="left">240 ms</td>
+<td align="left">36 ms</td>
+<td align="left">2.07 s</td>
+<td align="left">6.63</td>
+<td align="left">66 / 40</td>
+<td align="left">3.8e-16</td>
+<td align="left">7.7e-13</td>
+<td align="left">yes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="clustered-repeated-top-eigenvalues">Clustered / repeated top eigenvalues<a class="anchor" aria-label="anchor" href="#clustered-repeated-top-eigenvalues"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="21%">
+<col width="6%">
+<col width="7%">
+<col width="6%">
+<col width="5%">
+<col width="15%">
+<col width="12%">
+<col width="8%">
+<col width="8%">
+<col width="7%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="left">threads</th>
+<th align="left">eigencore</th>
+<th align="left">RSpectra</th>
+<th align="left">base</th>
+<th align="left">eigencore / RSpectra</th>
+<th align="left">matvecs ec / RS</th>
+<th align="left">bwd err ec</th>
+<th align="left">bwd err RS</th>
+<th align="left">certified</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">clustered_dense_n2000_LA_k10</td>
+<td align="left">1</td>
+<td align="left">244 ms</td>
+<td align="left">104 ms</td>
+<td align="left">1.84 s</td>
+<td align="left">2.34</td>
+<td align="left">141 / 127</td>
+<td align="left">1.6e-11</td>
+<td align="left">8.0e-11</td>
+<td align="left">yes</td>
+</tr>
+<tr class="even">
+<td align="left">clustered_dense_n2000_LA_k10</td>
+<td align="left">4</td>
+<td align="left">236 ms</td>
+<td align="left">97 ms</td>
+<td align="left">2.28 s</td>
+<td align="left">2.44</td>
+<td align="left">141 / 127</td>
+<td align="left">2.5e-12</td>
+<td align="left">9.7e-11</td>
+<td align="left">yes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="low-rank-plus-noise-svd">Low rank plus noise SVD<a class="anchor" aria-label="anchor" href="#low-rank-plus-noise-svd"></a>
+</h3>
+<table class="table">
+<colgroup>
+<col width="19%">
+<col width="5%">
+<col width="7%">
+<col width="6%">
+<col width="4%">
+<col width="5%">
+<col width="15%">
+<col width="11%">
+<col width="8%">
+<col width="8%">
+<col width="7%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case</th>
+<th align="left">threads</th>
+<th align="left">eigencore</th>
+<th align="left">RSpectra</th>
+<th align="left">irlba</th>
+<th align="left">base</th>
+<th align="left">eigencore / RSpectra</th>
+<th align="left">matvecs ec / RS</th>
+<th align="left">bwd err ec</th>
+<th align="left">bwd err RS</th>
+<th align="left">certified</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">lowrank_noise_5000x500_k10</td>
+<td align="left">1</td>
+<td align="left">67 ms</td>
+<td align="left">46 ms</td>
+<td align="left">48 ms</td>
+<td align="left">355 ms</td>
+<td align="left">1.45</td>
+<td align="left">- / 52</td>
+<td align="left">9.9e-16</td>
+<td align="left">3.8e-14</td>
+<td align="left">yes</td>
+</tr>
+<tr class="even">
+<td align="left">lowrank_noise_5000x500_k10</td>
+<td align="left">4</td>
+<td align="left">81 ms</td>
+<td align="left">53 ms</td>
+<td align="left">53 ms</td>
+<td align="left">409 ms</td>
+<td align="left">1.53</td>
+<td align="left">- / 52</td>
+<td align="left">1.3e-15</td>
+<td align="left">3.8e-14</td>
+<td align="left">yes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="time-relative-to-rspectra">Time relative to RSpectra<a class="anchor" aria-label="anchor" href="#time-relative-to-rspectra"></a>
+</h3>
+<p>Ratios below one mean faster than RSpectra on the same machine and
+thread setting.</p>
+<p><img src="benchmarks_files/figure-html/ratio-plot-1.png" class="r-plt" alt="" width="96%" style="display: block; margin: auto;"></p>
+</div>
+<div class="section level3">
+<h3 id="operator-applications">Operator applications<a class="anchor" aria-label="anchor" href="#operator-applications"></a>
+</h3>
+<p>Operator applications are the hardware-independent part of the
+comparison: they do not change with the machine, the BLAS, or the load.
+A dash means the package reported no comparable count (dense LAPACK,
+explicit Gram paths).</p>
+<table class="table">
+<caption>Operator applications (A and A’ counted separately) at threads
+= 1.</caption>
+<thead><tr class="header">
+<th align="left">case_id</th>
+<th align="left">eigencore</th>
+<th align="left">RSpectra</th>
+<th align="left">irlba</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">sym_sparse_n20000_LA_k10</td>
+<td align="left">268</td>
+<td align="left">230</td>
+<td align="left">-</td>
+</tr>
+<tr class="even">
+<td align="left">sym_sparse_n20000_SA_k10</td>
+<td align="left">348</td>
+<td align="left">236</td>
+<td align="left">-</td>
+</tr>
+<tr class="odd">
+<td align="left">nonsym_sparse_n20000_LM_k6</td>
+<td align="left">6576</td>
+<td align="left">3947</td>
+<td align="left">-</td>
+</tr>
+<tr class="even">
+<td align="left">svd_sparse_50000x2000_k20</td>
+<td align="left">-</td>
+<td align="left">486</td>
+<td align="left">756</td>
+</tr>
+<tr class="odd">
+<td align="left">svd_sparse_50000x20000_k20</td>
+<td align="left">-</td>
+<td align="left">602</td>
+<td align="left">1096</td>
+</tr>
+<tr class="even">
+<td align="left">dense_sym_n1500_LA_k10</td>
+<td align="left">182</td>
+<td align="left">169</td>
+<td align="left">-</td>
+</tr>
+<tr class="odd">
+<td align="left">eig_full_n1500_vectors</td>
+<td align="left">-</td>
+<td align="left">-</td>
+<td align="left">-</td>
+</tr>
+<tr class="even">
+<td align="left">eig_full_n1500_values</td>
+<td align="left">-</td>
+<td align="left">-</td>
+<td align="left">-</td>
+</tr>
+<tr class="odd">
+<td align="left">shift_invert_lap2d_g100_sigma4.01_k6</td>
+<td align="left">45</td>
+<td align="left">41</td>
+<td align="left">-</td>
+</tr>
+<tr class="even">
+<td align="left">generalized_fem2d_g50_SA_k6</td>
+<td align="left">-</td>
+<td align="left">1042</td>
+<td align="left">-</td>
+</tr>
+<tr class="odd">
+<td align="left">pca_centered_50000x1000_k10</td>
+<td align="left">570</td>
+<td align="left">330</td>
+<td align="left">390</td>
+</tr>
+<tr class="even">
+<td align="left">banded_lap1d_n20000_SA_k8</td>
+<td align="left">39</td>
+<td align="left">12020</td>
+<td align="left">-</td>
+</tr>
+<tr class="odd">
+<td align="left">laplacian2d_g150_SA_k10</td>
+<td align="left">1214</td>
+<td align="left">6488</td>
+<td align="left">-</td>
+</tr>
+<tr class="even">
+<td align="left">powerlaw_dense_n2000_LA_k10</td>
+<td align="left">66</td>
+<td align="left">40</td>
+<td align="left">-</td>
+</tr>
+<tr class="odd">
+<td align="left">clustered_dense_n2000_LA_k10</td>
+<td align="left">141</td>
+<td align="left">127</td>
+<td align="left">-</td>
+</tr>
+<tr class="even">
+<td align="left">lowrank_noise_5000x500_k10</td>
+<td align="left">-</td>
+<td align="left">52</td>
+<td align="left">48</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section level3">
+<h3 id="accuracy-summary">Accuracy summary<a class="anchor" aria-label="anchor" href="#accuracy-summary"></a>
+</h3>
+<table class="table">
+<caption>Independent backward error / scaled value error / target set
+(“cert”: eigencore’s own certificate passed). threads = 1.</caption>
+<colgroup>
+<col width="26%">
+<col width="22%">
+<col width="17%">
+<col width="16%">
+<col width="16%">
+</colgroup>
+<thead><tr class="header">
+<th align="left">case_id</th>
+<th align="left">eigencore</th>
+<th align="left">RSpectra</th>
+<th align="left">irlba</th>
+<th align="left">base</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">sym_sparse_n20000_LA_k10</td>
+<td align="left">9.3e-09 / 1.7e-14 / ok, cert</td>
+<td align="left">2.4e-09 / 1.6e-14 / ok</td>
+<td align="left">-</td>
+<td align="left">n/a</td>
+</tr>
+<tr class="even">
+<td align="left">sym_sparse_n20000_SA_k10</td>
+<td align="left">6.3e-09 / 1.0e-14 / ok, cert</td>
+<td align="left">4.4e-09 / 7.4e-15 / ok</td>
+<td align="left">-</td>
+<td align="left">n/a</td>
+</tr>
+<tr class="odd">
+<td align="left">nonsym_sparse_n20000_LM_k6</td>
+<td align="left">2.6e-09 / 7.4e-11 / MISS, cert</td>
+<td align="left">2.6e-09 / 8.2e-02 / MISS</td>
+<td align="left">-</td>
+<td align="left">n/a</td>
+</tr>
+<tr class="even">
+<td align="left">svd_sparse_50000x2000_k20</td>
+<td align="left">8.3e-10 / 3.3e-15 / ok, cert</td>
+<td align="left">1.8e-09 / 3.0e-15 / ok</td>
+<td align="left">8.6e-09 / 4.5e-15 / ok</td>
+<td align="left">n/a</td>
+</tr>
+<tr class="odd">
+<td align="left">svd_sparse_50000x20000_k20</td>
+<td align="left">2.3e-10 / 8.4e-15 / ok, cert</td>
+<td align="left">7.1e-09 / 6.0e-15 / ok</td>
+<td align="left">8.2e-09 / 1.0e-14 / ok</td>
+<td align="left">n/a</td>
+</tr>
+<tr class="even">
+<td align="left">dense_sym_n1500_LA_k10</td>
+<td align="left">6.1e-09 / 5.4e-15 / ok, cert</td>
+<td align="left">1.2e-09 / 5.5e-15 / ok</td>
+<td align="left">-</td>
+<td align="left">8.2e-16 / 5.3e-15 / ok</td>
+</tr>
+<tr class="odd">
+<td align="left">eig_full_n1500_vectors</td>
+<td align="left">2.0e-15 / 5.4e-15 / ok, cert</td>
+<td align="left">-</td>
+<td align="left">-</td>
+<td align="left">1.8e-15 / 5.3e-15 / ok</td>
+</tr>
+<tr class="even">
+<td align="left">eig_full_n1500_values</td>
+<td align="left">- / 5.5e-15 / ok</td>
+<td align="left">-</td>
+<td align="left">-</td>
+<td align="left">- / 0.0e+00 / ok</td>
+</tr>
+<tr class="odd">
+<td align="left">shift_invert_lap2d_g100_sigma4.01_k6</td>
+<td align="left">2.2e-16 / 7.4e-17 / ok, cert</td>
+<td align="left">6.4e-14 / 8.9e-16 / ok</td>
+<td align="left">-</td>
+<td align="left">n/a</td>
+</tr>
+<tr class="even">
+<td align="left">generalized_fem2d_g50_SA_k6</td>
+<td align="left">8.1e-09 / 1.2e-15 / ok, cert</td>
+<td align="left">6.0e-11 / 2.3e-13 / ok</td>
+<td align="left">-</td>
+<td align="left">2.2e-15 / 2.5e-16 / ok</td>
+</tr>
+<tr class="odd">
+<td align="left">pca_centered_50000x1000_k10</td>
+<td align="left">6.2e-10 / 1.9e-15 / ok, cert</td>
+<td align="left">6.1e-09 / 1.8e-15 / ok</td>
+<td align="left">9.4e-09 / 4.0e-15 / ok</td>
+<td align="left">n/a</td>
+</tr>
+<tr class="even">
+<td align="left">banded_lap1d_n20000_SA_k8</td>
+<td align="left">1.2e-10 / 2.8e-17 / ok, cert</td>
+<td align="left">- / - / MISS</td>
+<td align="left">-</td>
+<td align="left">n/a</td>
+</tr>
+<tr class="odd">
+<td align="left">laplacian2d_g150_SA_k10</td>
+<td align="left">5.5e-09 / 1.2e-15 / MISS, cert</td>
+<td align="left">3.1e-13 / 3.1e-13 / MISS</td>
+<td align="left">-</td>
+<td align="left">n/a</td>
+</tr>
+<tr class="even">
+<td align="left">powerlaw_dense_n2000_LA_k10</td>
+<td align="left">2.7e-16 / 1.5e-16 / ok, cert</td>
+<td align="left">7.7e-13 / 1.3e-15 / ok</td>
+<td align="left">-</td>
+<td align="left">3.8e-16 / 1.7e-16 / ok</td>
+</tr>
+<tr class="odd">
+<td align="left">clustered_dense_n2000_LA_k10</td>
+<td align="left">1.6e-11 / 4.3e-16 / ok, cert</td>
+<td align="left">8.0e-11 / 2.0e-15 / ok</td>
+<td align="left">-</td>
+<td align="left">1.4e-15 / 1.4e-15 / ok</td>
+</tr>
+<tr class="even">
+<td align="left">lowrank_noise_5000x500_k10</td>
+<td align="left">9.9e-16 / 1.2e-16 / ok, cert</td>
+<td align="left">3.8e-14 / 3.9e-16 / ok</td>
+<td align="left">6.0e-15 / 7.7e-16 / ok</td>
+<td align="left">9.1e-15 / 7.1e-16 / ok</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Rows where a method missed the wanted set or eigencore’s
+certificate failed</strong> (generated from the stored results):</p>
+<ul>
+<li>
+<code>nonsym_sparse_n20000_LM_k6</code>, eigencore: returned the
+wrong or an incomplete target set; eigencore’s certificate nevertheless
+passed (value error 7.4e-11, backward error 2.6e-09).</li>
+<li>
+<code>nonsym_sparse_n20000_LM_k6</code>, RSpectra: returned the
+wrong or an incomplete target set (value error 8.2e-02, backward error
+2.6e-09).</li>
+<li>
+<code>banded_lap1d_n20000_SA_k8</code>, RSpectra: returned the wrong
+or an incomplete target set (value error -, backward error -).</li>
+<li>
+<code>laplacian2d_g150_SA_k10</code>, eigencore: returned the wrong
+or an incomplete target set; eigencore’s certificate nevertheless passed
+(value error 1.2e-15, backward error 5.5e-09).</li>
+<li>
+<code>laplacian2d_g150_SA_k10</code>, RSpectra: returned the wrong
+or an incomplete target set (value error 3.1e-13, backward error
+3.1e-13).</li>
+</ul>
+<p>A residual certificate checks that each returned pair is accurate; it
+does not by itself prove that no wanted eigenvalue was skipped, which is
+what the target-set column measures.</p>
+</div>
 </div>
 <div class="section level2">
-<h2 id="limits-of-this-comparison">Limits of this comparison<a class="anchor" aria-label="anchor" href="#limits-of-this-comparison"></a>
+<h2 id="scaling">Scaling<a class="anchor" aria-label="anchor" href="#scaling"></a>
 </h2>
-<p>The rows above are deliberately small. They keep the vignette
-runnable, and they catch obvious problems: wrong target, broken sparse
-handling, missing vectors, certification drift, and large timing
-regressions. They do not prove large-scale speed claims.</p>
-<p>For larger sparse matrices, base R is a truth oracle only while
-<code>as.matrix(A)</code> is affordable. Studying scaling and memory
-behavior requires installed-package runs, larger fixtures, repeated
-measurements, and saved artifacts.</p>
-<p>The benchmark tables report <code>bench::mem_alloc</code>, which
-counts cumulative R-managed allocation. It does not see C/C++ working
-heaps used by eigencore or external native solvers, so it must not be
-read as cross-engine peak memory. The installed Hermitian G1 gate uses a
-narrower, explicit memory claim: the retained solver result may be at
-most 1.25 times the result from the smallest certified reference,
-allowing bounded space for eigencore’s plan, certificate, and provenance
-metadata. Cumulative R allocation remains visible as a diagnostic; a
-total or peak-memory claim needs a separate process-level RSS
-measurement.</p>
+<p>The scaling profile sweeps one variable at a time: the dimension
+<code>n</code> of a random sparse symmetric matrix (5 nonzeros per row),
+its density at <code>n = 20000</code>, the number of wanted eigenvalues
+<code>k</code>, the long side of a sparse <code>m x 2000</code> SVD, and
+the dimension of the 1-D Laplacian, whose smallest eigenvalues have gaps
+shrinking like <code>1/n^2</code>. Solid lines are 1 thread, dashed
+lines 4 threads; open symbols mark results that missed the wanted
+set.</p>
+<p><img src="benchmarks_files/figure-html/scaling-plots-1.png" class="r-plt" alt="" width="96%" style="display: block; margin: auto;"><img src="benchmarks_files/figure-html/scaling-plots-2.png" class="r-plt" alt="" width="96%" style="display: block; margin: auto;"><img src="benchmarks_files/figure-html/scaling-plots-3.png" class="r-plt" alt="" width="96%" style="display: block; margin: auto;"><img src="benchmarks_files/figure-html/scaling-plots-4.png" class="r-plt" alt="" width="96%" style="display: block; margin: auto;"><img src="benchmarks_files/figure-html/scaling-plots-5.png" class="r-plt" alt="" width="96%" style="display: block; margin: auto;"></p>
+<table class="table">
+<caption>Fitted log-log slope of median time against the swept
+variable.</caption>
+<thead><tr class="header">
+<th align="left">group</th>
+<th align="left">method</th>
+<th align="right">threads</th>
+<th align="right">slope</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td align="left">scaling_n</td>
+<td align="left">eigencore</td>
+<td align="right">1</td>
+<td align="right">1.15</td>
+</tr>
+<tr class="even">
+<td align="left">scaling_n</td>
+<td align="left">RSpectra</td>
+<td align="right">1</td>
+<td align="right">1.27</td>
+</tr>
+<tr class="odd">
+<td align="left">scaling_n</td>
+<td align="left">eigencore</td>
+<td align="right">4</td>
+<td align="right">0.84</td>
+</tr>
+<tr class="even">
+<td align="left">scaling_n</td>
+<td align="left">RSpectra</td>
+<td align="right">4</td>
+<td align="right">1.58</td>
+</tr>
+<tr class="odd">
+<td align="left">scaling_nnz</td>
+<td align="left">eigencore</td>
+<td align="right">1</td>
+<td align="right">0.64</td>
+</tr>
+<tr class="even">
+<td align="left">scaling_nnz</td>
+<td align="left">RSpectra</td>
+<td align="right">1</td>
+<td align="right">0.61</td>
+</tr>
+<tr class="odd">
+<td align="left">scaling_nnz</td>
+<td align="left">eigencore</td>
+<td align="right">4</td>
+<td align="right">0.23</td>
+</tr>
+<tr class="even">
+<td align="left">scaling_nnz</td>
+<td align="left">RSpectra</td>
+<td align="right">4</td>
+<td align="right">0.49</td>
+</tr>
+<tr class="odd">
+<td align="left">scaling_k</td>
+<td align="left">eigencore</td>
+<td align="right">1</td>
+<td align="right">0.99</td>
+</tr>
+<tr class="even">
+<td align="left">scaling_k</td>
+<td align="left">RSpectra</td>
+<td align="right">1</td>
+<td align="right">0.95</td>
+</tr>
+<tr class="odd">
+<td align="left">scaling_k</td>
+<td align="left">eigencore</td>
+<td align="right">4</td>
+<td align="right">0.92</td>
+</tr>
+<tr class="even">
+<td align="left">scaling_k</td>
+<td align="left">RSpectra</td>
+<td align="right">4</td>
+<td align="right">0.90</td>
+</tr>
+<tr class="odd">
+<td align="left">scaling_svd_m</td>
+<td align="left">eigencore</td>
+<td align="right">1</td>
+<td align="right">1.04</td>
+</tr>
+<tr class="even">
+<td align="left">scaling_svd_m</td>
+<td align="left">RSpectra</td>
+<td align="right">1</td>
+<td align="right">1.23</td>
+</tr>
+<tr class="odd">
+<td align="left">scaling_svd_m</td>
+<td align="left">irlba</td>
+<td align="right">1</td>
+<td align="right">1.33</td>
+</tr>
+<tr class="even">
+<td align="left">scaling_svd_m</td>
+<td align="left">eigencore</td>
+<td align="right">4</td>
+<td align="right">-0.09</td>
+</tr>
+<tr class="odd">
+<td align="left">scaling_svd_m</td>
+<td align="left">RSpectra</td>
+<td align="right">4</td>
+<td align="right">1.08</td>
+</tr>
+<tr class="even">
+<td align="left">scaling_svd_m</td>
+<td align="left">irlba</td>
+<td align="right">4</td>
+<td align="right">1.18</td>
+</tr>
+<tr class="odd">
+<td align="left">scaling_banded_n</td>
+<td align="left">eigencore</td>
+<td align="right">1</td>
+<td align="right">0.90</td>
+</tr>
+<tr class="even">
+<td align="left">scaling_banded_n</td>
+<td align="left">RSpectra</td>
+<td align="right">1</td>
+<td align="right">1.22</td>
+</tr>
+<tr class="odd">
+<td align="left">scaling_banded_n</td>
+<td align="left">eigencore</td>
+<td align="right">4</td>
+<td align="right">0.61</td>
+</tr>
+<tr class="even">
+<td align="left">scaling_banded_n</td>
+<td align="left">RSpectra</td>
+<td align="right">4</td>
+<td align="right">1.22</td>
+</tr>
+</tbody>
+</table>
 </div>
 <div class="section level2">
-<h2 id="run-the-larger-benchmark-scripts">Run the larger benchmark scripts<a class="anchor" aria-label="anchor" href="#run-the-larger-benchmark-scripts"></a>
+<h2 id="how-to-reproduce-or-add-your-machine">How to reproduce or add your machine<a class="anchor" aria-label="anchor" href="#how-to-reproduce-or-add-your-machine"></a>
 </h2>
-<p>The scripts under <code>inst/benchmarks</code> run larger cases with
-stricter checks and saved outputs. Run them from an installed package
-rather than a mutable source tree:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL <span class="at">--library</span><span class="op">=</span>/tmp/eigencore-bench-lib .</span>
-<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a><span class="va">R_LIBS</span><span class="op">=</span>/tmp/eigencore-bench-lib <span class="dt">\</span></span>
-<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a>  <span class="ex">Rscript</span> inst/benchmarks/bench-native-hermitian-gate.R <span class="dt">\</span></span>
-<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a>  <span class="at">--strict</span> <span class="at">--save</span> <span class="at">--cases</span><span class="op">=</span>path_laplacian:1000</span></code></pre></div>
-<p>For the SVD surface, compare eigencore against <code>RSpectra</code>,
-<code>irlba</code>, and base rows where those baselines are
-meaningful:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="va">R_LIBS</span><span class="op">=</span>/tmp/eigencore-bench-lib <span class="dt">\</span></span>
-<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a>  <span class="ex">Rscript</span> inst/benchmarks/bench-svd-surface.R <span class="dt">\</span></span>
-<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a>  <span class="at">--iterations</span><span class="op">=</span>1 <span class="at">--h-candidate</span> <span class="dt">\</span></span>
-<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a>  <span class="at">--methods</span><span class="op">=</span>eigencore,RSpectra,irlba,base <span class="dt">\</span></span>
-<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a>  <span class="at">--cases</span><span class="op">=</span>tall_sparse,wide_sparse <span class="dt">\</span></span>
-<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a>  <span class="at">--subject</span><span class="op">=</span>eigencore <span class="at">--strict</span> <span class="at">--save</span></span></code></pre></div>
-<p>Those scripts add strict pass/fail gates, larger sparse fixtures,
-saved RDS artifacts, memory ratios, and planner-provenance checks. Use
-<code>docs/v1-benchmark-manifest.md</code> for the current release-gate
-inventory and <code>docs/post-v1-benchmark-gates.md</code> for
-future-promotion gates.</p>
+<p>Install eigencore from the commit you want to measure into a private
+library and run the suite from the repository root:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL <span class="at">--preclean</span> <span class="at">--no-docs</span> <span class="at">-l</span> .rlib .</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="ex">Rscript</span> inst/benchmarks/run-suite.R <span class="at">--lib</span><span class="op">=</span>.rlib <span class="at">--profile</span><span class="op">=</span>quick              <span class="co"># ~2 min smoke run</span></span>
+<span id="cb1-3"><a href="#cb1-3" tabindex="-1"></a><span class="ex">Rscript</span> inst/benchmarks/run-suite.R <span class="at">--lib</span><span class="op">=</span>.rlib <span class="at">--profile</span><span class="op">=</span>standard <span class="at">--threads</span><span class="op">=</span>1,4</span>
+<span id="cb1-4"><a href="#cb1-4" tabindex="-1"></a><span class="ex">Rscript</span> inst/benchmarks/run-suite.R <span class="at">--lib</span><span class="op">=</span>.rlib <span class="at">--profile</span><span class="op">=</span>scaling  <span class="at">--threads</span><span class="op">=</span>1,4</span></code></pre></div>
+<p>Useful options: <code>--families=sym_sparse,svd_sparse</code> (or a
+sweep such as <code>scaling_k</code>),
+<code>--cases=&lt;substring&gt;</code>,
+<code>--methods=eigencore,RSpectra,irlba,base,PRIMME</code>,
+<code>--reps=N</code>, <code>--suitesparse</code> (adds a few
+SuiteSparse Matrix Collection matrices, downloaded once into the cache
+and skipped when offline), and <code>--list</code> to print the selected
+cases. Each run writes
+<code>inst/benchmarks/results/&lt;YYYYMMDD&gt;-&lt;machine-id&gt;-&lt;profile&gt;/</code>
+containing <code>results.csv</code> (one row per case, method and thread
+setting), <code>cases.csv</code> (generators, reference sources and
+<code>||A||_2</code>), and
+<code>environment.json</code>/<code>.rds</code> (CPU, cores, R,
+BLAS/LAPACK library and threads, package versions, eigencore git SHA,
+load average). The machine id is a hash; no hostname is stored.</p>
+<p>To add your machine, commit that directory; this article and the
+README table pick up the newest run per machine and profile. Summaries
+are available without rebuilding the site:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a><span class="ex">Rscript</span> inst/benchmarks/report.R inst/benchmarks/results/<span class="op">&lt;</span>run-dir<span class="op">&gt;</span></span></code></pre></div>
+<p>The <code>benchmarks</code> GitHub workflow (manual dispatch, inputs
+<code>profile</code> and <code>threads</code>) runs the same command on
+<code>ubuntu-latest</code> with OpenBLAS and uploads the result
+directory as an artifact; it never commits results.</p>
+</div>
+<div class="section level2">
+<h2 id="limits">Limits<a class="anchor" aria-label="anchor" href="#limits"></a>
+</h2>
+<ul>
+<li>
+<strong>Shared, noisy hardware.</strong> Stored results may come
+from a shared container whose load varies while the suite runs; the
+environment table records the load average at the start and end, and
+<code>results.csv</code> keeps every repetition (<code>times</code>) and
+the per-row load. Medians absorb short spikes, not sustained contention.
+Multithreaded rows are the most sensitive: an OpenMP region on an
+oversubscribed machine can be an order of magnitude slower than on an
+idle one, which is why matvec counts are reported alongside times.</li>
+<li>
+<strong>BLAS dependence.</strong> Dense cases and eigencore’s
+blocked kernels depend on the BLAS/LAPACK library and its threads;
+RSpectra uses Eigen’s own kernels. Compare rows only within one result
+set, and check the BLAS line of its environment.</li>
+<li>
+<strong>Random matrices are not real matrices.</strong> Most cases
+are synthetic with known structure (random sparsity, Laplacians,
+prescribed spectra). Real matrices have different sparsity patterns,
+spectra and conditioning; the optional SuiteSparse cases are a first
+step, and your own matrices are the only benchmark that settles a
+choice.</li>
+<li>
+<strong>Different stopping rules.</strong> All methods receive
+<code>tol = 1e-8</code>, but each package interprets it differently
+(RSpectra relative to the Ritz value, irlba relative to the largest
+singular value, eigencore as a backward error with a certificate). The
+independent accuracy columns are there so that a fast but inaccurate or
+incomplete answer is visible.</li>
+<li>
+<strong>What the times include.</strong> eigencore’s time includes
+certification and result construction; dense base R rows include
+<code><a href="https://rdrr.io/r/base/matrix.html" class="external-link">as.matrix()</a></code>; the RSpectra generalized row includes the
+sparse Cholesky factorisation.</li>
+</ul>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>

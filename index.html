@@ -86,7 +86,7 @@
 <li>
 <strong>PSD actions match their evidence.</strong> Complete dense and diagonal factors expose roots, pseudoinverses, projectors, and image reduction. Structural sparse Gram and Laplacian factors expose only what their construction proves, and unsupported requests fail before dense fallback.</li>
 </ol>
-<p>Supported structured problems run through fast native kernels. The <a href="#benchmarks">Benchmarks</a> section provides reproducible single-machine timings without treating them as cross-package rankings.</p>
+<p>Supported structured problems run through fast native kernels. The <a href="#benchmarks">Benchmarks</a> section compares them with RSpectra, irlba and base R using stored, reproducible results with independent accuracy checks.</p>
 <div class="section level2">
 <h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
 </h2>
@@ -118,7 +118,7 @@
 <span><span class="co">#&gt;   norm bound: two_norm_lower_bound</span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE</span></span>
 <span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
-<p>The printout names the kernel that ran, gives the worst residual, backward error, and orthogonality loss across the returned triplets, and shows the certificate passed. The backward error divides by a lower bound on <code>||A||_2</code> (<code>two_norm_lower_bound</code>), so it can only over-state the true normwise backward error. This problem uses the native certified Gram path; see <a href="#benchmarks">Benchmarks</a> for a reproducible timing on the development machine.</p>
+<p>The printout names the kernel that ran, gives the worst residual, backward error, and orthogonality loss across the returned triplets, and shows the certificate passed. The backward error divides by a lower bound on <code>||A||_2</code> (<code>two_norm_lower_bound</code>), so it can only over-state the true normwise backward error. This problem uses the native certified Gram path; see <a href="#benchmarks">Benchmarks</a> for reproducible timings.</p>
 <p><img src="reference/figures/README-scree-1.png" alt="The ten largest singular values highlighted in blue against the full 500-point singular spectrum of A in grey." width="100%"></p>
 </div>
 <div class="section level2">
@@ -249,46 +249,152 @@
 <div class="section level2">
 <h2 id="benchmarks">Benchmarks<a class="anchor" aria-label="anchor" href="#benchmarks"></a>
 </h2>
-<p>These are median wall-clock times for eigencore on one development machine. They include certificate computation and are intended as a reproducible performance smoke test, not a cross-package ranking or a performance guarantee. Reproduce them with <code>Rscript inst/benchmarks/bench-readme.R</code>.</p>
+<p>The table is drawn from stored results of the benchmark suite (<code>inst/benchmarks/results/</code>, profile <code>standard</code>), not timed when this README is built. Times are medians over repeated calls; eigencore’s include building its certificate, the other packages do no certification. Every method’s output is checked independently by the suite (2-norm backward error, error against a trusted reference, and whether the wanted eigenvalues were actually returned); † marks a result that missed part of the wanted set. RSpectra and irlba are single-threaded here; “n/a” means the method does not apply or the dense problem was too large.</p>
 <table class="table">
 <colgroup>
-<col width="33%">
-<col width="33%">
-<col width="33%">
+<col width="9%">
+<col width="12%">
+<col width="12%">
+<col width="12%">
+<col width="12%">
+<col width="12%">
+<col width="12%">
+<col width="15%">
 </colgroup>
 <thead><tr>
-<th>Problem (certificate <code>passed</code>)</th>
-<th align="right">Median time</th>
-<th>Planner path</th>
+<th>Problem</th>
+<th align="right">eigencore (1 thr)</th>
+<th align="right">eigencore (4 thr)</th>
+<th align="right">RSpectra</th>
+<th align="right">irlba</th>
+<th align="right">base R</th>
+<th align="right">eigencore / RSpectra</th>
+<th align="center">certified</th>
 </tr></thead>
 <tbody>
 <tr>
-<td>Tall sparse SVD, 100000 × 500, k = 10</td>
-<td align="right">15 ms</td>
-<td>native certified Gram SVD special case</td>
+<td>sparse symmetric 20k, largest, k = 10</td>
+<td align="right">278 ms</td>
+<td align="right">6.53 s</td>
+<td align="right">219 ms</td>
+<td align="right">-</td>
+<td align="right">n/a</td>
+<td align="right">1.27</td>
+<td align="center">yes</td>
 </tr>
 <tr>
-<td>Wide sparse SVD, 500 × 100000, k = 10</td>
-<td align="right">12 ms</td>
-<td>native certified Gram SVD special case</td>
+<td>sparse symmetric 20k, smallest, k = 10</td>
+<td align="right">375 ms</td>
+<td align="right">312 ms</td>
+<td align="right">206 ms</td>
+<td align="right">-</td>
+<td align="right">n/a</td>
+<td align="right">1.82</td>
+<td align="center">yes</td>
 </tr>
 <tr>
-<td>Banded Hermitian, smallest, n = 20000, k = 8</td>
-<td align="right">31 ms</td>
-<td>native tridiagonal Hermitian shift-invert</td>
+<td>sparse nonsymmetric 20k, largest modulus, k = 6</td>
+<td align="right">4.75 s†</td>
+<td align="right">9.70 s†</td>
+<td align="right">2.51 s†</td>
+<td align="right">-</td>
+<td align="right">n/a</td>
+<td align="right">1.89</td>
+<td align="center">yes</td>
+</tr>
+<tr>
+<td>sparse SVD 50k × 2k, k = 20</td>
+<td align="right">195 ms</td>
+<td align="right">8.96 s</td>
+<td align="right">136 ms</td>
+<td align="right">919 ms</td>
+<td align="right">n/a</td>
+<td align="right">1.43</td>
+<td align="center">yes</td>
+</tr>
+<tr>
+<td>sparse SVD 50k × 20k, k = 20</td>
+<td align="right">1.13 s</td>
+<td align="right">13.9 s</td>
+<td align="right">750 ms</td>
+<td align="right">2.22 s</td>
+<td align="right">n/a</td>
+<td align="right">1.51</td>
+<td align="center">yes</td>
+</tr>
+<tr>
+<td>centred sparse PCA 50k × 1k, k = 10</td>
+<td align="right">1.31 s</td>
+<td align="right">1.41 s</td>
+<td align="right">288 ms</td>
+<td align="right">508 ms</td>
+<td align="right">n/a</td>
+<td align="right">4.54</td>
+<td align="center">yes</td>
+</tr>
+<tr>
+<td>dense symmetric 1500, largest, k = 10</td>
+<td align="right">198 ms</td>
+<td align="right">186 ms</td>
+<td align="right">74 ms</td>
+<td align="right">-</td>
+<td align="right">682 ms</td>
+<td align="right">2.66</td>
+<td align="center">yes</td>
+</tr>
+<tr>
+<td>full dense eigen 1500 (<code>eig_full</code> vs <code>eigen</code>)</td>
+<td align="right">858 ms</td>
+<td align="right">481 ms</td>
+<td align="right">-</td>
+<td align="right">-</td>
+<td align="right">700 ms</td>
+<td align="right">-</td>
+<td align="center">yes</td>
+</tr>
+<tr>
+<td>2-D Laplacian 10k, nearest 4.01, k = 6</td>
+<td align="right">971 ms</td>
+<td align="right">1.10 s</td>
+<td align="right">41 ms</td>
+<td align="right">-</td>
+<td align="right">n/a</td>
+<td align="right">23.79</td>
+<td align="center">yes</td>
+</tr>
+<tr>
+<td>generalized FEM pencil 2.5k, smallest, k = 6</td>
+<td align="right">182 ms</td>
+<td align="right">187 ms</td>
+<td align="right">686 ms</td>
+<td align="right">-</td>
+<td align="right">6.68 s</td>
+<td align="right">0.27</td>
+<td align="center">yes</td>
+</tr>
+<tr>
+<td>1-D Laplacian 20k, smallest, k = 8</td>
+<td align="right">56 ms</td>
+<td align="right">78 ms</td>
+<td align="right">6.59 s†</td>
+<td align="right">-</td>
+<td align="right">n/a</td>
+<td align="right">0.01</td>
+<td align="center">yes</td>
 </tr>
 </tbody>
 </table>
-<p><sub>Measured with R 4.5.1 on aarch64-apple-darwin20. Timings depend on the processor, BLAS/LAPACK, package versions, sparsity pattern, and workload; rerun the script before making performance decisions.</sub></p>
-<p>The SVD rows use a bounded Gram kernel for tall or wide sparse problems whose small dimension is ≤ 512 (≤ 1024 for wide matrices). Other shapes may select different paths with different costs. <code>fit$method</code> always names the path that ran, making the relevant implementation boundary visible.</p>
-<p>That path has fixed work associated with solving the smaller Gram problem and constructing a certified result. On the tiny examples used in documentation smoke tests, this overhead can dominate and <code>RSpectra</code> or <code>irlba</code> may finish sooner. As the long dimension grows while the smaller dimension remains within the planner boundary, the same path can cross over and become faster. This is a shape-specific effect, not a claim that eigencore becomes faster whenever a matrix gets larger; the <a href="https://bbuchsbaum.github.io/eigencore/articles/benchmarks.html">benchmark vignette</a> explains the comparison and its limits.</p>
+<p><sub>2026-10-09; Intel(R) Xeon(R) Processor @ 2.10GHz, 4 logical cores; R 4.3.3; OpenBLAS; eigencore 1.3.0 (bf11055cbd); RSpectra 0.16.1, irlba 2.3.5.1; median of 5 reps; load average 1.8 at start, 7.6 at end; run <code>20261009-3d7cb0dd-standard</code>.</sub></p>
+<p>Results depend on the processor, BLAS/LAPACK, thread count, machine load and the matrices themselves; these are random and model matrices measured on one shared machine. On that machine other jobs pushed the load well above the core count during the 4-thread pass, and eigencore’s multithreaded kernels slowed down by up to an order of magnitude under that oversubscription (same operator-application counts, single-threaded competitors unaffected); the 1-thread column is the representative one. The <a href="https://bbuchsbaum.github.io/eigencore/articles/benchmarks.html">benchmarks article</a> shows every case and method, operator-application counts, accuracy, scaling curves and the limits of the comparison. Reproduce or add your machine with</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL <span class="at">--preclean</span> <span class="at">--no-docs</span> <span class="at">-l</span> .rlib .</span>
+<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a><span class="ex">Rscript</span> inst/benchmarks/run-suite.R <span class="at">--lib</span><span class="op">=</span>.rlib <span class="at">--profile</span><span class="op">=</span>standard <span class="at">--threads</span><span class="op">=</span>1,4</span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="when-to-use-what">When to use what<a class="anchor" aria-label="anchor" href="#when-to-use-what"></a>
 </h2>
 <p>Use <strong>eigencore</strong> for tall or wide sparse SVD (PCA-shaped problems), the smallest eigenvalues of banded or structured symmetric operators (certified, with automatic planner selection), centered or scaled or composed operators, dense generalized eigen/QZ/GSVD compatibility work through <code><a href="reference/eig_full.html">eig_full()</a></code>, <code><a href="reference/generalized_schur.html">generalized_schur()</a></code>, and <code><a href="reference/generalized_svd.html">generalized_svd()</a></code>, and workflows where explicit certificate metadata is useful.</p>
 <p>For workloads outside those structured paths, benchmark the candidate packages on your own matrices and hardware rather than assuming any implementation will be fastest. Side-by-side evaluation is straightforward because eigencore ships RSpectra-compatible wrappers with the same arguments:</p>
-<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">res</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/eigs_sym.html">eigs_sym</a></span><span class="op">(</span><span class="va">L</span>, k <span class="op">=</span> <span class="fl">8</span>, which <span class="op">=</span> <span class="st">"SA"</span><span class="op">)</span></span>
 <span><span class="va">res</span><span class="op">$</span><span class="va">values</span></span>
 <span><span class="co">#&gt; [1] 2.467154e-08 9.868617e-08 2.220439e-07 3.947447e-07 6.167886e-07</span></span>
