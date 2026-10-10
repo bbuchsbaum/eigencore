@@ -150,8 +150,8 @@ action:</p>
 <span><span class="co">#&gt;   representation: dense_spectral </span></span>
 <span><span class="co">#&gt;   fidelity: repaired_with_defect </span></span>
 <span><span class="co">#&gt;   symmetry defect: 0 </span></span>
-<span><span class="co">#&gt;   repair defect: 1.708445e-14 </span></span>
-<span><span class="co">#&gt;   source/action defect: 1.708445e-14</span></span></code></pre></div>
+<span><span class="co">#&gt;   repair defect: 1.743439e-14 </span></span>
+<span><span class="co">#&gt;   source/action defect: 1.743439e-14</span></span></code></pre></div>
 <p>The certificate distinguishes the source from the action that will
 run. Tiny accepted negative eigenvalues, numerical-null positive
 eigenvalues, and symmetry averaging are repairs, not erased history:
@@ -247,10 +247,10 @@ dropped directions, work, and a fresh postcondition certificate.</p>
 <span><span class="co">#&gt; eigencore PSD-orthonormal block</span></span>
 <span><span class="co">#&gt;   rank: 2 </span></span>
 <span><span class="co">#&gt;   condition: 225 </span></span>
-<span><span class="co">#&gt;   postcondition error: 1.310254e-14</span></span>
+<span><span class="co">#&gt;   postcondition error: 1.24366e-14</span></span>
 <span><span class="fu"><a href="../reference/psd_gram.html">psd_gram</a></span><span class="op">(</span><span class="va">K_factor</span>, <span class="va">K_basis</span><span class="op">$</span><span class="va">basis</span><span class="op">)</span></span>
 <span><span class="co">#&gt;               [,1]         [,2]</span></span>
-<span><span class="co">#&gt; [1,]  1.000000e+00 2.775558e-17</span></span>
+<span><span class="co">#&gt; [1,]  1.000000e+00 5.551115e-17</span></span>
 <span><span class="co">#&gt; [2,] -1.893266e-29 1.000000e+00</span></span>
 <span><span class="fu"><a href="../reference/certificate.html">certificate</a></span><span class="op">(</span><span class="va">K_basis</span><span class="op">)</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
@@ -313,7 +313,7 @@ the ordinary Euclidean problem there, then lift the vectors.</p>
 <span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>value <span class="op">=</span> <span class="va">value</span>, residual_norm <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sum.html" class="external-link">sum</a></span><span class="op">(</span><span class="va">residual</span><span class="op">^</span><span class="fl">2</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="co">#&gt;         value residual_norm </span></span>
-<span><span class="co">#&gt;   3.00000e+00   1.89715e-15</span></span>
+<span><span class="co">#&gt;  3.000000e+00  6.450768e-15</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/stopifnot.html" class="external-link">stopifnot</a></span><span class="op">(</span><span class="fu"><a href="../reference/certificate.html">certificate</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span><span class="op">$</span><span class="va">passed</span>, <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sum.html" class="external-link">sum</a></span><span class="op">(</span><span class="va">residual</span><span class="op">^</span><span class="fl">2</span><span class="op">)</span><span class="op">)</span> <span class="op">&lt;</span> <span class="fl">1e-9</span><span class="op">)</span></span></code></pre></div>
 <p>Here the certified image has dimension two, so materializing its
 two-by-two operator gives <code><a href="../reference/eig_full.html">eig_full()</a></code> an exact norm for its

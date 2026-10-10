@@ -147,9 +147,9 @@ exactly as you would the original matrix.</p>
 <span><span class="co">#&gt;   converged rank: 5 </span></span>
 <span><span class="co">#&gt;   method: native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary) </span></span>
 <span><span class="co">#&gt;   target: largest </span></span>
-<span><span class="co">#&gt;   max residual: 5.968392e-11 </span></span>
+<span><span class="co">#&gt;   max residual: 5.968391e-11 </span></span>
 <span><span class="co">#&gt;   max backward error: 1.267432e-10 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 1.776357e-15 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.332268e-15 </span></span>
 <span><span class="co">#&gt;   norm bound: two_norm_lower_bound </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
@@ -195,7 +195,7 @@ numerically indistinguishable from centering the dense matrix directly.
 Check it:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Extremes.html" class="external-link">max</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">abs</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="va">fit</span><span class="op">$</span><span class="va">d</span>, decreasing <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span> <span class="op">-</span> <span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="va">all_sv</span><span class="op">[</span><span class="fl">1</span><span class="op">:</span><span class="fl">5</span><span class="op">]</span>, decreasing <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1] 6.106227e-16</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] 5.551115e-16</span></span></code></pre></div>
 <p>The two agree to machine precision. <code>dense_centered</code> above
 was built only to draw the comparison plot and run this check — the
 eigencore computation itself never materialized it.</p>

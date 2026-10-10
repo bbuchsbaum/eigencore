@@ -112,9 +112,9 @@ things they measure, and what to do when one of them fails.</p>
 <span><span class="co">#&gt;   norm bound: two_norm_lower_bound+identity_exact </span></span>
 <span><span class="co">#&gt;   norm source: ritz+identity </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
-<span><span class="co">#&gt;   max residual: 5.624867e-11 </span></span>
-<span><span class="co">#&gt;   max backward error: 5.911531e-12 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 1.332268e-15 </span></span>
+<span><span class="co">#&gt;   max residual: 6.259907e-11 </span></span>
+<span><span class="co">#&gt;   max backward error: 6.578934e-12 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 8.881784e-16 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE </span></span>
 <span><span class="co">#&gt;   target completeness: inertia_verified</span></span></code></pre></div>
@@ -290,7 +290,7 @@ all pairs converge, and the verdict flips. The
 <span><span class="va">fit_fail</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">failed_indices</span></span>
 <span><span class="co">#&gt;  [1]  1  2  3  4  5  6  7  8  9 10</span></span>
 <span><span class="va">fit_fail</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">max_backward_error</span></span>
-<span><span class="co">#&gt; [1] 0.004080102</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] 0.004174378</span></span></code></pre></div>
 <p>You do not have to guess how far off it was, or whether it was
 inching toward convergence. The solver records a
 <code>convergence_history</code>; plotting the worst backward error per
@@ -416,7 +416,7 @@ B-orthogonality of the returned vectors.</p>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
 <span><span class="co">#&gt; [1] "two_norm_lower_bound+two_norm_lower_bound"</span></span>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">max_orthogonality_loss</span></span>
-<span><span class="co">#&gt; [1] 8.881784e-16</span></span>
+<span><span class="co">#&gt; [1] 2.442491e-15</span></span>
 <span><span class="va">fit_gen</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
 <p>If a B-orthogonality value comes back near machine precision, the
@@ -460,7 +460,7 @@ by a Rayleigh-Ritz step, re-certifies and checks again.</p>
 <span><span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="fu"><a href="../reference/values.html">values</a></span><span class="op">(</span><span class="va">bare</span><span class="op">)</span>, decreasing <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
 <span><span class="co">#&gt; [1] 9 9 7 7 5</span></span>
 <span><span class="va">bare</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
-<span><span class="co">#&gt; [1] TRUE</span></span>
+<span><span class="co">#&gt; [1] FALSE</span></span>
 <span><span class="va">fit_c</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">S</span>, k <span class="op">=</span> <span class="fl">5</span>, method <span class="op">=</span> <span class="fu"><a href="../reference/lanczos.html">lanczos</a></span><span class="op">(</span>completeness <span class="op">=</span> <span class="st">"probe"</span><span class="op">)</span>, seed <span class="op">=</span> <span class="fl">1</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="fu"><a href="../reference/values.html">values</a></span><span class="op">(</span><span class="va">fit_c</span><span class="op">)</span>, decreasing <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
 <span><span class="co">#&gt; [1] 9 9 7 7 7</span></span>
@@ -471,7 +471,7 @@ by a Rayleigh-Ritz step, re-certifies and checks again.</p>
 <span><span class="co">#&gt; [1] 10</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; $operator_columns</span></span>
-<span><span class="co">#&gt; [1] 124</span></span>
+<span><span class="co">#&gt; [1] 134</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; $rounds</span></span>
 <span><span class="co">#&gt; [1] 1</span></span></code></pre></div>
@@ -553,7 +553,7 @@ a value is provably missing.</p>
 <span><span class="co">#&gt; [1] "diagonal"</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; $rho</span></span>
-<span><span class="co">#&gt; [1] 3.288448e-12</span></span>
+<span><span class="co">#&gt; [1] 3.382558e-12</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; $count_upper</span></span>
 <span><span class="co">#&gt; [1] 5</span></span>
@@ -599,11 +599,54 @@ budget; <code>passed</code> is <code>FALSE</code>;</li>
 tridiagonal, analytic grid Laplacian) selected from every eigenvalue, so
 the set is complete by construction;</li>
 <li>
+<code>"inconclusive"</code> (nonsymmetric probe): the probe could
+not reach a verdict (it did not converge, or the returned vectors are
+linearly dependent, as for a defective or repeated eigenvalue a
+single-vector Krylov method cannot resolve); <code>passed</code> is
+<code>FALSE</code>;</li>
+<li>
 <code>"not_checked"</code>: no check applied (both-ends targets,
-nonsymmetric problems, a residual certificate that already failed,
-<code>certify = FALSE</code>, or
+complex matrix-free nonsymmetric operators, a residual certificate that
+already failed, <code>certify = FALSE</code>, or
 <code>completeness = "none"</code>).</li>
 </ul>
+<div class="section level4">
+<h4 id="nonsymmetric-problems">Nonsymmetric problems<a class="anchor" aria-label="anchor" href="#nonsymmetric-problems"></a>
+</h4>
+<p>Dense LAPACK routes (<code>dgeev</code>, <code>zgeev</code>, QZ for
+pencils) select from the full spectrum and report <code>"exact"</code>.
+Krylov-Schur (Arnoldi) results, including <code><a href="../reference/eigs.html">eigs()</a></code>,
+shift-invert (probed on
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><mi>A</mi><mo>−</mo><mi>σ</mi><mi>I</mi><msup><mo stretchy="false" form="postfix">)</mo><mrow><mi>−</mi><mn>1</mn></mrow></msup></mrow><annotation encoding="application/x-tex">(A - \sigma I)^{-1}</annotation></semantics></math>),
+matrix-free operators and diagonal-<code>B</code> sparse pencils (probed
+on
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>B</mi><mrow><mi>−</mi><mn>1</mn></mrow></msup><mi>A</mi></mrow><annotation encoding="application/x-tex">B^{-1}A</annotation></semantics></math>),
+are probed: with
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Q</mi><annotation encoding="application/x-tex">Q</annotation></semantics></math>
+an orthonormal basis of the returned vectors,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>T</mi><mo>=</mo><msup><mi>Q</mi><mi>T</mi></msup><mi>A</mi><mi>Q</mi></mrow><annotation encoding="application/x-tex">T = Q^T A Q</annotation></semantics></math>
+and
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>R</mi><mo>=</mo><mi>A</mi><mi>Q</mi><mo>−</mo><mi>Q</mi><mi>T</mi></mrow><annotation encoding="application/x-tex">R = AQ - QT</annotation></semantics></math>,
+the eigenvalues missing from the returned set are those of the
+compression
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><mi>I</mi><mo>−</mo><mi>Q</mi><msup><mi>Q</mi><mi>T</mi></msup><mo stretchy="false" form="postfix">)</mo><mi>A</mi><mo stretchy="false" form="prefix">(</mo><mi>I</mi><mo>−</mo><mi>Q</mi><msup><mi>Q</mi><mi>T</mi></msup><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(I - QQ^T) A (I - QQ^T)</annotation></semantics></math>
+when
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>R</mi><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">R = 0</annotation></semantics></math>.
+A deflated Krylov-Schur run on that compression (fixed-seed start) looks
+for an eigenvalue more preferred than the returned edge by more than the
+margin
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mi mathvariant="normal">max</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">l</mi></mrow><mspace width="0.167em"></mspace><mo stretchy="false" form="prefix">|</mo><mi>λ</mi><mo stretchy="false" form="prefix">|</mo><mo>,</mo><mn>2</mn><mo stretchy="false" form="postfix">∥</mo><mi>R</mi><msub><mo stretchy="false" form="postfix">∥</mo><mi>F</mi></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\max(\mathrm{tol}\,|\lambda|, 2\|R\|_F)</annotation></semantics></math>
+plus its own Ritz residual; one found is merged in by Rayleigh-Ritz on
+the enlarged subspace (<code>"repaired"</code>), otherwise the result is
+<code>"failed"</code>. A clean probe (<code>"probed"</code>) is
+evidence, not proof, and the margin covers the normal (or
+well-conditioned) case only: for a non-normal matrix an eigenvalue can
+move by up to its condition number times
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="postfix">∥</mo><mi>R</mi><mo stretchy="false" form="postfix">∥</mo></mrow><annotation encoding="application/x-tex">\|R\|</annotation></semantics></math>
+(a Jordan block of size <code>m</code> by
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="postfix">∥</mo><mi>R</mi><msup><mo stretchy="false" form="postfix">∥</mo><mrow><mn>1</mn><mi>/</mi><mi>m</mi></mrow></msup></mrow><annotation encoding="application/x-tex">\|R\|^{1/m}</annotation></semantics></math>),
+which the probe does not bound. Small complements (64 or fewer
+dimensions) are spanned completely.</p>
 <p>The check is chosen by <code>lanczos(completeness = )</code> or
 <code>options(eigencore.target_completeness = )</code>:
 <code>"auto"</code> (the default) counts edge targets when the matrix is
@@ -619,6 +662,7 @@ check off. <code>certificate$completeness$inertia_gate</code> records
 why the count was skipped. Matrices whose factors fill catastrophically
 (large random sparse graphs) are left to the probe; banded, grid and
 other mesh-like sparse matrices factor cheaply and are counted.</p>
+</div>
 <div class="section level4">
 <h4 id="every-eigenvalue-in-an-interval">Every eigenvalue in an interval<a class="anchor" aria-label="anchor" href="#every-eigenvalue-in-an-interval"></a>
 </h4>
@@ -698,8 +742,8 @@ list with two added fields:</p>
 <span><span class="co">#&gt;   norm source: ritz+identity </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   max residual: 2.308902e-09 </span></span>
-<span><span class="co">#&gt;   max backward error: 2.304028e-10 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 5.551115e-16 </span></span>
+<span><span class="co">#&gt;   max backward error: 2.304029e-10 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 8.881784e-16 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE </span></span>
 <span><span class="co">#&gt;   target completeness: inertia_verified</span></span></code></pre></div>

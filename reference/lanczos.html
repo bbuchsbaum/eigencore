@@ -113,23 +113,33 @@ it is preserved for the R reference solver's public API.</p></dd>
 
 <dt id="arg-completeness">completeness<a class="anchor" aria-label="anchor" href="#arg-completeness"></a></dt>
 <dd><p>Target-completeness check run after a certified
-Hermitian solve with a <code><a href="largest.html">largest()</a></code>, <code><a href="smallest.html">smallest()</a></code>,
-<code><a href="largest_magnitude.html">largest_magnitude()</a></code> (or, for the inertia check, <code><a href="nearest.html">nearest()</a></code>) target.
+Hermitian solve (every target except <code><a href="interval.html">interval()</a></code>, which verifies its
+own set; <code><a href="smallest_magnitude.html">smallest_magnitude()</a></code> is checked as <code>nearest(0)</code> and
+<code><a href="both_ends.html">both_ends()</a></code> one end at a time). Unless the check verifies the set,
+<code>certificate(fit)$passed</code> is <code>FALSE</code> (with <code>residual_passed = TRUE</code>).
 <code>"inertia"</code> proves completeness deterministically by counting
 eigenvalues with an \(LDL^T\) factorisation of <code>A - t B</code> (see
-<code><a href="eigen_count.html">eigen_count()</a></code>); it needs an explicit dense or sparse matrix and
+<code><a href="eigen_count.html">eigen_count()</a></code>); it needs an explicit dense or sparse matrix (a
+matrix-free operator with n at most
+<code>getOption("eigencore.completeness_materialize_limit", 2000)</code> is
+materialised by n applies) and
 reports <code>"inertia_verified"</code>, <code>"inertia_failed"</code> (repaired when
 possible, otherwise <code>passed = FALSE</code>) or <code>"inertia_inconclusive"</code> (an
 eigenvalue cluster straddles the target edge within the residual
-bound). <code>"probe"</code> runs a short block Lanczos process on the operator
+bound and the counts cannot show that a correct choice was returned; a
+repeated eigenvalue at the edge is verified as a tie, recorded in
+<code>certificate(fit)$completeness$tie</code>). <code>"probe"</code> runs a short block Lanczos process on the operator
 deflated against the returned eigenvectors (from a fixed-seed start; the
 global random stream is not touched) and, if it finds a more-preferred
 eigenvalue outside the returned set (for example a missed copy of a
 repeated eigenvalue), repairs the result with a deflated complement
 solve; it is probabilistic (it can prove a set incomplete but not
-complete) and is the check for matrix-free operators. <code>"auto"</code> uses the
-inertia check for edge targets (not <code><a href="nearest.html">nearest()</a></code>) when the matrix is
-explicit and its predicted
+complete) and is the check for large matrix-free operators; for
+<code><a href="nearest.html">nearest()</a></code> targets it runs on the route's own \((A - \sigma I)^{-1}\)
+after shift-invert, otherwise on \((A - \sigma I)^2\). Generalized
+problems are probed in the standard space \(R^{-T} A R^{-1}\),
+\(B = R^T R\). <code>"auto"</code> uses the inertia check when the matrix is
+explicit (or materialisable) and its predicted
 factorisation time is at most
 <code>max(getOption("eigencore.completeness_inertia_seconds", 0.5), getOption("eigencore.completeness_inertia_ratio", 1) * solve time)</code>,
 and the probe otherwise. <code>"none"</code> skips the check. <code>NULL</code> (default) uses

@@ -32,9 +32,9 @@ cert
 #>   norm bound: two_norm_lower_bound+identity_exact 
 #>   norm source: ritz+identity 
 #>   scale estimated: FALSE 
-#>   max residual: 5.624867e-11 
-#>   max backward error: 5.911531e-12 
-#>   max orthogonality loss: 1.332268e-15 
+#>   max residual: 6.259907e-11 
+#>   max backward error: 6.578934e-12 
+#>   max orthogonality loss: 8.881784e-16 
 #>   orthogonality tolerance: 1.490116e-08 
 #>   orthogonality required: TRUE 
 #>   target completeness: inertia_verified
@@ -202,7 +202,7 @@ fit_fail$certificate$passed
 fit_fail$certificate$failed_indices
 #>  [1]  1  2  3  4  5  6  7  8  9 10
 fit_fail$certificate$max_backward_error
-#> [1] 0.004080102
+#> [1] 0.004174378
 ```
 
 You do not have to guess how far off it was, or whether it was inching
@@ -323,7 +323,7 @@ fit_gen <- eig_partial(A, k = 5, target = largest(), B = B,
 fit_gen$certificate$norm_bound_type
 #> [1] "two_norm_lower_bound+two_norm_lower_bound"
 fit_gen$certificate$max_orthogonality_loss
-#> [1] 8.881784e-16
+#> [1] 2.442491e-15
 fit_gen$certificate$passed
 #> [1] TRUE
 ```
@@ -373,7 +373,7 @@ bare <- eig_partial(S, k = 5, method = lanczos(completeness = "none"), seed = 1)
 sort(values(bare), decreasing = TRUE)
 #> [1] 9 9 7 7 5
 bare$certificate$passed
-#> [1] TRUE
+#> [1] FALSE
 fit_c <- eig_partial(S, k = 5, method = lanczos(completeness = "probe"), seed = 1)
 sort(values(fit_c), decreasing = TRUE)
 #> [1] 9 9 7 7 7
@@ -384,7 +384,7 @@ fit_c$certificate$completeness[c("steps", "operator_columns", "rounds")]
 #> [1] 10
 #> 
 #> $operator_columns
-#> [1] 124
+#> [1] 134
 #> 
 #> $rounds
 #> [1] 1
@@ -465,7 +465,7 @@ fit_i$certificate$completeness[c("inertia_method", "rho", "count_upper",
 #> [1] "diagonal"
 #> 
 #> $rho
-#> [1] 3.288448e-12
+#> [1] 3.382558e-12
 #> 
 #> $count_upper
 #> [1] 5
@@ -502,9 +502,36 @@ the repair recovered it, and the repaired set was then counted complete.
 - `"exact"`: a full-spectrum route (dense LAPACK, tridiagonal, analytic
   grid Laplacian) selected from every eigenvalue, so the set is complete
   by construction;
-- `"not_checked"`: no check applied (both-ends targets, nonsymmetric
-  problems, a residual certificate that already failed,
-  `certify = FALSE`, or `completeness = "none"`).
+- `"inconclusive"` (nonsymmetric probe): the probe could not reach a
+  verdict (it did not converge, or the returned vectors are linearly
+  dependent, as for a defective or repeated eigenvalue a single-vector
+  Krylov method cannot resolve); `passed` is `FALSE`;
+- `"not_checked"`: no check applied (both-ends targets, complex
+  matrix-free nonsymmetric operators, a residual certificate that
+  already failed, `certify = FALSE`, or `completeness = "none"`).
+
+#### Nonsymmetric problems
+
+Dense LAPACK routes (`dgeev`, `zgeev`, QZ for pencils) select from the
+full spectrum and report `"exact"`. Krylov-Schur (Arnoldi) results,
+including
+[`eigs()`](https://bbuchsbaum.github.io/eigencore/reference/eigs.md),
+shift-invert (probed on $`(A - \sigma I)^{-1}`$), matrix-free operators
+and diagonal-`B` sparse pencils (probed on $`B^{-1}A`$), are probed:
+with $`Q`$ an orthonormal basis of the returned vectors, $`T = Q^T A Q`$
+and $`R = AQ - QT`$, the eigenvalues missing from the returned set are
+those of the compression $`(I - QQ^T) A (I - QQ^T)`$ when $`R = 0`$. A
+deflated Krylov-Schur run on that compression (fixed-seed start) looks
+for an eigenvalue more preferred than the returned edge by more than the
+margin $`\max(\mathrm{tol}\,|\lambda|, 2\|R\|_F)`$ plus its own Ritz
+residual; one found is merged in by Rayleigh-Ritz on the enlarged
+subspace (`"repaired"`), otherwise the result is `"failed"`. A clean
+probe (`"probed"`) is evidence, not proof, and the margin covers the
+normal (or well-conditioned) case only: for a non-normal matrix an
+eigenvalue can move by up to its condition number times $`\|R\|`$ (a
+Jordan block of size `m` by $`\|R\|^{1/m}`$), which the probe does not
+bound. Small complements (64 or fewer dimensions) are spanned
+completely.
 
 The check is chosen by `lanczos(completeness = )` or
 `options(eigencore.target_completeness = )`: `"auto"` (the default)
@@ -590,8 +617,8 @@ res$certificate
 #>   norm source: ritz+identity 
 #>   scale estimated: FALSE 
 #>   max residual: 2.308902e-09 
-#>   max backward error: 2.304028e-10 
-#>   max orthogonality loss: 5.551115e-16 
+#>   max backward error: 2.304029e-10 
+#>   max orthogonality loss: 8.881784e-16 
 #>   orthogonality tolerance: 1.490116e-08 
 #>   orthogonality required: TRUE 
 #>   target completeness: inertia_verified
