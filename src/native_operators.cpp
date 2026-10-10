@@ -4015,11 +4015,16 @@ static int ldl_solve_apply(const LdlSolveLeaf& f, int64_t block_cols,
 #endif
       status = -3;
     }
-    if (z.size() == static_cast<size_t>(n)) {
+    // Every thread must reach the work-sharing loop (OpenMP requires all or
+    // none of the team to encounter it); a thread whose workspace allocation
+    // failed skips its iterations instead, and status reports the failure.
+    const bool have_z = z.size() == static_cast<size_t>(n);
+    {
 #ifdef _OPENMP
 #pragma omp for schedule(static) nowait
 #endif
       for (int64_t c = 0; c < block_cols; ++c) {
+        if (!have_z) continue;
         const double* xc = X + c * ldx;
         double* yc = Y + c * ldy;
         double* zz = z.data();
