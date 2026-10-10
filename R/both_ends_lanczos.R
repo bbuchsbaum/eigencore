@@ -52,7 +52,7 @@ native_both_ends_lanczos_hermitian <- function(op, k, target, tol = 1e-8,
       if (block > 1L) {
         min(n, default_block_lanczos_max_subspace(kk, block))
       } else {
-        default_lanczos_max_subspace(kk, n)
+        default_lanczos_max_subspace(kk, n, op = op)
       }
     } else {
       min(n, max(as.integer(maxit), kk + block))

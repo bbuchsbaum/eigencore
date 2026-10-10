@@ -1210,7 +1210,7 @@ lanczos_plan_controls <- function(problem, k, method, chosen) {
       # Unrestarted reference Lanczos: the subspace is the whole iteration.
       max(as.integer(k) + 1L, 3L * as.integer(k) + 20L)
     } else {
-      default_lanczos_max_subspace(k, n)
+      default_lanczos_max_subspace(k, n, op = problem$A)
     }
   } else {
     as.integer(requested_subspace)
@@ -1251,10 +1251,42 @@ lanczos_plan_controls <- function(problem, k, method, chosen) {
 #' (sparse n = 20000 LA/SA/LM at k = 10 and k = 30, dense n = 1500): the
 #' native kernel's per-restart cost grows slowly with m, so 2k + 1 was the
 #' slowest choice (up to 1.5x), m in 30..50 was within noise for k = 10, and
-#' larger subspaces won at k = 30. `3k + 20` stays the default.
-default_lanczos_max_subspace <- function(k, n) {
+#' larger subspaces won at k = 30. `3k + 20` stays the default for dense
+#' and other operators whose apply costs more than a reorthogonalisation pass.
+#'
+#' P24: for a sparse (CSC) operator with few nonzeros per row the apply is
+#' cheap and the full reorthogonalisation against the m basis vectors (two
+#' memory passes over an n x m block per step) dominates the cost, so the
+#' ARPACK/RSpectra sizing `max(2k + 1, 20)` is faster: on random sparse
+#' n = 20000 (5 nonzeros per row, single thread) it cut CPU time by about
+#' 20% at k = 10 (fewer matvecs too), 30% at k = 20 and 40% at k = 40, and
+#' about 35% at n = 40000, k = 10.
+default_lanczos_max_subspace <- function(k, n, op = NULL) {
   k <- as.integer(k)
+  if (lanczos_cheap_sparse_apply(op, n)) {
+    return(min(as.integer(n), max(k + 1L, 2L * k + 1L, 20L)))
+  }
   min(as.integer(n), max(k + 1L, 3L * k + 20L))
+}
+
+#' @keywords internal
+#' TRUE for a CSC operator with at most
+#' getOption("eigencore.lanczos_sparse_row_nnz", 64) nonzeros per row on
+#' average (P24).
+lanczos_cheap_sparse_apply <- function(op, n) {
+  if (!inherits(op, "eigencore_operator") ||
+      !identical(op$metadata$storage %||% NULL, "dgCMatrix")) {
+    return(FALSE)
+  }
+  A <- op$metadata$matrix
+  if (!inherits(A, "dgCMatrix") || !(n > 0)) {
+    return(FALSE)
+  }
+  limit <- suppressWarnings(as.numeric(getOption("eigencore.lanczos_sparse_row_nnz", 64)))
+  if (length(limit) != 1L || !is.finite(limit)) {
+    limit <- 64
+  }
+  length(methods::slot(A, "x")) / n <= limit
 }
 
 #' @keywords internal

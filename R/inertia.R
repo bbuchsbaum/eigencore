@@ -328,8 +328,11 @@ inertia_norm1 <- function(part) {
     },
     dense = if (isTRUE(part$complex)) {
       max(colSums(Mod(part$matrix)), 0)
+    } else if (length(part$matrix)) {
+      # LAPACK dlange: the same 1-norm without an n x n abs() copy (P21).
+      norm(part$matrix, "O")
     } else {
-      max(colSums(abs(part$matrix)), 0)
+      0
     },
     sparse = max(Matrix::colSums(abs(part$matrix)), 0)
   )

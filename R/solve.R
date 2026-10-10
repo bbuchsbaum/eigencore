@@ -1520,7 +1520,9 @@ should_use_native_implicit_gram_svd <- function(problem, method, rank = NULL) {
   source <- source_or_null(problem$A)
   is_csc <- identical(storage, "dgCMatrix")
   is_dense <- is.matrix(source) && is.double(source) && !is.complex(source)
-  if (!is_csc && !is_dense) {
+  # P20: column-centred sparse operators (center(), scale_cols(center()))
+  # run the same kernel on the fused centred CSC apply.
+  if (!is_csc && !is_dense && is.null(implicit_gram_centered_csc_parts(problem$A))) {
     return(FALSE)
   }
   dims <- as.integer(problem$A$dim)
