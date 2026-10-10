@@ -163,14 +163,14 @@ Each violation was minimised into `test-oracle-regressions.R`.
 | O13 | Implicit `smallest_magnitude` on a singular sparse nonsymmetric matrix failed with `native Krylov-Schur Arnoldi operator apply failed with status=-8`: `Matrix::solve()` refused the LU at apply time (case 6743) | unexpected error | **fixed**: singular pivot ratio detected at factor time, so the implicit route perturbs σ (`R/transform_shift_invert.R`) |
 | O14 | `eigs_sym()` re-sorted values and vectors but left `certificate$residuals`/`backward_error`/`converged` in solver order | API | **fixed** (`R/compatibility.R`) |
 | O15 | Unclear errors: `svd_partial(method = lanczos())` gave "Invalid eigencore plan (dispatch_unavailable): planned_method." (159 cases). `k = n` on Lanczos routes gave "max_subspace must be at least k + 1" when no subspace had been requested (235 cases) | unclear error | **fixed**: messages now name the cause and the remedy (`R/problem.R`, `R/reference_lanczos.R`) |
-| O6 | `nearest(σ)` and shift-invert routes miss copies of repeated eigenvalues while certified (case 194) | wrong set, `not_checked` | **known**: the C50 probe does not cover nearest/shift-invert |
-| O7 | `both_ends`/`nearest` on the reference Lanczos route miss copies (cases 341, 357, 1544) | wrong set, `not_checked` | **known** (C50) |
-| O8 | SVD routes (prototype/native GK, implicit Gram) miss copies of repeated singular values (case 215) | wrong set, no completeness field | **known**: there is no SVD completeness check |
-| O9 | Matrix-free `smallest_magnitude` (`eigs_sym(f, which = "SM", ncv = 20)`) misses a multiple zero eigenvalue (case 133) | wrong set, `not_checked` | **known** (C50) |
-| O10 | Sparse `both_ends` takes the unrestarted reference Lanczos and does not converge even at n = 40 (honest, but RSpectra solves it) | quality | **known** |
-| O16 | Nonsymmetric Arnoldi certifies pairs outside the `largest/smallest_imaginary` and `largest_magnitude` target set on random matrices (cases 2692, 2783, 4543, 7072, 13198) | wrong set, `not_checked` | **known**: nonsymmetric target identity is unchecked |
-| O17 | LOBPCG with magnitude targets on indefinite problems misses the other end of the spectrum (cases 8847, 10647, 13154) | wrong set, `not_checked` | **known** |
-| O18 | Matrix-free nonsymmetric `smallest_magnitude` (no shift-invert available) certifies pairs that are not the smallest (cases 518, 10320, 14913) | wrong set, `not_checked` | **known** |
+| O6 | `nearest(σ)` and shift-invert routes miss copies of repeated eigenvalues while certified (case 194) | wrong set, `not_checked` | **fixed**: `nearest`/`smallest_magnitude` are inertia-counted under `completeness = "auto"` when the cost gate passes (proof), else probed on the route's (A − σI)⁻¹ or on (A − σI)² (evidence), with repair (`R/completeness_hermitian.R`) |
+| O7 | `both_ends`/`nearest` on the reference Lanczos route miss copies (cases 341, 357, 1544) | wrong set, `not_checked` | **fixed**: every non-exact Hermitian route is checked; `both_ends` is counted (or probed) per end (`R/completeness_hermitian.R`) |
+| O8 | SVD routes (prototype/native GK, implicit Gram) miss copies of repeated singular values (case 215) | wrong set, no completeness field | **fixed**: SVD target completeness (`R/completeness_svd.R`): augmented-matrix inertia count or Gram complement probe with repair; matrix-free `nearest()` SVD stays `not_checked` (`passed = FALSE`) |
+| O9 | Matrix-free `smallest_magnitude` (`eigs_sym(f, which = "SM", ncv = 20)`) misses a multiple zero eigenvalue (case 133) | wrong set, `not_checked` | **fixed**: small matrix-free operators are materialised and counted; larger ones are probed on A² (`R/completeness_hermitian.R`) |
+| O10 | Sparse `both_ends` takes the unrestarted reference Lanczos and does not converge even at n = 40 (honest, but RSpectra solves it) | quality | **fixed**: native both-ends route, two thick-restart solves merged by Rayleigh–Ritz (`R/both_ends_lanczos.R`) |
+| O16 | Nonsymmetric Arnoldi certifies pairs outside the `largest/smallest_imaginary` and `largest_magnitude` target set on random matrices (cases 2692, 2783, 4543, 7072, 13198) | wrong set, `not_checked` | **fixed**: deflated Krylov-Schur completeness probe on the complement of the returned Schur basis (`R/completeness_nonsym.R`); all five cases are `repaired` to the correct set |
+| O17 | LOBPCG with magnitude targets on indefinite problems misses the other end of the spectrum (cases 8847, 10647, 13154) | wrong set, `not_checked` | **fixed**: the count proves the other end missing and the deflated-complement repair (in the B-transformed space for generalized problems) finds it |
+| O18 | Matrix-free nonsymmetric `smallest_magnitude` (no shift-invert available) certifies pairs that are not the smallest (cases 518, 10320, 14913) | wrong set, `not_checked` | **fixed**: the nonsymmetric probe finds the smaller value and repairs the set (`R/completeness_nonsym.R`) |
 
 The sweep also exposed several harness-side pitfalls, which the harness now
 avoids:
@@ -247,6 +247,38 @@ Observations to follow up (not violations):
 * RSpectra disagreed with the oracle in 160 shim cases where eigencore was
   certified and right. The reverse (RSpectra right, eigencore uncertified)
   happened in 29 cases.
+
+### After the strict `passed` change (extended level, 2026-10-09)
+
+`certificate$passed` now requires the returned set to be verified
+(`exact`, `inertia_verified`, `probed` or `repaired`), and every Hermitian,
+nonsymmetric and SVD route carries a completeness check. Extended level,
+15000 cases, 3 workers, 661 s: **0 hard violations** and **0 certified
+results with a wrong set** in every configuration (before: 165 of 12977
+certified results had a wrong set without a completeness claim). 12873 of
+14022 solved cases certify (91.8%); every remaining uncertified case either
+fails its residual certificate or reports an honest unverified status.
+
+| config | runs | certified | uncertified_pct | wrong_set_certified | median_value_err_uncert |
+|---|---|---|---|---|---|
+| gen / lanczos1 |  304 |  246 | 19.1 | 0 | 1.4e-05 |
+| svd / golub_kahan |  802 |  651 | 18.8 | 0 | 2.6e-09 |
+| svd / randomized |  611 |  501 | 18.0 | 0 | 1.9e-03 |
+| gen / lobpcg |  312 |  268 | 14.1 | 0 | 5.5e-06 |
+| herm / lobpcg |  561 |  491 | 12.5 | 0 | 5.5e-04 |
+| herm / lanczos1 |  753 |  670 | 11.0 | 0 | 2.4e-07 |
+| nonsym / auto | 1867 | 1689 |  9.5 | 0 | 3.2e-05 |
+| herm / lanczos2 |  502 |  455 |  9.4 | 0 | 3.5e-09 |
+| svd / auto | 2079 | 1895 |  8.9 | 0 | 4.0e-16 |
+| herm / lanczos3 |  289 |  266 |  8.0 | 0 | 3.2e-05 |
+| nonsym / shift_invert |  130 |  121 |  6.9 | 0 | 3.5e-02 |
+| gen / auto |  683 |  640 |  6.3 | 0 | 3.5e-06 |
+| nonsym / lanczos1 |  113 |  106 |  6.2 | 0 | 1.6e-01 |
+| gen / shift_invert |  122 |  117 |  4.1 | 0 | 4.2e-08 |
+| herm / auto | 1729 | 1669 |  3.5 | 0 | 7.2e-12 |
+| shim / shim | 2197 | 2131 |  3.0 | 0 | 5.6e-16 |
+| herm / shift_invert |  334 |  324 |  3.0 | 0 | 7.0e-09 |
+| complex / auto |  634 |  633 |  0.2 | 0 | NA |
 
 ### Workflow
 

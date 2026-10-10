@@ -138,6 +138,8 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
     certify = certify
   )
   if (!is.null(fast)) {
+    fast <- require_verified_completeness(apply_svd_completeness(
+      fast, fast$plan, solve_seconds = proc.time()[["elapsed"]] - fast_started))
     work_values <- unclass(fast$work)
     work_values$total_seconds <- proc.time()[["elapsed"]] - fast_started
     fast$work <- new_typed_work_record(work_values)
@@ -325,6 +327,7 @@ solve.eigencore_plan <- function(
   if (!identical(a$problem$target$kind, "interval")) {
     result <- withhold_short_certificate(result, a$requested)
   }
+  result <- require_verified_completeness(result)
   finished <- proc.time()[["elapsed"]]
   result$work <- finalize_work_record(
     result,
@@ -352,6 +355,43 @@ solve.eigencore_plan <- function(
 # is exhausted (e.g. shift-invert on a spectrum with repeated eigenvalues:
 # 1, 7, 9 for k = 6 of {1,1,7,7,7,9,9,9}); found by the oracle sweep.
 #' @keywords internal
+# Completeness states that prove (exact, inertia_verified) or give strong
+# evidence (probed, repaired) that the returned set is the requested one.
+#' @keywords internal
+verified_completeness_states <- function() {
+  c("exact", "inertia_verified", "probed", "repaired")
+}
+
+# `certificate$passed` means "the requested pairs, each accurate": the residual
+# certificate passed AND the returned set was verified to be the requested
+# one. A result whose residuals pass but whose set was not verified keeps
+# residual_passed = TRUE and reports passed = FALSE with a note naming the
+# completeness status. Set options(eigencore.require_completeness = FALSE) to
+# restore the residual-only meaning of `passed`.
+#' @keywords internal
+require_verified_completeness <- function(result) {
+  cert <- result$certificate
+  if (is.null(cert) || !isTRUE(getOption("eigencore.require_completeness", TRUE))) {
+    return(result)
+  }
+  cert$residual_passed <- cert$residual_passed %||% isTRUE(cert$passed)
+  status <- cert$target_completeness %||% "not_checked"
+  cert$target_completeness <- status
+  verified <- status %in% verified_completeness_states()
+  cert$target_passed <- cert$target_passed %||%
+    (if (verified) TRUE else if (status %in% c("failed", "inertia_failed")) FALSE else NA)
+  if (isTRUE(cert$passed) && !verified) {
+    cert$passed <- FALSE
+    note <- paste0(
+      "residuals certified, but the returned set was not verified to be the ",
+      "requested one (target_completeness = \"", status, "\"); passed = FALSE"
+    )
+    cert$notes <- unique(c(cert$notes, note))
+  }
+  result$certificate <- cert
+  result
+}
+
 withhold_short_certificate <- function(result, k) {
   cert <- result$certificate
   returned <- length(result$values)
@@ -413,6 +453,8 @@ execute_eigen_plan <- function(plan, restart_preparation = NULL) {
     identical(target_completeness_route_class(plan, a), "krylov") &&
     (target_completeness_eligible(a, k) ||
        (mode %in% c("auto", "inertia") && inertia_completeness_eligible(a, k)))
+  need_vectors <- need_vectors ||
+    hermitian_completeness_wants_vectors(plan, a, k, mode)
   started <- proc.time()[["elapsed"]]
   result <- execute_eigen_plan_dispatch(
     plan, restart_preparation = restart_preparation,
@@ -423,8 +465,12 @@ execute_eigen_plan <- function(plan, restart_preparation = NULL) {
   if (!is.null(result$transform)) {
     result$transform["inertia_seed"] <- NULL
   }
-  apply_target_completeness(result, plan, a, k, mode, vectors_requested,
-                            solve_seconds = solve_seconds, seed = seed)
+  result <- apply_target_completeness(result, plan, a, k, mode, vectors_requested,
+                                      solve_seconds = solve_seconds, seed = seed)
+  if (!is.null(result$transform)) {
+    result$transform["completeness_solve"] <- NULL
+  }
+  result
 }
 
 #' @keywords internal
@@ -518,6 +564,16 @@ execute_eigen_plan_dispatch <- function(plan, restart_preparation = NULL,
 
 #' @keywords internal
 execute_svd_plan <- function(plan) {
+  # SVD target completeness (R/completeness_svd.R): verify that the returned
+  # triplets are the requested set.
+  started <- proc.time()[["elapsed"]]
+  result <- execute_svd_plan_dispatch(plan)
+  apply_svd_completeness(result, plan,
+                         solve_seconds = proc.time()[["elapsed"]] - started)
+}
+
+#' @keywords internal
+execute_svd_plan_dispatch <- function(plan) {
   a <- plan$problem
   execution <- plan$execution
   rank <- plan$requested
@@ -673,6 +729,7 @@ plan_dispatches_lanczos <- function(plan) {
     native_matrix_free_block_lanczos_label(),
     native_generalized_lanczos_label(),
     generalized_lanczos_label(),
+    native_both_ends_lanczos_label(),
     "reference Hermitian Lanczos (target unsupported by native path)",
     "reference Hermitian Lanczos (prototype/oracle fallback)"
   )

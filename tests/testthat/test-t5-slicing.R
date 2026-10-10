@@ -283,7 +283,9 @@ test_that("nearest() inertia counts reuse the shift-invert factor", {
   S <- sl_laplacian_2d(40)
   fit <- eig_partial(S, k = 5, target = nearest(2.3),
                      method = shift_invert(2.3, max_subspace = 60))
-  expect_identical(certificate(fit)$target_completeness, "not_checked")
+  # auto mode counts nearest() too (the cost gate passes for this size)
+  expect_identical(certificate(fit)$target_completeness, "inertia_verified")
+  expect_true(certificate(fit)$completeness$reused_symbolic)
   sl_local_options(list(eigencore.target_completeness = "inertia"))
   fit <- eig_partial(S, k = 5, target = nearest(2.3))
   cert <- certificate(fit)

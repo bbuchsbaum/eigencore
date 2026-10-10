@@ -261,6 +261,9 @@ plan_solver.eigencore_eigen_problem <- function(
         # explicitly asks for block > 1. The scalar (block == 1) matrix-free
         # default keeps routing to the reference Hermitian Lanczos path below.
         native_matrix_free_block_lanczos_label()
+      } else if (is.null(initial_subspace) &&
+                 native_both_ends_lanczos_supported(problem)) {
+        native_both_ends_lanczos_label()
       } else {
         "reference Hermitian Lanczos (prototype/oracle fallback)"
       }
@@ -331,6 +334,10 @@ plan_solver.eigencore_eigen_problem <- function(
       reference_arnoldi_target_supported(problem$target) &&
       (is_native_csc || is.null(source_or_null(problem$A)))) {
     reference_arnoldi_label()
+  } else if (is_hermitian && is.null(initial_subspace) &&
+             (is_native_csc || is.null(source_or_null(problem$A))) &&
+             native_both_ends_lanczos_supported(problem)) {
+    native_both_ends_lanczos_label()
   } else if (is_hermitian && is_native_csc) {
     "reference Hermitian Lanczos (target unsupported by native path)"
   } else if (is_hermitian && !has_metric &&
@@ -1344,7 +1351,8 @@ resolve_iteration_limit_controls <- function(controls, problem, chosen, maxit) {
     "native block Hermitian Lanczos thick-restart candidate",
     "native block Hermitian Lanczos (thick restart, locking)",
     native_matrix_free_block_lanczos_label(),
-    native_generalized_lanczos_label()
+    native_generalized_lanczos_label(),
+    native_both_ends_lanczos_label()
   )) {
     "thick_restart_cycles"
   } else if (chosen %in% c(

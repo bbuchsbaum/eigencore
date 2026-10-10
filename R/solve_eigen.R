@@ -226,6 +226,12 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
       vectors = vectors,
       reorthogonalize = method_reorth
     )
+  } else if (identical(plan$method, native_both_ends_lanczos_label())) {
+    native_both_ends_lanczos_hermitian(
+      a$A, k = k, target = a$target, tol = tol, maxit = method_subspace,
+      block = method_block, max_restarts = method_max_restarts,
+      vectors = vectors, check_stride = method_check_stride
+    )
   } else if (plan_dispatches_native_lanczos(plan)) {
     if (method_block > 1L) {
       native_block_lanczos_hermitian(
@@ -311,6 +317,12 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
       )
     } else {
       "using reference generalized SPD B-orthogonal Lanczos refinement; native generalized Lanczos hot loop not yet implemented"
+    }
+  } else if (identical(plan$method, native_both_ends_lanczos_label())) {
+    if (!isTRUE(iter$certificate$passed)) {
+      paste0(plan$method, " did not converge all ", k, " requested pairs")
+    } else {
+      character()
     }
   } else if (plan_dispatches_native_lanczos(plan)) {
     if (!isTRUE(iter$certificate$passed)) {
@@ -406,7 +418,7 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
       tol = tol,
       maxit = method_subspace,
       max_restarts = method_max_restarts,
-      vectors = vectors,
+      vectors = TRUE,
       extraction = method_extraction,
       krylov_schur_maxit = ks_max_iterations
     )
@@ -418,9 +430,16 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
       tol = tol,
       maxit = method_subspace,
       max_restarts = method_max_restarts,
-      vectors = vectors,
+      vectors = TRUE,
       extraction = method_extraction
     )
+  }
+  # Target completeness (R/completeness_nonsym.R): deflated Krylov-Schur
+  # probe of the complement, repair by a Schur-Rayleigh-Ritz merge.
+  iter <- nonsym_completeness_after_arnoldi(a$A, iter, k, a$target, tol,
+                                            certify, plan)
+  if (!isTRUE(vectors)) {
+    iter["vectors"] <- list(NULL)
   }
   left_contract <- if (identical(left_policy, "none")) {
     list(supported = FALSE, skipped = TRUE,
@@ -603,6 +622,26 @@ solve_eigen_sparse_general_pencil_arnoldi <- function(a, k, method, tol, maxit,
       }
     )
   }
+
+  # Target completeness (R/completeness_nonsym.R): probe B^{-1} A.
+  probed <- nonsym_completeness_apply(
+    Cop, vals, vecs_for_cert, cert, k, a$target, tol, certify, plan,
+    certify_fn = function(values, vectors) {
+      certify_generalized_pencil_operator(a$A, a$metric, values,
+                                          rep(1, length(values)), vectors,
+                                          tol = tol)
+    },
+    norm_scale = NULL
+  )
+  if (isTRUE(probed$repaired)) {
+    vals <- probed$values
+    vecs_for_cert <- probed$vectors
+    alpha <- vals
+    beta <- rep(1, length(vals))
+    pencil <- generalized_pencil_values(alpha, beta, tol = 0)
+  }
+  cert <- probed$certificate
+  iter$matvecs <- as.integer((iter$matvecs %||% 0L) + probed$columns)
 
   restart <- iter$restart
   restart$kind <- "native_transformed_sparse_general_pencil_arnoldi"

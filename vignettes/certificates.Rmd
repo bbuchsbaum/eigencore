@@ -478,9 +478,34 @@ repair recovered it, and the repaired set was then counted complete.
 - `"exact"`: a full-spectrum route (dense LAPACK, tridiagonal, analytic grid
   Laplacian) selected from every eigenvalue, so the set is complete by
   construction;
-- `"not_checked"`: no check applied (both-ends targets, nonsymmetric
-  problems, a residual certificate that already failed, `certify = FALSE`,
-  or `completeness = "none"`).
+- `"inconclusive"` (nonsymmetric probe): the probe could not reach a
+  verdict (it did not converge, or the returned vectors are linearly
+  dependent, as for a defective or repeated eigenvalue a single-vector
+  Krylov method cannot resolve); `passed` is `FALSE`;
+- `"not_checked"`: no check applied (both-ends targets, complex
+  matrix-free nonsymmetric operators, a residual certificate that already
+  failed, `certify = FALSE`, or `completeness = "none"`).
+
+#### Nonsymmetric problems
+
+Dense LAPACK routes (`dgeev`, `zgeev`, QZ for pencils) select from the full
+spectrum and report `"exact"`. Krylov-Schur (Arnoldi) results, including
+`eigs()`, shift-invert (probed on \((A - \sigma I)^{-1}\)), matrix-free
+operators and diagonal-`B` sparse pencils (probed on \(B^{-1}A\)), are
+probed: with \(Q\) an orthonormal basis of the returned vectors,
+\(T = Q^T A Q\) and \(R = AQ - QT\), the eigenvalues missing from the
+returned set are those of the compression
+\((I - QQ^T) A (I - QQ^T)\) when \(R = 0\). A deflated Krylov-Schur run
+on that compression (fixed-seed start) looks for an eigenvalue more preferred
+than the returned edge by more than the margin
+\(\max(\mathrm{tol}\,|\lambda|, 2\|R\|_F)\) plus its own Ritz residual;
+one found is merged in by Rayleigh-Ritz on the enlarged subspace
+(`"repaired"`), otherwise the result is `"failed"`. A clean probe
+(`"probed"`) is evidence, not proof, and the margin covers the normal (or
+well-conditioned) case only: for a non-normal matrix an eigenvalue can move
+by up to its condition number times \(\|R\|\) (a Jordan block of size
+`m` by \(\|R\|^{1/m}\)), which the probe does not bound. Small
+complements (64 or fewer dimensions) are spanned completely.
 
 The check is chosen by `lanczos(completeness = )` or
 `options(eigencore.target_completeness = )`: `"auto"` (the default) counts edge targets

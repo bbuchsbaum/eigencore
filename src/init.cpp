@@ -90,6 +90,7 @@ extern "C" SEXP eigencore_arnoldi_refined_ritz(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_arnoldi_ks_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_arnoldi_ks_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_arnoldi_ks_r_operator(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_arnoldi_ks_deflated(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_arnoldi_ritz_coefficients(SEXP, SEXP);
 extern "C" SEXP eigencore_arnoldi_ritz_vectors(SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_orthogonality_loss(SEXP, SEXP);
@@ -232,6 +233,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_arnoldi_ks_dense", (DL_FUNC) &eigencore_arnoldi_ks_dense, 8},
   {"eigencore_arnoldi_ks_csc", (DL_FUNC) &eigencore_arnoldi_ks_csc, 12},
   {"eigencore_arnoldi_ks_r_operator", (DL_FUNC) &eigencore_arnoldi_ks_r_operator, 9},
+  {"eigencore_arnoldi_ks_deflated", (DL_FUNC) &eigencore_arnoldi_ks_deflated, 8},
   {"eigencore_arnoldi_ritz_coefficients", (DL_FUNC) &eigencore_arnoldi_ritz_coefficients, 2},
   {"eigencore_arnoldi_ritz_vectors", (DL_FUNC) &eigencore_arnoldi_ritz_vectors, 3},
   {"eigencore_orthogonality_loss", (DL_FUNC) &eigencore_orthogonality_loss, 2},

@@ -1,5 +1,57 @@
 # eigencore (development version)
 
+## Nonsymmetric target completeness
+
+* Nonsymmetric Krylov-Schur results (`eig_partial()` on general matrices,
+  `eigs()`, matrix-free general operators, shift-invert for general
+  matrices, diagonal-`B` sparse pencils) are now probed for completeness:
+  a deflated Krylov-Schur run on the compression of the operator to the
+  complement of the returned vectors looks for a more-preferred eigenvalue
+  outside the returned set. Found intruders are merged in by a
+  Schur-Rayleigh-Ritz step (`target_completeness = "repaired"`); otherwise
+  the result reports `"failed"` or `"inconclusive"` and `passed = FALSE`. A
+  clean probe reports `"probed"` (evidence, not proof; the margin does not
+  cover pseudospectral effects of strongly non-normal matrices). Dense
+  LAPACK general routes report `"exact"`. Fixes O16 (pairs outside the
+  LI/SI/LM target set certified), O18 (matrix-free smallest_magnitude) and
+  C60 (random sparse n = 20000, largest_magnitude k = 6 missed the
+  largest-modulus conjugate pair; now repaired). Options
+  `eigencore.nonsym_probe_wanted` (6), `eigencore.nonsym_probe_subspace`
+  (60), `eigencore.nonsym_probe_exhaust` (64),
+  `eigencore.nonsym_probe_restarts` (1000) and
+  `eigencore.nonsym_probe_screen_tol` (1e-4, the tolerance of a first
+  screening pass) tune the probe. The probe costs roughly one more
+  Krylov-Schur solve on hard (clustered) spectra; a 20000 x 20000 sparse
+  `largest_magnitude()` k = 6 solve went from 8.7 s to 16.2 s (C60,
+  repaired) and a dense 1500 `largest_real()` k = 10 solve from 6.6 s to
+  6.9 s (single thread).
+
+## SVD target completeness
+
+* SVD results now carry a target-completeness verdict, so
+  `certificate$passed` (residuals certified AND the returned triplets are
+  the requested set) can be TRUE for `svd_partial()`, `solve()` on SVD
+  plans and `svds()` (also with `nu = 0` / `nv = 0`). Dense LAPACK routes
+  and Gram routes that decompose the formed Gram matrix with LAPACK are
+  `"exact"`. Krylov routes (Golub-Kahan, retained/block Golub-Kahan,
+  randomized, implicit Gram, matrix-free, centred/scaled operators) are
+  checked by an inertia count on the augmented matrix `[0 A; A' 0]` when
+  `A` is an explicit matrix and the factorisation is cheap
+  (`"inertia_verified"` / `"inertia_failed"`; cost gate
+  `eigencore.svd_completeness_inertia_seconds` = 0.25 s and
+  `eigencore.svd_completeness_inertia_ratio` = 0.1 of the solve time, only
+  for `m + n <= eigencore.svd_completeness_inertia_max_dim` = 20000;
+  `options(eigencore.target_completeness = "inertia")` always counts), and
+  otherwise by the deflated-complement probe on the Gram operator `A'A`
+  (or `AA'`, smaller side) with a repair round when a missing value is
+  found (`"probed"` / `"repaired"` / `"failed"`). A short result (fewer
+  triplets than requested, e.g. a Krylov space exhausted by repeated
+  singular values) is completed from the deflated Gram complement and kept
+  when it certifies. `nearest()` SVD targets
+  have no probe: matrix-free interior SVD results stay `"not_checked"`
+  (`passed = FALSE`, `residual_passed = TRUE`). Fixes oracle finding O8
+  (missing copies of repeated singular values).
+
 ## Interval targets and spectrum slicing
 
 * New `interval(a, b)` target: `eig_partial(A, target = interval(a, b))`

@@ -244,23 +244,33 @@ auto <- function(max_subspace = NULL) {
 #'   native path always reorthogonalizes (DGKS x2) and ignores this flag;
 #'   it is preserved for the R reference solver's public API.
 #' @param completeness Target-completeness check run after a certified
-#'   Hermitian solve with a `largest()`, `smallest()`,
-#'   `largest_magnitude()` (or, for the inertia check, `nearest()`) target.
+#'   Hermitian solve (every target except `interval()`, which verifies its
+#'   own set; `smallest_magnitude()` is checked as `nearest(0)` and
+#'   `both_ends()` one end at a time). Unless the check verifies the set,
+#'   `certificate(fit)$passed` is `FALSE` (with `residual_passed = TRUE`).
 #'   `"inertia"` proves completeness deterministically by counting
 #'   eigenvalues with an \eqn{LDL^T} factorisation of `A - t B` (see
-#'   [eigen_count()]); it needs an explicit dense or sparse matrix and
+#'   [eigen_count()]); it needs an explicit dense or sparse matrix (a
+#'   matrix-free operator with n at most
+#'   `getOption("eigencore.completeness_materialize_limit", 2000)` is
+#'   materialised by n applies) and
 #'   reports `"inertia_verified"`, `"inertia_failed"` (repaired when
 #'   possible, otherwise `passed = FALSE`) or `"inertia_inconclusive"` (an
 #'   eigenvalue cluster straddles the target edge within the residual
-#'   bound). `"probe"` runs a short block Lanczos process on the operator
-#'   deflated against the returned eigenvectors (from a fixed-seed start; the
+#'   bound and the counts cannot show that a correct choice was returned; a
+#'   repeated eigenvalue at the edge is verified as a tie, recorded in
+#'   `certificate(fit)$completeness$tie`). `"probe"` runs a short block
+#'   Lanczos process on the operator deflated against the returned eigenvectors (from a fixed-seed start; the
 #'   global random stream is not touched) and, if it finds a more-preferred
 #'   eigenvalue outside the returned set (for example a missed copy of a
 #'   repeated eigenvalue), repairs the result with a deflated complement
 #'   solve; it is probabilistic (it can prove a set incomplete but not
-#'   complete) and is the check for matrix-free operators. `"auto"` uses the
-#'   inertia check for edge targets (not `nearest()`) when the matrix is
-#'   explicit and its predicted
+#'   complete) and is the check for large matrix-free operators; for
+#'   `nearest()` targets it runs on the route's own \eqn{(A - \sigma I)^{-1}}
+#'   after shift-invert, otherwise on \eqn{(A - \sigma I)^2}. Generalized
+#'   problems are probed in the standard space \eqn{R^{-T} A R^{-1}},
+#'   \eqn{B = R^T R}. `"auto"` uses the inertia check when the matrix is
+#'   explicit (or materialisable) and its predicted
 #'   factorisation time is at most
 #'   `max(getOption("eigencore.completeness_inertia_seconds", 0.5),
 #'   getOption("eigencore.completeness_inertia_ratio", 1) * solve time)`,

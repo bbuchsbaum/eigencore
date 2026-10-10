@@ -376,15 +376,41 @@ test_that("an unrepaired missing copy is inertia_failed and withholds the certif
   expect_true(any(grepl("inertia count", fit$warnings)))
 })
 
-test_that("a cluster straddling the target edge is inertia_inconclusive", {
+test_that("a repeated eigenvalue straddling the target edge is verified as a tie", {
+  # k = 3 of 9, 9, 7, 7, 7: every choice of one 7 is a correct answer. The
+  # counts prove both 9s are returned and the third value lies in the edge
+  # window (R/completeness_hermitian.R, hermitian_completeness_tie()).
   d <- c(9, 9, 7, 7, 7, seq(5, 0.1, length.out = 35L))
   A <- t5_dense_with_spectrum(d, 13L)
   fit <- eig_partial(A, 3L, largest(), method = lanczos(), seed = 1L)
   cert <- certificate(fit)
-  expect_identical(cert$target_completeness, "inertia_inconclusive")
-  expect_true(is.na(cert$target_passed))
+  expect_identical(cert$target_completeness, "inertia_verified")
+  expect_true(cert$target_passed)
   expect_true(cert$passed)
-  expect_match(cert$completeness$reason, "not separated")
+  expect_true(cert$completeness$tie)
+  expect_identical(as.integer(cert$completeness$tie_eigenvalues), 3L)
+  expect_match(cert$completeness$reason, "tie")
+  expect_equal(sort(values(fit)), c(7, 9, 9), tolerance = 1e-8)
+})
+
+test_that("an edge cluster the counts cannot resolve stays inertia_inconclusive", {
+  # Returned 4.2 is within its residual bound of 5, but not far enough inside
+  # the lower threshold to prove that 5 itself is returned: no claim.
+  A <- diag(c(5, 2, 1, 0.5, 0.2))
+  gate <- list(ctx = eigencore:::inertia_context(A), delta_A = 0, delta_B = 0,
+               metric = NULL)
+  problem <- list(A = as_operator(A))
+  vals <- c(4.2, 2)
+  parts <- eigencore:::hermitian_completeness_parts(largest(), vals)
+  res <- eigencore:::hermitian_completeness_count(problem, gate, vals, c(0.8, 0.8),
+                                                  0, parts)
+  expect_identical(res$status, "inertia_inconclusive")
+  expect_match(res$record$reason, "not separated")
+  expect_null(res$record$tie)
+  cert <- eigencore:::require_verified_completeness(list(certificate =
+    eigencore:::certificate_with_completeness(list(passed = TRUE), res$status, res$record)))$certificate
+  expect_false(cert$passed)
+  expect_true(cert$residual_passed)
   expect_true(any(grepl("inconclusive", cert$notes)))
 })
 
@@ -413,12 +439,13 @@ test_that("nearest and largest_magnitude targets are verified by interval counts
   set.seed(8)
   d <- sort(stats::runif(200L, -4, 4))
   S <- t5_rotated_sparse(d, 82L)
-  # auto mode leaves interior (nearest) targets unchecked ...
+  # auto mode counts interior (nearest) targets when the cost gate passes ...
   fit <- eig_partial(S, 5L, target = nearest(0.7), method = shift_invert(sigma = 0.7))
   cert <- certificate(fit)
-  expect_identical(cert$target_completeness, "not_checked")
-  expect_match(cert$completeness$inertia_gate, "nearest")
-  # ... and counts them on request.
+  expect_identical(cert$target_completeness, "inertia_verified")
+  expect_true(cert$passed)
+  expect_identical(cert$completeness$gate, "cost gate passed")
+  # ... and always on request.
   fit <- with_t5_completeness(
     "inertia",
     eig_partial(S, 5L, target = nearest(0.7), method = shift_invert(sigma = 0.7))
@@ -459,11 +486,19 @@ test_that("completeness modes and the cost gate", {
   fit <- with_t5_completeness("inertia",
                               eig_partial(S, 4L, largest(), method = lanczos(), seed = 1L))
   expect_identical(certificate(fit)$target_completeness, "inertia_verified")
-  # Matrix-free operators keep the probe.
+  # Small matrix-free operators are materialised (n applies) and counted ...
   op <- linear_operator(dim(S), function(X, alpha = 1, beta = 0, Y = NULL) {
     Z <- alpha * as.matrix(S %*% X)
     if (is.null(Y) || beta == 0) Z else Z + beta * Y
   }, structure = hermitian())
+  fit <- with_t5_completeness("inertia",
+                              eig_partial(op, 4L, largest(), method = lanczos(block = 2L),
+                                          seed = 1L))
+  expect_identical(certificate(fit)$target_completeness, "inertia_verified")
+  expect_true(certificate(fit)$completeness$materialized)
+  # ... larger ones keep the probe.
+  old_limit <- options(eigencore.completeness_materialize_limit = 10L)
+  on.exit(options(old_limit), add = TRUE)
   fit <- with_t5_completeness("inertia",
                               eig_partial(op, 4L, largest(), method = lanczos(block = 2L),
                                           seed = 1L))

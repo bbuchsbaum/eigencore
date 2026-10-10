@@ -424,7 +424,14 @@ test_that("interior matrix-free SVD routes natively with or without norm metadat
     eigencore:::native_matrix_free_interior_golub_kahan_label()
   )
   expect_equal(bare$d, c(1, 0.2), tolerance = 1e-12)
-  expect_certificate_clean(bare)
+  # Matrix-free nearest() SVD: no explicit matrix for an inertia count and no
+  # sound complement probe for an interior target (the full-subspace route
+  # can miss a repeated copy), so the set stays unverified: residuals pass,
+  # passed = FALSE.
+  expect_true(bare$certificate$residual_passed)
+  expect_false(bare$certificate$passed)
+  expect_identical(bare$certificate$target_completeness, "not_checked")
+  expect_lte(bare$certificate$max_backward_error, 1e-8)
 
   fit <- svd_partial(
     make_op(metadata = list(frobenius_norm = norm(A, "F"))),
@@ -449,7 +456,10 @@ test_that("interior matrix-free SVD routes natively with or without norm metadat
   expect_false(fit$certificate$scale_is_estimate)
   expect_equal(fit$restart$final_max_subspace, min(dim(A)))
   expect_equal(fit$d, c(1, 0.2), tolerance = 1e-12)
-  expect_certificate_clean(fit)
+  # Unverifiable set (matrix-free interior target): residuals only.
+  expect_true(fit$certificate$residual_passed)
+  expect_false(fit$certificate$passed)
+  expect_lte(fit$certificate$max_backward_error, 1e-8)
 })
 
 test_that("complex dense SVD uses native dense complex certification", {
