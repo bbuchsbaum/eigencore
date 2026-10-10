@@ -9,6 +9,8 @@
 # restores cross-orthogonality between the halves) and certifies the merged
 # set from scratch. Missing copies of a repeated eigenvalue in either half are
 # caught by the target-completeness check (two parts, R/completeness_hermitian.R).
+# A warm start (initial_subspace, e.g. eigs_sym(opts = list(initvec =))) is
+# the start block of both solves.
 
 #' @keywords internal
 native_both_ends_lanczos_label <- function() {
@@ -37,7 +39,8 @@ native_both_ends_lanczos_hermitian <- function(op, k, target, tol = 1e-8,
                                                maxit = NULL, block = 1L,
                                                max_restarts = 100L,
                                                vectors = TRUE,
-                                               check_stride = 0L) {
+                                               check_stride = 0L,
+                                               start = NULL) {
   op <- as_operator(op)
   n <- as.integer(op$dim[[1L]])
   kl <- as.integer(target$value$k_low)
@@ -60,13 +63,17 @@ native_both_ends_lanczos_hermitian <- function(op, k, target, tol = 1e-8,
     if (block > 1L) {
       native_block_lanczos_hermitian(
         op, k = kk, target = end_target, tol = tol, maxit = m, block = block,
-        max_restarts = max_restarts, vectors = TRUE, full_subspace = TRUE,
+        max_restarts = max_restarts, vectors = TRUE,
+        # A warm start must be iterated, not bypassed by the dense
+        # full-subspace shortcut (as on the single-end route).
+        full_subspace = is.null(start), start = start,
         check_stride = check_stride
       )
     } else {
       native_lanczos_hermitian(
         op, k = kk, target = end_target, tol = tol, maxit = m,
-        max_restarts = max_restarts, vectors = TRUE, check_stride = check_stride
+        max_restarts = max_restarts, vectors = TRUE, start = start,
+        check_stride = check_stride
       )
     }
   }

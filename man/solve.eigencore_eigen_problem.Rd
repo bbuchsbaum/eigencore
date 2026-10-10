@@ -41,9 +41,10 @@ See \code{\link[=eig_partial]{eig_partial()}}.}
 
 \item{initial_subspace}{Optional numeric matrix of starting directions
 (a warm start). Supported on standard real Hermitian Lanczos paths —
-native dense double / \code{dgCMatrix}, native matrix-free callbacks for
-\code{lanczos(block > 1)}, and the scalar matrix-free reference path for
-\code{lanczos(block = 1)}; supplying it on any other planned path is an error.
+native dense double / \code{dgCMatrix}, native matrix-free callbacks, the
+native both-ends route, and the scalar reference path for targets
+without a native kernel; supplying it on any other planned path is an
+error.
 The subspace is only
 a starting hint, never a source of reused convergence: every solve
 recomputes projected quantities, residuals, orthogonality, convergence,

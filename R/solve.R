@@ -39,8 +39,8 @@
 #' @param initial_subspace Optional numeric matrix of starting directions
 #'   (a warm start). Supported on standard real Hermitian Lanczos paths: the
 #'   native paths for explicit dense double or `dgCMatrix` operators, the native
-#'   matrix-free callback path selected by `lanczos(block > 1)`, and the scalar
-#'   matrix-free reference path selected by `lanczos(block = 1)`;
+#'   matrix-free callback path (scalar or block), the native both-ends route,
+#'   and the scalar reference path for targets without a native kernel;
 #'   supplying it on any other planned path (generalized, shift-invert, dense
 #'   fallback) is an error. Pass `method = lanczos()` to guarantee a Lanczos
 #'   route: with the default `method = auto()`, sparse or `nearest()` problems
@@ -177,9 +177,10 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
 #'   `"compute"`); see [eig_partial()].
 #' @param initial_subspace Optional numeric matrix of starting directions
 #'   (a warm start). Supported on standard real Hermitian Lanczos paths —
-#'   native dense double / `dgCMatrix`, native matrix-free callbacks for
-#'   `lanczos(block > 1)`, and the scalar matrix-free reference path for
-#'   `lanczos(block = 1)`; supplying it on any other planned path is an error.
+#'   native dense double / `dgCMatrix`, native matrix-free callbacks, the
+#'   native both-ends route, and the scalar reference path for targets
+#'   without a native kernel; supplying it on any other planned path is an
+#'   error.
 #'   The subspace is only
 #'   a starting hint, never a source of reused convergence: every solve
 #'   recomputes projected quantities, residuals, orthogonality, convergence,
@@ -751,6 +752,14 @@ plan_dispatches_native_lanczos <- function(plan) {
     "native block Hermitian Lanczos (thick restart, locking)",
     native_matrix_free_block_lanczos_label()
   )
+}
+
+# Native routes that consume a warm-start block: the single-end thick-restart
+# kernels and the both-ends route, which starts both of its solves from it.
+#' @keywords internal
+plan_dispatches_native_warm_lanczos <- function(plan) {
+  plan_dispatches_native_lanczos(plan) ||
+    identical(plan$method, native_both_ends_lanczos_label())
 }
 
 #' @keywords internal

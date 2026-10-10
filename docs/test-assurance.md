@@ -369,7 +369,7 @@ Thread determinism: `Rscript inst/validation/thread-determinism.R 1 2 4`.
 | ASan + UBSan + `float-cast-overflow` + `float-divide-by-zero` | threads 2, full suite + entry-point script | 0 reports (these two checks are not part of `-fsanitize=undefined` in gcc; `float-divide-by-zero` ran in recover mode, so it would have printed even benign IEEE divisions: none occurred) |
 | ASan + UBSan, `native-smoke.R`, `native-entry-points.R` | threads 2 and 4 | pass, 0 reports |
 | valgrind memcheck, `native-entry-points.R` | threads 2 | `ERROR SUMMARY: 0 errors` |
-| valgrind memcheck, test suite minus the four heaviest files (`t4a-omp`, `bench-smoke`, `t4b-svd`, `t3-api`) | threads 2 | `ERROR SUMMARY: 0 errors`, `definitely lost: 0 bytes`; 6934 expectations, 1 failure that is a valgrind artifact (F7) |
+| valgrind memcheck, test suite minus the four heaviest files (`t4a-omp`, `bench-smoke`, `t4b-svd`, `t3-api`) | threads 2 | `ERROR SUMMARY: 0 errors`, `definitely lost: 0 bytes`; 6934 expectations, 1 failure that is a valgrind artifact (F7, since fixed) |
 | valgrind memcheck, `test-native-assurance.R` + `test-t3-unwind.R` + `test-native-hardening.R` + entry-point script, after the F1 fix | threads 2 | `ERROR SUMMARY: 0 errors`, `definitely lost: 0 bytes`; 456 expectations, 0 failures |
 | Full suite, plain build (final) | threads 1 / 4 | 8415 expectations, 0 failures, 11 skips, identical outcome at both thread counts (ASan counts are lower because the 200-expectation RSS test is skipped there) |
 
@@ -411,40 +411,87 @@ snapshot test failed whenever `NOT_CRAN=true` (CI, coverage, sanitizer runs).
 under ASan needs `allocator_may_return_null=1` (see above) and skipping the
 RSS-growth assertion; both are now encoded in the CI workflow and the test.
 
-**F4 (open, route quality, not memory): `eigs_sym(sparse, which = "BE")`.**
-Sparse `both_ends` goes to the R reference Hermitian Lanczos
-("target unsupported by native path") and, on a 60 x 60 path Laplacian plus
-diagonal, `k = 3`, returns 0 converged pairs with a warning and a failed
-certificate (backward errors up to 3e-4); the dense input certifies. Honest
-(uncertified) but a convergence gap.
+**F4 (fixed, route quality): `eigs_sym(sparse, which = "BE")`.**
+Sparse `both_ends` went to the R reference Hermitian Lanczos ("target
+unsupported by native path") and, on a 60 x 60 path Laplacian plus
+diagonal, `k = 3`, returned 0 converged pairs with a warning and a failed
+certificate (backward errors up to 3e-4); the dense input certified. Root
+cause: the reference Lanczos does not restart, so its 3k + 20 step budget
+cannot resolve the poorly separated ends. The default shim call was already
+fixed on `main` by the native both-ends route ("native Hermitian Lanczos both
+ends (two thick-restart solves)", `R/both_ends_lanczos.R`): `eigs_sym()` maps
+`"BE"` to `both_ends(k %/% 2, k - k %/% 2)` (alternating ends, the extra
+pair from the high end when `k` is odd, values returned in decreasing
+order), identical to RSpectra 0.16 for k = 1..6 on the reproducer. One path
+still fell back: a warm start (`opts = list(initvec =)`, which the shim
+passes as `initial_subspace` with `lanczos()`) excluded the both-ends route
+and again converged 0 of 3 pairs. Fix: the both-ends route consumes the
+warm start (both thick-restart solves start from it; it is admitted by the
+warm-start/restart-state seam via `plan_dispatches_native_warm_lanczos()`),
+so every `"BE"` call on sparse, matrix-free or function input takes the
+native route and reaches `inertia_verified` / `probed` completeness.
+Regression tests: `test-assurance-findings.R` ("F4: ...", compares with
+RSpectra when installed).
 
-**F5 (open, route quality): explicit `lanczos()` on a matrix-free Hermitian
-operator** takes the R-level prototype Lanczos ("native hot loop not yet
-implemented"), stops after 29 applies on n = 60 and fails its certificate;
-`maxit = 500` and `max_subspace = 30` do not change the number of applies.
-`auto()` (C53) routes the same operator to the native thick-restart kernel and
-certifies. The `lanczos()` method descriptor should route there too, or honour
-`maxit`.
+**F5 (fixed, route quality): explicit `lanczos()` on a matrix-free
+Hermitian operator** took the R-level prototype Lanczos ("native hot loop not
+yet implemented"), stopped after 29 applies on n = 60 and failed its
+certificate; `maxit = 500` and `max_subspace = 30` did not help. Root cause:
+the planner sent scalar (`block = 1`) matrix-free `lanczos()` to the
+unrestarted reference Lanczos on purpose (only `block > 1` was opted into the
+native callback kernel), and that prototype's whole iteration is its
+subspace: 3k + 20 = 29 steps by default; the solve-level `maxit` was resolved
+as "Lanczos steps" but could only cap that default (`min(29, 500)`), and
+`max_subspace = 30` bought exactly one more step. Fix: explicit `lanczos()`
+on a matrix-free Hermitian operator with a native target now routes to the
+native thick-restart callback kernel as `auto()` does (C53), including warm
+starts; the reference route remains only for targets without a native kernel
+(e.g. `nearest()` without a factorization), and there `maxit` now sets the
+step budget (`min(n, maxit)`) when `max_subspace` is not given (it still only
+caps an explicit `max_subspace`). Reproducer after the fix: certified,
+`inertia_verified`, 54-80 applies. Regression tests: `test-assurance-findings.R`
+("F5: ...").
 
-**F6 (open, message quality):** a singular
+**F6 (fixed, message quality):** a singular
 `shifted_tridiagonal_preconditioner()` (e.g. a path Laplacian with shift 0)
-fails LOBPCG with the bare `native CSC LOBPCG failed with status=-5`.
+failed LOBPCG with the bare `native CSC LOBPCG failed with status=-5`.
+Fix: the preconditioner factors `A + shift * I` once at construction (O(n),
+`dgttrf` + `dgtcon`) and a singular system is an error naming
+`shifted_tridiagonal_preconditioner()` and asking for a positive shift; the
+native LOBPCG maps its status `-5` (only returned by the shifted
+diagonal/tridiagonal preconditioner factor and solve) to the same kind of
+message. Regression test: `test-assurance-findings.R` ("F6: ...").
 
-**F7 (valgrind artifact; low-severity portability note).** Under valgrind,
-`test-identity-hash.R` ("C45: identity is identical across separate R
-sessions") fails: the sparse operator's identity differs from the one computed
-in a native child session. Cause: `as_operator(<dgCMatrix>)` stores column
-means / centred sums of squares computed with `long double` accumulators in
-its metadata, and the identity hashes that metadata; valgrind models x87
-`long double` with 64-bit precision, so e.g. the mean `1/3` comes out one ulp
-different (`0x1.5555555555556p-2` vs `0x1.5555555555555p-2`). This is a
-valgrind limitation, not a memory error, but it shows that the persisted
-identity of a sparse operator depends on `long double` arithmetic of the
-platform (80-bit x86, 128-bit aarch64 Linux, 64-bit on macOS arm64 / MSVC),
-so in rare double-rounding cases a plan or restart state persisted on one
-platform will not match the same matrix on another. Hashing only the source
-slots (or computing the moments in double with compensated summation) would
-make identities platform-independent.
+**F7 (fixed; found as a valgrind artifact, a portability defect).** Under
+valgrind, `test-identity-hash.R` ("C45: identity is identical across separate
+R sessions") failed: the sparse operator's identity differed from the one
+computed in a native child session. Cause: `as_operator(<dgCMatrix>)` stores
+column sums, sums of squares, means and centred sums of squares computed with
+`long double` accumulators (`eigencore_csc_column_moments`) in its metadata,
+and the built-in identity hashed that metadata; valgrind models x87
+`long double` with 64-bit precision, so e.g. the mean `1/3` came out one ulp
+different (`0x1.5555555555556p-2` vs `0x1.5555555555555p-2`). The same
+happens between platforms (80-bit x86, 128-bit aarch64 Linux, 64-bit on
+macOS arm64 / MSVC), so a plan, restart state or PSD factor persisted on one
+platform could fail to match the same matrix on another. Fix
+(`R/workflow_contract.R`): the identity payload drops the derived metadata
+(`derived_identity_metadata_keys()`: the four column moments and
+`frobenius_norm`) and hashes the exact content of a Matrix source instead:
+its class and every slot (`i`, `p`, `x`, `Dim`, `Dimnames`, `uplo`, ...)
+except the `factors` cache, plus the operator's structure flags
+(`storage`, `input_storage`, `symmetric_storage`). The native hash streams
+the slots without copying, so the cost is unchanged (one pass over the
+slots). `identity_hash_format()` is now `"eigencore-identity-hash-v3"`
+(the hash algorithm itself is unchanged): plans, restart states and PSD
+factors persisted under v2 fail with the typed `identity_format_changed`
+error (`eigencore_plan_error`, `eigencore_restart_state_error`) asking for a
+re-plan, never with a crash or a silent mismatch. Residual: centred
+operators (`center()`) still hash their centring vectors, which are operator
+parameters (not derived metadata) computed by `colMeans()`. Regression tests:
+`test-assurance-findings.R` ("F7: ...": one-ulp changes of every derived
+moment leave the identity unchanged, the `factors` cache is ignored, content
+slots and `Dimnames` count, v2 plans and restart states are rejected with the
+typed error).
 
 ### OpenMP race review (static)
 
