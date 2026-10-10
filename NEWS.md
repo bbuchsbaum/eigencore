@@ -1,5 +1,54 @@
 # eigencore (development version)
 
+## Complex Hermitian eigenproblems on the iterative routes
+
+* Complex Hermitian problems now run on the iterative routes with verified
+  completeness. They are solved as the real symmetric `2n x 2n` embedding
+  `[Re -Im; Im Re]` (every eigenvalue doubled, `k -> 2k`) through the
+  ordinary real pipeline (native block Lanczos, LDL' shift-invert, native
+  generalized Lanczos, interval slicing, dense LAPACK), and the real Ritz
+  vectors are mapped back by a complex Rayleigh-Ritz step and certified on
+  the complex operator. The real route's completeness verdict
+  (`"inertia_verified"`, `"probed"`, `"exact"`) transfers, so
+  `certificate$passed` can be `TRUE`. New plan label
+  `"native realified complex Hermitian route (real 2n embedding)"`;
+  `fit$restart$inner_method` names the real route used.
+* `auto()` keeps zheev for small dense complex Hermitian matrices (the
+  real dense-partial thresholds, `n < 128` or `k / n > 0.25`) and now uses
+  the embedding above them: dense `n = 500 / 1000 / 2000`, `k = 10` (one
+  thread) went from 0.44 / 4.8 / 32 s to 0.17 / 1.1 / 4.9 s with the same
+  eigenvalue accuracy. `nearest()` on a small dense complex matrix no longer
+  errors (it was routed to a real-only shift-invert).
+* `lanczos()` on complex input now works (it errored in
+  `reorthogonalize_against`): it runs the realified native block kernel with
+  `block = 2 * block` (at least 2). With
+  `options(eigencore.complex_hermitian_realify = FALSE)` it runs the
+  reference Lanczos, now fixed for complex arithmetic (Hermitian inner
+  products, complex basis, real tridiagonal).
+* `lobpcg()` on complex input (reference LOBPCG) now converges: Hermitian
+  Rayleigh quotients and Rayleigh-Ritz, an order-preserving complex
+  B-orthonormalisation, complex preconditioners and constraints.
+* New `complex_operator(re, im)` builds a complex operator from real and
+  imaginary parts (dense or any `Matrix` class); the `Matrix` package has
+  no complex sparse classes, so this is how complex sparse Hermitian
+  matrices enter eigencore. Their embedding stays a `dgCMatrix`, so native
+  sparse block Lanczos, CHOLMOD shift-invert (`nearest()`,
+  `shift_invert()`, C60 `smallest()` routing) and CHOLMOD inertia counts
+  all apply.
+* Complex matrix-free Hermitian operators
+  (`linear_operator(..., dtype = "complex", structure = hermitian())`) are
+  supported (they errored); general complex matrix-free operators still
+  error.
+* Complex Hermitian-definite pencils (`B` Hermitian positive definite,
+  complex or real) solve through the embedded real SPD pencil for every
+  method; `interval()` targets now accept complex pencils, complex sparse
+  and complex matrix-free operators (inertia counted and sliced on the
+  embedding).
+* Completeness of complex results from any route is checked on the
+  embedding: the returned pairs are realified and counted (LDL' inertia) or
+  probed there, and a repaired set is mapped back and re-certified. Complex
+  results previously stayed `"not_checked"`.
+
 ## Nonsymmetric target completeness
 
 * Nonsymmetric Krylov-Schur results (`eig_partial()` on general matrices,

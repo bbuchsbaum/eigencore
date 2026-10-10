@@ -30,7 +30,14 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
   if (!is.null(constraints_info) && constraints_info$rank + k > n) {
     stop("LOBPCG constraints leave fewer than k free dimensions.", call. = FALSE)
   }
+  # Complex Hermitian problems iterate in complex arithmetic (Hermitian inner
+  # products, zheev Rayleigh-Ritz); the Ritz values stay real.
+  complex_problem <- identical(op$dtype %||% "double", "complex") ||
+    identical(Bop$dtype %||% "double", "complex")
   X <- matrix(stats::rnorm(n * k), nrow = n, ncol = k)
+  if (complex_problem) {
+    X <- X + 1i * matrix(stats::rnorm(n * k), nrow = n, ncol = k)
+  }
   X <- lobpcg_project_constraints(X, constraints_info, Bop = Bop)
   orth_native <- FALSE
   orth_all_native <- TRUE
@@ -63,10 +70,10 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
 
   for (iter in seq_len(maxit)) {
     iterations <- iter
-    AX <- apply_operator(op, X)
-    BX <- if (is.null(Bop)) X else apply_operator(Bop, X)
+    AX <- lobpcg_apply(op, X)
+    BX <- if (is.null(Bop)) X else lobpcg_apply(Bop, X)
     matvecs <- matvecs + 1L
-    values <- colSums(X * AX)
+    values <- if (complex_problem) Re(colSums(Conj(X) * AX)) else colSums(X * AX)
     R <- AX - sweep(BX, 2L, values, `*`)
     residual_norms <- col_norms(R)
     x_norms <- col_norms(X)
@@ -98,10 +105,10 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
     record_orthogonalization(orth)
     Q <- orth$Q
     BQ <- orth$BQ
-    AQ <- apply_operator(op, Q)
+    AQ <- lobpcg_apply(op, Q)
     matvecs <- matvecs + 1L
-    H <- crossprod(Q, AQ)
-    H <- (H + t(H)) / 2
+    H <- certificate_gram(Q, AQ)
+    H <- (H + Conj(t(H))) / 2
     small <- eigen(H, symmetric = TRUE)
     idx <- order_indices(small$values, target)
     if (length(idx) < k) {
@@ -117,7 +124,12 @@ reference_lobpcg_hermitian <- function(op, k, target = smallest(), tol = 1e-8,
     values <- small$values[idx]
   }
 
-  cert <- certify_eigen_operator(op, values, X, Bop = Bop, tol = tol)
+  cert <- if (complex_problem) {
+    certify_eigen_operator(complex_hermitian_complex_view(op), values, X,
+                           Bop = complex_hermitian_complex_view(Bop), tol = tol)
+  } else {
+    certify_eigen_operator(op, values, X, Bop = Bop, tol = tol)
+  }
   history <- data.frame(
     iteration = seq_len(iterations),
     max_relative_residual = history_max_relative_residual[seq_len(iterations)],
@@ -864,7 +876,9 @@ lobpcg_prepare_constraints <- function(constraints, n, Bop = NULL) {
     return(NULL)
   }
   Z <- as.matrix(constraints)
-  storage.mode(Z) <- "double"
+  if (!is.complex(Z)) {
+    storage.mode(Z) <- "double"
+  }
   if (nrow(Z) != n) {
     stop("LOBPCG constraints must have one row per problem dimension.", call. = FALSE)
   }
@@ -886,13 +900,26 @@ lobpcg_project_constraints <- function(X, constraints, Bop = NULL) {
   if (is.null(constraints)) {
     return(X)
   }
-  BX <- if (is.null(Bop)) X else apply_operator(Bop, X)
-  X - constraints$Q %*% crossprod(constraints$Q, BX)
+  BX <- if (is.null(Bop)) X else lobpcg_apply(Bop, X)
+  X - constraints$Q %*% certificate_gram(constraints$Q, BX)
+}
+
+# Operator apply that also takes a complex block on a real operator (the
+# real metric of a complex pencil) without densifying.
+#' @keywords internal
+lobpcg_apply <- function(op, X) {
+  if (is.complex(X) && !identical(op$dtype %||% "double", "complex")) {
+    return(apply_operator_split_complex(op, X))
+  }
+  apply_operator(op, X)
 }
 
 #' @keywords internal
 lobpcg_b_orthonormalize <- function(X, Bop = NULL, tol = sqrt(.Machine$double.eps)) {
   X <- as.matrix(X)
+  if (is.complex(X)) {
+    return(lobpcg_b_orthonormalize_complex(X, Bop, tol = tol))
+  }
   if (is.null(Bop)) {
     Q <- tryCatch(native_cholqr2(X)$Q, error = function(e) NULL)
     if (is.null(Q)) {
@@ -943,4 +970,42 @@ lobpcg_b_orthonormalize <- function(X, Bop = NULL, tol = sqrt(.Machine$double.ep
   Q <- X %*% invR
   BQ <- BQ %*% invR
   list(Q = Q, BQ = BQ, native = FALSE, method = "operator_b_qr_chol")
+}
+
+# Complex (B-)orthonormalisation: column-ordered two-pass modified
+# Gram-Schmidt in the B inner product (B applied once to the block and
+# tracked linearly), dropping numerically dependent columns. Column order is
+# preserved, so an orthonormalised Ritz block keeps its target order (base
+# qr() of a complex matrix always pivots, and chol() has no complex method).
+#' @keywords internal
+lobpcg_b_orthonormalize_complex <- function(X, Bop = NULL, tol = sqrt(.Machine$double.eps)) {
+  X <- as.matrix(X)
+  BX <- if (is.null(Bop)) X else as.matrix(lobpcg_apply(Bop, X))
+  n <- nrow(X)
+  Q <- matrix(0i, n, 0L)
+  BQ <- matrix(0i, n, 0L)
+  for (j in seq_len(ncol(X))) {
+    v <- X[, j]
+    bv <- BX[, j]
+    nrm0 <- sqrt(max(Re(sum(Conj(v) * bv)), 0))
+    if (!is.finite(nrm0) || nrm0 == 0) {
+      next
+    }
+    if (ncol(Q)) {
+      for (pass in 1:2) {
+        coef <- Conj(t(BQ)) %*% v
+        v <- v - as.vector(Q %*% coef)
+        bv <- bv - as.vector(BQ %*% coef)
+      }
+    }
+    nrm <- sqrt(max(Re(sum(Conj(v) * bv)), 0))
+    if (is.finite(nrm) && nrm > tol * nrm0) {
+      Q <- cbind(Q, v / nrm)
+      BQ <- cbind(BQ, bv / nrm)
+    }
+  }
+  if (!ncol(Q)) {
+    stop("LOBPCG trial subspace is numerically degenerate.", call. = FALSE)
+  }
+  list(Q = Q, BQ = BQ, native = FALSE, method = "complex_b_mgs2")
 }
