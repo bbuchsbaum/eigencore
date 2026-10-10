@@ -63,8 +63,8 @@ global random number stream is restored on exit.}
 \item{initial_subspace}{Optional numeric matrix of starting directions
 (a warm start). Supported on standard real Hermitian Lanczos paths: the
 native paths for explicit dense double or \code{dgCMatrix} operators, the native
-matrix-free callback path selected by \code{lanczos(block > 1)}, and the scalar
-matrix-free reference path selected by \code{lanczos(block = 1)};
+matrix-free callback path (scalar or block), the native both-ends route,
+and the scalar reference path for targets without a native kernel;
 supplying it on any other planned path (generalized, shift-invert, dense
 fallback) is an error. Pass \code{method = lanczos()} to guarantee a Lanczos
 route: with the default \code{method = auto()}, sparse or \code{nearest()} problems

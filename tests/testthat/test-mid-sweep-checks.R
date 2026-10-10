@@ -127,7 +127,7 @@ test_that("matrix-free block thick-restart matches the oracle", {
   expect_true(isTRUE(cert$orthogonality_passed))
 })
 
-test_that("matrix-free scalar (block == 1) stays on the reference path", {
+test_that("matrix-free scalar (block == 1) takes the native callback kernel (F5)", {
   n <- 80L
   k <- 3L
   A <- clustered_decay_sym(n, seed = 9L)
@@ -136,8 +136,10 @@ test_that("matrix-free scalar (block == 1) stays on the reference path", {
     op, k = k, target = largest(), method = lanczos(max_subspace = n), seed = 2
   )
   expect_identical(
-    fit$method, "reference Hermitian Lanczos (prototype/oracle fallback)"
+    fit$method,
+    "native block Hermitian Lanczos (matrix-free callback, thick restart, locking)"
   )
+  expect_identical(fit$block, 1L)
 })
 
 test_that("matrix-free block warm start enters at full width and beats cold", {

@@ -422,7 +422,7 @@ test_that("RSpectra SM maps to smallest magnitude, not smallest algebraic", {
   expect_equal(ef$values, 2)
 })
 
-test_that("prototype Lanczos solves matrix-free Hermitian operators", {
+test_that("explicit Lanczos solves matrix-free Hermitian operators natively", {
   vals <- c(6, 5, 4, 3, 2, 1)
   op <- linear_operator(
     dim = c(length(vals), length(vals)),
@@ -450,7 +450,14 @@ test_that("prototype Lanczos solves matrix-free Hermitian operators", {
   expect_equal(values(fit), c(6, 5), tolerance = 1e-10)
   expect_true(certificate(fit)$passed)
   expect_equal(fit$nconv, 2)
-  expect_equal(fit$method, "reference Hermitian Lanczos (prototype/oracle fallback)")
+  # F5: scalar lanczos() on a callback operator runs the native kernel.
+  expect_equal(fit$method, eigencore:::native_matrix_free_block_lanczos_label())
+  # Targets without a native kernel keep the reference prototype.
+  ref <- eig_partial(op, k = 2, target = nearest(3.4),
+                     method = lanczos(max_subspace = 6), seed = 123)
+  expect_equal(sort(values(ref)), c(3, 4), tolerance = 1e-10)
+  expect_true(certificate(ref)$passed)
+  expect_equal(ref$method, "reference Hermitian Lanczos (prototype/oracle fallback)")
 })
 
 test_that("reference Lanczos uses shared scalar subspace validation", {

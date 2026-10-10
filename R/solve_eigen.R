@@ -164,7 +164,7 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
     } else {
       NULL
     }
-    native_warm_path <- plan_dispatches_native_lanczos(plan)
+    native_warm_path <- plan_dispatches_native_warm_lanczos(plan)
     if (!native_warm_path && !plan_dispatches_reference_hermitian_lanczos(plan)) {
       stop("Internal error: initial_subspace reached an unsupported Lanczos dispatch.",
            call. = FALSE)
@@ -230,7 +230,8 @@ solve_eigen_lanczos <- function(a, k, method, tol, maxit, vectors, certify, plan
     native_both_ends_lanczos_hermitian(
       a$A, k = k, target = a$target, tol = tol, maxit = method_subspace,
       block = method_block, max_restarts = method_max_restarts,
-      vectors = vectors, check_stride = method_check_stride
+      vectors = vectors, check_stride = method_check_stride,
+      start = start_block
     )
   } else if (plan_dispatches_native_lanczos(plan)) {
     if (method_block > 1L) {
