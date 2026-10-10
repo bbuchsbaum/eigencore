@@ -284,6 +284,7 @@ stop_if_complex_matrix_input <- function(x) {
     stop(
       "Complex-valued Matrix inputs are future scope in eigencore's native sparse/operator API. ",
       "Base complex dense matrices use native dense complex LAPACK kernels; ",
+      "pass a complex sparse matrix as complex_operator(re, im) (real and imaginary parts); ",
       "real-valued matrices may still return complex eigenpairs through eigs().",
       call. = FALSE
     )

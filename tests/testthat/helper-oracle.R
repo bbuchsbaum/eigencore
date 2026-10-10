@@ -199,9 +199,15 @@ oracle_case_nonsym <- function(max_n) {
        sigma_pos = stats::runif(1), tol = oracle_draw_tol())
 }
 
+# Complex family: complex Hermitian (dense, complex_operator() sparse/dense
+# split storage, matrix-free), complex general dense, and complex
+# Hermitian-definite pencils. Hermitian cases exercise the realified
+# iterative routes (auto above the dense size, lanczos, shift_invert) and the
+# reference complex LOBPCG.
 oracle_case_complex <- function(max_n) {
-  n <- oracle_draw_n(min(max_n, 120L))
-  herm <- stats::runif(1) < 0.5
+  kind <- oracle_pick(c("cherm", "cgen", "cgenh"), c(5, 3, 2))
+  herm <- kind %in% c("cherm", "cgenh")
+  n <- oracle_draw_n(min(max_n, if (herm) 200L else 120L))
   target <- if (herm) {
     oracle_pick(c("largest", "smallest", "largest_magnitude",
                   "smallest_magnitude", "both_ends", "nearest"))
@@ -210,12 +216,74 @@ oracle_case_complex <- function(max_n) {
                   "smallest_real", "largest_imaginary", "smallest_imaginary",
                   "nearest"))
   }
-  list(api = "eig", structure = if (herm) "cherm" else "cgen",
-       storage = "dense", n = n,
+  storage <- if (identical(kind, "cherm")) {
+    oracle_pick(c("dense", "split_sparse", "split_dense", "linop"), c(3, 3, 1, 2))
+  } else {
+    "dense"
+  }
+  method <- if (herm) {
+    oracle_pick(c("auto", "lanczos1", "lanczos2", "lobpcg", "shift_invert"),
+                c(5, 2, 1, 1.5, if (identical(storage, "linop")) 0 else 1))
+  } else {
+    "auto"
+  }
+  if (method == "shift_invert") target <- "nearest"
+  list(api = "eig", structure = kind,
+       storage = storage, n = n,
        spectrum = if (herm) oracle_pick(oracle_herm_spectra) else
          oracle_pick(c("random_matrix", "complex", "repeated", "tiny", "huge")),
-       k = oracle_draw_k(n), target = target, method = "auto",
+       k = oracle_draw_k(n), target = target, method = method,
        sigma_pos = stats::runif(1), tol = oracle_draw_tol())
+}
+
+# A unitary factor: dense, or block-diagonal (blocks of size 1..4) with rows
+# and columns permuted for a sparse Hermitian matrix with a given spectrum.
+oracle_unitary <- function(n, sparse = FALSE) {
+  rand <- function(b) {
+    Z <- matrix(complex(real = stats::rnorm(b * b), imaginary = stats::rnorm(b * b)), b)
+    qr.Q(qr(Z))
+  }
+  if (!sparse) {
+    return(rand(n))
+  }
+  Q <- matrix(0i, n, n)
+  i <- 1L
+  while (i <= n) {
+    b <- min(n - i + 1L, sample.int(4L, 1L))
+    idx <- i:(i + b - 1L)
+    Q[idx, idx] <- rand(b)
+    i <- i + b
+  }
+  Q[sample.int(n), sample.int(n)]
+}
+
+oracle_complex_store <- function(A, storage) {
+  switch(storage,
+    dense = A,
+    split_dense = eigencore::complex_operator(Re(A), Im(A)),
+    split_sparse = {
+      re <- Re(A)
+      im <- Im(A)
+      re[abs(re) < 1e-300] <- 0
+      im[abs(im) < 1e-300] <- 0
+      # Built from triplets: Matrix::Matrix() tests symmetry with an absolute
+      # tolerance and would symmetrise a tiny-scale skew imaginary part.
+      eigencore::complex_operator(oracle_dgC(re), oracle_dgC(im))
+    },
+    linop = {
+      force(A)
+      eigencore::linear_operator(
+        dim = dim(A),
+        apply = function(X, alpha = 1, beta = 0, Y = NULL) {
+          Z <- alpha * (A %*% X)
+          if (is.null(Y) || beta == 0) Z else Z + beta * Y
+        },
+        dtype = "complex",
+        structure = eigencore::hermitian(),
+        name = "oracle_complex_linop"
+      )
+    },
+    stop("unknown complex storage ", storage))
 }
 
 oracle_case_gen <- function(max_n) {
@@ -556,12 +624,25 @@ oracle_build_impl <- function(case) {
   } else if (st == "cherm") {
     n <- case$n
     lambda <- oracle_spectrum(case$spectrum, n)
-    Z <- matrix(complex(real = stats::rnorm(n * n), imaginary = stats::rnorm(n * n)), n)
-    Q <- qr.Q(qr(Z))
+    storage <- oracle_or(case$storage, "dense")
+    Q <- oracle_unitary(n, sparse = storage == "split_sparse")
     A <- Q %*% (lambda * Conj(t(Q)))
     A <- (A + Conj(t(A))) / 2
     out$A <- A
-    out$obj <- A
+    out$obj <- oracle_complex_store(A, storage)
+  } else if (st == "cgenh") {
+    # Complex Hermitian-definite pencil (A, B), B Hermitian positive
+    # definite, with B-orthonormal eigenvectors X: A = X^-H diag(lambda) X^-1.
+    n <- case$n
+    lambda <- oracle_spectrum(case$spectrum, n)
+    X <- oracle_unitary(n) %*% diag(stats::runif(n, 0.5, 2), n)
+    Xi <- solve(X)
+    A <- Conj(t(Xi)) %*% (lambda * Xi)
+    B <- Conj(t(Xi)) %*% Xi
+    out$A <- (A + Conj(t(A))) / 2
+    out$B <- (B + Conj(t(B))) / 2
+    out$obj <- out$A
+    out$Bobj <- out$B
   } else if (st == "cgen") {
     n <- case$n
     if (case$spectrum == "random_matrix") {
@@ -755,6 +836,14 @@ oracle_truth <- function(case, prob) {
     list(values = ev, normA = svd(A, 0, 0)$d[1],
          normB = max(eigen(prob$B, symmetric = TRUE, only.values = TRUE)$values),
          L = L)
+  } else if (st == "cgenh") {
+    # B^{-1/2} A B^{-1/2} through B's eigendecomposition (base chol() has no
+    # complex method).
+    eb <- eigen(prob$B, symmetric = TRUE)
+    Bmh <- eb$vectors %*% (Conj(t(eb$vectors)) / sqrt(eb$values))
+    C <- Bmh %*% A %*% Bmh
+    ev <- eigen((C + Conj(t(C))) / 2, symmetric = TRUE, only.values = TRUE)$values
+    list(values = ev, normA = svd(A, 0, 0)$d[1], normB = max(eb$values))
   } else if (st %in% c("nonsym", "cgen")) {
     e <- eigen(A)
     list(values = e$values, vectors = e$vectors, normA = svd(A, 0, 0)$d[1],
@@ -1061,6 +1150,17 @@ oracle_check <- function(case, prob, truth, sigma, fit) {
       vbound <- sqrt(colSums(Linv_r^2)) / xB
       G <- crossprod(X, BX)
       ortho <- max(abs(G - diag(ncol(X))))
+    } else if (case$structure == "cgenh") {
+      BX <- prob$B %*% X
+      R <- AX - sweep(BX, 2L, vals, `*`)
+      xn <- sqrt(colSums(Mod(X)^2))
+      eta <- oracle_div(sqrt(colSums(Mod(R)^2)), (nA + Mod(vals) * truth$normB) * xn)
+      # |theta - lambda| <= ||r||_{B^-1} / ||x||_B
+      rBr <- Re(colSums(Conj(R) * solve(prob$B, R)))
+      xB <- sqrt(Re(colSums(Conj(X) * BX)))
+      vbound <- sqrt(pmax(rBr, 0)) / xB
+      G <- Conj(t(X)) %*% BX
+      ortho <- max(Mod(G - diag(ncol(X))))
     } else {
       R <- AX - sweep(X, 2L, vals, `*`)
       xn <- sqrt(colSums(Mod(X)^2))
@@ -1107,7 +1207,7 @@ oracle_check <- function(case, prob, truth, sigma, fit) {
                               max(eta), tol))
     }
     orth_required <- !identical(cert$orthogonality_required, FALSE) &&
-      case$structure %in% c("herm", "cherm", "gen", "svd")
+      case$structure %in% c("herm", "cherm", "gen", "cgenh", "svd")
     orth_tol <- max(tol, sqrt(eps))
     if (orth_required && ortho > orth_tol * 2 + 64 * n_eff * eps) {
       hard <- c(hard, sprintf("soundness: certified but orthogonality loss %.3g > %.3g",

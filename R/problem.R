@@ -159,6 +159,15 @@ plan_solver.eigencore_eigen_problem <- function(
   }
   if (is_interval_target(problem$target)) {
     check_iteration_limit_conflict(method, maxit)
+    complex_route <- complex_hermitian_interval_plan(
+      problem, k = k, method = method, tol = tol, maxit = maxit,
+      vectors = vectors, certify = certify,
+      allow_dense_fallback = match.arg(allow_dense_fallback),
+      left_vectors = match.arg(left_vectors)
+    )
+    if (!is.null(complex_route)) {
+      return(complex_route)
+    }
     return(plan_interval_eigen(
       problem, k = k, method = method, tol = tol, maxit = maxit,
       vectors = vectors, certify = certify,
@@ -197,6 +206,15 @@ plan_solver.eigencore_eigen_problem <- function(
     initial_subspace = initial_subspace
   )
   execution$left_vectors <- left_vectors
+  # Complex Hermitian problems (R/complex_hermitian.R): iterative routes run
+  # on the real 2n embedding; small dense auto() solves keep zheev below.
+  complex_route <- complex_hermitian_plan(
+    problem, k, method, method_descriptor, execution, planner_policy, maxit,
+    initial_subspace = initial_subspace
+  )
+  if (!is.null(complex_route)) {
+    return(complex_route)
+  }
   if (!is.null(initial_subspace) && is_auto_method(method)) {
     # A warm start needs a route that consumes it: no C60 shift-invert.
     method$no_ldl_route <- TRUE

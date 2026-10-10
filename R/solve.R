@@ -443,6 +443,9 @@ execute_eigen_plan <- function(plan, restart_preparation = NULL) {
   # Ritz vectors, so they are kept internally and dropped afterwards when the
   # caller asked for values only.
   a <- plan$problem
+  if (plan_dispatches_complex_hermitian_realified(plan)) {
+    return(solve_complex_hermitian_realified(plan))
+  }
   if (is_interval_target(a$target)) {
     return(solve_interval_eigen(plan))
   }
@@ -812,6 +815,9 @@ plan_dispatches_golub_kahan <- function(plan) {
 plan_dispatch_available <- function(plan) {
   if (identical(plan$problem_type, "eigen")) {
     problem <- plan$problem
+    if (plan_dispatches_complex_hermitian_realified(plan)) {
+      return(TRUE)
+    }
     if (is_interval_target(problem$target)) {
       return(plan$method %in% interval_route_labels())
     }
@@ -864,13 +870,17 @@ validate_complex_eigen_plan <- function(problem, plan) {
   if (!identical(problem$A$dtype, "complex")) {
     return(plan)
   }
-  if (!is.null(source_or_null(problem$A))) {
+  if (!is.null(source_or_null(problem$A)) ||
+      plan$method %in% complex_hermitian_reference_labels()) {
     return(plan)
   }
   stop(
-    "Complex matrix-free eigen operators are future scope in eigencore. ",
-    "Use a base complex dense matrix for the native dense complex LAPACK path; ",
-    "native complex callback/sparse operator support is not promoted yet.",
+    "Complex matrix-free eigen operators are future scope in eigencore for ",
+    "general (non-Hermitian) structure. Complex Hermitian operators ",
+    "(structure = hermitian(), or a complex_operator() with symmetric real ",
+    "and skew-symmetric imaginary parts) are supported through the real 2n ",
+    "embedding; for a general complex matrix use a base complex dense matrix ",
+    "(native dense complex LAPACK path).",
     call. = FALSE
   )
 }
