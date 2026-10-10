@@ -536,6 +536,14 @@ kernels, as documented in `?eigencore-threads`; 2 and 4 threads agree
 bitwise. The full suite passes identically with 1 and 4 threads (plain and
 ASan builds).
 
+The parallel-efficiency governor (P18) only lowers the OpenMP team size of a
+region; algorithm choices follow `eigencore.threads`, so the check also
+passes unchanged with 8 competing CPU-bound processes on 4 cores, where the
+governor runs most regions on one or two threads.
+`test-t4a-omp.R` ("P18: the parallel-efficiency governor ...") pins the cap
+to 1 and 2 with a test hook and expects bitwise-identical products and
+solves.
+
 Note: `svds()` has no `seed` argument and consumes the global RNG stream, so
 successive unseeded calls differ; seed the RNG when comparing (C26).
 

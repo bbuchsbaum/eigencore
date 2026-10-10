@@ -29,7 +29,8 @@ Depends:
     R (>= 4.1)
 Imports:
     Matrix (>= 1.6-2),
-    methods
+    methods,
+    parallel
 LinkingTo:
     Matrix
 Suggests:

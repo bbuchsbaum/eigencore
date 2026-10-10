@@ -128,6 +128,7 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
     rank <- validate_solution_count(rank, min(dims), "rank")
   }
   fast_started <- proc.time()[["elapsed"]]
+  fast_clock <- completeness_clock()
   fast <- try_svd_partial_native_gram_fastpath(
     A = A,
     rank = rank,
@@ -139,7 +140,7 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
   )
   if (!is.null(fast)) {
     fast <- require_verified_completeness(apply_svd_completeness(
-      fast, fast$plan, solve_seconds = proc.time()[["elapsed"]] - fast_started))
+      fast, fast$plan, solve_seconds = completeness_seconds_since(fast_clock)))
     work_values <- unclass(fast$work)
     work_values$total_seconds <- proc.time()[["elapsed"]] - fast_started
     fast$work <- new_typed_work_record(work_values)
@@ -459,12 +460,12 @@ execute_eigen_plan <- function(plan, restart_preparation = NULL) {
        (mode %in% c("auto", "inertia") && inertia_completeness_eligible(a, k)))
   need_vectors <- need_vectors ||
     hermitian_completeness_wants_vectors(plan, a, k, mode)
-  started <- proc.time()[["elapsed"]]
+  started <- completeness_clock()
   result <- execute_eigen_plan_dispatch(
     plan, restart_preparation = restart_preparation,
     vectors = vectors_requested || need_vectors
   )
-  solve_seconds <- proc.time()[["elapsed"]] - started
+  solve_seconds <- completeness_seconds_since(started)
   seed <- result$transform$inertia_seed %||% NULL
   if (!is.null(result$transform)) {
     result$transform["inertia_seed"] <- NULL
@@ -570,10 +571,10 @@ execute_eigen_plan_dispatch <- function(plan, restart_preparation = NULL,
 execute_svd_plan <- function(plan) {
   # SVD target completeness (R/completeness_svd.R): verify that the returned
   # triplets are the requested set.
-  started <- proc.time()[["elapsed"]]
+  started <- completeness_clock()
   result <- execute_svd_plan_dispatch(plan)
   apply_svd_completeness(result, plan,
-                         solve_seconds = proc.time()[["elapsed"]] - started)
+                         solve_seconds = completeness_seconds_since(started))
 }
 
 #' @keywords internal

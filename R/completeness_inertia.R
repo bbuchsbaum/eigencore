@@ -59,6 +59,32 @@ inertia_completeness_controls <- function() {
   )
 }
 
+# Solve time for the completeness cost gates (C62). The gates allow a
+# factorisation predicted to take up to `ratio` times the solve's own time;
+# on an oversubscribed machine the elapsed time of the solve is inflated by
+# the CPU it did not get (formerly 10-80x with spinning OpenMP threads), so
+# the gates would admit a count costing minutes. The gates therefore use the
+# smaller of the elapsed time and the CPU time the process received (all
+# threads): unloaded, a serial solve has CPU ~ elapsed and a parallel one
+# CPU > elapsed, so the elapsed time is used as before; under load the CPU
+# time approximates what the solve costs on an idle core, which is also what
+# the flop-rate prediction of the factorisation assumes.
+#' @keywords internal
+completeness_clock <- function() {
+  pt <- proc.time()
+  c(elapsed = pt[["elapsed"]], cpu = pt[["user.self"]] + pt[["sys.self"]])
+}
+
+#' @keywords internal
+completeness_seconds_since <- function(started) {
+  spent <- completeness_clock() - started
+  cpu <- spent[["cpu"]]
+  if (!is.finite(cpu) || cpu <= 0) {
+    return(spent[["elapsed"]])
+  }
+  min(spent[["elapsed"]], cpu)
+}
+
 # Preference distance used by the counting argument.
 #' @keywords internal
 inertia_completeness_kind <- function(target) {

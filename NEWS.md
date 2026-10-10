@@ -114,6 +114,31 @@
   test of `smallest_magnitude()` on dense n = 300, where pairs 4-6 had
   residuals 7e-7..2.3e-6 against `tol = 1e-8`.
 
+## Multithreading on busy machines
+
+* eigencore's OpenMP sparse kernels no longer collapse when the machine is
+  oversubscribed (P18, C57, C62). With the OpenMP runtime's default
+  spinning wait policy, every fork/join of a short kernel waited a
+  scheduler time slice for a descheduled thread, so with 4 threads on 4
+  busy cores solves ran 10-80 times slower than with one thread. Each
+  parallel region is now timed; when regions run slower than they would
+  serially, the team is halved, and larger teams are retried after a
+  growing pause. With 8 competing CPU-bound processes on 4 cores, 4-thread
+  solves went from 16-19 s to 3-6 s (sparse symmetric n = 20000, `largest()`
+  / `smallest()`) and from 7-12 s to 0.6-1.2 s (`svd_partial()` 50000 x
+  2000); quiet-machine timings are unchanged. Most of the remaining
+  slowdown comes from a multithreaded OpenBLAS, which spins the same way;
+  set `OPENBLAS_NUM_THREADS=1` on busy machines. Only
+  the team size changes, so results stay independent of the load (and of
+  the thread count as before). `options(eigencore.adaptive_threads = FALSE)`
+  turns the governor off; `eigencore:::native_thread_info()` reports the
+  `effective` team size.
+* The default thread count is now also limited to the physical cores and
+  to a container's cgroup CPU quota.
+* The inertia completeness cost gates scale their budget by the smaller of
+  the solve's elapsed and CPU time, so a solve slowed down by other
+  processes no longer admits a minutes-long inertia count (C62).
+
 ## Nonsymmetric target completeness
 
 * Nonsymmetric Krylov-Schur results (`eig_partial()` on general matrices,
