@@ -546,10 +546,22 @@ complex_hermitian_select <- function(values, target, k) {
 #' @keywords internal
 complex_hermitian_from_realified <- function(problem, U, k, expected_rank = k,
                                              rank_tol = 1e-6, min_gap = 1e3) {
+  n <- as.integer(problem$A$dim[[1L]])
+  complex_hermitian_rr(problem, complex_hermitian_complexify(U, n), k,
+                       expected_rank = expected_rank, rank_tol = rank_tol,
+                       min_gap = min_gap)
+}
+
+# Complex Rayleigh-Ritz of (A, B) on span(Z): an M-orthonormal basis of the
+# numerical column space of Z (rank from the Gram spectrum: expected_rank
+# when the gap shows it, else every direction above rank_tol), projected
+# onto A; the k target pairs are selected.
+#' @keywords internal
+complex_hermitian_rr <- function(problem, Z, k, expected_rank = NA_integer_,
+                                 rank_tol = 1e-6, min_gap = 1e3) {
   Aop <- problem$A
   Bop <- problem$metric
-  n <- as.integer(Aop$dim[[1L]])
-  Z <- complex_hermitian_complexify(U, n)
+  Z <- as.matrix(Z) + 0i
   BZ <- if (is.null(Bop)) Z else complex_hermitian_apply(Bop, Z)
   G <- Conj(t(Z)) %*% BZ
   G <- (G + Conj(t(G))) / 2
@@ -564,7 +576,7 @@ complex_hermitian_from_realified <- function(problem, U, k, expected_rank = k,
   # Use that rank when the gap shows it, else every direction above
   # rank_tol (an inconsistent set: the caller then re-checks completeness).
   r0 <- as.integer(expected_rank)
-  r <- if (r0 >= 1L && r0 <= length(lam) && lam[[r0]] > 0 && sv_gap(r0) >= min_gap) {
+  r <- if (!is.na(r0) && r0 >= 1L && r0 <= length(lam) && lam[[r0]] > 0 && sv_gap(r0) >= min_gap) {
     r0
   } else {
     sum(lam > rank_tol^2 * top)
@@ -610,6 +622,190 @@ complex_hermitian_certify <- function(problem, values, vectors, tol) {
     return(interval_empty_certificate(tol, "no eigenvalues returned"))
   }
   certify_eigen_operator(Ac, values, vectors, Bop = Bc, tol = tol)
+}
+
+# ---------------------------------------------------------------------------
+# Polishing mapped-back pairs that miss the tolerance
+# ---------------------------------------------------------------------------
+#
+# A completeness repair on the embedding (a deflated complement solve, for
+# interior targets on the squared-shift operator) can return real pairs
+# that are complete but only accurate to ~1e-6, and the complex
+# Rayleigh-Ritz map cannot improve vectors it is given. When the mapped set
+# misses the tolerance it is refined on the complex operator: each
+# unconverged pair gets one Rayleigh-quotient (shifted inverse) iteration
+# step, solved with a dense complex LU or a sparse LU of the real embedding
+# where that is cheap, else the span is enlarged by a short block Krylov
+# sequence started from the residuals; then a complex Rayleigh-Ritz over the
+# span of all returned plus refinement vectors selects the target pairs, and
+# the set is re-certified from scratch. The caller re-checks completeness.
+
+# Shifted solve y = (A - theta B)^{-1} rhs, or NULL when no cheap solve
+# exists (matrix-free operators, large dense sources, sparse pencils).
+#' @keywords internal
+complex_hermitian_shift_solver <- function(problem) {
+  Aop <- problem$A
+  Bop <- problem$metric
+  n <- as.integer(Aop$dim[[1L]])
+  dense_max <- suppressWarnings(as.integer(
+    getOption("eigencore.complex_polish_dense_max_n", 4000L)))
+  if (length(dense_max) != 1L || is.na(dense_max)) dense_max <- 4000L
+  dense_of <- function(op) {
+    if (is.null(op)) {
+      return(NULL)
+    }
+    src <- source_or_null(op)
+    if (is.matrix(src)) {
+      return(src)
+    }
+    split <- op$metadata$complex_split %||% NULL
+    if (!is.null(split) && !inherits(split$re, "sparseMatrix")) {
+      return(split$re + 1i * split$im)
+    }
+    mat <- op$metadata$matrix %||% NULL
+    if (!is.null(mat) && n <= dense_max) {
+      return(as.matrix(mat))
+    }
+    # A small matrix-free operator is materialised by n applies, as the
+    # completeness count does (same eigencore.completeness_materialize_limit).
+    if (is.null(src) && is.null(mat) &&
+        n <= hermitian_completeness_controls()$materialize_limit) {
+      m <- hermitian_completeness_materialize(op)
+      if (!is.null(m)) {
+        return(m$matrix)
+      }
+    }
+    NULL
+  }
+  split <- Aop$metadata$complex_split %||% NULL
+  if (is.null(Bop) && !is.null(split) && inherits(split$re, "sparseMatrix")) {
+    R2 <- complex_hermitian_realify_sparse(split$re, split$im)
+    I2 <- Matrix::Diagonal(2L * n)
+    return(function(theta, rhs) {
+      X <- as.matrix(Matrix::solve(R2 - theta * I2, rbind(Re(rhs), Im(rhs))))
+      X[seq_len(n), , drop = FALSE] + 1i * X[n + seq_len(n), , drop = FALSE]
+    })
+  }
+  if (n > dense_max) {
+    return(NULL)
+  }
+  A <- dense_of(Aop)
+  B <- if (is.null(Bop)) NULL else dense_of(Bop)
+  if (is.null(A) || (!is.null(Bop) && is.null(B))) {
+    return(NULL)
+  }
+  function(theta, rhs) {
+    M <- if (is.null(B)) A - diag(theta, n) else A - theta * B
+    solve(M + 0i, rhs + 0i)
+  }
+}
+
+#' @keywords internal
+complex_hermitian_polish <- function(problem, values, vectors, cert, tol,
+                                     max_rounds = 3L) {
+  k <- length(values)
+  if (is.null(cert) || isTRUE(cert$passed) || !k || is.null(vectors)) {
+    return(NULL)
+  }
+  be <- as.numeric(cert$backward_error)
+  if (length(be) != k || !all(is.finite(be)) || max(be) > 1e-3) {
+    # Far from converged: not a polishing job.
+    return(NULL)
+  }
+  Aop <- problem$A
+  Bc <- complex_hermitian_complex_view(problem$metric)
+  n <- as.integer(Aop$dim[[1L]])
+  solver <- complex_hermitian_shift_solver(problem)
+  scale <- max(abs(values), as.numeric(cert$scale %||% 0), 1)
+  apply_B <- function(X) if (is.null(Bc)) X else as.matrix(apply_operator(Bc, X))
+  unit <- function(Y) {
+    nr <- sqrt(colSums(Mod(Y)^2))
+    Y[, nr > 0, drop = FALSE] %*% diag(1 / nr[nr > 0], sum(nr > 0))
+  }
+  V <- as.matrix(vectors) + 0i
+  vals <- as.numeric(values)
+  current <- cert
+  rounds <- 0L
+  method <- if (is.null(solver)) "block_krylov_residual_expansion" else "shifted_inverse_iteration"
+  # Inverse iteration converges in one or two rounds; the Krylov expansion
+  # (no solve available) gains less per round and gets more of them.
+  if (is.null(solver)) {
+    max_rounds <- max_rounds + 3L
+  }
+  for (round in seq_len(max_rounds)) {
+    rounds <- round
+    bad <- which(!as.logical(current$converged %||% rep(FALSE, k)))
+    if (!length(bad)) {
+      bad <- seq_len(k)
+    }
+    Vb <- V[, bad, drop = FALSE]
+    Y <- if (!is.null(solver)) {
+      BVb <- apply_B(Vb)
+      cols <- lapply(seq_along(bad), function(j) {
+        for (rel in c(0, 1e-10, -1e-8)) {
+          y <- tryCatch(solver(vals[[bad[[j]]]] + rel * scale, BVb[, j, drop = FALSE]),
+                        error = function(e) NULL)
+          if (!is.null(y) && all(is.finite(Re(y))) && all(is.finite(Im(y)))) {
+            return(y)
+          }
+        }
+        NULL
+      })
+      cols <- Filter(Negate(is.null), cols)
+      if (length(cols)) do.call(cbind, cols) else NULL
+    } else {
+      R <- as.matrix(complex_hermitian_apply(Aop, Vb)) -
+        sweep(apply_B(Vb), 2L, vals[bad], `*`)
+      # Block Krylov sequence from the residuals, fully reorthogonalised
+      # against V and the earlier blocks (only the span matters).
+      basis <- qr.Q(qr(V))
+      orth_block <- function(W) {
+        for (pass in 1:2) {
+          W <- W - basis %*% (Conj(t(basis)) %*% W)
+        }
+        nr <- sqrt(colSums(Mod(W)^2))
+        W <- W[, nr > 1e-10 * max(nr, .Machine$double.xmin), drop = FALSE]
+        if (ncol(W)) qr.Q(qr(W)) else W
+      }
+      blocks <- list()
+      W <- orth_block(R)
+      for (step in seq_len(12L)) {
+        if (!ncol(W) || ncol(basis) + ncol(W) >= n) break
+        blocks[[step]] <- W
+        basis <- cbind(basis, W)
+        W <- orth_block(as.matrix(complex_hermitian_apply(Aop, W)))
+      }
+      if (length(blocks)) do.call(cbind, blocks) else NULL
+    }
+    if (is.null(Y) || !ncol(Y)) {
+      break
+    }
+    rr <- tryCatch(complex_hermitian_rr(problem, cbind(V, unit(Y)), k,
+                                        rank_tol = 1e-10),
+                   error = function(e) NULL)
+    if (is.null(rr) || length(rr$values) != k) {
+      break
+    }
+    new_cert <- complex_hermitian_certify(problem, rr$values, rr$vectors, tol)
+    if (!(max(new_cert$backward_error) < max(current$backward_error))) {
+      break
+    }
+    V <- rr$vectors
+    vals <- rr$values
+    current <- new_cert
+    if (isTRUE(current$passed)) {
+      break
+    }
+  }
+  if (identical(current, cert)) {
+    return(NULL)
+  }
+  current$notes <- unique(c(cert$notes, current$notes, sprintf(paste0(
+    "mapped-back pairs missed the tolerance (max backward error %.3g); ",
+    "polished on the complex operator (%s, %d round(s)) and re-certified"),
+    max(be), method, rounds)))
+  list(values = vals, vectors = V, certificate = current, rounds = rounds,
+       method = method)
 }
 
 #' @keywords internal
@@ -680,6 +876,16 @@ solve_complex_hermitian_realified <- function(plan) {
   } else {
     NULL
   }
+  polished <- if (length(values) == expected) {
+    complex_hermitian_polish(problem, values, vectors, cert, tol)
+  } else {
+    NULL
+  }
+  if (!is.null(polished)) {
+    values <- polished$values
+    vectors <- polished$vectors
+    cert <- polished$certificate
+  }
   # The real verdict transfers when the real set was the doubled complex
   # set: an even count whose complex span has exactly that rank.
   consistent <- (m2 %% 2L == 0L) && identical(as.integer(mapped$rank), as.integer(m2 %/% 2L)) &&
@@ -690,6 +896,10 @@ solve_complex_hermitian_realified <- function(plan) {
   record$inner_status <- inner_status
   record$complex_rank <- as.integer(mapped$rank)
   record$realified_pairs <- m2
+  if (!is.null(polished)) {
+    record$polished <- polished$method
+    record$polish_rounds <- polished$rounds
+  }
   status <- if (consistent) inner_status else "not_checked"
   if (!consistent && m2) {
     warnings <- c(warnings, sprintf(paste0(
@@ -745,7 +955,8 @@ solve_complex_hermitian_realified <- function(plan) {
   if (is.null(cert)) {
     result$certificate <- NULL
   }
-  if (!consistent && isTRUE(cert$passed) && length(values) == expected &&
+  if ((!consistent || !is.null(polished)) && isTRUE(cert$passed) &&
+      length(values) == expected &&
       !identical(target_completeness_mode(plan$method_descriptor), "none")) {
     # Re-check the mapped complex set directly.
     checked <- complex_hermitian_target_completeness(
@@ -816,6 +1027,13 @@ complex_hermitian_target_completeness <- function(result, plan, problem, k, mode
     mapped <- complex_hermitian_from_realified(problem, out2$vectors, k)
     tol <- cert$tolerance %||% plan$execution$tol
     new_cert <- complex_hermitian_certify(problem, mapped$values, mapped$vectors, tol)
+    polished <- complex_hermitian_polish(problem, mapped$values, mapped$vectors,
+                                         new_cert, tol)
+    if (!is.null(polished)) {
+      mapped$values <- polished$values
+      mapped$vectors <- polished$vectors
+      new_cert <- polished$certificate
+    }
     new_cert$notes <- unique(c(cert$notes, new_cert$notes,
       "target completeness check repaired the realified set; result mapped back by complex Rayleigh-Ritz"))
     result$values <- mapped$values

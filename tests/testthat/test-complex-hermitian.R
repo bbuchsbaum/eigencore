@@ -272,3 +272,58 @@ test_that("realified results report the inner route and transfer work", {
   expect_null(fit$vectors)
   expect_true(isTRUE(certificate(fit)$passed))
 })
+
+test_that("mapped-back pairs that miss the tolerance are polished and re-certified", {
+  # Integration regression: a repaired realified set (interior target,
+  # squared-shift repair) mapped back with residuals ~1e-6 against tol 1e-8.
+  ns <- asNamespace("eigencore")
+  H <- complex_hermitian_fixture(300, seed = 2L)
+  ev <- eigen(H, symmetric = TRUE, only.values = TRUE)$values
+  fit <- eig_partial(H, k = 6, target = smallest_magnitude(), seed = 3)
+  expect_complex_pairs(fit, H, ev[order(abs(ev))][1:6])
+
+  g <- complex_hermitian_grid(12)
+  cases <- list(
+    dense = list(op = H, H = H),
+    split = list(op = complex_operator(Re(H), Im(H)), H = H),
+    sparse = list(op = complex_operator(g$re, g$im), H = g$H),
+    matrix_free = list(op = linear_operator(
+      dim = c(300, 300),
+      apply = function(X, alpha = 1, beta = 0, Y = NULL) alpha * (H %*% X),
+      dtype = "complex", structure = hermitian()), H = H)
+  )
+  for (nm in names(cases)) {
+    Hm <- cases[[nm]]$H
+    P <- eigen_problem(cases[[nm]]$op, target = smallest_magnitude())
+    e <- eigen(Hm, symmetric = TRUE)
+    id <- order(abs(e$values))[1:4]
+    set.seed(21)
+    V <- e$vectors[, id] + 1e-6 * matrix(complex(real = rnorm(nrow(Hm) * 4),
+                                                 imaginary = rnorm(nrow(Hm) * 4)), nrow(Hm))
+    V <- qr.Q(qr(V))
+    vals <- Re(colSums(Conj(V) * (Hm %*% V)))
+    cert <- ns$complex_hermitian_certify(P, vals, V, 1e-10)
+    expect_false(isTRUE(cert$passed), info = nm)
+    out <- ns$complex_hermitian_polish(P, vals, V, cert, 1e-10)
+    expect_false(is.null(out), info = nm)
+    expect_true(isTRUE(out$certificate$passed), info = nm)
+    expect_equal(sort(out$values), sort(e$values[id]), tolerance = 1e-10, info = nm)
+    expect_identical(out$method, "shifted_inverse_iteration", info = nm)
+  }
+  # Above the materialisation limit a matrix-free operator has no solve:
+  # the residual-started block Krylov expansion still improves the pairs
+  # (and never returns a worse set).
+  old <- options(eigencore.completeness_materialize_limit = 10L)
+  on.exit(options(old), add = TRUE)
+  P <- eigen_problem(cases$matrix_free$op, target = largest())
+  e <- eigen(H, symmetric = TRUE)
+  set.seed(22)
+  V <- qr.Q(qr(e$vectors[, 1:3] + 1e-6 * matrix(complex(real = rnorm(900),
+                                                         imaginary = rnorm(900)), 300)))
+  vals <- Re(colSums(Conj(V) * (H %*% V)))
+  cert <- ns$complex_hermitian_certify(P, vals, V, 1e-10)
+  out <- ns$complex_hermitian_polish(P, vals, V, cert, 1e-10)
+  expect_identical(out$method, "block_krylov_residual_expansion")
+  expect_true(isTRUE(out$certificate$passed))
+  expect_equal(out$values, e$values[1:3], tolerance = 1e-10)
+})

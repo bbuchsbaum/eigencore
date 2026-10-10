@@ -103,6 +103,16 @@
   embedding: the returned pairs are realified and counted (LDL' inertia) or
   probed there, and a repaired set is mapped back and re-certified. Complex
   results previously stayed `"not_checked"`.
+* Mapped-back complex pairs that miss the tolerance (typically after a
+  completeness repair of an interior target on the embedding, whose
+  deflated complement solve can land at ~1e-6) are polished on the complex
+  operator: one shifted inverse-iteration step per unconverged pair (dense
+  complex LU, sparse LU of the embedding, or a materialised small
+  matrix-free operator), else a residual-started block Krylov expansion,
+  then a complex Rayleigh-Ritz over all returned plus refinement vectors,
+  re-certification and a completeness re-check. Found by the integration
+  test of `smallest_magnitude()` on dense n = 300, where pairs 4-6 had
+  residuals 7e-7..2.3e-6 against `tol = 1e-8`.
 
 ## Nonsymmetric target completeness
 
