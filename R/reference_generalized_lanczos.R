@@ -391,7 +391,7 @@ native_generalized_lanczos_hermitian <- function(op, Bop, k, target = smallest()
   if (length(max_restarts) != 1L || is.na(max_restarts) || max_restarts < 0L) {
     max_restarts <- 100L
   }
-  started_solve <- proc.time()[["elapsed"]]
+  started_solve <- completeness_clock()
   transformed <- native_generalized_lanczos_transform_operator(op, Bop, target = target)
   iter <- native_block_lanczos_hermitian(
     transformed$operator,
@@ -412,6 +412,7 @@ native_generalized_lanczos_hermitian <- function(op, Bop, k, target = smallest()
   # problem C = L^{-1} A L^{-T} (Euclidean deflation there is B-orthogonal
   # deflation of the pencil), before the back-transform; they run when the
   # inertia certificate is not used, or to repair an inertia failure.
+  solve_seconds <- completeness_seconds_since(started_solve)
   started_completeness <- proc.time()[["elapsed"]]
   probe_eligible <- !is.null(completeness_target_kind(target)) && k < n
   finish_values <- function(iter) {
@@ -432,7 +433,6 @@ native_generalized_lanczos_hermitian <- function(op, Bop, k, target = smallest()
     check$record$space <- "transformed_standard_problem"
     check
   }
-  solve_seconds <- started_completeness - started_solve
   inertia_gate <- if (completeness_mode %in% c("auto", "inertia") &&
                       isTRUE(iter$certificate$passed) && k < n &&
                       !is.null(inertia_completeness_kind(target))) {
