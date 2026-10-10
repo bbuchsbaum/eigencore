@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <cmath>
 #include <cfloat>
@@ -377,7 +378,8 @@ extern "C" int eigencore_tridiagonal_generalized_shift_invert_apply(
 //
 // The package default is computed in R at load time (R/threads.R: 1 under
 // R CMD check or when _R_CHECK_LIMIT_CORES_ is set, otherwise OMP_NUM_THREADS
-// or the processor count capped at 8) and stored with
+// or the processor count limited to the physical cores and the cgroup CPU
+// quota and capped at 8) and stored with
 // eigencore_set_default_threads(). getOption("eigencore.threads") overrides it;
 // every .Call entry re-reads the option once (eigencore_refresh_thread_count,
 // called from eigencore_call), so kernels below only read g_eigencore_threads.
@@ -416,6 +418,96 @@ extern "C" int eigencore_thread_count(void) {
   return g_eigencore_threads;
 }
 
+// Parallel-efficiency governor (P18; declared in eigencore_common.h).
+//
+// A region is a strike when its wall time exceeds threads x the master's busy
+// time (the serial estimate for an evenly split loop) plus
+// kGovernorSlackSeconds, i.e. when running it in parallel was slower than
+// running it serially. Strikes decay geometrically (x 0.75 per region); at
+// kGovernorTrigger (two strikes in a row, or a dense run of them) the team
+// size is halved. After kGovernorBackoffMin seconds a team twice as large is
+// tried again; a probe that fails soon after it started doubles the backoff
+// (up to kGovernorBackoffMax). The state persists across calls because load
+// does. Unloaded, joins cost microseconds and never strike; with libgomp's
+// spinning workers on oversubscribed cores they cost milliseconds and strike
+// every time, so the cap reaches one thread within a few regions.
+static const double kGovernorSlackSeconds = 1e-4;
+static const double kGovernorTrigger = 1.75;
+static const double kGovernorBackoffMin = 0.25;
+static const double kGovernorBackoffMax = 4.0;
+static bool g_governor_enabled = true;
+static int g_governor_cap = 0;              // 0: no cap
+static double g_governor_strikes = 0.0;
+static double g_governor_changed_at = 0.0;  // steady-clock seconds
+static double g_governor_backoff = kGovernorBackoffMin;
+static long long g_governor_reductions = 0;
+
+static double eigencore_steady_seconds() {
+  return std::chrono::duration<double>(
+    std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+extern "C" int eigencore_parallel_threads(int requested) {
+  if (requested <= 1) {
+    return 1;
+  }
+#ifdef _OPENMP
+  if (omp_in_parallel()) {
+    return 1;
+  }
+#endif
+  if (!g_governor_enabled || g_governor_cap <= 0) {
+    return requested;
+  }
+  const double now = eigencore_steady_seconds();
+  if (now - g_governor_changed_at >= g_governor_backoff) {
+    // Probe a larger team.
+    g_governor_cap *= 2;
+    g_governor_changed_at = now;
+    g_governor_strikes = 0.0;
+    if (g_governor_cap >= g_eigencore_threads) {
+      g_governor_cap = 0;
+      return requested;
+    }
+  }
+  return std::min(requested, g_governor_cap);
+}
+
+extern "C" void eigencore_parallel_report(int threads, double wall_seconds,
+                                          double master_busy_seconds) {
+  if (!g_governor_enabled || threads <= 1 || !(master_busy_seconds > 0.0)) {
+    return;
+  }
+  const bool strike = wall_seconds >
+    static_cast<double>(threads) * master_busy_seconds + kGovernorSlackSeconds;
+  g_governor_strikes = 0.75 * g_governor_strikes + (strike ? 1.0 : 0.0);
+  if (g_governor_strikes < kGovernorTrigger) {
+    return;
+  }
+  const double now = eigencore_steady_seconds();
+  // A level that collapses soon after it was reached (a failed probe, which
+  // may have lifted the cap entirely, or a cascade of reductions) waits
+  // longer before the next probe.
+  if (now - g_governor_changed_at < 2.0 * g_governor_backoff) {
+    g_governor_backoff = std::min(2.0 * g_governor_backoff, kGovernorBackoffMax);
+  } else {
+    g_governor_backoff = kGovernorBackoffMin;
+  }
+  g_governor_cap = std::max(1, threads / 2);
+  g_governor_changed_at = now;
+  g_governor_strikes = 0.0;
+  ++g_governor_reductions;
+}
+
+// Team size the next full-width region would get (for thread_info()).
+static int eigencore_effective_threads() {
+  const int threads = g_eigencore_threads;
+  if (!g_governor_enabled || g_governor_cap <= 0) {
+    return threads;
+  }
+  return std::min(threads, g_governor_cap);
+}
+
 extern "C" void eigencore_refresh_thread_count(void) {
 #ifdef _OPENMP
   static SEXP option_symbol = nullptr;
@@ -449,6 +541,13 @@ extern "C" void eigencore_refresh_thread_count(void) {
     }
   }
   g_eigencore_csr_cache_bytes = csr_mb * 1048576.0;
+  static SEXP adaptive_symbol = nullptr;
+  if (adaptive_symbol == nullptr) {
+    adaptive_symbol = Rf_install("eigencore.adaptive_threads");
+  }
+  const SEXP adaptive = Rf_GetOption1(adaptive_symbol);
+  g_governor_enabled = !(TYPEOF(adaptive) == LGLSXP && XLENGTH(adaptive) >= 1 &&
+                         LOGICAL(adaptive)[0] == FALSE);
 #else
   g_eigencore_threads = 1;
 #endif
@@ -607,13 +706,15 @@ extern "C" void eigencore_call_leave(void) {
 #endif
 }
 
-// c(openmp, processors, default, current, blas_kind, blas_threads):
-// blas_kind 0 = no known threading control, 1 = OpenBLAS pthreads/FlexiBLAS
-// (switched to one thread during multithreaded sparse solves), 2 = threaded
-// BLAS left alone; blas_threads is the controllable BLAS's current thread
-// count, or NA.
+// c(openmp, processors, default, current, blas_kind, blas_threads,
+// effective, reductions): blas_kind 0 = no known threading control, 1 =
+// OpenBLAS pthreads/FlexiBLAS (switched to one thread during multithreaded
+// sparse solves), 2 = threaded BLAS left alone; blas_threads is the
+// controllable BLAS's current thread count, or NA; effective is the team
+// size the parallel-efficiency governor currently allows (<= current) and
+// reductions how often it has lowered the cap in this session.
 static SEXP eigencore_thread_info_pack() {
-  SEXP out = PROTECT(allocVector(INTSXP, 6));
+  SEXP out = PROTECT(allocVector(INTSXP, 8));
 #ifdef _OPENMP
   INTEGER(out)[0] = 1;
 #else
@@ -631,16 +732,42 @@ static SEXP eigencore_thread_info_pack() {
   INTEGER(out)[4] = EIGENCORE_BLAS_SERIAL;
   INTEGER(out)[5] = NA_INTEGER;
 #endif
-  SEXP names = PROTECT(allocVector(STRSXP, 6));
+  INTEGER(out)[6] = eigencore_effective_threads();
+  INTEGER(out)[7] = g_governor_reductions > INT_MAX ? INT_MAX :
+    static_cast<int>(g_governor_reductions);
+  SEXP names = PROTECT(allocVector(STRSXP, 8));
   SET_STRING_ELT(names, 0, mkChar("openmp"));
   SET_STRING_ELT(names, 1, mkChar("processors"));
   SET_STRING_ELT(names, 2, mkChar("default"));
   SET_STRING_ELT(names, 3, mkChar("current"));
   SET_STRING_ELT(names, 4, mkChar("blas_kind"));
   SET_STRING_ELT(names, 5, mkChar("blas_threads"));
+  SET_STRING_ELT(names, 6, mkChar("effective"));
+  SET_STRING_ELT(names, 7, mkChar("reductions"));
   setAttrib(out, R_NamesSymbol, names);
   UNPROTECT(2);
   return out;
+}
+
+// Test hook: eigencore_thread_governor(cap) sets the governor's team-size cap
+// (0 removes it) and holds it for kGovernorBackoffMax seconds before the next
+// probe; NA leaves the state unchanged. Returns eigencore_thread_info_pack().
+extern "C" SEXP eigencore_thread_governor(SEXP cap_) {
+  EIGENCORE_ENTRY_BEGIN
+  if ((isReal(cap_) || isInteger(cap_)) && XLENGTH(cap_) >= 1) {
+    const double value = isReal(cap_) ? REAL(cap_)[0] :
+      (INTEGER(cap_)[0] == NA_INTEGER ? NA_REAL :
+         static_cast<double>(INTEGER(cap_)[0]));
+    if (R_FINITE(value) && value >= 0.0) {
+      g_governor_cap = value >= 1.0 ?
+        static_cast<int>(std::min(value, 256.0)) : 0;
+      g_governor_strikes = 0.0;
+      g_governor_backoff = kGovernorBackoffMax;
+      g_governor_changed_at = eigencore_steady_seconds();
+    }
+  }
+  return eigencore_thread_info_pack();
+  EIGENCORE_ENTRY_END
 }
 
 // eigencore_set_default_threads(n): n < 1 or NA leaves the default unchanged.
@@ -1059,10 +1186,13 @@ static void csc_forward_gather(CSCOperator* csc, int threads,
       std::min<int64_t>(kCscPanelCols, block_cols - chunk));
     const double* Xc = X + chunk * ldx;
     double* Yc = Y + chunk * ldy;
-    EIGENCORE_OMP(omp parallel num_threads(threads))
+    EigencoreParallelRegion region(threads);
+    const int team = region.threads();
+    (void) team;  // only read by the OpenMP pragma
+    EIGENCORE_OMP(omp parallel num_threads(team))
     {
       if (need_panel) {
-        EIGENCORE_OMP(omp for schedule(static))
+        EIGENCORE_OMP(omp for schedule(static) nowait)
         for (int col = 0; col < n; ++col) {
           double* prow = xp + static_cast<int64_t>(col) * kCscPanelCols;
           bool all_zero = true;
@@ -1078,6 +1208,9 @@ static void csc_forward_gather(CSCOperator* csc, int threads,
           }
           skip[col] = all_zero ? 1 : 0;
         }
+        region.master_pause();
+        EIGENCORE_OMP(omp barrier)
+        region.master_resume();
       }
       // Contiguous row ranges balanced by nonzero count.
       const int nt = eigencore_omp_num_threads();
@@ -1091,6 +1224,7 @@ static void csc_forward_gather(CSCOperator* csc, int threads,
       csc_forward_gather_rows<kScaled>(cache, std::min(row_begin, m),
                                        std::min(row_end, m), c, Xc, xp, skip,
                                        alpha, Yc, ldy);
+      region.master_pause();
     }
   }
 }
@@ -1128,7 +1262,12 @@ static void csc_forward_apply(CSCOperator* csc, int64_t block_cols,
       const int* srows = cache->slab_rows.data();
       const int parts = cache->slab_parts;
       eigencore_blas_quiesce();
-      EIGENCORE_OMP(omp parallel num_threads(parts))
+      // The slab layout is fixed by `threads`; the governor may run it on a
+      // smaller team (each slab is still one thread's work).
+      EigencoreParallelRegion region(parts);
+      const int team = region.threads();
+      (void) team;  // only read by the OpenMP pragma
+      EIGENCORE_OMP(omp parallel num_threads(team))
       {
         const int stride = eigencore_omp_num_threads();
         for (int t = eigencore_omp_thread_num(); t < parts; t += stride) {
@@ -1142,6 +1281,7 @@ static void csc_forward_apply(CSCOperator* csc, int64_t block_cols,
                                        panel);
           }
         }
+        region.master_pause();
       }
       return;
     }
@@ -1152,18 +1292,24 @@ static void csc_forward_apply(CSCOperator* csc, int64_t block_cols,
     }
     if (chunks > 1) {
       // No CSR copy: split aligned column chunks across threads.
-      const int use = static_cast<int>(std::min<int64_t>(threads, chunks));
-      (void) use;  // only read by the OpenMP pragma
       eigencore_blas_quiesce();
-      EIGENCORE_OMP(omp parallel for num_threads(use) schedule(static))
-      for (int64_t chunk_id = 0; chunk_id < chunks; ++chunk_id) {
-        const int64_t chunk = chunk_id * kCscPanelCols;
-        const int c = static_cast<int>(
-          std::min<int64_t>(kCscPanelCols, block_cols - chunk));
-        csc_forward_chunk<kScaled>(n, csc->col_ptr, csc->row_idx,
-                                   csc->values, 0, m, c, X + chunk * ldx, ldx,
-                                   weights, alpha, Y + chunk * ldy, ldy,
-                                   nullptr);
+      EigencoreParallelRegion region(
+        static_cast<int>(std::min<int64_t>(threads, chunks)));
+      const int team = region.threads();
+      (void) team;  // only read by the OpenMP pragma
+      EIGENCORE_OMP(omp parallel num_threads(team))
+      {
+        EIGENCORE_OMP(omp for schedule(static) nowait)
+        for (int64_t chunk_id = 0; chunk_id < chunks; ++chunk_id) {
+          const int64_t chunk = chunk_id * kCscPanelCols;
+          const int c = static_cast<int>(
+            std::min<int64_t>(kCscPanelCols, block_cols - chunk));
+          csc_forward_chunk<kScaled>(n, csc->col_ptr, csc->row_idx,
+                                     csc->values, 0, m, c, X + chunk * ldx,
+                                     ldx, weights, alpha, Y + chunk * ldy, ldy,
+                                     nullptr);
+        }
+        region.master_pause();
       }
       return;
     }
@@ -1270,25 +1416,45 @@ static void csc_adjoint_apply(CSCOperator* csc, int64_t block_cols,
     if (threads > 1) {
       eigencore_blas_quiesce();
     }
-    const double* xt = nullptr;
-    if (c >= 3 && m > 0 && csc->col_ptr[n] >= m) {
-      double* panel = csc_panel(csc, m);
-      EIGENCORE_OMP(omp parallel for num_threads(threads) schedule(static) if(threads > 1))
-      for (int row = 0; row < m; ++row) {
-        double* prow = panel + static_cast<int64_t>(row) * kCscPanelCols;
-        for (int block = 0; block < c; ++block) {
-          prow[block] = xptr[block][row];
-        }
-      }
-      xt = panel;
-    }
+    double* panel = (c >= 3 && m > 0 && csc->col_ptr[n] >= m) ?
+      csc_panel(csc, m) : nullptr;
+    const double* xt = panel;
     if (threads > 1) {
-      EIGENCORE_OMP(omp parallel for num_threads(threads) schedule(dynamic, 256))
-      for (int col = 0; col < n; ++col) {
-        csc_adjoint_column<kScaled>(csc, col, c, xptr, xt, weights, means,
-                                    xsum, alpha, yptr);
+      // One region for the panel transpose and the gather (one fork/join
+      // per chunk instead of two).
+      EigencoreParallelRegion region(threads);
+      const int team = region.threads();
+      (void) team;  // only read by the OpenMP pragma
+      EIGENCORE_OMP(omp parallel num_threads(team))
+      {
+        if (panel != nullptr) {
+          EIGENCORE_OMP(omp for schedule(static) nowait)
+          for (int row = 0; row < m; ++row) {
+            double* prow = panel + static_cast<int64_t>(row) * kCscPanelCols;
+            for (int block = 0; block < c; ++block) {
+              prow[block] = xptr[block][row];
+            }
+          }
+          region.master_pause();
+          EIGENCORE_OMP(omp barrier)
+          region.master_resume();
+        }
+        EIGENCORE_OMP(omp for schedule(dynamic, 256) nowait)
+        for (int col = 0; col < n; ++col) {
+          csc_adjoint_column<kScaled>(csc, col, c, xptr, xt, weights, means,
+                                      xsum, alpha, yptr);
+        }
+        region.master_pause();
       }
     } else {
+      if (panel != nullptr) {
+        for (int row = 0; row < m; ++row) {
+          double* prow = panel + static_cast<int64_t>(row) * kCscPanelCols;
+          for (int block = 0; block < c; ++block) {
+            prow[block] = xptr[block][row];
+          }
+        }
+      }
       for (int col = 0; col < n; ++col) {
         csc_adjoint_column<kScaled>(csc, col, c, xptr, xt, weights, means,
                                     xsum, alpha, yptr);
@@ -2207,24 +2373,34 @@ static void csc_project_transposed_kernel(const int* row_idx, const int* col_ptr
   if (threads > 1) {
     eigencore_blas_quiesce();
   }
-  EIGENCORE_OMP(omp parallel for num_threads(threads) schedule(static) if(threads > 1))
-  for (int row = 0; row < m; ++row) {
-    for (int block = 0; block < q_cols; ++block) {
-      Qt[static_cast<int64_t>(row) * q_cols + block] =
-        Q[static_cast<int64_t>(block) * m + row];
-    }
-  }
-  EIGENCORE_OMP(omp parallel for num_threads(threads) schedule(dynamic, 256) if(threads > 1))
-  for (int col = 0; col < n; ++col) {
-    double* out_col = B + static_cast<int64_t>(col) * q_cols;
-    for (int pos = col_ptr[col]; pos < col_ptr[col + 1]; ++pos) {
-      const int row = row_idx[pos];
-      const double a = values[pos];
-      const double* qt_row = Qt + static_cast<int64_t>(row) * q_cols;
+  EigencoreParallelRegion region(threads);
+  const int team = region.threads();
+  (void) team;  // only read by the OpenMP pragma
+  EIGENCORE_OMP(omp parallel num_threads(team) if(team > 1))
+  {
+    EIGENCORE_OMP(omp for schedule(static) nowait)
+    for (int row = 0; row < m; ++row) {
       for (int block = 0; block < q_cols; ++block) {
-        out_col[block] += a * qt_row[block];
+        Qt[static_cast<int64_t>(row) * q_cols + block] =
+          Q[static_cast<int64_t>(block) * m + row];
       }
     }
+    region.master_pause();
+    EIGENCORE_OMP(omp barrier)
+    region.master_resume();
+    EIGENCORE_OMP(omp for schedule(dynamic, 256) nowait)
+    for (int col = 0; col < n; ++col) {
+      double* out_col = B + static_cast<int64_t>(col) * q_cols;
+      for (int pos = col_ptr[col]; pos < col_ptr[col + 1]; ++pos) {
+        const int row = row_idx[pos];
+        const double a = values[pos];
+        const double* qt_row = Qt + static_cast<int64_t>(row) * q_cols;
+        for (int block = 0; block < q_cols; ++block) {
+          out_col[block] += a * qt_row[block];
+        }
+      }
+    }
+    region.master_pause();
   }
 }
 
@@ -3823,9 +3999,10 @@ static int ldl_solve_apply(const LdlSolveLeaf& f, int64_t block_cols,
                            double beta, double* Y, int64_t ldy) {
   const int64_t n = f.n;
   int status = 0;
+  EigencoreParallelRegion region(block_cols > 1 ?
+    std::min<int>(eigencore_thread_count(), static_cast<int>(block_cols)) : 1);
 #ifdef _OPENMP
-  const int threads = block_cols > 1 ?
-    std::min<int>(eigencore_thread_count(), static_cast<int>(block_cols)) : 1;
+  const int threads = region.threads();
 #pragma omp parallel num_threads(threads) if (threads > 1)
 #endif
   {
@@ -3840,7 +4017,7 @@ static int ldl_solve_apply(const LdlSolveLeaf& f, int64_t block_cols,
     }
     if (z.size() == static_cast<size_t>(n)) {
 #ifdef _OPENMP
-#pragma omp for schedule(static)
+#pragma omp for schedule(static) nowait
 #endif
       for (int64_t c = 0; c < block_cols; ++c) {
         const double* xc = X + c * ldx;
@@ -3892,6 +4069,7 @@ static int ldl_solve_apply(const LdlSolveLeaf& f, int64_t block_cols,
         }
       }
     }
+    region.master_pause();
   }
   return status;
 }

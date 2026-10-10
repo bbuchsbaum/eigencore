@@ -90,6 +90,7 @@ cat("eigencore threads:", getOption("eigencore.threads"), "\n")
 # --- runtime / threads / unwind ---------------------------------------------
 section("thread info + set default", {
   call_native("eigencore_thread_info")
+  call_native("eigencore_thread_governor", NA_real_)
   call_native("eigencore_set_default_threads", NA_real_)
   ns$eigencore_threads()
 })

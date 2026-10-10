@@ -421,27 +421,34 @@ static void reorth_gemm_tn(int n, int k, int b, const double* V,
     return;
   }
   const int64_t total = static_cast<int64_t>(k) * b;
-  EIGENCORE_OMP(omp parallel for num_threads(threads) schedule(static))
-  for (int64_t idx = 0; idx < total; ++idx) {
-    const int j = static_cast<int>(idx % k);
-    const int col = static_cast<int>(idx / k);
-    const double* v = V + static_cast<int64_t>(j) * n;
-    const double* w = W + static_cast<int64_t>(col) * n;
-    double s0 = 0.0;
-    double s1 = 0.0;
-    double s2 = 0.0;
-    double s3 = 0.0;
-    int row = 0;
-    for (; row + 4 <= n; row += 4) {
-      s0 += v[row] * w[row];
-      s1 += v[row + 1] * w[row + 1];
-      s2 += v[row + 2] * w[row + 2];
-      s3 += v[row + 3] * w[row + 3];
+  EigencoreParallelRegion region(threads);
+  const int team = region.threads();
+  (void) team;  // only read by the OpenMP pragma
+  EIGENCORE_OMP(omp parallel num_threads(team))
+  {
+    EIGENCORE_OMP(omp for schedule(static) nowait)
+    for (int64_t idx = 0; idx < total; ++idx) {
+      const int j = static_cast<int>(idx % k);
+      const int col = static_cast<int>(idx / k);
+      const double* v = V + static_cast<int64_t>(j) * n;
+      const double* w = W + static_cast<int64_t>(col) * n;
+      double s0 = 0.0;
+      double s1 = 0.0;
+      double s2 = 0.0;
+      double s3 = 0.0;
+      int row = 0;
+      for (; row + 4 <= n; row += 4) {
+        s0 += v[row] * w[row];
+        s1 += v[row + 1] * w[row + 1];
+        s2 += v[row + 2] * w[row + 2];
+        s3 += v[row + 3] * w[row + 3];
+      }
+      for (; row < n; ++row) {
+        s0 += v[row] * w[row];
+      }
+      C[j + static_cast<int64_t>(col) * ldc] = (s0 + s1) + (s2 + s3);
     }
-    for (; row < n; ++row) {
-      s0 += v[row] * w[row];
-    }
-    C[j + static_cast<int64_t>(col) * ldc] = (s0 + s1) + (s2 + s3);
+    region.master_pause();
   }
 }
 
@@ -462,20 +469,27 @@ static void reorth_gemm_nn_minus(int n, int k, int b, const double* V,
   }
   const int block_rows = 512;
   const int blocks = (n + block_rows - 1) / block_rows;
-  EIGENCORE_OMP(omp parallel for num_threads(threads) schedule(static))
-  for (int blk = 0; blk < blocks; ++blk) {
-    const int r0 = blk * block_rows;
-    const int r1 = (r0 + block_rows < n) ? r0 + block_rows : n;
-    for (int col = 0; col < b; ++col) {
-      double* w = W + static_cast<int64_t>(col) * n;
-      for (int j = 0; j < k; ++j) {
-        const double c = C[j + static_cast<int64_t>(col) * ldc];
-        const double* v = V + static_cast<int64_t>(j) * n;
-        for (int row = r0; row < r1; ++row) {
-          w[row] -= v[row] * c;
+  EigencoreParallelRegion region(threads);
+  const int team = region.threads();
+  (void) team;  // only read by the OpenMP pragma
+  EIGENCORE_OMP(omp parallel num_threads(team))
+  {
+    EIGENCORE_OMP(omp for schedule(static) nowait)
+    for (int blk = 0; blk < blocks; ++blk) {
+      const int r0 = blk * block_rows;
+      const int r1 = (r0 + block_rows < n) ? r0 + block_rows : n;
+      for (int col = 0; col < b; ++col) {
+        double* w = W + static_cast<int64_t>(col) * n;
+        for (int j = 0; j < k; ++j) {
+          const double c = C[j + static_cast<int64_t>(col) * ldc];
+          const double* v = V + static_cast<int64_t>(j) * n;
+          for (int row = r0; row < r1; ++row) {
+            w[row] -= v[row] * c;
+          }
         }
       }
     }
+    region.master_pause();
   }
 }
 
