@@ -1,5 +1,31 @@
 # eigencore (development version)
 
+## Native-code assurance findings F4-F7
+
+* `eigs_sym(which = "BE")` with a warm start (`opts = list(initvec =)`)
+  and `eig_partial(target = both_ends(), initial_subspace =)` now take the
+  native both-ends route (both thick-restart solves start from the supplied
+  vector) instead of the unrestarted reference Lanczos, which converged 0 of
+  3 pairs on a 60 x 60 path Laplacian plus diagonal (F4). `"BE"` keeps
+  RSpectra's split (the extra pair from the high end when `k` is odd).
+* An explicit `lanczos()` (scalar, `block = 1`) on a matrix-free Hermitian
+  operator now runs the native thick-restart callback kernel, as `auto()`
+  does, instead of the R prototype Lanczos that stopped after 3k + 20 applies
+  and failed its certificate (F5). The reference route remains for targets
+  without a native kernel; there `maxit` now sets the Lanczos step budget
+  when `max_subspace` is not given (it used to only cap the 3k + 20 default).
+* `shifted_tridiagonal_preconditioner()` factors `A + shift * I` at
+  construction and rejects a singular system with an error naming the
+  preconditioner; the native LOBPCG names it too instead of a bare
+  `status=-5` (F6).
+* Built-in operator identities no longer depend on `long double`
+  arithmetic: they hash the exact content of a Matrix source (all slots but
+  the `factors` cache) and the structure flags, not the derived column
+  moments, so a persisted plan, restart state or PSD factor matches the same
+  matrix on every platform (F7). `identity_hash_format()` is now
+  `"eigencore-identity-hash-v3"`; objects persisted under v2 fail with the
+  typed `identity_format_changed` error and must be re-planned / re-factored.
+
 ## Nonsymmetric target completeness
 
 * Nonsymmetric Krylov-Schur results (`eig_partial()` on general matrices,
