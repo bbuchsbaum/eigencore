@@ -255,6 +255,17 @@ inertia_completeness_check <- function(Aop, values, residuals, orthogonality,
   # error, so the widening recount below is rarely needed; gaps smaller than
   # that are inside any practical residual bound anyway.
   margin <- max(rho, 1e-10 * scale, 64 * eps * scale)
+  # P19: a shift-invert solve already factored A - sigma I next to the
+  # thresholds; its backward bound predicts theirs (the same symbolic
+  # pattern, comparable growth). Starting from twice that prediction avoids
+  # the widening recount below in the common case, which for nearest()
+  # costs two extra factorisations. The check below still widens when the
+  # actual bound exceeds the margin.
+  seed_bound <- ctx$seed_tally$backward_bound %||% NA_real_
+  if (is.numeric(seed_bound) && length(seed_bound) == 1L && is.finite(seed_bound) &&
+      seed_bound > 0) {
+    margin <- max(margin, 4 * seed_bound)
+  }
   # The count is exact for A - t B + E with ||E|| <= backward_bound; the
   # matched eigenvalues sit at least `margin` from the threshold, so the
   # margin must exceed that bound (widen once if it does not).

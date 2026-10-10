@@ -266,33 +266,12 @@ shift_invert_apply_factory <- function(solve_fn) {
 }
 
 #' @keywords internal
-#' Small non-cryptographic digest of a numeric vector. Captures length,
-#' running sums, range, and a deterministic head/tail sample so two
-#' mathematically identical matrices map to identical fingerprints. Two
-#' distinct matrices with all summary statistics matching would collide,
-#' which is acceptable for shift-invert cache keys (collisions only matter
-#' if a user tries to reuse a factorization across truly distinct A).
+#' Digest of a numeric (or integer) vector for shift-invert cache keys: its
+#' length and the native identity hash of its values (P19; previously
+#' running sums and a formatted head/tail sample, several times slower).
+#' Value-based, so two identical matrices map to identical fingerprints.
 shift_invert_double_digest <- function(values) {
-  values <- as.numeric(values)
-  n <- length(values)
-  if (n == 0L) {
-    return("empty|0|0|0|0|0|")
-  }
-  finite <- is.finite(values)
-  fin_values <- values[finite]
-  head_n <- min(8L, n)
-  tail_n <- min(8L, n)
-  paste(
-    n,
-    format(sum(fin_values), digits = 17),
-    format(sum(fin_values * fin_values), digits = 17),
-    format(if (length(fin_values)) min(fin_values) else NA_real_, digits = 17),
-    format(if (length(fin_values)) max(fin_values) else NA_real_, digits = 17),
-    paste(format(values[seq_len(head_n)], digits = 17), collapse = "_"),
-    paste(format(values[seq.int(n - tail_n + 1L, n)], digits = 17), collapse = "_"),
-    sum(!finite),
-    sep = "|"
-  )
+  paste(length(values), stable_raw_hash(values), sep = "|")
 }
 
 #' @keywords internal
@@ -306,7 +285,7 @@ shift_invert_operator_fingerprint <- function(op) {
       kind = "dense",
       dim = dim(source),
       storage_mode = storage.mode(source),
-      digest = shift_invert_double_digest(as.numeric(source))
+      digest = shift_invert_double_digest(source)
     ))
   }
   if (inherits(matrix, "sparseMatrix")) {
@@ -325,8 +304,8 @@ shift_invert_operator_fingerprint <- function(op) {
       class = class(matrix),
       dim = methods::slot(matrix, "Dim"),
       nnz = length(x_slot),
-      i_digest = shift_invert_double_digest(as.numeric(i_slot)),
-      p_digest = shift_invert_double_digest(as.numeric(p_slot)),
+      i_digest = shift_invert_double_digest(i_slot),
+      p_digest = shift_invert_double_digest(p_slot),
       x_digest = shift_invert_double_digest(x_slot)
     ))
   }

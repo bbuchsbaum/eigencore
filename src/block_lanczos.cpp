@@ -3163,6 +3163,51 @@ static SEXP block_thick_restart_lanczos_impl(
     &stage_seconds, &history);
 }
 
+// TRUE when the n x n column-major matrix equals its transpose exactly
+// (NaN entries compare unequal). Compared in square tiles so both the column
+// and the row walk stay in cache.
+static bool dense_exactly_symmetric(const double* A, int n) {
+  const int tile = 64;
+  for (int jb = 0; jb < n; jb += tile) {
+    const int je = (jb + tile < n) ? jb + tile : n;
+    for (int ib = jb; ib < n; ib += tile) {
+      const int ie = (ib + tile < n) ? ib + tile : n;
+      for (int j = jb; j < je; ++j) {
+        const int i0 = (ib > j + 1) ? ib : j + 1;
+        for (int i = i0; i < ie; ++i) {
+          if (!(A[static_cast<int64_t>(i) + static_cast<int64_t>(j) * n] ==
+                A[static_cast<int64_t>(j) + static_cast<int64_t>(i) * n])) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
+
+// Apply of an exactly symmetric dense matrix: dsymv on the lower triangle for
+// a single column, the general dense apply (dgemm) for wider blocks.
+static int dense_symmetric_apply(void* impl, EigencoreTranspose op,
+                                 int64_t block_cols, const double* X,
+                                 int64_t ldx, double alpha, double beta,
+                                 double* Y, int64_t ldy,
+                                 EigencoreWorkspace* workspace) {
+  DenseColumnMajorOperator* dense = static_cast<DenseColumnMajorOperator*>(impl);
+  if (block_cols != 1 || dense->rows != dense->cols || ldx < dense->rows ||
+      ldy < dense->rows || !eigencore_int_indexable(dense->rows)) {
+    return eigencore_dense_apply(impl, op, block_cols, X, ldx, alpha, beta, Y,
+                                 ldy, workspace);
+  }
+  const char uplo = 'L';
+  const int n = static_cast<int>(dense->rows);
+  const int inc = 1;
+  double beta_blas = beta;
+  F77_CALL(dsymv)(&uplo, &n, &alpha, dense->values, &n, X, &inc, &beta_blas,
+                  Y, &inc FCONE);
+  return 0;
+}
+
 extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(
     SEXP A_, SEXP k_, SEXP m_max_, SEXP block_size_,
     SEXP target_kind_, SEXP tol_, SEXP max_restarts_,
@@ -3197,6 +3242,15 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(
   if (check_stride < 0) error("check_stride must be >= 0");
 
   DenseColumnMajorOperator impl = {n, n, REAL(A_)};
+  // P21: an exactly symmetric source is applied with dsymv, which reads one
+  // triangle (half the memory traffic of dgemv) and gives the same product
+  // up to rounding. A source that is Hermitian only within a tolerance keeps
+  // the full dgemv product.
+  if (dense_exactly_symmetric(REAL(A_), n)) {
+    return block_thick_restart_lanczos_impl(
+      &impl, dense_symmetric_apply, n, 0, k, m_max, block_size, target_kind,
+      tol, max_restarts, norm_a, REAL(start_), check_stride);
+  }
   return block_thick_restart_lanczos_impl(
     &impl, eigencore_dense_apply, n, 0, k, m_max, block_size, target_kind,
     tol, max_restarts, norm_a, REAL(start_), check_stride);
@@ -3429,6 +3483,44 @@ extern "C" SEXP eigencore_normal_thick_restart_lanczos_csc(
   CSCOperator base = {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)};
   return normal_thick_restart_lanczos_impl(
     &base, eigencore_csc_apply, m, n,
+    static_cast<int>(asInteger(side_)),
+    k_, m_max_, block_size_, target_kind_, tol_, max_restarts_,
+    norm_a_, start_);
+  EIGENCORE_ENTRY_END
+}
+
+// Implicit Gram Lanczos on the column-centred, right-scaled CSC map
+// C = (A - 1 mu^T) D (P20): the normal operator C^T C (or C C^T) is applied
+// as two fused centred-scaled CSC applies, so the centred matrix is never
+// formed and sparse PCA runs on the small side like an uncentred matrix.
+extern "C" SEXP eigencore_normal_thick_restart_lanczos_centered_scaled_csc(
+    SEXP i_, SEXP p_, SEXP x_, SEXP dim_, SEXP col_means_, SEXP col_weights_,
+    SEXP side_, SEXP k_, SEXP m_max_, SEXP block_size_, SEXP target_kind_,
+    SEXP tol_, SEXP max_restarts_, SEXP norm_a_, SEXP start_) {
+  EIGENCORE_ENTRY_BEGIN
+  if (!isInteger(i_) || !isInteger(p_) || !isReal(x_) || !isInteger(dim_) ||
+      !isReal(col_means_) || !isReal(col_weights_)) {
+    error("invalid centered-scaled CSC normal-equations Lanczos inputs");
+  }
+  eigencore_validate_csc_structure(i_, p_, x_, dim_,
+                                   "centered-scaled normal-equations Lanczos");
+  const int m = INTEGER(dim_)[0];
+  const int n = INTEGER(dim_)[1];
+  if (XLENGTH(col_means_) != n || XLENGTH(col_weights_) != n) {
+    error("centered-scaled CSC means and weights must have one entry per column");
+  }
+  const double* means = REAL(col_means_);
+  const double* weights = REAL(col_weights_);
+  for (int col = 0; col < n; ++col) {
+    if (!R_FINITE(means[col]) || !R_FINITE(weights[col])) {
+      error("centered-scaled CSC means and weights must be finite");
+    }
+  }
+  CenteredScaledCSCOperator base = {
+    {m, n, INTEGER(i_), INTEGER(p_), REAL(x_)}, means, weights
+  };
+  return normal_thick_restart_lanczos_impl(
+    &base, eigencore_centered_scaled_csc_apply, m, n,
     static_cast<int>(asInteger(side_)),
     k_, m_max_, block_size_, target_kind_, tol_, max_restarts_,
     norm_a_, start_);

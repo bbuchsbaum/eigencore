@@ -117,7 +117,27 @@ class StreamHash {
   }
 
   void doubles(const double* x, R_xlen_t n) {
-    for (R_xlen_t i = 0; i < n; ++i) {
+    R_xlen_t i = 0;
+    for (; i < n && n_ != 0; ++i) {
+      word(canonical_double_bits(x[i]));
+    }
+    // Whole rounds straight into the lanes (P22): the same word sequence and
+    // digest as word() one at a time, without the per-word buffer branch.
+    std::uint64_t a = v_[0], b = v_[1], c = v_[2], d = v_[3];
+    const R_xlen_t whole = (n - i) / 4 * 4;
+    const R_xlen_t end = i + whole;
+    for (; i < end; i += 4) {
+      a = lane_round(a, canonical_double_bits(x[i]));
+      b = lane_round(b, canonical_double_bits(x[i + 1]));
+      c = lane_round(c, canonical_double_bits(x[i + 2]));
+      d = lane_round(d, canonical_double_bits(x[i + 3]));
+    }
+    v_[0] = a;
+    v_[1] = b;
+    v_[2] = c;
+    v_[3] = d;
+    total_ += static_cast<std::uint64_t>(whole);
+    for (; i < n; ++i) {
       word(canonical_double_bits(x[i]));
     }
   }
