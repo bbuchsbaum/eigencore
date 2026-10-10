@@ -7,7 +7,7 @@ Compute a partial eigendecomposition.
 ``` r
 eig_partial(
   A,
-  k,
+  k = NULL,
   target = largest(),
   B = NULL,
   method = auto(),
@@ -30,7 +30,11 @@ eig_partial(
 
 - k:
 
-  Number of eigenpairs to compute.
+  Number of eigenpairs to compute. Required except for an
+  [`interval()`](https://bbuchsbaum.github.io/eigencore/reference/interval.md)
+  target, whose count comes from an inertia factorisation; there a
+  supplied `k` is an upper bound (an error if the interval holds more
+  eigenvalues).
 
 - target:
 

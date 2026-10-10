@@ -141,6 +141,8 @@ Selectors describing which part of the spectrum you want.
   : Target both algebraic ends.
 - [`nearest()`](https://bbuchsbaum.github.io/eigencore/reference/nearest.md)
   : Target values nearest a shift.
+- [`interval()`](https://bbuchsbaum.github.io/eigencore/reference/interval.md)
+  : Target every eigenvalue in an interval.
 
 ## Methods
 
@@ -185,6 +187,8 @@ Inspecting solver output and the numerical evidence.
 
 - [`certificate()`](https://bbuchsbaum.github.io/eigencore/reference/certificate.md)
   : Extract a result certificate.
+- [`eigen_count()`](https://bbuchsbaum.github.io/eigencore/reference/eigen_count.md)
+  : Count eigenvalues below, at and above a shift (Sylvester inertia)
 - [`residuals(`*`<eigencore_eigen_result>`*`)`](https://bbuchsbaum.github.io/eigencore/reference/residuals.md)
   [`residuals(`*`<eigencore_svd_result>`*`)`](https://bbuchsbaum.github.io/eigencore/reference/residuals.md)
   [`residuals(`*`<eigencore_certificate>`*`)`](https://bbuchsbaum.github.io/eigencore/reference/residuals.md)

@@ -63,6 +63,22 @@ with `n = 1e6`, computing the full spectrum is impossible — the
 *partial* result is the only result, which is exactly why a certificate
 matters.
 
+When the question is “which eigenvalues lie between `a` and `b`?” rather
+than “the `k` largest”, ask for an interval and leave `k` out: eigencore
+counts the eigenvalues in `[a, b]` first and returns exactly those, with
+the count as part of the certificate (see
+[`vignette("certificates")`](https://bbuchsbaum.github.io/eigencore/articles/certificates.md)).
+
+``` r
+
+fit_iv <- eig_partial(A, target = interval(4, 5))
+values(fit_iv)
+#>  [1] 4.029254 4.154812 4.196181 4.241956 4.326912 4.425624 4.504502 4.566055
+#>  [9] 4.700866 4.769169
+fit_iv$certificate$target_completeness
+#> [1] "exact"
+```
+
 ## Generalized SPD eigenproblem (`A v = lambda B v`)
 
 Pass a metric `B` to
@@ -173,7 +189,7 @@ res$certificate
 #>   max orthogonality loss: 5.551115e-16 
 #>   orthogonality tolerance: 1.490116e-08 
 #>   orthogonality required: TRUE 
-#>   target completeness: probed
+#>   target completeness: inertia_verified
 ```
 
 [`eigs()`](https://bbuchsbaum.github.io/eigencore/reference/eigs.md),

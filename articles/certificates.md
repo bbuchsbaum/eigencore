@@ -37,7 +37,7 @@ cert
 #>   max orthogonality loss: 1.332268e-15 
 #>   orthogonality tolerance: 1.490116e-08 
 #>   orthogonality required: TRUE 
-#>   target completeness: probed
+#>   target completeness: inertia_verified
 ```
 
 The fields you act on, in order:
@@ -348,15 +348,20 @@ After a certified Hermitian Krylov solve with a
 [`smallest()`](https://bbuchsbaum.github.io/eigencore/reference/smallest.md)
 or
 [`largest_magnitude()`](https://bbuchsbaum.github.io/eigencore/reference/largest_magnitude.md)
-target, eigencore therefore runs a short **deflated complement probe**:
-a few block Lanczos steps on the operator restricted to the orthogonal
-complement of the returned vectors (B-orthogonal for generalized
-problems), from a fixed-seed start that does not touch R’s random-number
-stream. Any Ritz value of that restricted operator that lies beyond the
-least-preferred returned value (by more than the residual and tolerance
-margin) proves a more-preferred eigenvalue is missing. The solver then
-repairs the result with a deflated complement solve, merges the two sets
-by a Rayleigh-Ritz step, re-certifies and probes again.
+target (and, with `completeness = "inertia"`,
+[`nearest()`](https://bbuchsbaum.github.io/eigencore/reference/nearest.md)),
+eigencore therefore checks the returned set. With an explicit dense or
+sparse matrix it *counts* eigenvalues (the next section); for a
+matrix-free operator, or when a factorisation would cost more than the
+solve, it runs a short **deflated complement probe**: a few block
+Lanczos steps on the operator restricted to the orthogonal complement of
+the returned vectors (B-orthogonal for generalized problems), from a
+fixed-seed start that does not touch R’s random-number stream. Any Ritz
+value of that restricted operator that lies beyond the least-preferred
+returned value (by more than the residual and tolerance margin) proves a
+more-preferred eigenvalue is missing. The solver then repairs the result
+with a deflated complement solve, merges the two sets by a Rayleigh-Ritz
+step, re-certifies and checks again.
 
 ``` r
 
@@ -369,7 +374,7 @@ sort(values(bare), decreasing = TRUE)
 #> [1] 9 9 7 7 5
 bare$certificate$passed
 #> [1] TRUE
-fit_c <- eig_partial(S, k = 5, method = lanczos(), seed = 1)
+fit_c <- eig_partial(S, k = 5, method = lanczos(completeness = "probe"), seed = 1)
 sort(values(fit_c), decreasing = TRUE)
 #> [1] 9 9 7 7 7
 fit_c$certificate$target_completeness
@@ -385,31 +390,182 @@ fit_c$certificate$completeness[c("steps", "operator_columns", "rounds")]
 #> [1] 1
 ```
 
+The probe is cheap (by default at most 8 steps of block size 2, set by
+the options `eigencore.completeness_probe_steps` and
+`eigencore.completeness_probe_block`). It is a probabilistic check: it
+can prove a set incomplete, not complete; an intruder whose Ritz value a
+short run does not resolve goes unnoticed.
+
+### Counting certificates
+
+For a Hermitian matrix (or a pencil with symmetric positive definite
+`B`) that is available explicitly, the number of eigenvalues below any
+shift `t` is the number of negative pivots of an $`LDL^T`$ factorisation
+of `A - t B` (Sylvester’s law of inertia).
+[`eigen_count()`](https://bbuchsbaum.github.io/eigencore/reference/eigen_count.md)
+exposes that count: dense matrices use LAPACK’s Bunch-Kaufman `dsytrf`,
+sparse ones CHOLMOD’s $`LDL^T`$ with a fill-reducing ordering,
+tridiagonal ones a Sturm sequence.
+
+``` r
+
+set.seed(2)
+Q <- qr.Q(qr(matrix(rnorm(60 * 60), 60)))
+A7 <- Q %*% (d * t(Q))
+A7 <- (A7 + t(A7)) / 2   # dense, same spectrum as S
+eigen_count(S, 6)        # S is diagonal: an exact comparison
+#> <eigencore_inertia> diagonal  
+#>   sigma: 6 
+#>   below: 55  zero: 0  above: 5  (n = 60 )
+#>   reliable: TRUE  min pivot / scale: 0.0667  pivot growth: 0.393
+eigen_count(A7, 6)
+#> <eigencore_inertia> dense_bunch_kaufman  
+#>   sigma: 6 
+#>   below: 55  zero: 0  above: 5  (n = 60 )
+#>   reliable: TRUE  min pivot / scale: 0.0443  pivot growth: 3.31
+eigen_count(A7, 7)
+#> <eigencore_inertia> dense_bunch_kaufman  
+#>   sigma: 7  zero band: sigma -/+ 2.76e-11 
+#>   below: 55  zero: 3  above: 2  (n = 60 )
+#>   reliable: TRUE  min pivot / scale: 2.27e-11  pivot growth: 1 
+#>   note: sigma was within the numerical zero band of the factorisation; counts use sigma -/+ 2.76e-11 and 'zero' counts the eigenvalues inside that band
+```
+
+The last call lands exactly on the triple eigenvalue 7: the
+factorisation reports a (numerically) zero pivot, so the shift is moved
+to `7 -/+ delta`, `zero` counts the eigenvalues inside that band, and
+`reliable` says whether every count came from a trustworthy
+factorisation. CHOLMOD’s sparse $`LDL^T`$ does not pivot, so each count
+carries its backward-error bound (`diagnostics$backward_bound`, from
+`|| |L| |D| |L'| ||`) and pivot growth; an unreliable count is
+perturbed, falls back to a pivoted dense factorisation for moderate `n`,
+or is reported with `reliable = FALSE`, never silently trusted.
+
+The completeness certificate turns two such counts into a proof. By
+Kahan’s theorem every returned value $`\theta_i`$ has its own (distinct)
+eigenvalue within $`\rho = \|R\|_F / \sigma_{\min}(X)`$ of it, where `R`
+holds the certificate’s residuals. For a
+[`largest()`](https://bbuchsbaum.github.io/eigencore/reference/largest.md)
+target with returned edge $`\theta_{\min}`$, if exactly `k` eigenvalues
+exceed $`\theta_{\min} - \rho - m`$ (the margin `m` exceeds the
+factorisation’s backward error), those `k` eigenvalues are the returned
+ones and the set is complete. If at least `k` eigenvalues exceed
+$`\theta_{\min} + \rho + m`$, a value is provably missing.
+
+``` r
+
+fit_i <- eig_partial(S, k = 5, method = lanczos(), seed = 1)
+sort(values(fit_i), decreasing = TRUE)
+#> [1] 9 9 7 7 7
+fit_i$certificate$target_completeness
+#> [1] "inertia_verified"
+fit_i$certificate$completeness[c("inertia_method", "rho", "count_upper",
+                                 "factorizations", "repaired")]
+#> $inertia_method
+#> [1] "diagonal"
+#> 
+#> $rho
+#> [1] 3.288448e-12
+#> 
+#> $count_upper
+#> [1] 5
+#> 
+#> $factorizations
+#> [1] 3
+#> 
+#> $repaired
+#> [1] TRUE
+```
+
+Here the first Krylov answer missed a copy of 7; the count proved it,
+the repair recovered it, and the repaired set was then counted complete.
+
 `certificate$target_completeness` is one of:
 
+- `"inertia_verified"`: the count proves the returned set is the
+  requested one (`completeness$repaired` records whether a repair was
+  needed);
+- `"inertia_failed"`: the count proves a more-preferred eigenvalue is
+  missing and the repair budget
+  (`options(eigencore.completeness_max_rounds = 3)`) did not fix it;
+  `passed` is then `FALSE` although every residual passes
+  (`residual_passed` keeps that verdict, `target_passed` is `FALSE`);
+- `"inertia_inconclusive"`: the `k`-th and `(k+1)`-th eigenvalues are
+  closer than the residual uncertainty (for example `k` cuts through a
+  multiple eigenvalue), so the target edge is not separated; no claim is
+  made either way and `passed` is unaffected;
 - `"probed"`: the probe found nothing beyond the returned edge;
 - `"repaired"`: the probe found a missing value and the repaired set
   then probed clean;
-- `"failed"`: an intruder remained after the repair budget
-  (`options(eigencore.completeness_max_rounds = 3)`); `passed` is then
-  `FALSE` even though every residual passes (`residual_passed` keeps
-  that verdict, `target_passed` is `FALSE`);
+- `"failed"`: a probe intruder remained after the repair budget;
+  `passed` is `FALSE`;
 - `"exact"`: a full-spectrum route (dense LAPACK, tridiagonal, analytic
   grid Laplacian) selected from every eigenvalue, so the set is complete
   by construction;
-- `"not_checked"`: the probe did not apply (interior or both-ends
-  targets, nonsymmetric problems, a residual certificate that already
-  failed, `certify = FALSE`, or `completeness = "none"`).
+- `"not_checked"`: no check applied (both-ends targets, nonsymmetric
+  problems, a residual certificate that already failed,
+  `certify = FALSE`, or `completeness = "none"`).
 
-The probe is cheap (by default at most 8 steps of block size 2, set by
-the options `eigencore.completeness_probe_steps` and
-`eigencore.completeness_probe_block`) and is switched off with
-`lanczos(completeness = "none")` or
-`options(eigencore.target_completeness = "none")`. It is a probabilistic
-check: it can prove a set incomplete, not complete — an intruder whose
-Ritz value a short run does not resolve goes unnoticed. The
-deterministic answer is an eigenvalue-counting (inertia, `LDL'`)
-certificate, planned for a later release.
+The check is chosen by `lanczos(completeness = )` or
+`options(eigencore.target_completeness = )`: `"auto"` (the default)
+counts edge targets when the matrix is explicit and the predicted
+factorisation time (from CHOLMOD’s symbolic analysis, or $`n^3/3`$ flops
+for dense) is at most `max(0.5 s, solve time)` (options
+`eigencore.completeness_inertia_seconds` and
+`eigencore.completeness_inertia_ratio`), and probes otherwise;
+`"inertia"` always counts when it can; `"probe"` always probes; `"none"`
+switches the check off. `certificate$completeness$inertia_gate` records
+why the count was skipped. Matrices whose factors fill catastrophically
+(large random sparse graphs) are left to the probe; banded, grid and
+other mesh-like sparse matrices factor cheaply and are counted.
+
+#### Every eigenvalue in an interval
+
+The same counts drive the `interval(a, b)` target:
+[`eig_partial()`](https://bbuchsbaum.github.io/eigencore/reference/eig_partial.md)
+counts the eigenvalues in the closed interval `[a, b]` first (so `k` can
+be left out), solves for exactly that many, and certifies the set with
+the count. For a sparse matrix the interval is split into slices by
+further counts (“spectrum slicing”); each slice is solved by
+shift-invert Lanczos at its centre and the slices are merged.
+
+``` r
+
+L1 <- Matrix::bandSparse(30, k = c(0, 1),
+                         diagonals = list(rep(2, 30), rep(-1, 29)),
+                         symmetric = TRUE)
+L2 <- kronecker(L1, Matrix::Diagonal(30)) + kronecker(Matrix::Diagonal(30), L1)
+op <- options(eigencore.interval_dense_limit = 0)  # show the sparse route
+fit_iv <- eig_partial(L2, target = interval(1, 1.5))
+options(op)
+length(values(fit_iv))
+#> [1] 41
+fit_iv$certificate$target_completeness
+#> [1] "inertia_verified"
+fit_iv$interval[c("count", "slices", "factorizations")]
+#> $count
+#> [1] 41
+#> 
+#> $slices
+#> [1] 1
+#> 
+#> $factorizations
+#> [1] 3
+```
+
+The interval is closed: an eigenvalue numerically on an end point
+(inside the zero band of the factorisation there) counts as inside. With
+residual bound $`\rho`$ from Kahan’s theorem, if all `m` returned values
+lie inside $`[a, b]`$ by more than $`\rho`$, they are provably the `m`
+eigenvalues of the interval (`"inertia_verified"`). A value within
+$`\rho`$ of an end point is listed in `completeness$boundary_ambiguous`;
+one recount on the interval widened by $`\rho`$ settles it (the same
+count proves the set; a larger one means an eigenvalue sits just outside
+within the residual bound and the result is `"inertia_inconclusive"`). A
+returned count different from the interval count is `"inertia_failed"`
+and `passed = FALSE`. Dense matrices use LAPACK’s `dsyevr` with a value
+range instead, which selects the eigenvalues by the same kind of Sturm
+count on the tridiagonal form (`"exact"`).
 
 ## Comparing eigencore certificates to RSpectra diagnostics
 
@@ -433,12 +589,12 @@ res$certificate
 #>   norm bound: two_norm_lower_bound+identity_exact 
 #>   norm source: ritz+identity 
 #>   scale estimated: FALSE 
-#>   max residual: 6.019888e-09 
-#>   max backward error: 6.007181e-10 
-#>   max orthogonality loss: 1.110223e-15 
+#>   max residual: 2.308902e-09 
+#>   max backward error: 2.304028e-10 
+#>   max orthogonality loss: 5.551115e-16 
 #>   orthogonality tolerance: 1.490116e-08 
 #>   orthogonality required: TRUE 
-#>   target completeness: probed
+#>   target completeness: inertia_verified
 ```
 
 Code already written against
@@ -455,6 +611,8 @@ certified results without changing call sites.
 | `passed = FALSE`, `norm_bound_type` is `two_norm_lower_bound`, residuals tiny | The norm lower bound may be weak (e.g. smallest targets of a matrix-free operator). | Supply `metadata$two_norm` if `||A||_2` is known, or use a built-in matrix class. |
 | `max_orthogonality_loss` near `sqrt(eps)` but residuals tiny | Iterative drift; clustered eigenvalues at risk of duplicates. | Increase `maxit`; check whether there are repeated eigenvalues. |
 | `failed_indices` includes the first returned pairs | Some leading returned pairs exceed the tolerance. | Inspect `convergence_history`; increase `maxit` if the errors are still declining. |
+| `passed = FALSE`, `residual_passed = TRUE`, `target_completeness = "inertia_failed"` | An eigenvalue count proves a more-preferred eigenvalue is missing from the returned set. | Use a block method with a block at least the multiplicity (`lanczos(block = )`), raise `eigencore.completeness_max_rounds`, or a dense solve. |
+| `target_completeness = "inertia_inconclusive"` | The target edge cuts through a cluster (closer than the residual bound); every returned pair is still certified. | Request a `k` that does not split the cluster, or tighten `tol`. |
 | `passed = FALSE`, `residual_passed = TRUE`, `target_completeness = "failed"` | Every pair is accurate, but a more-preferred eigenvalue (e.g. a missed copy of a repeated value) lies outside the returned set. | Use a block method with a block at least the multiplicity (`lanczos(block = )`), raise `eigencore.completeness_max_rounds`, or a dense solve. |
 | `failed_indices` includes the last returned pairs | Some trailing returned pairs exceed the tolerance. | Inspect the spectral gap; a wider `k` may help when the target boundary cuts through a cluster. |
 

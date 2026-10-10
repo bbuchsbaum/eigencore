@@ -136,6 +136,19 @@ it.
 production problem with <code>n = 1e6</code>, computing the full
 spectrum is impossible — the <em>partial</em> result is the only result,
 which is exactly why a certificate matters.</p>
+<p>When the question is “which eigenvalues lie between <code>a</code>
+and <code>b</code>?” rather than “the <code>k</code> largest”, ask for
+an interval and leave <code>k</code> out: eigencore counts the
+eigenvalues in <code>[a, b]</code> first and returns exactly those, with
+the count as part of the certificate (see
+<code><a href="../articles/certificates.html">vignette("certificates")</a></code>).</p>
+<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">fit_iv</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">A</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/interval.html">interval</a></span><span class="op">(</span><span class="fl">4</span>, <span class="fl">5</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="fu"><a href="../reference/values.html">values</a></span><span class="op">(</span><span class="va">fit_iv</span><span class="op">)</span></span>
+<span><span class="co">#&gt;  [1] 4.029254 4.154812 4.196181 4.241956 4.326912 4.425624 4.504502 4.566055</span></span>
+<span><span class="co">#&gt;  [9] 4.700866 4.769169</span></span>
+<span><span class="va">fit_iv</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">target_completeness</span></span>
+<span><span class="co">#&gt; [1] "exact"</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="generalized-spd-eigenproblem-a-v-lambda-b-v">Generalized SPD eigenproblem (<code>A v = lambda B v</code>)<a class="anchor" aria-label="anchor" href="#generalized-spd-eigenproblem-a-v-lambda-b-v"></a>
@@ -143,7 +156,7 @@ which is exactly why a certificate matters.</p>
 <p>Pass a metric <code>B</code> to <code><a href="../reference/eig_partial.html">eig_partial()</a></code> when the
 problem is <code>A v = lambda B v</code> rather than the standard
 <code>A v = lambda v</code>.</p>
-<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">B</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/diag.html" class="external-link">diag</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">5</span>, length.out <span class="op">=</span> <span class="va">n</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="va">fit_gen</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">A</span>, k <span class="op">=</span> <span class="fl">5</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span>, B <span class="op">=</span> <span class="va">B</span>,</span>
 <span>                       method <span class="op">=</span> <span class="fu"><a href="../reference/lobpcg.html">lobpcg</a></span><span class="op">(</span>maxit <span class="op">=</span> <span class="fl">200</span><span class="op">)</span><span class="op">)</span></span>
@@ -172,7 +185,7 @@ generalized SVD.</p>
 <h2 id="partial-svd">Partial SVD<a class="anchor" aria-label="anchor" href="#partial-svd"></a>
 </h2>
 <p>For rectangular problems use <code><a href="../reference/svd_partial.html">svd_partial()</a></code>:</p>
-<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">M</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">matrix</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/Normal.html" class="external-link">rnorm</a></span><span class="op">(</span><span class="fl">400</span> <span class="op">*</span> <span class="fl">50</span><span class="op">)</span>, <span class="fl">400</span>, <span class="fl">50</span><span class="op">)</span></span>
 <span><span class="va">svd_fit</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/svd_partial.html">svd_partial</a></span><span class="op">(</span><span class="va">M</span>, rank <span class="op">=</span> <span class="fl">5</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="va">svd_fit</span></span>
@@ -207,7 +220,7 @@ certificate covers both <code>||A v - sigma u||</code> and
 <p>If your existing code uses <code><a href="https://rdrr.io/pkg/RSpectra/man/eigs.html" class="external-link">RSpectra::eigs_sym()</a></code>, you can
 call eigencore in the same shape — the return list extends RSpectra’s by
 adding <code>certificate</code> and <code>diagnostics</code>:</p>
-<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">res</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eigs_sym.html">eigs_sym</a></span><span class="op">(</span><span class="va">A</span>, k <span class="op">=</span> <span class="fl">5</span>, which <span class="op">=</span> <span class="st">"LA"</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/utils/str.html" class="external-link">str</a></span><span class="op">(</span><span class="va">res</span>, max.level <span class="op">=</span> <span class="fl">1</span><span class="op">)</span></span>
 <span><span class="co">#&gt; List of 7</span></span>
@@ -219,7 +232,7 @@ adding <code>certificate</code> and <code>diagnostics</code>:</p>
 <span><span class="co">#&gt;  $ certificate:List of 24</span></span>
 <span><span class="co">#&gt;   ..- attr(*, "class")= chr "eigencore_certificate"</span></span>
 <span><span class="co">#&gt;  $ diagnostics:List of 21</span></span></code></pre></div>
-<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">res</span><span class="op">$</span><span class="va">certificate</span></span>
 <span><span class="co">#&gt; eigencore certificate</span></span>
 <span><span class="co">#&gt;   passed: TRUE </span></span>
@@ -233,7 +246,7 @@ adding <code>certificate</code> and <code>diagnostics</code>:</p>
 <span><span class="co">#&gt;   max orthogonality loss: 5.551115e-16 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE </span></span>
-<span><span class="co">#&gt;   target completeness: probed</span></span></code></pre></div>
+<span><span class="co">#&gt;   target completeness: inertia_verified</span></span></code></pre></div>
 <p><code><a href="../reference/eigs.html">eigs()</a></code>, <code><a href="../reference/eigs_sym.html">eigs_sym()</a></code>, and <code><a href="../reference/svds.html">svds()</a></code>
 accept the same <code>which</code> codes as <code>RSpectra</code> —
 <code>"LM"</code>, <code>"SM"</code>, <code>"LA"</code>,
@@ -250,7 +263,7 @@ when you want to inspect or reuse a piece of that pipeline.</p>
 <p><strong>1. Operators.</strong> Any matrix is wrapped in a
 <em>block-native operator</em> the moment you hand it to a problem
 constructor. You can do this explicitly:</p>
-<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">Aop</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/as_operator.html">as_operator</a></span><span class="op">(</span><span class="va">A</span><span class="op">)</span></span>
 <span><span class="va">Aop</span></span>
 <span><span class="co">#&gt; &lt;eigencore operator&gt;</span></span>
@@ -268,7 +281,7 @@ the same object type, doing more work per call.</p>
 its structure (<code><a href="../reference/hermitian.html">hermitian()</a></code>, <code><a href="../reference/general.html">general()</a></code>, …), and
 the spectral target (<code><a href="../reference/largest.html">largest()</a></code>, <code><a href="../reference/smallest.html">smallest()</a></code>,
 <code><a href="../reference/nearest.html">nearest()</a></code>, …).</p>
-<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">P</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eigen_problem.html">eigen_problem</a></span><span class="op">(</span><span class="va">A</span>, structure <span class="op">=</span> <span class="fu"><a href="../reference/hermitian.html">hermitian</a></span><span class="op">(</span><span class="op">)</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
 <p><strong>3. Plans.</strong> <code><a href="../reference/plan_solver.html">plan_solver()</a></code> chooses a
 method and returns an executable, frozen record. It stores the problem,
@@ -276,7 +289,7 @@ requested size, method descriptor, execution controls, operator
 identity, and the planner-policy snapshot that selected the route.
 Changing <code>options(eigencore.*)</code> later does not alter
 <code>solve(plan)</code>.</p>
-<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plan</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/plan_solver.html">plan_solver</a></span><span class="op">(</span><span class="va">P</span>, k <span class="op">=</span> <span class="fl">5</span><span class="op">)</span></span>
 <span><span class="va">plan</span></span>
 <span><span class="co">#&gt; eigencore solver plan</span></span>
@@ -302,7 +315,7 @@ Changing <code>options(eigencore.*)</code> later does not alter
 route and controls to govern execution. The result distinguishes that
 planned route from the route that actually returned the certified
 values; they differ only when an allowed runtime fallback is used.</p>
-<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">planned_fit</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/solve-methods.html" class="external-link">solve</a></span><span class="op">(</span><span class="va">plan</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span></span>
 <span>  planned <span class="op">=</span> <span class="va">planned_fit</span><span class="op">$</span><span class="va">planned_method</span>,</span>

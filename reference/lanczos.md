@@ -59,22 +59,35 @@ lanczos(
 
 - completeness:
 
-  Target-completeness check run after a certified standard Hermitian
-  solve with a
+  Target-completeness check run after a certified Hermitian solve with a
   [`largest()`](https://bbuchsbaum.github.io/eigencore/reference/largest.md),
-  [`smallest()`](https://bbuchsbaum.github.io/eigencore/reference/smallest.md)
-  or
+  [`smallest()`](https://bbuchsbaum.github.io/eigencore/reference/smallest.md),
   [`largest_magnitude()`](https://bbuchsbaum.github.io/eigencore/reference/largest_magnitude.md)
-  target. `"probe"` runs a short block Lanczos process on the operator
-  deflated against the returned eigenvectors (from a fixed-seed start;
-  the global random stream is not touched) and, if it finds a
-  more-preferred eigenvalue outside the returned set (for example a
-  missed copy of a repeated eigenvalue), repairs the result with a
-  deflated complement solve. `"none"` skips it. `NULL` (default) uses
-  `getOption("eigencore.target_completeness", "probe")`. The outcome is
-  recorded in `certificate(fit)$target_completeness`; see the
-  "Certificates" vignette. The probe is probabilistic: it can prove a
-  set incomplete but not complete.
+  (or, for the inertia check,
+  [`nearest()`](https://bbuchsbaum.github.io/eigencore/reference/nearest.md))
+  target. `"inertia"` proves completeness deterministically by counting
+  eigenvalues with an \\LDL^T\\ factorisation of `A - t B` (see
+  [`eigen_count()`](https://bbuchsbaum.github.io/eigencore/reference/eigen_count.md));
+  it needs an explicit dense or sparse matrix and reports
+  `"inertia_verified"`, `"inertia_failed"` (repaired when possible,
+  otherwise `passed = FALSE`) or `"inertia_inconclusive"` (an eigenvalue
+  cluster straddles the target edge within the residual bound).
+  `"probe"` runs a short block Lanczos process on the operator deflated
+  against the returned eigenvectors (from a fixed-seed start; the global
+  random stream is not touched) and, if it finds a more-preferred
+  eigenvalue outside the returned set (for example a missed copy of a
+  repeated eigenvalue), repairs the result with a deflated complement
+  solve; it is probabilistic (it can prove a set incomplete but not
+  complete) and is the check for matrix-free operators. `"auto"` uses
+  the inertia check for edge targets (not
+  [`nearest()`](https://bbuchsbaum.github.io/eigencore/reference/nearest.md))
+  when the matrix is explicit and its predicted factorisation time is at
+  most
+  `max(getOption("eigencore.completeness_inertia_seconds", 0.5), getOption("eigencore.completeness_inertia_ratio", 1) * solve time)`,
+  and the probe otherwise. `"none"` skips the check. `NULL` (default)
+  uses `getOption("eigencore.target_completeness", "auto")`. The outcome
+  is recorded in `certificate(fit)$target_completeness`; see the
+  "Certificates" vignette.
 
 ## Value
 

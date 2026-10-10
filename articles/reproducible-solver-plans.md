@@ -100,7 +100,7 @@ data.frame(
   restarts = w$restarts
 )
 #>   complete solve_columns certificate_columns iterations restarts
-#> 1     TRUE           130                   2        109        4
+#> 1     TRUE           114                   2        109        4
 ```
 
 `complete = TRUE` means every logical counter is known. When it is

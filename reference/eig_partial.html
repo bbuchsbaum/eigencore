@@ -59,7 +59,7 @@
     <h2 id="ref-usage">Usage<a class="anchor" aria-label="anchor" href="#ref-usage"></a></h2>
     <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">eig_partial</span><span class="op">(</span></span>
 <span>  <span class="va">A</span>,</span>
-<span>  <span class="va">k</span>,</span>
+<span>  k <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  target <span class="op">=</span> <span class="fu"><a href="largest.html">largest</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  B <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  method <span class="op">=</span> <span class="fu"><a href="auto.html">auto</a></span><span class="op">(</span><span class="op">)</span>,</span>
@@ -83,7 +83,10 @@
 
 
 <dt id="arg-k">k<a class="anchor" aria-label="anchor" href="#arg-k"></a></dt>
-<dd><p>Number of eigenpairs to compute.</p></dd>
+<dd><p>Number of eigenpairs to compute. Required except for an
+<code><a href="interval.html">interval()</a></code> target, whose count comes from an inertia factorisation;
+there a supplied <code>k</code> is an upper bound (an error if the interval holds
+more eigenvalues).</p></dd>
 
 
 <dt id="arg-target">target<a class="anchor" aria-label="anchor" href="#arg-target"></a></dt>

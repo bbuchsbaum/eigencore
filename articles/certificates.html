@@ -117,7 +117,7 @@ things they measure, and what to do when one of them fails.</p>
 <span><span class="co">#&gt;   max orthogonality loss: 1.332268e-15 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE </span></span>
-<span><span class="co">#&gt;   target completeness: probed</span></span></code></pre></div>
+<span><span class="co">#&gt;   target completeness: inertia_verified</span></span></code></pre></div>
 <p>The fields you act on, in order:</p>
 <ul>
 <li>
@@ -437,16 +437,20 @@ return <code>9, 9, 7, 7, 5</code>, and every one of those five pairs
 certifies.</p>
 <p>After a certified Hermitian Krylov solve with a
 <code><a href="../reference/largest.html">largest()</a></code>, <code><a href="../reference/smallest.html">smallest()</a></code> or
-<code><a href="../reference/largest_magnitude.html">largest_magnitude()</a></code> target, eigencore therefore runs a
-short <strong>deflated complement probe</strong>: a few block Lanczos
-steps on the operator restricted to the orthogonal complement of the
-returned vectors (B-orthogonal for generalized problems), from a
-fixed-seed start that does not touch R’s random-number stream. Any Ritz
-value of that restricted operator that lies beyond the least-preferred
-returned value (by more than the residual and tolerance margin) proves a
-more-preferred eigenvalue is missing. The solver then repairs the result
-with a deflated complement solve, merges the two sets by a Rayleigh-Ritz
-step, re-certifies and probes again.</p>
+<code><a href="../reference/largest_magnitude.html">largest_magnitude()</a></code> target (and, with
+<code>completeness = "inertia"</code>, <code><a href="../reference/nearest.html">nearest()</a></code>),
+eigencore therefore checks the returned set. With an explicit dense or
+sparse matrix it <em>counts</em> eigenvalues (the next section); for a
+matrix-free operator, or when a factorisation would cost more than the
+solve, it runs a short <strong>deflated complement probe</strong>: a few
+block Lanczos steps on the operator restricted to the orthogonal
+complement of the returned vectors (B-orthogonal for generalized
+problems), from a fixed-seed start that does not touch R’s random-number
+stream. Any Ritz value of that restricted operator that lies beyond the
+least-preferred returned value (by more than the residual and tolerance
+margin) proves a more-preferred eigenvalue is missing. The solver then
+repairs the result with a deflated complement solve, merges the two sets
+by a Rayleigh-Ritz step, re-certifies and checks again.</p>
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">d</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">9</span>, <span class="fl">9</span>, <span class="fl">7</span>, <span class="fl">7</span>, <span class="fl">7</span>, <span class="fu"><a href="https://rdrr.io/r/base/seq.html" class="external-link">seq</a></span><span class="op">(</span><span class="fl">5</span>, <span class="fl">0.1</span>, length.out <span class="op">=</span> <span class="fl">55</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">1001</span><span class="op">)</span></span>
@@ -457,7 +461,7 @@ step, re-certifies and probes again.</p>
 <span><span class="co">#&gt; [1] 9 9 7 7 5</span></span>
 <span><span class="va">bare</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span>
-<span><span class="va">fit_c</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">S</span>, k <span class="op">=</span> <span class="fl">5</span>, method <span class="op">=</span> <span class="fu"><a href="../reference/lanczos.html">lanczos</a></span><span class="op">(</span><span class="op">)</span>, seed <span class="op">=</span> <span class="fl">1</span><span class="op">)</span></span>
+<span><span class="va">fit_c</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">S</span>, k <span class="op">=</span> <span class="fl">5</span>, method <span class="op">=</span> <span class="fu"><a href="../reference/lanczos.html">lanczos</a></span><span class="op">(</span>completeness <span class="op">=</span> <span class="st">"probe"</span><span class="op">)</span>, seed <span class="op">=</span> <span class="fl">1</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="fu"><a href="../reference/values.html">values</a></span><span class="op">(</span><span class="va">fit_c</span><span class="op">)</span>, decreasing <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
 <span><span class="co">#&gt; [1] 9 9 7 7 7</span></span>
 <span><span class="va">fit_c</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">target_completeness</span></span>
@@ -471,8 +475,116 @@ step, re-certifies and probes again.</p>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; $rounds</span></span>
 <span><span class="co">#&gt; [1] 1</span></span></code></pre></div>
+<p>The probe is cheap (by default at most 8 steps of block size 2, set
+by the options <code>eigencore.completeness_probe_steps</code> and
+<code>eigencore.completeness_probe_block</code>). It is a probabilistic
+check: it can prove a set incomplete, not complete; an intruder whose
+Ritz value a short run does not resolve goes unnoticed.</p>
+</div>
+<div class="section level3">
+<h3 id="counting-certificates">Counting certificates<a class="anchor" aria-label="anchor" href="#counting-certificates"></a>
+</h3>
+<p>For a Hermitian matrix (or a pencil with symmetric positive definite
+<code>B</code>) that is available explicitly, the number of eigenvalues
+below any shift <code>t</code> is the number of negative pivots of an
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>L</mi><mi>D</mi><msup><mi>L</mi><mi>T</mi></msup></mrow><annotation encoding="application/x-tex">LDL^T</annotation></semantics></math>
+factorisation of <code>A - t B</code> (Sylvester’s law of inertia).
+<code><a href="../reference/eigen_count.html">eigen_count()</a></code> exposes that count: dense matrices use
+LAPACK’s Bunch-Kaufman <code>dsytrf</code>, sparse ones CHOLMOD’s
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>L</mi><mi>D</mi><msup><mi>L</mi><mi>T</mi></msup></mrow><annotation encoding="application/x-tex">LDL^T</annotation></semantics></math>
+with a fill-reducing ordering, tridiagonal ones a Sturm sequence.</p>
+<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">2</span><span class="op">)</span></span>
+<span><span class="va">Q</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/qraux.html" class="external-link">qr.Q</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/qr-methods.html" class="external-link">qr</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">matrix</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/Normal.html" class="external-link">rnorm</a></span><span class="op">(</span><span class="fl">60</span> <span class="op">*</span> <span class="fl">60</span><span class="op">)</span>, <span class="fl">60</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="va">A7</span> <span class="op">&lt;-</span> <span class="va">Q</span> <span class="op"><a href="https://rdrr.io/r/base/matmult.html" class="external-link">%*%</a></span> <span class="op">(</span><span class="va">d</span> <span class="op">*</span> <span class="fu"><a href="https://rdrr.io/r/base/t.html" class="external-link">t</a></span><span class="op">(</span><span class="va">Q</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="va">A7</span> <span class="op">&lt;-</span> <span class="op">(</span><span class="va">A7</span> <span class="op">+</span> <span class="fu"><a href="https://rdrr.io/r/base/t.html" class="external-link">t</a></span><span class="op">(</span><span class="va">A7</span><span class="op">)</span><span class="op">)</span> <span class="op">/</span> <span class="fl">2</span>   <span class="co"># dense, same spectrum as S</span></span>
+<span><span class="fu"><a href="../reference/eigen_count.html">eigen_count</a></span><span class="op">(</span><span class="va">S</span>, <span class="fl">6</span><span class="op">)</span>        <span class="co"># S is diagonal: an exact comparison</span></span>
+<span><span class="co">#&gt; &lt;eigencore_inertia&gt; diagonal  </span></span>
+<span><span class="co">#&gt;   sigma: 6 </span></span>
+<span><span class="co">#&gt;   below: 55  zero: 0  above: 5  (n = 60 )</span></span>
+<span><span class="co">#&gt;   reliable: TRUE  min pivot / scale: 0.0667  pivot growth: 0.393</span></span>
+<span><span class="fu"><a href="../reference/eigen_count.html">eigen_count</a></span><span class="op">(</span><span class="va">A7</span>, <span class="fl">6</span><span class="op">)</span></span>
+<span><span class="co">#&gt; &lt;eigencore_inertia&gt; dense_bunch_kaufman  </span></span>
+<span><span class="co">#&gt;   sigma: 6 </span></span>
+<span><span class="co">#&gt;   below: 55  zero: 0  above: 5  (n = 60 )</span></span>
+<span><span class="co">#&gt;   reliable: TRUE  min pivot / scale: 0.0443  pivot growth: 3.31</span></span>
+<span><span class="fu"><a href="../reference/eigen_count.html">eigen_count</a></span><span class="op">(</span><span class="va">A7</span>, <span class="fl">7</span><span class="op">)</span></span>
+<span><span class="co">#&gt; &lt;eigencore_inertia&gt; dense_bunch_kaufman  </span></span>
+<span><span class="co">#&gt;   sigma: 7  zero band: sigma -/+ 2.76e-11 </span></span>
+<span><span class="co">#&gt;   below: 55  zero: 3  above: 2  (n = 60 )</span></span>
+<span><span class="co">#&gt;   reliable: TRUE  min pivot / scale: 2.27e-11  pivot growth: 1 </span></span>
+<span><span class="co">#&gt;   note: sigma was within the numerical zero band of the factorisation; counts use sigma -/+ 2.76e-11 and 'zero' counts the eigenvalues inside that band</span></span></code></pre></div>
+<p>The last call lands exactly on the triple eigenvalue 7: the
+factorisation reports a (numerically) zero pivot, so the shift is moved
+to <code>7 -/+ delta</code>, <code>zero</code> counts the eigenvalues
+inside that band, and <code>reliable</code> says whether every count
+came from a trustworthy factorisation. CHOLMOD’s sparse
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>L</mi><mi>D</mi><msup><mi>L</mi><mi>T</mi></msup></mrow><annotation encoding="application/x-tex">LDL^T</annotation></semantics></math>
+does not pivot, so each count carries its backward-error bound
+(<code>diagnostics$backward_bound</code>, from
+<code>|| |L| |D| |L'| ||</code>) and pivot growth; an unreliable count
+is perturbed, falls back to a pivoted dense factorisation for moderate
+<code>n</code>, or is reported with <code>reliable = FALSE</code>, never
+silently trusted.</p>
+<p>The completeness certificate turns two such counts into a proof. By
+Kahan’s theorem every returned value
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>θ</mi><mi>i</mi></msub><annotation encoding="application/x-tex">\theta_i</annotation></semantics></math>
+has its own (distinct) eigenvalue within
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>ρ</mi><mo>=</mo><mo stretchy="false" form="postfix">∥</mo><mi>R</mi><msub><mo stretchy="false" form="postfix">∥</mo><mi>F</mi></msub><mi>/</mi><msub><mi>σ</mi><mi mathvariant="normal">min</mi></msub><mo stretchy="false" form="prefix">(</mo><mi>X</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\rho = \|R\|_F / \sigma_{\min}(X)</annotation></semantics></math>
+of it, where <code>R</code> holds the certificate’s residuals. For a
+<code><a href="../reference/largest.html">largest()</a></code> target with returned edge
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>θ</mi><mi mathvariant="normal">min</mi></msub><annotation encoding="application/x-tex">\theta_{\min}</annotation></semantics></math>,
+if exactly <code>k</code> eigenvalues exceed
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>θ</mi><mi mathvariant="normal">min</mi></msub><mo>−</mo><mi>ρ</mi><mo>−</mo><mi>m</mi></mrow><annotation encoding="application/x-tex">\theta_{\min} - \rho - m</annotation></semantics></math>
+(the margin <code>m</code> exceeds the factorisation’s backward error),
+those <code>k</code> eigenvalues are the returned ones and the set is
+complete. If at least <code>k</code> eigenvalues exceed
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>θ</mi><mi mathvariant="normal">min</mi></msub><mo>+</mo><mi>ρ</mi><mo>+</mo><mi>m</mi></mrow><annotation encoding="application/x-tex">\theta_{\min} + \rho + m</annotation></semantics></math>,
+a value is provably missing.</p>
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">fit_i</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">S</span>, k <span class="op">=</span> <span class="fl">5</span>, method <span class="op">=</span> <span class="fu"><a href="../reference/lanczos.html">lanczos</a></span><span class="op">(</span><span class="op">)</span>, seed <span class="op">=</span> <span class="fl">1</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="fu"><a href="../reference/values.html">values</a></span><span class="op">(</span><span class="va">fit_i</span><span class="op">)</span>, decreasing <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
+<span><span class="co">#&gt; [1] 9 9 7 7 7</span></span>
+<span><span class="va">fit_i</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">target_completeness</span></span>
+<span><span class="co">#&gt; [1] "inertia_verified"</span></span>
+<span><span class="va">fit_i</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">completeness</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"inertia_method"</span>, <span class="st">"rho"</span>, <span class="st">"count_upper"</span>,</span>
+<span>                                 <span class="st">"factorizations"</span>, <span class="st">"repaired"</span><span class="op">)</span><span class="op">]</span></span>
+<span><span class="co">#&gt; $inertia_method</span></span>
+<span><span class="co">#&gt; [1] "diagonal"</span></span>
+<span><span class="co">#&gt; </span></span>
+<span><span class="co">#&gt; $rho</span></span>
+<span><span class="co">#&gt; [1] 3.288448e-12</span></span>
+<span><span class="co">#&gt; </span></span>
+<span><span class="co">#&gt; $count_upper</span></span>
+<span><span class="co">#&gt; [1] 5</span></span>
+<span><span class="co">#&gt; </span></span>
+<span><span class="co">#&gt; $factorizations</span></span>
+<span><span class="co">#&gt; [1] 3</span></span>
+<span><span class="co">#&gt; </span></span>
+<span><span class="co">#&gt; $repaired</span></span>
+<span><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
+<p>Here the first Krylov answer missed a copy of 7; the count proved it,
+the repair recovered it, and the repaired set was then counted
+complete.</p>
 <p><code>certificate$target_completeness</code> is one of:</p>
 <ul>
+<li>
+<code>"inertia_verified"</code>: the count proves the returned set
+is the requested one (<code>completeness$repaired</code> records whether
+a repair was needed);</li>
+<li>
+<code>"inertia_failed"</code>: the count proves a more-preferred
+eigenvalue is missing and the repair budget
+(<code>options(eigencore.completeness_max_rounds = 3)</code>) did not
+fix it; <code>passed</code> is then <code>FALSE</code> although every
+residual passes (<code>residual_passed</code> keeps that verdict,
+<code>target_passed</code> is <code>FALSE</code>);</li>
+<li>
+<code>"inertia_inconclusive"</code>: the <code>k</code>-th and
+<code>(k+1)</code>-th eigenvalues are closer than the residual
+uncertainty (for example <code>k</code> cuts through a multiple
+eigenvalue), so the target edge is not separated; no claim is made
+either way and <code>passed</code> is unaffected;</li>
 <li>
 <code>"probed"</code>: the probe found nothing beyond the returned
 edge;</li>
@@ -480,30 +592,88 @@ edge;</li>
 <code>"repaired"</code>: the probe found a missing value and the
 repaired set then probed clean;</li>
 <li>
-<code>"failed"</code>: an intruder remained after the repair budget
-(<code>options(eigencore.completeness_max_rounds = 3)</code>);
-<code>passed</code> is then <code>FALSE</code> even though every
-residual passes (<code>residual_passed</code> keeps that verdict,
-<code>target_passed</code> is <code>FALSE</code>);</li>
+<code>"failed"</code>: a probe intruder remained after the repair
+budget; <code>passed</code> is <code>FALSE</code>;</li>
 <li>
 <code>"exact"</code>: a full-spectrum route (dense LAPACK,
 tridiagonal, analytic grid Laplacian) selected from every eigenvalue, so
 the set is complete by construction;</li>
 <li>
-<code>"not_checked"</code>: the probe did not apply (interior or
-both-ends targets, nonsymmetric problems, a residual certificate that
-already failed, <code>certify = FALSE</code>, or
+<code>"not_checked"</code>: no check applied (both-ends targets,
+nonsymmetric problems, a residual certificate that already failed,
+<code>certify = FALSE</code>, or
 <code>completeness = "none"</code>).</li>
 </ul>
-<p>The probe is cheap (by default at most 8 steps of block size 2, set
-by the options <code>eigencore.completeness_probe_steps</code> and
-<code>eigencore.completeness_probe_block</code>) and is switched off
-with <code>lanczos(completeness = "none")</code> or
-<code>options(eigencore.target_completeness = "none")</code>. It is a
-probabilistic check: it can prove a set incomplete, not complete — an
-intruder whose Ritz value a short run does not resolve goes unnoticed.
-The deterministic answer is an eigenvalue-counting (inertia,
-<code>LDL'</code>) certificate, planned for a later release.</p>
+<p>The check is chosen by <code>lanczos(completeness = )</code> or
+<code>options(eigencore.target_completeness = )</code>:
+<code>"auto"</code> (the default) counts edge targets when the matrix is
+explicit and the predicted factorisation time (from CHOLMOD’s symbolic
+analysis, or
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>n</mi><mn>3</mn></msup><mi>/</mi><mn>3</mn></mrow><annotation encoding="application/x-tex">n^3/3</annotation></semantics></math>
+flops for dense) is at most <code>max(0.5 s, solve time)</code> (options
+<code>eigencore.completeness_inertia_seconds</code> and
+<code>eigencore.completeness_inertia_ratio</code>), and probes
+otherwise; <code>"inertia"</code> always counts when it can;
+<code>"probe"</code> always probes; <code>"none"</code> switches the
+check off. <code>certificate$completeness$inertia_gate</code> records
+why the count was skipped. Matrices whose factors fill catastrophically
+(large random sparse graphs) are left to the probe; banded, grid and
+other mesh-like sparse matrices factor cheaply and are counted.</p>
+<div class="section level4">
+<h4 id="every-eigenvalue-in-an-interval">Every eigenvalue in an interval<a class="anchor" aria-label="anchor" href="#every-eigenvalue-in-an-interval"></a>
+</h4>
+<p>The same counts drive the <code>interval(a, b)</code> target:
+<code><a href="../reference/eig_partial.html">eig_partial()</a></code> counts the eigenvalues in the closed interval
+<code>[a, b]</code> first (so <code>k</code> can be left out), solves
+for exactly that many, and certifies the set with the count. For a
+sparse matrix the interval is split into slices by further counts
+(“spectrum slicing”); each slice is solved by shift-invert Lanczos at
+its centre and the slices are merged.</p>
+<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">L1</span> <span class="op">&lt;-</span> <span class="fu">Matrix</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/bandSparse.html" class="external-link">bandSparse</a></span><span class="op">(</span><span class="fl">30</span>, k <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">0</span>, <span class="fl">1</span><span class="op">)</span>,</span>
+<span>                         diagonals <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/rep.html" class="external-link">rep</a></span><span class="op">(</span><span class="fl">2</span>, <span class="fl">30</span><span class="op">)</span>, <span class="fu"><a href="https://rdrr.io/r/base/rep.html" class="external-link">rep</a></span><span class="op">(</span><span class="op">-</span><span class="fl">1</span>, <span class="fl">29</span><span class="op">)</span><span class="op">)</span>,</span>
+<span>                         symmetric <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
+<span><span class="va">L2</span> <span class="op">&lt;-</span> <span class="fu">kronecker</span><span class="op">(</span><span class="va">L1</span>, <span class="fu">Matrix</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/Diagonal.html" class="external-link">Diagonal</a></span><span class="op">(</span><span class="fl">30</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span> <span class="fu">kronecker</span><span class="op">(</span><span class="fu">Matrix</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/Matrix/man/Diagonal.html" class="external-link">Diagonal</a></span><span class="op">(</span><span class="fl">30</span><span class="op">)</span>, <span class="va">L1</span><span class="op">)</span></span>
+<span><span class="va">op</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">options</a></span><span class="op">(</span>eigencore.interval_dense_limit <span class="op">=</span> <span class="fl">0</span><span class="op">)</span>  <span class="co"># show the sparse route</span></span>
+<span><span class="va">fit_iv</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eig_partial.html">eig_partial</a></span><span class="op">(</span><span class="va">L2</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/interval.html">interval</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">1.5</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">options</a></span><span class="op">(</span><span class="va">op</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="fu"><a href="../reference/values.html">values</a></span><span class="op">(</span><span class="va">fit_iv</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="co">#&gt; [1] 41</span></span>
+<span><span class="va">fit_iv</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">target_completeness</span></span>
+<span><span class="co">#&gt; [1] "inertia_verified"</span></span>
+<span><span class="va">fit_iv</span><span class="op">$</span><span class="va">interval</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"count"</span>, <span class="st">"slices"</span>, <span class="st">"factorizations"</span><span class="op">)</span><span class="op">]</span></span>
+<span><span class="co">#&gt; $count</span></span>
+<span><span class="co">#&gt; [1] 41</span></span>
+<span><span class="co">#&gt; </span></span>
+<span><span class="co">#&gt; $slices</span></span>
+<span><span class="co">#&gt; [1] 1</span></span>
+<span><span class="co">#&gt; </span></span>
+<span><span class="co">#&gt; $factorizations</span></span>
+<span><span class="co">#&gt; [1] 3</span></span></code></pre></div>
+<p>The interval is closed: an eigenvalue numerically on an end point
+(inside the zero band of the factorisation there) counts as inside. With
+residual bound
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ρ</mi><annotation encoding="application/x-tex">\rho</annotation></semantics></math>
+from Kahan’s theorem, if all <code>m</code> returned values lie inside
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">[</mo><mi>a</mi><mo>,</mo><mi>b</mi><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[a, b]</annotation></semantics></math>
+by more than
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ρ</mi><annotation encoding="application/x-tex">\rho</annotation></semantics></math>,
+they are provably the <code>m</code> eigenvalues of the interval
+(<code>"inertia_verified"</code>). A value within
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ρ</mi><annotation encoding="application/x-tex">\rho</annotation></semantics></math>
+of an end point is listed in
+<code>completeness$boundary_ambiguous</code>; one recount on the
+interval widened by
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ρ</mi><annotation encoding="application/x-tex">\rho</annotation></semantics></math>
+settles it (the same count proves the set; a larger one means an
+eigenvalue sits just outside within the residual bound and the result is
+<code>"inertia_inconclusive"</code>). A returned count different from
+the interval count is <code>"inertia_failed"</code> and
+<code>passed = FALSE</code>. Dense matrices use LAPACK’s
+<code>dsyevr</code> with a value range instead, which selects the
+eigenvalues by the same kind of Sturm count on the tridiagonal form
+(<code>"exact"</code>).</p>
+</div>
 </div>
 </div>
 <div class="section level2">
@@ -514,7 +684,7 @@ The deterministic answer is an eigenvalue-counting (inertia,
 orthogonality measure. The eigencore shim
 (<code><a href="../reference/eigs_sym.html">eigencore::eigs_sym()</a></code>) returns the same RSpectra-shaped
 list with two added fields:</p>
-<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">res</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/eigs_sym.html">eigs_sym</a></span><span class="op">(</span><span class="va">A</span>, k <span class="op">=</span> <span class="fl">5</span>, which <span class="op">=</span> <span class="st">"LA"</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/names.html" class="external-link">names</a></span><span class="op">(</span><span class="va">res</span><span class="op">)</span></span>
 <span><span class="co">#&gt; [1] "values"      "vectors"     "nconv"       "niter"       "nops"       </span></span>
@@ -527,12 +697,12 @@ list with two added fields:</p>
 <span><span class="co">#&gt;   norm bound: two_norm_lower_bound+identity_exact </span></span>
 <span><span class="co">#&gt;   norm source: ritz+identity </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
-<span><span class="co">#&gt;   max residual: 6.019888e-09 </span></span>
-<span><span class="co">#&gt;   max backward error: 6.007181e-10 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 1.110223e-15 </span></span>
+<span><span class="co">#&gt;   max residual: 2.308902e-09 </span></span>
+<span><span class="co">#&gt;   max backward error: 2.304028e-10 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 5.551115e-16 </span></span>
 <span><span class="co">#&gt;   orthogonality tolerance: 1.490116e-08 </span></span>
 <span><span class="co">#&gt;   orthogonality required: TRUE </span></span>
-<span><span class="co">#&gt;   target completeness: probed</span></span></code></pre></div>
+<span><span class="co">#&gt;   target completeness: inertia_verified</span></span></code></pre></div>
 <p>Code already written against <code><a href="https://rdrr.io/pkg/RSpectra/man/eigs.html" class="external-link">RSpectra::eigs_sym()</a></code>
 ignores <code>certificate</code> and <code>diagnostics</code> silently;
 new code can opt in to certified results without changing call
@@ -591,6 +761,24 @@ eigenvalues.</td>
 <td>Some leading returned pairs exceed the tolerance.</td>
 <td>Inspect <code>convergence_history</code>; increase
 <code>maxit</code> if the errors are still declining.</td>
+</tr>
+<tr class="even">
+<td>
+<code>passed = FALSE</code>, <code>residual_passed = TRUE</code>,
+<code>target_completeness = "inertia_failed"</code>
+</td>
+<td>An eigenvalue count proves a more-preferred eigenvalue is missing
+from the returned set.</td>
+<td>Use a block method with a block at least the multiplicity
+(<code>lanczos(block = )</code>), raise
+<code>eigencore.completeness_max_rounds</code>, or a dense solve.</td>
+</tr>
+<tr class="odd">
+<td><code>target_completeness = "inertia_inconclusive"</code></td>
+<td>The target edge cuts through a cluster (closer than the residual
+bound); every returned pair is still certified.</td>
+<td>Request a <code>k</code> that does not split the cluster, or tighten
+<code>tol</code>.</td>
 </tr>
 <tr class="even">
 <td>

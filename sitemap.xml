@@ -31,6 +31,7 @@
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/diagnostics.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/eig_full.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/eig_partial.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/reference/eigen_count.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/eigen_problem.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/eigencore-package.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.html</loc></url>
@@ -43,6 +44,7 @@
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/golub_kahan.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/hermitian.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/index.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/reference/interval.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/lanczos.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/largest.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/largest_imaginary.html</loc></url>
@@ -87,6 +89,7 @@
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/scale_cols.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/scale_rows.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/shift_invert.html</loc></url>
+<url><loc>https://bbuchsbaum.github.io/eigencore/reference/shift_invert_prepare_tridiagonal.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/shifted_cholesky_preconditioner.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/shifted_diagonal_preconditioner.html</loc></url>
 <url><loc>https://bbuchsbaum.github.io/eigencore/reference/shifted_tridiagonal_preconditioner.html</loc></url>
