@@ -30,7 +30,8 @@
 #   --list                             print the selected cases and exit
 #
 # Output: <out>/<YYYYMMDD>-<machine-id>-<profile>/
-#   results.csv       one row per case x method x threads
+#   results.csv       one row per case x method x threads (wall times and
+#                     process CPU time per repetition: cpu_median, cpu_min)
 #   cases.csv         one row per case: generator, size, reference source, ||A||_2
 #   environment.json  machine, R, BLAS/LAPACK, package versions, git SHA, load
 #   environment.rds   the same as an R list (plus per-worker thread settings)

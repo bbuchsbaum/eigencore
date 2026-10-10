@@ -1,5 +1,34 @@
 # eigencore (development version)
 
+## Single-thread performance (P19-P24)
+
+* Implicitly centred sparse PCA (`svd_partial(center(A))`,
+  `scale_cols(center(A), w)`) now runs the implicit Gram thick-restart
+  Lanczos on a fused centred CSC kernel instead of the matrix-free
+  Golub-Kahan callback cycle: 50000 x 1000, k = 10 went from ~1.35 s to
+  ~0.31 s CPU (RSpectra on the centred function operator: ~0.28 s). Row or
+  double centring keeps Golub-Kahan. Certification is unchanged.
+* Sparse shift-invert with `nearest()`: the inertia completeness count now
+  starts its margin from the shift-invert factor's own backward bound and
+  needs two LDL' factorisations instead of four (2-D Laplacian n = 10000:
+  ~107 -> ~87 ms CPU). The margin is still checked against each count's
+  actual bound.
+* Exactly symmetric dense matrices are applied with `dsymv` (one triangle)
+  in the thick-restart Lanczos kernel; dense symmetric 1500, k = 10:
+  ~220 -> ~165 ms CPU.
+* Sparse matrices with few nonzeros per row use the ARPACK subspace
+  `max(2k + 1, 20)` for scalar thick-restart Lanczos (was `3k + 20`):
+  reorthogonalisation dominated there (20-40% less CPU at n = 20000,
+  k = 10..40). `options(eigencore.lanczos_sparse_row_nnz)` (64) sets the
+  cut-off.
+* The nonsymmetric completeness probe merges a missed eigenvalue found by
+  its screening pass directly when that value already converged at the
+  solve tolerance, instead of re-running the probe at full tolerance first
+  (C60 case, sparse 20000 LM k = 6: ~13.6k -> ~9.7k operator columns,
+  ~12.6 -> ~7.8 s; same repaired set).
+* The benchmark runner records process CPU time per repetition
+  (`cpu_median`, `cpu_min` in `results.csv`).
+
 ## Nonsymmetric target completeness
 
 * Nonsymmetric Krylov-Schur results (`eig_partial()` on general matrices,
