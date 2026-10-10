@@ -45,17 +45,29 @@ native path always reorthogonalizes (DGKS x2) and ignores this flag;
 it is preserved for the R reference solver's public API.}
 
 \item{completeness}{Target-completeness check run after a certified
-standard Hermitian solve with a \code{largest()}, \code{smallest()} or
-\code{largest_magnitude()} target. \code{"probe"} runs a short block Lanczos
-process on the operator deflated against the returned eigenvectors (from a
-fixed-seed start; the global random stream is not touched) and, if it
-finds a more-preferred eigenvalue outside the returned set (for example a
-missed copy of a repeated eigenvalue), repairs the result with a deflated
-complement solve. \code{"none"} skips it. \code{NULL} (default) uses
-\code{getOption("eigencore.target_completeness", "probe")}. The outcome is
+Hermitian solve with a \code{largest()}, \code{smallest()},
+\code{largest_magnitude()} (or, for the inertia check, \code{nearest()}) target.
+\code{"inertia"} proves completeness deterministically by counting
+eigenvalues with an \eqn{LDL^T} factorisation of \verb{A - t B} (see
+\code{\link[=eigen_count]{eigen_count()}}); it needs an explicit dense or sparse matrix and
+reports \code{"inertia_verified"}, \code{"inertia_failed"} (repaired when
+possible, otherwise \code{passed = FALSE}) or \code{"inertia_inconclusive"} (an
+eigenvalue cluster straddles the target edge within the residual
+bound). \code{"probe"} runs a short block Lanczos process on the operator
+deflated against the returned eigenvectors (from a fixed-seed start; the
+global random stream is not touched) and, if it finds a more-preferred
+eigenvalue outside the returned set (for example a missed copy of a
+repeated eigenvalue), repairs the result with a deflated complement
+solve; it is probabilistic (it can prove a set incomplete but not
+complete) and is the check for matrix-free operators. \code{"auto"} uses the
+inertia check for edge targets (not \code{nearest()}) when the matrix is
+explicit and its predicted
+factorisation time is at most
+\verb{max(getOption("eigencore.completeness_inertia_seconds", 0.5), getOption("eigencore.completeness_inertia_ratio", 1) * solve time)},
+and the probe otherwise. \code{"none"} skips the check. \code{NULL} (default) uses
+\code{getOption("eigencore.target_completeness", "auto")}. The outcome is
 recorded in \code{certificate(fit)$target_completeness}; see the
-"Certificates" vignette. The probe is probabilistic: it can prove a set
-incomplete but not complete.}
+"Certificates" vignette.}
 }
 \value{
 An \code{eigencore_method} descriptor selecting Lanczos iteration.

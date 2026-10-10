@@ -3,6 +3,11 @@
 # single-vector Krylov method can miss a copy of an exactly repeated
 # eigenvalue (9, 9, 7, 7, 7 -> 9, 9, 7, 7, 5) and still certify every pair.
 # The deflated-complement probe must catch and repair that.
+#
+# These are the probe's regression tests, so the file pins the completeness
+# mode to "probe"; the default "auto" mode replaces the probe by the inertia
+# certificate when the matrix is explicit (tests in test-t5-inertia.R).
+withr::local_options(list(eigencore.target_completeness = "probe"))
 
 t4b_diag_sparse <- function(d, seed) {
   n <- length(d)

@@ -16,7 +16,8 @@
       crossprod_operator(A, name = NULL)
       diagnostics(x, ...)
       eig_full(A, B = NULL, structure = NULL, vectors = TRUE, tol = 1e-08, allow_dense_fallback = c("auto", "never", "always"), ...)
-      eig_partial(A, k, target = largest(), B = NULL, method = auto(), tol = 1e-08, maxit = NULL, vectors = TRUE, seed = NULL, certify = TRUE, allow_dense_fallback = c("auto", "never", "always"), initial_subspace = NULL, left_vectors = c("auto", "none", "compute"))
+      eig_partial(A, k = NULL, target = largest(), B = NULL, method = auto(), tol = 1e-08, maxit = NULL, vectors = TRUE, seed = NULL, certify = TRUE, allow_dense_fallback = c("auto", "never", "always"), initial_subspace = NULL, left_vectors = c("auto", "none", "compute"))
+      eigen_count(A, sigma, B = NULL, perturb = TRUE, pivot_tol = NULL)
       eigen_problem(A, metric = NULL, structure = NULL, target = largest(), transform = NULL)
       eigs(A, k, which = "LM", sigma = NULL, opts = list(), ..., n = NULL, args = NULL, left = FALSE)
       eigs_sym(A, k, which = "LM", sigma = NULL, opts = list(), lower = TRUE, ..., n = NULL, args = NULL)
@@ -26,6 +27,7 @@
       generalized_svd(A, B, tol = 1e-08, ...)
       golub_kahan(max_subspace = NULL, reorthogonalize = TRUE)
       hermitian()
+      interval(a, b)
       lanczos(max_subspace = NULL, max_restarts = NULL, block = 1L, check_stride = 0L, reorthogonalize = TRUE, completeness = NULL)
       largest()
       largest_imaginary()
@@ -93,6 +95,7 @@
       print.eigencore_certificate
       print.eigencore_eigen_result
       print.eigencore_gsvd_result
+      print.eigencore_inertia
       print.eigencore_operator
       print.eigencore_plan
       print.eigencore_psd_block_result

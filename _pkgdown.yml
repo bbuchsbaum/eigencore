@@ -95,6 +95,7 @@ reference:
   - smallest_imaginary
   - both_ends
   - nearest
+  - interval
 - title: Methods
   desc: Solver families and method descriptors.
   contents:
@@ -119,6 +120,7 @@ reference:
   desc: Inspecting solver output and the numerical evidence.
   contents:
   - certificate
+  - eigen_count
   - residuals
   - backward_error
   - values

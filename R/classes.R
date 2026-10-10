@@ -106,6 +106,78 @@ both_ends <- function(k_low, k_high) {
   new_target("both_ends", list(k_low = k_low, k_high = k_high))
 }
 
+#' Target every eigenvalue in an interval.
+#'
+#' `interval(a, b)` selects all eigenvalues of a Hermitian problem (or of a
+#' symmetric-definite pencil `A x = lambda B x`) that lie in the closed
+#' interval `[a, b]`. The number of such eigenvalues is not supplied: the
+#' solver counts them first with Sylvester's law of inertia (see
+#' [eigen_count()]), so `eig_partial(A, target = interval(a, b))` needs no
+#' `k`. A supplied `k` is an upper bound and must be at least the count.
+#'
+#' **End points.** The interval is closed. Counting factors `A - t B` at
+#' `t = a` and `t = b`; when a factorisation there is not reliable (an
+#' eigenvalue numerically at the end point) the end point is moved outward
+#' by a small recorded perturbation, so an eigenvalue inside that numerical
+#' zero band is counted as inside. Eigenvalues whose residual bound
+#' straddles an end point are reported in
+#' `certificate(fit)$completeness$boundary_ambiguous` rather than dropped.
+#'
+#' **Routes.** Dense matrices use LAPACK `dsyevr` with `RANGE = "V"`
+#' (exact: the tridiagonal Sturm bisection selects the eigenvalues);
+#' generalized dense pencils reduce with the Cholesky factor of `B` first.
+#' Sparse matrices are counted and solved with \eqn{LDL^T} shift-invert
+#' Lanczos at the interval centre; wide intervals are split into slices by
+#' inertia counts (spectrum slicing), each slice is solved at its own centre
+#' (reusing the symbolic factorisation) and the slices are merged. Every
+#' result is certified by residuals and by the inertia count:
+#' `certificate(fit)$target_completeness` is `"inertia_verified"` when the
+#' returned values provably are all eigenvalues in the interval (`"exact"`
+#' for the dense LAPACK route).
+#'
+#' Options: `eigencore.interval_dense_limit` (default 800) is the largest
+#' sparse dimension solved by the dense route; `eigencore.interval_slice_size`
+#' fixes the number of eigenvalues per slice (default: chosen from the
+#' predicted factorisation cost, between 60 and 200). Per-slice diagnostics
+#' (bounds, counts, the free count at each slice centre, operator applies,
+#' block size used for repeated eigenvalues) are in `fit$interval`.
+#'
+#' @param a,b Interval end points, `a < b`. One of them may be infinite
+#'   (`interval(-Inf, b)` selects every eigenvalue up to `b`); both infinite
+#'   is the full spectrum, use [eig_full()].
+#' @return An `eigencore_target` descriptor of kind `"interval"`.
+#' @examples
+#' A <- diag(c(1, 2, 2, 5, 7, 9))
+#' fit <- eig_partial(A, target = interval(1.5, 6))
+#' values(fit)
+#' certificate(fit)$target_completeness
+#' @export
+interval <- function(a, b) {
+  check <- function(x, name) {
+    x <- suppressWarnings(as.numeric(x))
+    if (length(x) != 1L || is.na(x)) {
+      stop(name, " must be a single number.", call. = FALSE)
+    }
+    x
+  }
+  a <- check(a, "a")
+  b <- check(b, "b")
+  if (!(a < b)) {
+    stop("interval(a, b) requires a < b, got a = ", format(a), ", b = ",
+         format(b), ".", call. = FALSE)
+  }
+  if (is.infinite(a) && is.infinite(b)) {
+    stop("interval(-Inf, Inf) is the full spectrum; use eig_full().",
+         call. = FALSE)
+  }
+  new_target("interval", list(lower = a, upper = b))
+}
+
+#' @noRd
+is_interval_target <- function(target) {
+  inherits(target, "eigencore_target") && identical(target$kind, "interval")
+}
+
 #' @noRd
 new_method <- function(kind, ...) {
   structure(c(list(kind = kind), list(...)), class = "eigencore_method")
@@ -172,17 +244,30 @@ auto <- function(max_subspace = NULL) {
 #'   native path always reorthogonalizes (DGKS x2) and ignores this flag;
 #'   it is preserved for the R reference solver's public API.
 #' @param completeness Target-completeness check run after a certified
-#'   standard Hermitian solve with a `largest()`, `smallest()` or
-#'   `largest_magnitude()` target. `"probe"` runs a short block Lanczos
-#'   process on the operator deflated against the returned eigenvectors (from a
-#'   fixed-seed start; the global random stream is not touched) and, if it
-#'   finds a more-preferred eigenvalue outside the returned set (for example a
-#'   missed copy of a repeated eigenvalue), repairs the result with a deflated
-#'   complement solve. `"none"` skips it. `NULL` (default) uses
-#'   `getOption("eigencore.target_completeness", "probe")`. The outcome is
+#'   Hermitian solve with a `largest()`, `smallest()`,
+#'   `largest_magnitude()` (or, for the inertia check, `nearest()`) target.
+#'   `"inertia"` proves completeness deterministically by counting
+#'   eigenvalues with an \eqn{LDL^T} factorisation of `A - t B` (see
+#'   [eigen_count()]); it needs an explicit dense or sparse matrix and
+#'   reports `"inertia_verified"`, `"inertia_failed"` (repaired when
+#'   possible, otherwise `passed = FALSE`) or `"inertia_inconclusive"` (an
+#'   eigenvalue cluster straddles the target edge within the residual
+#'   bound). `"probe"` runs a short block Lanczos process on the operator
+#'   deflated against the returned eigenvectors (from a fixed-seed start; the
+#'   global random stream is not touched) and, if it finds a more-preferred
+#'   eigenvalue outside the returned set (for example a missed copy of a
+#'   repeated eigenvalue), repairs the result with a deflated complement
+#'   solve; it is probabilistic (it can prove a set incomplete but not
+#'   complete) and is the check for matrix-free operators. `"auto"` uses the
+#'   inertia check for edge targets (not `nearest()`) when the matrix is
+#'   explicit and its predicted
+#'   factorisation time is at most
+#'   `max(getOption("eigencore.completeness_inertia_seconds", 0.5),
+#'   getOption("eigencore.completeness_inertia_ratio", 1) * solve time)`,
+#'   and the probe otherwise. `"none"` skips the check. `NULL` (default) uses
+#'   `getOption("eigencore.target_completeness", "auto")`. The outcome is
 #'   recorded in `certificate(fit)$target_completeness`; see the
-#'   "Certificates" vignette. The probe is probabilistic: it can prove a set
-#'   incomplete but not complete.
+#'   "Certificates" vignette.
 #' @return An `eigencore_method` descriptor selecting Lanczos iteration.
 #' @export
 lanczos <- function(max_subspace = NULL, max_restarts = NULL, block = 1L,
@@ -353,6 +438,10 @@ target_label <- function(target) {
   }
   if (identical(target$kind, "nearest")) {
     return(paste0("nearest(", target$value, ")"))
+  }
+  if (identical(target$kind, "interval")) {
+    return(paste0("interval(", format(target$value$lower, digits = 10), ", ",
+                  format(target$value$upper, digits = 10), ")"))
   }
   if (identical(target$kind, "both_ends")) {
     return(paste0("both_ends(", target$value$k_low, ", ", target$value$k_high, ")"))

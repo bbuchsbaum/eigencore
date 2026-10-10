@@ -3504,6 +3504,18 @@ extern "C" SEXP eigencore_csc_apply_repeat(SEXP i_, SEXP p_, SEXP x_,
 //   list(type = "product", children = list(C1, ..., Ck))          C1 C2 ... Ck
 //   list(type = "sum", children = list(...), weights = <double>)  sum w_i C_i
 //   list(type = "adjoint", child = C)                             C^T
+//   list(type = "ldl_solve", p =, i =, x =, nz =, perm =)        (P'LDL'P)^{-1}
+//   list(type = "cholmod_solve", factor = <CHMfactor>, n =)      A^{-1}
+//
+// The ldl_solve leaf (tranche 5) applies the inverse of a CHOLMOD simplicial
+// LDL' factor (Matrix dCHMsimpl slots: column j holds D_jj at x[p[j]] then
+// the strictly lower entries of the unit lower triangular L, nz[j] entries in
+// all; perm is CHOLMOD's 0-based fill-reducing permutation, L D L' =
+// A(perm, perm)). It is symmetric, so its adjoint is itself. Shift-invert
+// Lanczos applies (A - sigma B)^{-1} through it without an R round trip.
+// The cholmod_solve leaf does the same through CHOLMOD's own cholmod_solve2
+// (src/cholmod_bridge.c, Matrix C API); the R layer builds it only when the
+// run-time Matrix ABI matches the compiled one, and ldl_solve otherwise.
 //
 // The external pointer protects the spec, so the borrowed leaf storage lives
 // as long as the composite.
@@ -3518,7 +3530,42 @@ enum CompositeNodeType {
   COMPOSITE_RANK1 = 4,
   COMPOSITE_PRODUCT = 5,
   COMPOSITE_SUM = 6,
-  COMPOSITE_ADJOINT = 7
+  COMPOSITE_ADJOINT = 7,
+  COMPOSITE_LDL_SOLVE = 8,
+  COMPOSITE_CHOLMOD_SOLVE = 9
+};
+
+}  // namespace
+
+extern "C" void* eigencore_cholmod_solver_new(SEXP factor);
+extern "C" void eigencore_cholmod_solver_free(void* handle);
+extern "C" int eigencore_cholmod_solver_apply(void* handle, int ncol,
+                                              const double* X, int ldx,
+                                              double alpha, double beta,
+                                              double* out, int ldo);
+
+namespace {
+
+struct CholmodSolverHandle {
+  void* handle = nullptr;
+  CholmodSolverHandle() = default;
+  CholmodSolverHandle(const CholmodSolverHandle&) = delete;
+  CholmodSolverHandle& operator=(const CholmodSolverHandle&) = delete;
+  ~CholmodSolverHandle() {
+    if (handle != nullptr) {
+      eigencore_cholmod_solver_free(handle);
+    }
+  }
+};
+
+// Borrowed CHOLMOD simplicial LDL' factor (see the spec comment above).
+struct LdlSolveLeaf {
+  int64_t n = 0;
+  const int* p = nullptr;
+  const int* i = nullptr;
+  const double* x = nullptr;
+  const int* nz = nullptr;
+  const int* perm = nullptr;  // nullptr: natural ordering
 };
 
 struct CompositeNode {
@@ -3530,6 +3577,8 @@ struct CompositeNode {
   DiagonalOperator diagonal = {0, nullptr, false};
   const double* u = nullptr;
   const double* v = nullptr;
+  LdlSolveLeaf ldl;
+  CholmodSolverHandle cholmod;
   std::vector<std::unique_ptr<CompositeNode>> children;
   std::vector<double> weights;
   // Ping-pong intermediates of a product chain, grown on demand and reused.
@@ -3681,6 +3730,75 @@ static std::unique_ptr<CompositeNode> composite_build_node(SEXP spec,
         }
       }
     }
+  } else if (std::strcmp(type, "ldl_solve") == 0) {
+    SEXP p_ = composite_spec_field(spec, "p");
+    SEXP i_ = composite_spec_field(spec, "i");
+    SEXP x_ = composite_spec_field(spec, "x");
+    SEXP nz_ = composite_spec_field(spec, "nz");
+    SEXP perm_ = composite_spec_field(spec, "perm");
+    if (!isInteger(p_) || !isInteger(i_) || !isReal(x_) || !isInteger(nz_) ||
+        !(isNull(perm_) || isInteger(perm_))) {
+      error("invalid native composite spec: ldl_solve leaf needs integer p, i, nz, "
+            "perm and double x");
+    }
+    const R_xlen_t n = XLENGTH(nz_);
+    if (n < 1 || XLENGTH(p_) < n + 1 || XLENGTH(i_) != XLENGTH(x_) ||
+        (!isNull(perm_) && XLENGTH(perm_) != n)) {
+      error("invalid native composite spec: inconsistent ldl_solve factor slots");
+    }
+    const int* p = INTEGER(p_);
+    const int* ri = INTEGER(i_);
+    const double* x = REAL(x_);
+    const int* nz = INTEGER(nz_);
+    const R_xlen_t len = XLENGTH(x_);
+    // Validate the structure once: every column starts with its finite,
+    // nonzero diagonal pivot and stores strictly lower rows in range.
+    for (R_xlen_t j = 0; j < n; ++j) {
+      const R_xlen_t start = p[j];
+      const R_xlen_t count = nz[j];
+      if (count < 1 || start < 0 || start + count > len || ri[start] != j ||
+          !R_FINITE(x[start]) || x[start] == 0.0) {
+        error("invalid native composite spec: ldl_solve column %ld is malformed "
+              "or has a zero pivot", static_cast<long>(j));
+      }
+      for (R_xlen_t t = start + 1; t < start + count; ++t) {
+        if (ri[t] <= j || ri[t] >= n || !R_FINITE(x[t])) {
+          error("invalid native composite spec: ldl_solve column %ld is malformed",
+                static_cast<long>(j));
+        }
+      }
+    }
+    if (!isNull(perm_)) {
+      std::vector<char> seen(static_cast<size_t>(n), 0);
+      const int* perm = INTEGER(perm_);
+      for (R_xlen_t k = 0; k < n; ++k) {
+        if (perm[k] < 0 || perm[k] >= n || seen[static_cast<size_t>(perm[k])]) {
+          error("invalid native composite spec: ldl_solve perm is not a permutation");
+        }
+        seen[static_cast<size_t>(perm[k])] = 1;
+      }
+    }
+    node->type = COMPOSITE_LDL_SOLVE;
+    node->rows = node->cols = n;
+    node->ldl.n = n;
+    node->ldl.p = p;
+    node->ldl.i = ri;
+    node->ldl.x = x;
+    node->ldl.nz = nz;
+    node->ldl.perm = isNull(perm_) ? nullptr : INTEGER(perm_);
+  } else if (std::strcmp(type, "cholmod_solve") == 0) {
+    SEXP factor_ = composite_spec_field(spec, "factor");
+    SEXP n_ = composite_spec_field(spec, "n");
+    if (!isInteger(n_) || XLENGTH(n_) != 1 || INTEGER(n_)[0] < 1 ||
+        TYPEOF(factor_) != S4SXP) {
+      error("invalid native composite spec: cholmod_solve leaf needs a factor and n");
+    }
+    node->cholmod.handle = eigencore_cholmod_solver_new(factor_);
+    if (node->cholmod.handle == nullptr) {
+      error("invalid native composite spec: CHOLMOD factor could not be wrapped");
+    }
+    node->type = COMPOSITE_CHOLMOD_SOLVE;
+    node->rows = node->cols = INTEGER(n_)[0];
   } else if (std::strcmp(type, "adjoint") == 0) {
     node->type = COMPOSITE_ADJOINT;
     node->children.push_back(
@@ -3695,6 +3813,87 @@ static std::unique_ptr<CompositeNode> composite_build_node(SEXP spec,
     error("native composite dimensions exceed the LP64 BLAS/R integer range");
   }
   return node;
+}
+
+// y = alpha (P' L D L' P)^{-1} x + beta y for each column (the factor is
+// symmetric, so the adjoint is the same map). Columns are independent and
+// run in parallel when there are several.
+static int ldl_solve_apply(const LdlSolveLeaf& f, int64_t block_cols,
+                           const double* X, int64_t ldx, double alpha,
+                           double beta, double* Y, int64_t ldy) {
+  const int64_t n = f.n;
+  int status = 0;
+#ifdef _OPENMP
+  const int threads = block_cols > 1 ?
+    std::min<int>(eigencore_thread_count(), static_cast<int>(block_cols)) : 1;
+#pragma omp parallel num_threads(threads) if (threads > 1)
+#endif
+  {
+    std::vector<double> z;
+    try {
+      z.resize(static_cast<size_t>(n));
+    } catch (const std::bad_alloc&) {
+#ifdef _OPENMP
+#pragma omp atomic write
+#endif
+      status = -3;
+    }
+    if (z.size() == static_cast<size_t>(n)) {
+#ifdef _OPENMP
+#pragma omp for schedule(static)
+#endif
+      for (int64_t c = 0; c < block_cols; ++c) {
+        const double* xc = X + c * ldx;
+        double* yc = Y + c * ldy;
+        double* zz = z.data();
+        if (f.perm != nullptr) {
+          for (int64_t k = 0; k < n; ++k) zz[k] = xc[f.perm[k]];
+        } else {
+          std::memcpy(zz, xc, sizeof(double) * static_cast<size_t>(n));
+        }
+        // L z = b (unit lower, column oriented), then D.
+        const int* const fp = f.p;
+        const int* const fi = f.i;
+        const int* const fnz = f.nz;
+        const double* const fx = f.x;
+        for (int64_t j = 0; j < n; ++j) {
+          const int start = fp[j];
+          const int stop = start + fnz[j];
+          const double zj = zz[j];
+          if (zj != 0.0) {
+            for (int t = start + 1; t < stop; ++t) {
+              zz[fi[t]] -= fx[t] * zj;
+            }
+          }
+          zz[j] = zj / fx[start];
+        }
+        // L' z = w (unit upper, row oriented on the stored columns).
+        for (int64_t j = n - 1; j >= 0; --j) {
+          const int start = fp[j];
+          const int stop = start + fnz[j];
+          double s = zz[j];
+          for (int t = start + 1; t < stop; ++t) {
+            s -= fx[t] * zz[fi[t]];
+          }
+          zz[j] = s;
+        }
+        if (f.perm != nullptr) {
+          if (beta == 0.0) {
+            for (int64_t k = 0; k < n; ++k) yc[f.perm[k]] = alpha * zz[k];
+          } else {
+            for (int64_t k = 0; k < n; ++k) {
+              yc[f.perm[k]] = alpha * zz[k] + beta * yc[f.perm[k]];
+            }
+          }
+        } else if (beta == 0.0) {
+          for (int64_t k = 0; k < n; ++k) yc[k] = alpha * zz[k];
+        } else {
+          for (int64_t k = 0; k < n; ++k) yc[k] = alpha * zz[k] + beta * yc[k];
+        }
+      }
+    }
+  }
+  return status;
 }
 
 static int composite_node_apply(CompositeNode* node, bool adjoint,
@@ -3743,6 +3942,13 @@ static int composite_node_apply(CompositeNode* node, bool adjoint,
       }
       return 0;
     }
+    case COMPOSITE_LDL_SOLVE:
+      return ldl_solve_apply(node->ldl, block_cols, X, ldx, alpha, beta, Y,
+                             ldy);
+    case COMPOSITE_CHOLMOD_SOLVE:
+      return eigencore_cholmod_solver_apply(
+        node->cholmod.handle, static_cast<int>(block_cols), X,
+        static_cast<int>(ldx), alpha, beta, Y, static_cast<int>(ldy));
     case COMPOSITE_ADJOINT:
       return composite_node_apply(node->children.front().get(), !adjoint,
                                   block_cols, X, ldx, alpha, beta, Y, ldy);

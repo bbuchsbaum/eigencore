@@ -391,6 +391,7 @@ native_generalized_lanczos_hermitian <- function(op, Bop, k, target = smallest()
   if (length(max_restarts) != 1L || is.na(max_restarts) || max_restarts < 0L) {
     max_restarts <- 100L
   }
+  started_solve <- proc.time()[["elapsed"]]
   transformed <- native_generalized_lanczos_transform_operator(op, Bop, target = target)
   iter <- native_block_lanczos_hermitian(
     transformed$operator,
@@ -404,35 +405,109 @@ native_generalized_lanczos_hermitian <- function(op, Bop, k, target = smallest()
     full_subspace = TRUE,
     certificate_fallback = TRUE
   )
-  # Target completeness (C50) on the transformed standard problem
-  # C = L^{-1} A L^{-T}: Euclidean deflation there is B-orthogonal deflation
-  # of the pencil, so the probe and any repair act before the back-transform.
-  completeness <- NULL
-  if (identical(completeness_mode, "probe") &&
-      isTRUE(iter$certificate$passed) && !is.null(iter$vectors) &&
-      !is.null(completeness_target_kind(target)) &&
-      length(iter$values) == k && k < n) {
+  # Target completeness (C50). With explicit A and B the inertia count of
+  # A - t B proves (or refutes) completeness of the pencil's returned set
+  # directly ("auto" / "inertia" modes, subject to the cost gate). The
+  # deflated-complement probe and its repair act on the transformed standard
+  # problem C = L^{-1} A L^{-T} (Euclidean deflation there is B-orthogonal
+  # deflation of the pencil), before the back-transform; they run when the
+  # inertia certificate is not used, or to repair an inertia failure.
+  started_completeness <- proc.time()[["elapsed"]]
+  probe_eligible <- !is.null(completeness_target_kind(target)) && k < n
+  finish_values <- function(iter) {
+    mapped <- transformed$back_transform(iter$vectors)
+    orth <- lobpcg_b_orthonormalize(mapped, Bop)
+    mapped <- orth$Q[, seq_len(min(k, ncol(orth$Q))), drop = FALSE]
+    vals <- iter$values[seq_len(ncol(mapped))]
+    cert <- certify_eigen_operator(op, vals, mapped, Bop = Bop, tol = tol)
+    list(values = vals, vectors = mapped, orth = orth, cert = cert)
+  }
+  run_probe <- function(iter) {
     started <- proc.time()[["elapsed"]]
-    completeness <- target_completeness_check(
+    check <- target_completeness_check(
       transformed$operator, iter$values, iter$vectors, target, tol = tol,
       residuals = iter$certificate$residuals, norm_scale = iter$certificate$scale
     )
-    completeness$record$seconds <- proc.time()[["elapsed"]] - started
-    completeness$record$space <- "transformed_standard_problem"
-    if (isTRUE(completeness$repaired)) {
-      iter$values <- completeness$values
-      iter$vectors <- completeness$vectors
-    }
+    check$record$seconds <- proc.time()[["elapsed"]] - started
+    check$record$space <- "transformed_standard_problem"
+    check
   }
-  mapped_vectors <- transformed$back_transform(iter$vectors)
-  orth <- lobpcg_b_orthonormalize(mapped_vectors, Bop)
-  mapped_vectors <- orth$Q[, seq_len(min(k, ncol(orth$Q))), drop = FALSE]
-  values <- iter$values[seq_len(ncol(mapped_vectors))]
-  cert <- certify_eigen_operator(op, values, mapped_vectors, Bop = Bop, tol = tol)
-  cert <- if (is.null(completeness)) {
-    certificate_with_completeness(cert, "not_checked")
+  solve_seconds <- started_completeness - started_solve
+  inertia_gate <- if (completeness_mode %in% c("auto", "inertia") &&
+                      isTRUE(iter$certificate$passed) && k < n &&
+                      !is.null(inertia_completeness_kind(target))) {
+    inertia_completeness_gate(list(A = op, metric = Bop, target = target),
+                              completeness_mode, k, solve_seconds = solve_seconds)
   } else {
-    certificate_with_completeness(cert, completeness$status, completeness$record)
+    NULL
+  }
+  completeness <- NULL
+  if (isTRUE(inertia_gate$use)) {
+    final <- finish_values(iter)
+    check <- inertia_completeness_check(
+      op, final$values, final$cert$residuals, final$cert$orthogonality, target,
+      Bop = Bop, ctx = inertia_gate$ctx
+    )
+    record <- check$record
+    record$repaired <- FALSE
+    record$gate <- inertia_gate$reason
+    record$predicted_seconds <- inertia_gate$predicted_seconds
+    record$operator_columns <- 0L
+    record$operator_block_calls <- 0L
+    status <- check$status
+    if (identical(status, "inertia_failed") && probe_eligible &&
+        isTRUE(final$cert$passed)) {
+      probe <- run_probe(iter)
+      record$probe <- probe$record
+      record$operator_columns <- probe$record$operator_columns
+      record$operator_block_calls <- probe$record$operator_block_calls
+      if (isTRUE(probe$repaired)) {
+        iter$values <- probe$values
+        iter$vectors <- probe$vectors
+        final <- finish_values(iter)
+        again <- inertia_completeness_check(
+          op, final$values, final$cert$residuals, final$cert$orthogonality,
+          target, Bop = Bop, ctx = inertia_gate$ctx
+        )
+        keep <- c("edge", "rho", "margin", "threshold_upper", "count_upper",
+                  "threshold_lower", "count_lower", "reason")
+        record[keep] <- again$record[keep]
+        record$factorizations <- record$factorizations + again$record$factorizations
+        record$repaired <- TRUE
+        status <- again$status
+      }
+    }
+    record$seconds <- proc.time()[["elapsed"]] - started_completeness
+    values <- final$values
+    mapped_vectors <- final$vectors
+    orth <- final$orth
+    cert <- certificate_with_completeness(final$cert, status, record)
+  } else {
+    if (identical(completeness_mode, "probe") ||
+        (completeness_mode %in% c("auto", "inertia") && !isTRUE(inertia_gate$use))) {
+      if (!identical(completeness_mode, "none") &&
+          isTRUE(iter$certificate$passed) && !is.null(iter$vectors) &&
+          probe_eligible && length(iter$values) == k) {
+        completeness <- run_probe(iter)
+        if (!is.null(inertia_gate)) {
+          completeness$record$inertia_gate <- inertia_gate$reason
+          completeness$record$inertia_predicted_seconds <- inertia_gate$predicted_seconds
+        }
+        if (isTRUE(completeness$repaired)) {
+          iter$values <- completeness$values
+          iter$vectors <- completeness$vectors
+        }
+      }
+    }
+    final <- finish_values(iter)
+    values <- final$values
+    mapped_vectors <- final$vectors
+    orth <- final$orth
+    cert <- if (is.null(completeness)) {
+      certificate_with_completeness(final$cert, "not_checked")
+    } else {
+      certificate_with_completeness(final$cert, completeness$status, completeness$record)
+    }
   }
   history <- iter$convergence_history %||% data.frame()
   list(

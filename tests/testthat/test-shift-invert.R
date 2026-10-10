@@ -73,11 +73,11 @@ test_that("auto nearest target preserves sparse shift-invert boundary labels", {
   fit <- eig_partial(A_csc, k = 4L, target = nearest(15.5))
   expected <- vals[order(abs(vals - 15.5))][1:4]
   expect_identical(fit$method,
-                   "native thick-restart Hermitian Lanczos shift-invert (sparse LU solve callback)")
+                   "native thick-restart Hermitian Lanczos shift-invert (sparse LDL' solve callback)")
   expect_equal(sort(values(fit)), sort(expected), tolerance = 1e-7)
   expect_identical(fit$transform$kind, "shift_invert")
   expect_equal(fit$transform$factorization_cache$contract$provider,
-               "Matrix::lu_reference_factorization")
+               "Matrix::Cholesky_LDL_reference_factorization")
   expect_equal(fit$transform$factorization_cache$contract$promotion_status,
                "reference_boundary")
   expect_true(all(fit$certificate$converged))
@@ -127,7 +127,7 @@ test_that("shift-invert handles a sparse CSC source via factorized solve", {
                      method = shift_invert(sigma = 15.5))
 
   expect_identical(fit$method,
-                   "native thick-restart Hermitian Lanczos shift-invert (sparse LU solve callback)")
+                   "native thick-restart Hermitian Lanczos shift-invert (sparse LDL' solve callback)")
   expected <- vals[order(abs(vals - 15.5))][1:4]
   expect_equal(sort(fit$values), sort(expected), tolerance = 1e-7)
   # The dsCMatrix source carries an exact Frobenius norm (Matrix::norm), so the
@@ -140,16 +140,16 @@ test_that("shift-invert handles a sparse CSC source via factorized solve", {
   expect_true(fit$certificate$passed)
   expect_lt(max(fit$certificate$backward_error), 1e-7)
   cache <- fit$transform$factorization_cache
-  expect_equal(cache$label_kind, "sparse_lu")
-  expect_equal(cache$factorization, "Matrix::lu")
+  expect_equal(cache$label_kind, "sparse_ldl")
+  expect_equal(cache$factorization, "Matrix::Cholesky(LDL = TRUE, super = FALSE)")
   expect_true(cache$factorization_cached)
-  expect_equal(cache$condition_estimate_type, "sparse_lu_pivot_ratio")
+  expect_equal(cache$condition_estimate_type, "sparse_ldl_pivot_ratio")
   expect_true(is.finite(cache$condition_estimate))
   expect_gt(cache$condition_estimate, 0)
   expect_false(isTRUE(cache$near_singular))
   contract <- cache$contract
   expect_equal(contract$contract_version, "shift_invert_factorization_contract_v1")
-  expect_equal(contract$provider, "Matrix::lu_reference_factorization")
+  expect_equal(contract$provider, "Matrix::Cholesky_LDL_reference_factorization")
   expect_equal(contract$promotion_status, "reference_boundary")
   expect_false(contract$owned_by_eigencore)
   expect_false(contract$external_cache)
@@ -342,14 +342,14 @@ test_that("generalized shift-invert keeps non-tridiagonal sparse A reference-lab
 
   expect_identical(
     fit$method,
-    "native thick-restart generalized SPD Lanczos shift-invert (sparse LU solve callback)"
+    "native thick-restart generalized SPD Lanczos shift-invert (sparse LDL' solve callback)"
   )
   expect_equal(sort(fit$values), sort(expected), tolerance = 1e-6)
   expect_equal(fit$transform$factorization_cache$label_kind,
-               "sparse_lu_generalized")
+               "sparse_ldl_generalized")
   expect_false(isTRUE(fit$transform$factorization_cache$native))
   contract <- fit$transform$factorization_cache$contract
-  expect_equal(contract$provider, "Matrix::lu_reference_factorization")
+  expect_equal(contract$provider, "Matrix::Cholesky_LDL_reference_factorization")
   expect_equal(contract$promotion_status, "reference_boundary")
   expect_false(contract$owned_by_eigencore)
   expect_true(contract$generalized)

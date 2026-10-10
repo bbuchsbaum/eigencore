@@ -6,7 +6,7 @@
 \usage{
 eig_partial(
   A,
-  k,
+  k = NULL,
   target = largest(),
   B = NULL,
   method = auto(),
@@ -23,7 +23,10 @@ eig_partial(
 \arguments{
 \item{A}{Matrix or eigencore operator.}
 
-\item{k}{Number of eigenpairs to compute.}
+\item{k}{Number of eigenpairs to compute. Required except for an
+\code{\link[=interval]{interval()}} target, whose count comes from an inertia factorisation;
+there a supplied \code{k} is an upper bound (an error if the interval holds
+more eigenvalues).}
 
 \item{target}{Eigencore eigenvalue target descriptor. With
 \code{method = shift_invert(sigma)} it defaults to \code{nearest(sigma)}; other

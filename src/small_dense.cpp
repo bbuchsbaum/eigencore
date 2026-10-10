@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 #include "eigencore_common.h"
 #include <R.h>
 #include <Rinternals.h>
@@ -102,21 +103,23 @@ static void* qz_complex_selector(int sort_code) {
 // otherwise RANGE = 'I' over [il, iu] (1-based). Eigenvalues land in w
 // (length n), eigenvectors in z (n x count) when want_vectors.
 // Returns LAPACK info; *m_found receives the number of eigenvalues found.
+// value_range: RANGE = 'V' over the half-open (vl, vu] instead (z must
+// then hold n x n).
 static int run_dsyevr(const double* A, int n, bool want_vectors, int il,
-                      int iu, double* w, double* z, int* m_found) {
+                      int iu, double* w, double* z, int* m_found,
+                      bool value_range = false, double vl = 0.0,
+                      double vu = 0.0) {
   const size_t nn = static_cast<size_t>(n) * static_cast<size_t>(n);
   double* work_matrix = reinterpret_cast<double*>(R_alloc(nn, sizeof(double)));
   std::memcpy(work_matrix, A, sizeof(double) * nn);
-  const bool all = (il <= 0);
-  const int count = all ? n : (iu - il + 1);
+  const bool all = !value_range && (il <= 0);
+  const int count = (all || value_range) ? n : (iu - il + 1);
   char jobz = want_vectors ? 'V' : 'N';
-  char range = all ? 'A' : 'I';
+  char range = value_range ? 'V' : (all ? 'A' : 'I');
   char uplo = 'U';
-  double vl = 0.0;
-  double vu = 0.0;
   double abstol = 0.0;
-  int il_la = all ? 1 : il;
-  int iu_la = all ? n : iu;
+  int il_la = (all || value_range) ? 1 : il;
+  int iu_la = (all || value_range) ? n : iu;
   int ldz = want_vectors ? n : 1;
   double z_dummy = 0.0;
   double* z_ptr = want_vectors ? z : &z_dummy;
@@ -1225,6 +1228,59 @@ extern "C" SEXP eigencore_dense_symmetric_eigen_selected(SEXP A_, SEXP k_,
   EIGENCORE_ENTRY_END
 }
 
+// Dense symmetric eigenpairs with eigenvalues in the half-open range
+// (vl, vu] via dsyevr RANGE = 'V' (interval targets). Values ascending.
+extern "C" SEXP eigencore_dense_symmetric_eigen_value_range(SEXP A_, SEXP vl_,
+                                                            SEXP vu_,
+                                                            SEXP vectors_flag_) {
+  EIGENCORE_ENTRY_BEGIN
+  if (!isReal(A_)) {
+    error("A must be a double matrix");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  if (dimA == R_NilValue || INTEGER(dimA)[0] != INTEGER(dimA)[1]) {
+    error("A must be a square matrix");
+  }
+  const int n = INTEGER(dimA)[0];
+  const double vl = asReal(vl_);
+  const double vu = asReal(vu_);
+  if (!R_FINITE(vl) || !R_FINITE(vu) || !(vl < vu)) {
+    error("value range must be finite with vl < vu");
+  }
+  const bool want_vectors = vectors_flag(vectors_flag_);
+  int m_found = 0;
+  double* w = reinterpret_cast<double*>(
+    R_alloc(static_cast<size_t>(n > 0 ? n : 1), sizeof(double)));
+  double* z = want_vectors && n > 0 ? reinterpret_cast<double*>(
+    R_alloc(static_cast<size_t>(n) * static_cast<size_t>(n), sizeof(double))) : NULL;
+  if (n > 0) {
+    const int info = run_dsyevr(REAL(A_), n, want_vectors, 0, 0, w, z,
+                                &m_found, true, vl, vu);
+    if (info != 0) {
+      error("LAPACK dsyevr (RANGE = 'V') failed with info=%d", info);
+    }
+  }
+  SEXP values_ = PROTECT(allocVector(REALSXP, m_found));
+  for (int i = 0; i < m_found; ++i) {
+    REAL(values_)[i] = w[i];
+  }
+  SEXP vectors_ = PROTECT(want_vectors ? allocMatrix(REALSXP, n, m_found) : R_NilValue);
+  if (want_vectors && m_found > 0) {
+    std::memcpy(REAL(vectors_), z,
+                sizeof(double) * static_cast<size_t>(n) * static_cast<size_t>(m_found));
+  }
+  SEXP out_ = PROTECT(allocVector(VECSXP, 2));
+  SET_VECTOR_ELT(out_, 0, values_);
+  SET_VECTOR_ELT(out_, 1, vectors_);
+  SEXP names_ = PROTECT(allocVector(STRSXP, 2));
+  SET_STRING_ELT(names_, 0, mkChar("values"));
+  SET_STRING_ELT(names_, 1, mkChar("vectors"));
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(4);
+  return out_;
+  EIGENCORE_ENTRY_END
+}
+
 extern "C" SEXP eigencore_dense_symmetric_eigen_dsyevx_selected(SEXP A_, SEXP k_, SEXP target_kind_) {
   EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
@@ -2117,5 +2173,318 @@ extern "C" SEXP eigencore_tridiagonal_solve(SEXP lower_, SEXP diag_,
 
   UNPROTECT(1);
   return out_;
+  EIGENCORE_ENTRY_END
+}
+
+// ---------------------------------------------------------------------------
+// Sylvester inertia helpers (tranche 5, capability gap 4).
+//
+// Each helper factors a shifted symmetric matrix M = A - sigma B and returns
+// a named numeric vector
+//   neg, zero, pos          inertia of the computed block-diagonal factor D
+//   min_abs_pivot           smallest |eigenvalue| over the 1x1 / 2x2 pivots
+//   max_abs_pivot           largest  |eigenvalue| over the pivots
+//   max_abs_multiplier      largest |L_ij| (i > j, outside 2x2 pivot blocks)
+//   growth                  || |L| |D| |L'| ||_inf (sparse LDL'); dense and
+//                           tridiagonal report max_abs_pivot *
+//                           max(1, max_abs_multiplier)^2 as a proxy
+//   norm1                   ||M||_1 (= ||M||_inf, symmetric); NA when the
+//                           helper does not see M (sparse factor diagnostics)
+//   info                    LAPACK info (> 0: an exact zero pivot)
+//   two_by_two              number of 2x2 pivot blocks
+// By Sylvester's law of inertia M = P L D L' P' is congruent to D, so the
+// counts are those of the eigenvalues of A - sigma B, i.e. (B positive
+// definite) of the pencil's eigenvalues below / at / above sigma. They are
+// exact for a backward-perturbed M; the R layer (R/inertia.R) judges
+// reliability from min_abs_pivot and growth relative to the matrix scale.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct InertiaTally {
+  double neg = 0.0;
+  double zero = 0.0;
+  double pos = 0.0;
+  double min_abs = R_PosInf;
+  double max_abs = 0.0;
+  double max_mult = 0.0;
+  double growth = 0.0;
+  double norm1 = 0.0;
+  double info = 0.0;
+  double two_by_two = 0.0;
+
+  void add_pivot(double value) {
+    if (value < 0.0) {
+      neg += 1.0;
+    } else if (value > 0.0) {
+      pos += 1.0;
+    } else {
+      zero += 1.0;
+    }
+    const double a = fabs(value);
+    if (a < min_abs) min_abs = a;
+    if (a > max_abs) max_abs = a;
+  }
+};
+
+SEXP inertia_tally_sexp(const InertiaTally& t) {
+  const char* names[] = {"neg", "zero", "pos", "min_abs_pivot", "max_abs_pivot",
+                         "max_abs_multiplier", "growth", "norm1", "info",
+                         "two_by_two"};
+  const double values[] = {t.neg, t.zero, t.pos,
+                           R_FINITE(t.min_abs) ? t.min_abs : 0.0, t.max_abs,
+                           t.max_mult, t.growth, t.norm1, t.info, t.two_by_two};
+  const int len = 10;
+  SEXP out_ = PROTECT(allocVector(REALSXP, len));
+  SEXP names_ = PROTECT(allocVector(STRSXP, len));
+  for (int i = 0; i < len; ++i) {
+    REAL(out_)[i] = values[i];
+    SET_STRING_ELT(names_, i, mkChar(names[i]));
+  }
+  setAttrib(out_, R_NamesSymbol, names_);
+  UNPROTECT(2);
+  return out_;
+}
+
+}  // namespace
+
+// Dense real symmetric inertia of A - sigma B (B = NULL: identity) by
+// Bunch-Kaufman LDL' (dsytrf on the lower triangle). Only the lower
+// triangles of A and B are read.
+extern "C" SEXP eigencore_dense_symmetric_inertia(SEXP A_, SEXP sigma_, SEXP B_) {
+  EIGENCORE_ENTRY_BEGIN
+  if (!isReal(A_)) {
+    error("A must be a double matrix");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  if (dimA == R_NilValue || INTEGER(dimA)[0] != INTEGER(dimA)[1]) {
+    error("A must be a square matrix");
+  }
+  const int n = INTEGER(dimA)[0];
+  const double sigma = asReal(sigma_);
+  if (!R_FINITE(sigma)) {
+    error("sigma must be finite");
+  }
+  const bool has_B = B_ != R_NilValue;
+  if (has_B) {
+    SEXP dimB = getAttrib(B_, R_DimSymbol);
+    if (!isReal(B_) || dimB == R_NilValue || INTEGER(dimB)[0] != n ||
+        INTEGER(dimB)[1] != n) {
+      error("B must be a double matrix with the dimensions of A");
+    }
+  }
+  InertiaTally tally;
+  if (n == 0) {
+    return inertia_tally_sexp(tally);
+  }
+  const size_t nn = static_cast<size_t>(n) * static_cast<size_t>(n);
+  std::vector<double> M(nn, 0.0);
+  const double* A = REAL(A_);
+  const double* B = has_B ? REAL(B_) : nullptr;
+  std::vector<double> colsum(static_cast<size_t>(n), 0.0);
+  for (int j = 0; j < n; ++j) {
+    for (int i = j; i < n; ++i) {
+      const size_t ij = static_cast<size_t>(i) + static_cast<size_t>(j) * n;
+      const double v = A[ij] - (has_B ? sigma * B[ij] : (i == j ? sigma : 0.0));
+      if (!R_FINITE(v)) {
+        error("A - sigma B has non-finite entries");
+      }
+      M[ij] = v;
+      colsum[static_cast<size_t>(j)] += fabs(v);
+      if (i != j) {
+        colsum[static_cast<size_t>(i)] += fabs(v);
+      }
+    }
+  }
+  for (int j = 0; j < n; ++j) {
+    if (colsum[static_cast<size_t>(j)] > tally.norm1) {
+      tally.norm1 = colsum[static_cast<size_t>(j)];
+    }
+  }
+  std::vector<int> ipiv(static_cast<size_t>(n), 0);
+  char uplo = 'L';
+  int info = 0;
+  int lwork = -1;
+  double work_query = 0.0;
+  F77_CALL(dsytrf)(&uplo, &n, M.data(), &n, ipiv.data(), &work_query, &lwork,
+                   &info FCONE);
+  if (info < 0) {
+    error("LAPACK dsytrf workspace query failed with info=%d", info);
+  }
+  lwork = static_cast<int>(work_query);
+  if (lwork < n) lwork = n;
+  std::vector<double> work(static_cast<size_t>(lwork));
+  F77_CALL(dsytrf)(&uplo, &n, M.data(), &n, ipiv.data(), work.data(), &lwork,
+                   &info FCONE);
+  if (info < 0) {
+    error("LAPACK dsytrf failed with info=%d", info);
+  }
+  tally.info = static_cast<double>(info);
+  int k = 0;
+  while (k < n) {
+    const size_t kk = static_cast<size_t>(k) + static_cast<size_t>(k) * n;
+    if (ipiv[static_cast<size_t>(k)] > 0) {
+      tally.add_pivot(M[kk]);
+      for (int i = k + 1; i < n; ++i) {
+        const double l = fabs(M[static_cast<size_t>(i) + static_cast<size_t>(k) * n]);
+        if (l > tally.max_mult) tally.max_mult = l;
+      }
+      k += 1;
+    } else {
+      if (k + 1 >= n) {
+        error("LAPACK dsytrf returned an incomplete 2x2 pivot block");
+      }
+      // 2x2 pivot [a b; b c]: its two eigenvalues, the small one from the
+      // determinant to avoid cancellation.
+      const double a = M[kk];
+      const double b = M[kk + 1];
+      const double c = M[kk + 1 + static_cast<size_t>(n)];
+      const double mean = 0.5 * (a + c);
+      const double rad = hypot(0.5 * (a - c), b);
+      const double big = mean >= 0.0 ? mean + rad : mean - rad;
+      const double det = a * c - b * b;
+      const double small = big != 0.0 ? det / big : 0.0;
+      tally.add_pivot(big);
+      tally.add_pivot(small);
+      tally.two_by_two += 1.0;
+      for (int col = k; col <= k + 1; ++col) {
+        for (int i = k + 2; i < n; ++i) {
+          const double l = fabs(M[static_cast<size_t>(i) + static_cast<size_t>(col) * n]);
+          if (l > tally.max_mult) tally.max_mult = l;
+        }
+      }
+      k += 2;
+    }
+  }
+  const double m1 = tally.max_mult > 1.0 ? tally.max_mult : 1.0;
+  tally.growth = tally.max_abs * m1 * m1;
+  return inertia_tally_sexp(tally);
+  EIGENCORE_ENTRY_END
+}
+
+// Sturm count for the symmetric tridiagonal T - sigma B (B diagonal; NULL =
+// identity) from the pivots of the unpivoted recurrence
+//   q_1 = d_1 - sigma b_1,  q_i = (d_i - sigma b_i) - e_{i-1}^2 / q_{i-1}.
+// The count is backward stable (it is exact for a componentwise relative
+// perturbation of T; Kahan, Demmel). A pivot with |q| <= pivmin is replaced
+// by -pivmin as in LAPACK dlaebz and reported as a zero pivot (not in neg).
+extern "C" SEXP eigencore_tridiagonal_inertia(SEXP d_, SEXP e_, SEXP sigma_, SEXP b_) {
+  EIGENCORE_ENTRY_BEGIN
+  if (!isReal(d_) || !isReal(e_)) {
+    error("tridiagonal inertia: d and e must be double vectors");
+  }
+  const R_xlen_t n = XLENGTH(d_);
+  if (n > 0 && XLENGTH(e_) != n - 1) {
+    error("tridiagonal inertia: e must have length n - 1");
+  }
+  const bool has_b = b_ != R_NilValue;
+  if (has_b && (!isReal(b_) || XLENGTH(b_) != n)) {
+    error("tridiagonal inertia: b must be a double vector of length n");
+  }
+  const double sigma = asReal(sigma_);
+  if (!R_FINITE(sigma)) {
+    error("sigma must be finite");
+  }
+  const double* d = REAL(d_);
+  const double* e = REAL(e_);
+  const double* b = has_b ? REAL(b_) : nullptr;
+  InertiaTally tally;
+  double emax2 = 0.0;
+  for (R_xlen_t i = 0; i + 1 < n; ++i) {
+    if (!R_FINITE(e[i])) error("tridiagonal inertia: non-finite off-diagonal");
+    if (e[i] * e[i] > emax2) emax2 = e[i] * e[i];
+  }
+  const double pivmin = DBL_MIN * (emax2 > 1.0 ? emax2 : 1.0);
+  double q = 0.0;
+  for (R_xlen_t i = 0; i < n; ++i) {
+    const double di = d[i] - sigma * (has_b ? b[i] : 1.0);
+    if (!R_FINITE(di)) error("tridiagonal inertia: non-finite diagonal");
+    const double left = i > 0 ? fabs(e[i - 1]) : 0.0;
+    const double right = i + 1 < n ? fabs(e[i]) : 0.0;
+    const double rowsum = fabs(di) + left + right;
+    if (rowsum > tally.norm1) tally.norm1 = rowsum;
+    q = i == 0 ? di : di - (e[i - 1] * e[i - 1]) / q;
+    const double aq = fabs(q);
+    if (aq < tally.min_abs) tally.min_abs = aq;
+    if (aq > tally.max_abs) tally.max_abs = aq;
+    if (aq <= pivmin) {
+      tally.zero += 1.0;
+      q = -pivmin;
+    } else if (q < 0.0) {
+      tally.neg += 1.0;
+    } else {
+      tally.pos += 1.0;
+    }
+  }
+  tally.growth = tally.max_abs;
+  return inertia_tally_sexp(tally);
+  EIGENCORE_ENTRY_END
+}
+
+// Diagnostics of a CHOLMOD simplicial LDL' factor (Matrix dCHMsimpl slots
+// p, i, x, nz): column j holds D_jj at x[p[j]] (row j) followed by the
+// strictly lower entries of the unit lower triangular L. Returns the inertia
+// of D, the pivot extremes, max |L_ij| and growth = || |L| |D| |L'| ||_inf,
+// whose ratio to ||A - sigma B||_inf bounds the componentwise backward error
+// of the unpivoted factorisation (up to a modest multiple of eps).
+extern "C" SEXP eigencore_simplicial_ldl_diagnostics(SEXP p_, SEXP i_, SEXP x_,
+                                                      SEXP nz_) {
+  EIGENCORE_ENTRY_BEGIN
+  if (!isInteger(p_) || !isInteger(i_) || !isReal(x_) || !isInteger(nz_)) {
+    error("simplicial LDL' diagnostics: unexpected factor slot types");
+  }
+  const R_xlen_t n = XLENGTH(nz_);
+  if (XLENGTH(p_) < n + 1) {
+    error("simplicial LDL' diagnostics: p must have length n + 1");
+  }
+  const int* p = INTEGER(p_);
+  const int* ri = INTEGER(i_);
+  const double* x = REAL(x_);
+  const int* nz = INTEGER(nz_);
+  const R_xlen_t len = XLENGTH(x_);
+  const R_xlen_t ilen = XLENGTH(i_);
+  InertiaTally tally;
+  std::vector<double> y(static_cast<size_t>(n), 1.0);  // |L'| 1 (unit diagonal)
+  for (R_xlen_t j = 0; j < n; ++j) {
+    const R_xlen_t start = p[j];
+    const R_xlen_t count = nz[j];
+    if (count < 1 || start < 0 || start + count > len || start + count > ilen ||
+        ri[start] != j) {
+      error("simplicial LDL' diagnostics: column %ld does not start with its diagonal",
+            static_cast<long>(j));
+    }
+    const double dj = x[start];
+    if (!R_FINITE(dj)) {
+      error("simplicial LDL' diagnostics: non-finite pivot in column %ld",
+            static_cast<long>(j));
+    }
+    tally.add_pivot(dj);
+    for (R_xlen_t t = start + 1; t < start + count; ++t) {
+      const double l = fabs(x[t]);
+      if (!R_FINITE(l)) {
+        error("simplicial LDL' diagnostics: non-finite multiplier");
+      }
+      if (ri[t] <= j || ri[t] >= n) {
+        error("simplicial LDL' diagnostics: malformed column %ld", static_cast<long>(j));
+      }
+      if (l > tally.max_mult) tally.max_mult = l;
+      y[static_cast<size_t>(j)] += l;
+    }
+  }
+  // z = |D| y, w = |L| z (unit diagonal plus the strictly lower part).
+  std::vector<double> w(static_cast<size_t>(n), 0.0);
+  for (R_xlen_t j = 0; j < n; ++j) {
+    const R_xlen_t start = p[j];
+    const double zj = fabs(x[start]) * y[static_cast<size_t>(j)];
+    w[static_cast<size_t>(j)] += zj;
+    for (R_xlen_t t = start + 1; t < start + nz[j]; ++t) {
+      w[static_cast<size_t>(ri[t])] += fabs(x[t]) * zj;
+    }
+  }
+  for (R_xlen_t j = 0; j < n; ++j) {
+    if (w[static_cast<size_t>(j)] > tally.growth) tally.growth = w[static_cast<size_t>(j)];
+  }
+  tally.norm1 = NA_REAL;
+  return inertia_tally_sexp(tally);
   EIGENCORE_ENTRY_END
 }

@@ -28,8 +28,10 @@ RoxygenNote: 7.3.3
 Depends:
     R (>= 4.1)
 Imports:
-    Matrix,
+    Matrix (>= 1.6-2),
     methods
+LinkingTo:
+    Matrix
 Suggests:
     bench,
     callr,
@@ -38,7 +40,8 @@ Suggests:
     RSpectra,
     irlba,
     rsvd,
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    withr
 VignetteBuilder: knitr
 Config/testthat/edition: 3
 SystemRequirements: C++17
