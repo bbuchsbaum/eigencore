@@ -72,7 +72,7 @@ nonsym_completeness_controls <- function() {
     # Wanted Ritz values of the complement probe and its Krylov-Schur
     # subspace; complements no larger than `exhaust` are spanned completely.
     wanted = as_count(getOption("eigencore.nonsym_probe_wanted"), 6L, 1L),
-    subspace = as_count(getOption("eigencore.nonsym_probe_subspace"), 60L, 3L),
+    subspace = as_count(getOption("eigencore.nonsym_probe_subspace"), 80L, 3L),
     exhaust = as_count(getOption("eigencore.nonsym_probe_exhaust"), 64L, 0L),
     restarts = as_count(getOption("eigencore.nonsym_probe_restarts"), 1000L, 1L),
     # Screening tolerance of the first (clean-verdict) probe pass.

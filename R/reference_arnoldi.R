@@ -107,7 +107,8 @@ arnoldi_left_eigen_contract <- function(op, values, right_vectors, target,
                                         tol = 1e-8, maxit = NULL,
                                         max_restarts = 0L,
                                         extraction = "projected_ritz",
-                                        krylov_schur_maxit = native_krylov_schur_default_maxit()) {
+                                        krylov_schur_maxit = native_krylov_schur_default_maxit(),
+                                        subspace_limit = NULL) {
   if (is.null(right_vectors)) {
     return(list(
       supported = FALSE,
@@ -154,7 +155,8 @@ arnoldi_left_eigen_contract <- function(op, values, right_vectors, target,
         # Biorthogonality error scales like (left residual) / (eigenvalue
         # gap), so converge the adjoint Ritz pairs two digits beyond `tol`.
         krylov_schur_tol = max(tol * 1e-2, 100 * .Machine$double.eps),
-        krylov_schur_maxit = krylov_schur_maxit
+        krylov_schur_maxit = krylov_schur_maxit,
+        subspace_limit = subspace_limit
       )
     } else {
       reference_arnoldi_general(
@@ -370,6 +372,19 @@ native_krylov_schur_default_ncv <- function(n, k) {
 }
 
 #' @keywords internal
+#' Largest subspace the adaptive Krylov-Schur restart may grow to when the
+#' default `ncv` stalls (src/arnoldi.cpp, step 6): four times the default
+#' ncv, but never past the point where the bases and restart buffers of the
+#' successive doublings (under 4 n (m + 1) doubles in all) would exceed
+#' 1 GiB, and never below `ncv`.
+native_krylov_schur_default_subspace_limit <- function(n, k, ncv = native_krylov_schur_default_ncv(n, k)) {
+  n <- as.integer(n)
+  ncv <- as.integer(ncv)
+  budget <- floor(2^30 / (32 * max(n, 1L))) - 1L
+  as.integer(max(ncv, min(n, 4L * ncv, budget)))
+}
+
+#' @keywords internal
 #' Cap on Krylov-Schur outer iterations (restarts) per attempt.
 native_krylov_schur_default_maxit <- function() {
   1000L
@@ -443,11 +458,14 @@ native_arnoldi_cycle <- function(op, start, m) {
 #' unchanged to the converged Krylov-Schur decomposition.
 native_krylov_schur <- function(op, start, k, m, target, tol,
                                 maxit = native_krylov_schur_default_maxit(),
-                                target_values = NULL) {
+                                target_values = NULL,
+                                subspace_limit = NULL) {
   op <- as_operator(op)
   kernel <- native_arnoldi_kernel(op)
   code <- arnoldi_target_code(target)
   tol <- as.numeric(tol)
+  # maxit carries the optional subspace growth limit as a second element.
+  maxit <- as.integer(c(maxit, if (length(subspace_limit)) subspace_limit else NA_integer_))
   # target_values (internal): rank Ritz values by distance to this set
   # instead of by `target` (used by the adjoint solve for left vectors).
   target_values <- if (length(target_values)) as.complex(target_values) else NULL
@@ -461,7 +479,7 @@ native_krylov_schur <- function(op, start, k, m, target, tol,
       code,
       target_values,
       tol,
-      as.integer(maxit),
+      maxit,
       PACKAGE = "eigencore"
     ))
   }
@@ -483,7 +501,7 @@ native_krylov_schur <- function(op, start, k, m, target, tol,
       code,
       target_values,
       tol,
-      as.integer(maxit),
+      maxit,
       PACKAGE = "eigencore"
     ))
   }
@@ -498,7 +516,7 @@ native_krylov_schur <- function(op, start, k, m, target, tol,
       code,
       target_values,
       tol,
-      as.integer(maxit),
+      maxit,
       PACKAGE = "eigencore"
     ))
   }
@@ -574,7 +592,8 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
                                    extraction = "projected_ritz",
                                    krylov_schur_maxit = native_krylov_schur_default_maxit(),
                                    target_values = NULL,
-                                   krylov_schur_tol = tol) {
+                                   krylov_schur_tol = tol,
+                                   subspace_limit = NULL) {
   op <- as_operator(op)
   extraction <- match.arg(extraction, c("projected_ritz", "refined_ritz"))
   if (op$dim[[1L]] != op$dim[[2L]]) {
@@ -604,6 +623,8 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
   # Krylov-Schur needs room for at least one new direction beyond the wanted
   # block (plus a possible conjugate partner) unless the space is all of R^n.
   m <- min(n, max(k + 2L, m))
+  # Adaptive growth limit (NULL: fixed subspace, e.g. a requested size).
+  subspace_limit <- if (length(subspace_limit)) as.integer(subspace_limit) else NULL
   max_restarts <- as.integer(max_restarts %||% 0L)
   if (max_restarts < 0L) {
     stop("max_restarts must be non-negative.", call. = FALSE)
@@ -631,7 +652,8 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
     cycle_start <- proc.time()[["elapsed"]]
     cycle <- native_krylov_schur(
       op, start, k = k, m = m, target = target, tol = krylov_schur_tol,
-      maxit = krylov_schur_maxit, target_values = target_values
+      maxit = krylov_schur_maxit, target_values = target_values,
+      subspace_limit = if (length(subspace_limit)) max(subspace_limit, m) else NULL
     )
     cycle_seconds <- proc.time()[["elapsed"]] - cycle_start
     total_cycle_seconds <- total_cycle_seconds + cycle_seconds
@@ -654,6 +676,8 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
       attempt = attempt,
       extraction = ritz$extraction,
       max_subspace = m,
+      final_subspace = cycle$max_subspace %||% m,
+      subspace_growths = cycle$subspace_growths %||% 0L,
       iterations = cycle$krylov_schur_restarts + 1L,
       matvecs = cycle$matvecs,
       krylov_schur_restarts = cycle$krylov_schur_restarts,
@@ -744,7 +768,8 @@ native_arnoldi_general <- function(op, k, target = largest(), tol = 1e-8,
 native_krylov_schur_status <- function() {
   paste(
     "native real Krylov-Schur restart (dgees + dtrsen reordering, CGS2",
-    "orthogonalization, conjugate pairs kept together)"
+    "orthogonalization, conjugate pairs kept together, adaptive subspace",
+    "growth on stalled convergence)"
   )
 }
 

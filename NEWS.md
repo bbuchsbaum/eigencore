@@ -1,5 +1,34 @@
 # eigencore (development version)
 
+## Nonsymmetric Krylov-Schur restart (P26)
+
+* The native real Krylov-Schur kernel grows its subspace when convergence
+  stalls. It starts at the ARPACK size `max(2k + 1, 20)`. After 25 restarts
+  without the wanted values converging, it doubles the subspace, up to 4x
+  that size (and a 1 GiB basis budget). The kept Krylov-Schur
+  decomposition carries over unchanged. Well-separated spectra converge
+  before the first doubling and run as before. A requested `max_subspace`
+  stays fixed. On the clustered disk edge of a random sparse n = 20000
+  `largest_magnitude()` k = 6 problem, the fixed 20-column subspace needed
+  400-1000 restarts (5k-17k operator columns, heavy-tailed by start
+  vector). The grown subspace needs 1.5k-3k, and its converged set is more
+  often the true one, so the completeness probe repairs less often.
+* The restart keep count `k + min(nconv, (ncv - k) / 2)` now uses the
+  number of wanted values converged in the current projected matrix, as
+  ARPACK and Spectra do, instead of the count from the previous restart.
+* The nonsymmetric completeness probe's default Krylov-Schur subspace
+  (`eigencore.nonsym_probe_subspace`) is now 80 (was 60). The larger
+  subspace explores more per restart and needed fewer operator columns on
+  seven random sparse n = 20000 cases (14 s vs 23 s probe CPU in total).
+  The verdict logic, tolerances, wanted count and fresh random start are
+  unchanged.
+* Benchmark `nonsym_sparse_n20000_LM_k6`, 1 thread, same loaded machine:
+  12.1-12.9 s down to 4.6-5.1 s CPU, and 9710 down to 2822 operator
+  columns (main solve 1854, probe 968, no repair round). RSpectra took
+  3.1 s for 3947 columns and returned the wrong set. Random sparse
+  n = 20000 `largest_magnitude()` k = 20: 57-88 s down to 8.7 s, and
+  `largest_real()` k = 6: 15-25 s down to 8 s.
+
 ## Native-code assurance findings F4-F7
 
 * `eigs_sym(which = "BE")` with a warm start (`opts = list(initvec =)`)
