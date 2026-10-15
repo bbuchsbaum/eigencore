@@ -96,9 +96,16 @@ test_that("maxit maps to each route's own iteration limit", {
     Z <- alpha * (A %*% X)
     if (!is.null(Y) && beta != 0) Z + beta * Y else Z
   }, structure = hermitian())
-  # auto() now routes matrix-free Hermitian operators natively (C53); an
-  # explicit scalar lanczos() still selects the unrestarted reference path.
-  ref <- plan_solver(eigen_problem(op), k = 2L, maxit = 12L, method = lanczos())
+  # auto() and an explicit lanczos() route matrix-free Hermitian operators
+  # natively (C53, F5): maxit is the restart limit there.
+  nat <- plan_solver(eigen_problem(op), k = 2L, maxit = 12L, method = lanczos())
+  expect_identical(nat$method, eigencore:::native_matrix_free_block_lanczos_label())
+  expect_identical(nat$controls$iteration_limit_kind, "thick_restart_cycles")
+  expect_identical(nat$controls$max_restarts, 12L)
+  # nearest() has no native matrix-free kernel: the unrestarted reference
+  # path, where maxit is the number of Lanczos steps.
+  ref <- plan_solver(eigen_problem(op, target = nearest(3)), k = 2L, maxit = 12L,
+                     method = lanczos())
   expect_identical(ref$method, "reference Hermitian Lanczos (prototype/oracle fallback)")
   expect_identical(ref$controls$iteration_limit_kind, "lanczos_steps")
   expect_identical(ref$controls$max_subspace, 12L)

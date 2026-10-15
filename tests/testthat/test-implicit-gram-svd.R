@@ -113,3 +113,49 @@ test_that("implicit Gram SVD result matches Golub-Kahan on a fixed spectrum", {
   expect_true(fit$certificate$passed)
   expect_equal(fit$d, d_true[1:5], tolerance = 1e-8)
 })
+
+test_that("implicitly centred sparse PCA runs on the implicit Gram kernel (P20)", {
+  set.seed(107)
+  A <- abs(Matrix::rsparsematrix(3000, 300, density = 0.02))
+  dense <- as.matrix(A)
+  centred <- sweep(dense, 2L, colMeans(dense), `-`)
+  ref <- svd(centred, nu = 6, nv = 6)
+
+  op <- center(A)
+  plan <- plan_solver(svd_problem(op), rank = 6)
+  expect_identical(plan$method, eigencore:::native_implicit_gram_svd_label())
+  fit <- svd_partial(op, rank = 6, tol = 1e-8)
+  expect_identical(fit$method, eigencore:::native_implicit_gram_svd_label())
+  expect_true(fit$restart$centered_csc)
+  expect_false(fit$restart$materialized_gram)
+  expect_true(fit$certificate$passed)
+  expect_equal(fit$d, ref$d[1:6], tolerance = 1e-8)
+  expect_true(all(abs(colSums(fit$u * ref$u)) > 1 - 1e-6))
+  expect_true(all(abs(colSums(fit$v * ref$v)) > 1 - 1e-6))
+  # The residuals are those of the centred matrix, not of A.
+  expect_lt(max(abs(centred %*% fit$v - sweep(fit$u, 2L, fit$d, `*`))),
+            1e-6 * ref$d[[1L]])
+
+  # Centred and column-scaled.
+  w <- seq(0.5, 2, length.out = ncol(A))
+  fit_s <- svd_partial(scale_cols(center(A), w), rank = 4, tol = 1e-8)
+  expect_true(fit_s$restart$centered_csc)
+  expect_true(fit_s$certificate$passed)
+  expect_equal(fit_s$d, svd(sweep(centred, 2L, w, `*`), nu = 0, nv = 0)$d[1:4],
+               tolerance = 1e-8)
+
+  # Wide operator: the left (A A') Gram side.
+  At <- methods::as(Matrix::t(A), "CsparseMatrix")
+  wide <- t(dense)
+  fit_w <- svd_partial(center(At), rank = 4, tol = 1e-8)
+  expect_true(fit_w$restart$centered_csc)
+  expect_identical(fit_w$restart$gram_side, "left")
+  expect_true(fit_w$certificate$passed)
+  expect_equal(fit_w$d,
+               svd(sweep(wide, 2L, colMeans(wide), `-`), nu = 0, nv = 0)$d[1:4],
+               tolerance = 1e-8)
+
+  # Row (or double) centring is not a column rank-one correction: it keeps
+  # the Golub-Kahan route.
+  expect_null(eigencore:::implicit_gram_centered_csc_parts(center(A, rows = TRUE)))
+})

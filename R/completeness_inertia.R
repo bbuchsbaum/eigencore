@@ -59,6 +59,32 @@ inertia_completeness_controls <- function() {
   )
 }
 
+# Solve time for the completeness cost gates (C62). The gates allow a
+# factorisation predicted to take up to `ratio` times the solve's own time;
+# on an oversubscribed machine the elapsed time of the solve is inflated by
+# the CPU it did not get (formerly 10-80x with spinning OpenMP threads), so
+# the gates would admit a count costing minutes. The gates therefore use the
+# smaller of the elapsed time and the CPU time the process received (all
+# threads): unloaded, a serial solve has CPU ~ elapsed and a parallel one
+# CPU > elapsed, so the elapsed time is used as before; under load the CPU
+# time approximates what the solve costs on an idle core, which is also what
+# the flop-rate prediction of the factorisation assumes.
+#' @keywords internal
+completeness_clock <- function() {
+  pt <- proc.time()
+  c(elapsed = pt[["elapsed"]], cpu = pt[["user.self"]] + pt[["sys.self"]])
+}
+
+#' @keywords internal
+completeness_seconds_since <- function(started) {
+  spent <- completeness_clock() - started
+  cpu <- spent[["cpu"]]
+  if (!is.finite(cpu) || cpu <= 0) {
+    return(spent[["elapsed"]])
+  }
+  min(spent[["elapsed"]], cpu)
+}
+
 # Preference distance used by the counting argument.
 #' @keywords internal
 inertia_completeness_kind <- function(target) {
@@ -159,7 +185,7 @@ inertia_metric_lower_bound <- function(Bop) {
   dmin <- switch(
     bctx$kind,
     tridiagonal = min(bctx$d),
-    dense = min(diag(bctx$A)),
+    dense = min(Re(diag(bctx$A))),
     sparse = min(Matrix::diag(bctx$A))
   )
   if (!is.finite(dmin) || dmin <= 0) {
@@ -255,6 +281,17 @@ inertia_completeness_check <- function(Aop, values, residuals, orthogonality,
   # error, so the widening recount below is rarely needed; gaps smaller than
   # that are inside any practical residual bound anyway.
   margin <- max(rho, 1e-10 * scale, 64 * eps * scale)
+  # P19: a shift-invert solve already factored A - sigma I next to the
+  # thresholds; its backward bound predicts theirs (the same symbolic
+  # pattern, comparable growth). Starting from twice that prediction avoids
+  # the widening recount below in the common case, which for nearest()
+  # costs two extra factorisations. The check below still widens when the
+  # actual bound exceeds the margin.
+  seed_bound <- ctx$seed_tally$backward_bound %||% NA_real_
+  if (is.numeric(seed_bound) && length(seed_bound) == 1L && is.finite(seed_bound) &&
+      seed_bound > 0) {
+    margin <- max(margin, 4 * seed_bound)
+  }
   # The count is exact for A - t B + E with ||E|| <= backward_bound; the
   # matched eigenvalues sit at least `margin` from the threshold, so the
   # margin must exceed that bound (widen once if it does not).

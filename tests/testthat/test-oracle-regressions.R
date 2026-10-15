@@ -178,15 +178,24 @@ test_that("O7: both_ends / nearest on Lanczos routes find every copy (case 341)"
   fit <- eig_partial(A, k = 5, target = both_ends(2, 3),
                      method = lanczos(block = 2, completeness = "probe"))
   expect_verified_set(fit, c(-1, -1, 9, 9, 9), c("probed", "repaired"))
-  # The reference Lanczos route (taken with a warm start) is probed too.
+  # A warm start now stays on the native both-ends route (F4); it used to
+  # take the reference Lanczos.
   set.seed(7)
   fit <- eig_partial(A, k = 5, target = both_ends(2, 3),
                      method = lanczos(completeness = "probe"),
                      initial_subspace = matrix(rnorm(50), 50))
-  expect_match(fit$method, "^reference Hermitian Lanczos")
+  expect_identical(fit$method, "native Hermitian Lanczos both ends (two thick-restart solves)")
+  expect_identical(fit$start_source, "user_supplied")
   expect_verified_set(fit, c(-1, -1, 9, 9, 9), c("probed", "repaired"))
   fit <- eig_partial(A, k = 4, target = nearest(4.2), method = lanczos())
   expect_verified_set(fit, c(5, 5, 5, 5), "inertia_verified")
+  # The reference Lanczos route (nearest() with a warm start) is probed too.
+  set.seed(8)
+  fit <- eig_partial(A, k = 4, target = nearest(4.2),
+                     method = lanczos(max_subspace = 50, completeness = "probe"),
+                     initial_subspace = matrix(rnorm(50), 50))
+  expect_match(fit$method, "^reference Hermitian Lanczos")
+  expect_verified_set(fit, c(5, 5, 5, 5), c("probed", "repaired"))
 })
 
 test_that("O8: SVD routes no longer miss copies of repeated singular values (case 215)", {

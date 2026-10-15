@@ -1043,6 +1043,17 @@ static SEXP lobpcg_run_native_checked(void* impl,
     X.data(), values.data(), residuals.data(), converged.data(),
     hist_res.data(), hist_nconv.data(), &iterations, &matvecs,
     &preconditioner_calls, &q_rank, &constraints_rank);
+  if (status == -5 && diag != nullptr) {
+    // -5 is only returned by the factor/solve of the shifted tridiagonal
+    // (or diagonal) preconditioner, which both pass their bands here.
+    error("native %s LOBPCG: the preconditioner system A + shift * I of "
+          "shifted_tridiagonal_preconditioner() (or "
+          "shifted_diagonal_preconditioner()) is singular to working precision "
+          "(zero or negligible LU pivot, or non-finite entries); use a "
+          "positive shift that moves it away from the spectrum of A, or "
+          "another preconditioner",
+          error_label);
+  }
   if (status != 0) {
     error("native %s LOBPCG failed with status=%d", error_label, status);
   }

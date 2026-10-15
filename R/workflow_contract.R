@@ -35,7 +35,12 @@ stable_raw_hash <- function(x) {
 
 #' @keywords internal
 identity_hash_format <- function() {
-  "eigencore-identity-hash-v2"
+  # v3 (F7): built-in operator identities hash the exact source content
+  # (Matrix slots without the `factors` cache) and no longer the derived
+  # column moments, so they are platform-independent. The native hash
+  # algorithm is unchanged from v2; persisted v2 plans, restart states and
+  # PSD factors are rejected with the typed "identity_format_changed" error.
+  "eigencore-identity-hash-v3"
 }
 
 #' @keywords internal
@@ -116,12 +121,38 @@ canonical_identity_value <- function(x) {
   if (is.function(x) || is.environment(x) || typeof(x) == "externalptr") {
     return(NULL)
   }
+  if (inherits(x, "Matrix")) {
+    return(identity_matrix_content(x))
+  }
   if (is.list(x)) {
     out <- lapply(x, canonical_identity_value)
     names(out) <- names(x)
     return(out)
   }
   x
+}
+
+# The identity content of a Matrix-package object (F7): its class and every
+# slot (i, p, x, Dim, Dimnames, uplo, diag, ...) except `factors`, a cache of
+# factorizations that Matrix may fill in place and that says nothing about
+# the operator. Slots are taken as they are (no copy), in sorted order.
+#' @keywords internal
+identity_matrix_content <- function(x) {
+  slots <- sort(setdiff(methods::slotNames(x), "factors"))
+  content <- lapply(slots, function(name) methods::slot(x, name))
+  names(content) <- slots
+  list(class = class(x), slots = content)
+}
+
+# Operator metadata derived from the source values with platform-dependent
+# floating-point arithmetic: the CSC column moments are accumulated in
+# `long double`, whose width differs between x86-64, aarch64 Linux, macOS
+# arm64, MSVC and valgrind. The identity hashes the exact source content
+# instead and never these values (F7).
+#' @keywords internal
+derived_identity_metadata_keys <- function() {
+  c("native", "frobenius_norm", "column_sums", "column_sum_squares",
+    "column_means", "column_centered_sum_squares")
 }
 
 #' @keywords internal
@@ -131,14 +162,18 @@ builtin_operator_identity_payload <- function(op) {
   structural_metadata <- metadata
   structural_metadata$source <- NULL
   structural_metadata$matrix <- NULL
-  structural_metadata$native <- NULL
-  structural_metadata$frobenius_norm <- NULL
+  structural_metadata[intersect(names(structural_metadata),
+                                derived_identity_metadata_keys())] <- NULL
   list(
     dim = as.integer(op$dim),
     dtype = op$dtype,
     structure = op$structure$kind,
     source_class = class(source),
-    source = source,
+    source = if (inherits(source, "Matrix")) {
+      identity_matrix_content(source)
+    } else {
+      source
+    },
     metadata = canonical_identity_value(structural_metadata)
   )
 }

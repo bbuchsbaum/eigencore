@@ -448,6 +448,9 @@ certificate_with_completeness <- function(certificate, status, record = NULL) {
 #' @keywords internal
 target_completeness_route_class <- function(plan, problem) {
   method <- plan$method %||% ""
+  if (plan_dispatches_complex_hermitian_realified(plan)) {
+    return("krylov")
+  }
   if (is_transform_method(problem$transform)) {
     if (plan$method %in% shift_invert_arnoldi_labels()) {
       return("unsupported")

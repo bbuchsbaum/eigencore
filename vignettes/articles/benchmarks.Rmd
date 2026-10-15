@@ -371,9 +371,11 @@ the result directory as an artifact; it never commits results.
   whose load varies while the suite runs; the environment table records the
   load average at the start and end, and `results.csv` keeps every repetition
   (`times`) and the per-row load. Medians absorb short spikes, not sustained
-  contention. Multithreaded rows are the most sensitive: an OpenMP region on
-  an oversubscribed machine can be an order of magnitude slower than on an
-  idle one, which is why matvec counts are reported alongside times.
+  contention. Multithreaded rows are the most sensitive: eigencore's OpenMP
+  governor shrinks the team when regions stop paying off, but a
+  multithreaded BLAS can still spin on an oversubscribed machine (set
+  `OPENBLAS_NUM_THREADS=1` there), which is why matvec counts are reported
+  alongside times.
 - **BLAS dependence.** Dense cases and eigencore's blocked kernels depend on
   the BLAS/LAPACK library and its threads; RSpectra uses Eigen's own kernels.
   Compare rows only within one result set, and check the BLAS line of its

@@ -162,7 +162,9 @@ test_that("P7: reference Lanczos certifies once instead of every iteration", {
     },
     structure = hermitian()
   )
-  fit <- eig_partial(op, k = 3, method = lanczos(), seed = 5)
+  # nearest() keeps the reference route: explicit scalar lanczos() on a
+  # callback operator with a native target runs the native kernel (F5).
+  fit <- eig_partial(op, k = 3, target = nearest(11), method = lanczos(), seed = 5)
   expect_match(fit$method, "reference Hermitian Lanczos")
   # The two-norm lower-bound scale (C12) lets a matrix-free certificate pass.
   expect_true(fit$certificate$passed)

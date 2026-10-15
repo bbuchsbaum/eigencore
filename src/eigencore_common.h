@@ -298,6 +298,70 @@ extern "C" void eigencore_call_leave(void);
 // single-threaded (see native_operators.cpp).
 extern "C" int eigencore_reorth_threads(void);
 
+// Parallel-efficiency governor (P18 / C57 / C62), defined in
+// native_operators.cpp. With libgomp's default (active) wait policy, idle
+// team threads spin; when other processes occupy the cores, each fork/join or
+// barrier then waits a scheduler time slice for a descheduled team member,
+// and short kernels run 10-80x slower than serially. The policy cannot be
+// changed once libgomp is initialised (R itself links it), so instead every
+// parallel region reports its wall time and the master thread's own busy
+// time: a region that ran slower than its serial estimate (threads x master
+// busy time) is a strike, repeated strikes halve the team size, and a larger
+// team is probed again after an exponential backoff. The governor only
+// changes num_threads(); callers keep choosing their algorithm (CSR copy,
+// slabs, OpenMP reorthogonalisation) from eigencore_thread_count(), so
+// results do not depend on the load.
+//
+// eigencore_parallel_threads(requested) returns the team size for a region
+// that would use `requested` threads (1 inside a parallel region);
+// eigencore_parallel_report() records its outcome. Main thread only.
+extern "C" int eigencore_parallel_threads(int requested);
+extern "C" void eigencore_parallel_report(int threads, double wall_seconds,
+                                          double master_busy_seconds);
+
+// RAII timer for one parallel region (or a run of regions treated as one).
+// threads() is the team size to pass to num_threads(). Inside the region,
+// thread 0 calls master_pause() when its share of a work-sharing loop is done
+// (put `nowait` on the loop) and master_resume() after an explicit barrier,
+// so busy time excludes waiting for the other threads. Never throws and never
+// calls the R API.
+class EigencoreParallelRegion {
+ public:
+  explicit EigencoreParallelRegion(int requested)
+      : threads_(eigencore_parallel_threads(requested)), busy_(0.0) {
+    if (threads_ > 1) {
+      start_ = seg_ = std::chrono::steady_clock::now();
+    }
+  }
+  ~EigencoreParallelRegion() {
+    if (threads_ > 1) {
+      const double wall = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - start_).count();
+      eigencore_parallel_report(threads_, wall, busy_);
+    }
+  }
+  EigencoreParallelRegion(const EigencoreParallelRegion&) = delete;
+  EigencoreParallelRegion& operator=(const EigencoreParallelRegion&) = delete;
+  int threads() const { return threads_; }
+  void master_pause() {
+    if (threads_ > 1 && eigencore_omp_thread_num() == 0) {
+      busy_ += std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - seg_).count();
+    }
+  }
+  void master_resume() {
+    if (threads_ > 1 && eigencore_omp_thread_num() == 0) {
+      seg_ = std::chrono::steady_clock::now();
+    }
+  }
+
+ private:
+  int threads_;
+  double busy_;
+  std::chrono::steady_clock::time_point start_;
+  std::chrono::steady_clock::time_point seg_;
+};
+
 // Body of every .Call entry point. All C++ objects created by `body` are
 // destroyed before any R condition is raised.
 template <typename Body>

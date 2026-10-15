@@ -31,7 +31,11 @@ reverse_rows_within_columns <- function(A) {
 }
 
 test_that("default thread count follows the CRAN / OMP_NUM_THREADS policy", {
-  f <- eigencore:::eigencore_default_threads
+  # cores / quota = NA: no physical-core or cgroup information.
+  f <- function(env, processors, cores = NA, quota = NA) {
+    eigencore:::eigencore_default_threads(env, processors = processors,
+                                          cores = cores, quota = quota)
+  }
   expect_identical(f(c(`_R_CHECK_LIMIT_CORES_` = "TRUE"), processors = 16L), 1L)
   expect_identical(f(c(`_R_CHECK_LIMIT_CORES_` = "warn"), processors = 16L), 1L)
   expect_identical(f(c(`_R_CHECK_LIMIT_CORES_` = "false"), processors = 16L), 8L)
@@ -41,12 +45,42 @@ test_that("default thread count follows the CRAN / OMP_NUM_THREADS policy", {
   expect_identical(f(character(), processors = 32L), 8L)
   expect_identical(f(character(), processors = 3L), 3L)
   expect_identical(f(character(), processors = NA), 1L)
+  # P18: physical cores and a container CPU quota cap the default.
+  expect_identical(f(character(), processors = 16L, cores = 6L), 6L)
+  expect_identical(f(character(), processors = 16L, cores = 12L), 8L)
+  expect_identical(f(character(), processors = 16L, quota = 2.5), 2L)
+  expect_identical(f(character(), processors = 4L, quota = 0.5), 1L)
+  expect_identical(f(character(), processors = 4L, cores = 8L, quota = 16), 4L)
+  expect_identical(f(c(OMP_NUM_THREADS = "6"), processors = 4L, quota = 1), 6L)
+})
+
+test_that("P18: cgroup CPU quotas are read from cgroup v2 and v1 files", {
+  quota <- eigencore:::eigencore_cgroup_cpu_quota
+  root <- tempfile("cgroup")
+  self <- tempfile("self")
+  on.exit(unlink(c(root, self), recursive = TRUE), add = TRUE)
+  dir.create(file.path(root, "pod"), recursive = TRUE)
+  writeLines("0::/pod", self)
+  writeLines("150000 100000", file.path(root, "pod", "cpu.max"))
+  expect_equal(quota(root, self), 1.5)
+  writeLines("max 100000", file.path(root, "pod", "cpu.max"))
+  expect_identical(quota(root, self), NA_real_)
+  v1 <- file.path(root, "cpu,cpuacct", "docker")
+  dir.create(v1, recursive = TRUE)
+  unlink(file.path(root, "pod", "cpu.max"))
+  writeLines(c("4:cpu,cpuacct:/docker", "0::/"), self)
+  writeLines("200000", file.path(v1, "cpu.cfs_quota_us"))
+  writeLines("100000", file.path(v1, "cpu.cfs_period_us"))
+  expect_equal(quota(root, self), 2)
+  writeLines("-1", file.path(v1, "cpu.cfs_quota_us"))
+  expect_identical(quota(root, self), NA_real_)
+  expect_identical(quota(file.path(root, "missing"), tempfile()), NA_real_)
 })
 
 test_that("eigencore.threads is read at every native call", {
   info <- thread_info()
   expect_named(info, c("openmp", "processors", "default", "current",
-                       "blas_kind", "blas_threads"))
+                       "blas_kind", "blas_threads", "effective", "reductions"))
   default <- info[["default"]]
   expect_gte(default, 1L)
   if (!has_openmp()) {
@@ -215,4 +249,58 @@ test_that("C36: sparse solves agree across thread counts and restore BLAS thread
   align <- function(U, V) sweep(U, 2L, sign(colSums(U * V)), "*")
   expect_equal(align(r1$e$vectors, r4$e$vectors), r4$e$vectors, tolerance = 1e-8)
   expect_equal(align(r1$s$v, r4$s$v), r4$s$v, tolerance = 1e-8)
+})
+
+test_that("P18: the parallel-efficiency governor changes team sizes, not results", {
+  skip_if_not(has_openmp(), "built without OpenMP")
+  governor <- function(cap) eigencore:::native_thread_info_governor(cap)
+  on.exit(governor(0), add = TRUE)
+  set.seed(405)
+  A <- Matrix::rsparsematrix(3000, 3000, density = 0.006)
+  tall <- Matrix::rsparsematrix(12000, 600, density = 0.008)
+  B <- Matrix::rsparsematrix(4000, 4000, density = 1.5e-3)
+  S <- methods::as(methods::as(Matrix::forceSymmetric(B + Matrix::t(B)),
+                               "generalMatrix"), "CsparseMatrix")
+  run <- function(cap) {
+    with_options(list(eigencore.threads = 4L), {
+      info <- governor(cap)
+      expect_identical(info[["effective"]], if (cap == 0) 4L else as.integer(cap))
+      out <- list()
+      for (M in list(A, tall)) {
+        for (transpose in c(FALSE, TRUE)) {
+          X <- matrix(rnorm((if (transpose) nrow(M) else ncol(M)) * 12), ncol = 12)
+          out[[length(out) + 1L]] <- eigencore:::csc_apply_repeat(
+            M, X, transpose = transpose, reps = 3L)$Y
+        }
+      }
+      set.seed(1)
+      e <- eigs_sym(S, 6, which = "LA")
+      set.seed(2)
+      s <- svds(tall, 5)
+      c(out, list(e$values, e$vectors, s$d, s$u, s$v))
+    })
+  }
+  set.seed(7)
+  full <- run(0)
+  set.seed(7)
+  one <- run(1)
+  set.seed(7)
+  two <- run(2)
+  expect_identical(one, full)
+  expect_identical(two, full)
+  # Disabled governor: the configured count is used.
+  with_options(list(eigencore.threads = 4L, eigencore.adaptive_threads = FALSE), {
+    governor(1)
+    expect_identical(thread_info()[["effective"]], 4L)
+  })
+})
+
+test_that("C62: completeness gates use the smaller of elapsed and CPU solve time", {
+  clock <- eigencore:::completeness_clock()
+  expect_named(clock, c("elapsed", "cpu"))
+  since <- eigencore:::completeness_seconds_since
+  # Starved solve: 10 s elapsed, 1 s of CPU -> about 1 s.
+  expect_equal(since(clock - c(elapsed = 10, cpu = 1)), 1, tolerance = 0.5)
+  # Parallel solve: 1 s elapsed, 4 s of CPU -> about 1 s.
+  expect_equal(since(clock - c(elapsed = 1, cpu = 4)), 1, tolerance = 0.5)
 })

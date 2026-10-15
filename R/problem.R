@@ -159,6 +159,15 @@ plan_solver.eigencore_eigen_problem <- function(
   }
   if (is_interval_target(problem$target)) {
     check_iteration_limit_conflict(method, maxit)
+    complex_route <- complex_hermitian_interval_plan(
+      problem, k = k, method = method, tol = tol, maxit = maxit,
+      vectors = vectors, certify = certify,
+      allow_dense_fallback = match.arg(allow_dense_fallback),
+      left_vectors = match.arg(left_vectors)
+    )
+    if (!is.null(complex_route)) {
+      return(complex_route)
+    }
     return(plan_interval_eigen(
       problem, k = k, method = method, tol = tol, maxit = maxit,
       vectors = vectors, certify = certify,
@@ -197,6 +206,15 @@ plan_solver.eigencore_eigen_problem <- function(
     initial_subspace = initial_subspace
   )
   execution$left_vectors <- left_vectors
+  # Complex Hermitian problems (R/complex_hermitian.R): iterative routes run
+  # on the real 2n embedding; small dense auto() solves keep zheev below.
+  complex_route <- complex_hermitian_plan(
+    problem, k, method, method_descriptor, execution, planner_policy, maxit,
+    initial_subspace = initial_subspace
+  )
+  if (!is.null(complex_route)) {
+    return(complex_route)
+  }
   if (!is.null(initial_subspace) && is_auto_method(method)) {
     # A warm start needs a route that consumes it: no C60 shift-invert.
     method$no_ldl_route <- TRUE
@@ -253,16 +271,17 @@ plan_solver.eigencore_eigen_problem <- function(
         "native block Hermitian Lanczos (thick restart, locking)"
       } else if (native_lanczos_supported) {
         "native scalar thick-restart Hermitian Lanczos"
-      } else if (lanczos_block > 1L &&
-                 native_lanczos_target_supported(problem$target) &&
+      } else if (native_lanczos_target_supported(problem$target) &&
                  native_matrix_free_block_lanczos_available(problem$A)) {
-        # Opt-in only: a matrix-free Hermitian operator routes to the native
-        # block thick-restart kernel through its apply callback when the user
-        # explicitly asks for block > 1. The scalar (block == 1) matrix-free
-        # default keeps routing to the reference Hermitian Lanczos path below.
+        # A matrix-free Hermitian operator runs the native thick-restart
+        # kernel through its apply callback (scalar for block == 1, block
+        # otherwise), as under auto() (C53). The scalar case used to take
+        # the unrestarted R reference Lanczos, which stopped after its
+        # 3k + 20 step budget and failed its certificate (F5).
         native_matrix_free_block_lanczos_label()
-      } else if (is.null(initial_subspace) &&
-                 native_both_ends_lanczos_supported(problem)) {
+      } else if (native_both_ends_lanczos_supported(problem)) {
+        # both_ends(): two native thick-restart solves, also with a warm
+        # start (F4: eigs_sym(which = "BE", opts = list(initvec =))).
         native_both_ends_lanczos_label()
       } else {
         "reference Hermitian Lanczos (prototype/oracle fallback)"
@@ -334,7 +353,7 @@ plan_solver.eigencore_eigen_problem <- function(
       reference_arnoldi_target_supported(problem$target) &&
       (is_native_csc || is.null(source_or_null(problem$A)))) {
     reference_arnoldi_label()
-  } else if (is_hermitian && is.null(initial_subspace) &&
+  } else if (is_hermitian &&
              (is_native_csc || is.null(source_or_null(problem$A))) &&
              native_both_ends_lanczos_supported(problem)) {
     native_both_ends_lanczos_label()
@@ -435,7 +454,8 @@ plan_solver.eigencore_eigen_problem <- function(
   if (grepl("LOBPCG", chosen, fixed = TRUE)) {
     controls <- lobpcg_plan_controls(method, planner_policy = planner_policy)
   }
-  controls <- resolve_iteration_limit_controls(controls, problem, chosen, maxit)
+  controls <- resolve_iteration_limit_controls(controls, problem, chosen, maxit,
+                                             method = method)
   if (!is.null(initial_subspace) &&
       warm_start_plan_consumes_start(problem, list(method = chosen))) {
     controls$initial_subspace_supported <- TRUE
@@ -1210,7 +1230,7 @@ lanczos_plan_controls <- function(problem, k, method, chosen) {
       # Unrestarted reference Lanczos: the subspace is the whole iteration.
       max(as.integer(k) + 1L, 3L * as.integer(k) + 20L)
     } else {
-      default_lanczos_max_subspace(k, n)
+      default_lanczos_max_subspace(k, n, op = problem$A)
     }
   } else {
     as.integer(requested_subspace)
@@ -1251,10 +1271,42 @@ lanczos_plan_controls <- function(problem, k, method, chosen) {
 #' (sparse n = 20000 LA/SA/LM at k = 10 and k = 30, dense n = 1500): the
 #' native kernel's per-restart cost grows slowly with m, so 2k + 1 was the
 #' slowest choice (up to 1.5x), m in 30..50 was within noise for k = 10, and
-#' larger subspaces won at k = 30. `3k + 20` stays the default.
-default_lanczos_max_subspace <- function(k, n) {
+#' larger subspaces won at k = 30. `3k + 20` stays the default for dense
+#' and other operators whose apply costs more than a reorthogonalisation pass.
+#'
+#' P24: for a sparse (CSC) operator with few nonzeros per row the apply is
+#' cheap and the full reorthogonalisation against the m basis vectors (two
+#' memory passes over an n x m block per step) dominates the cost, so the
+#' ARPACK/RSpectra sizing `max(2k + 1, 20)` is faster: on random sparse
+#' n = 20000 (5 nonzeros per row, single thread) it cut CPU time by about
+#' 20% at k = 10 (fewer matvecs too), 30% at k = 20 and 40% at k = 40, and
+#' about 35% at n = 40000, k = 10.
+default_lanczos_max_subspace <- function(k, n, op = NULL) {
   k <- as.integer(k)
+  if (lanczos_cheap_sparse_apply(op, n)) {
+    return(min(as.integer(n), max(k + 1L, 2L * k + 1L, 20L)))
+  }
   min(as.integer(n), max(k + 1L, 3L * k + 20L))
+}
+
+#' @keywords internal
+#' TRUE for a CSC operator with at most
+#' getOption("eigencore.lanczos_sparse_row_nnz", 64) nonzeros per row on
+#' average (P24).
+lanczos_cheap_sparse_apply <- function(op, n) {
+  if (!inherits(op, "eigencore_operator") ||
+      !identical(op$metadata$storage %||% NULL, "dgCMatrix")) {
+    return(FALSE)
+  }
+  A <- op$metadata$matrix
+  if (!inherits(A, "dgCMatrix") || !(n > 0)) {
+    return(FALSE)
+  }
+  limit <- suppressWarnings(as.numeric(getOption("eigencore.lanczos_sparse_row_nnz", 64)))
+  if (length(limit) != 1L || !is.finite(limit)) {
+    limit <- 64
+  }
+  length(methods::slot(A, "x")) / n <= limit
 }
 
 #' @keywords internal
@@ -1327,7 +1379,8 @@ unrestarted_shift_invert_labels <- function() {
 #' @keywords internal
 #' Resolve the solve-level `maxit` (an iteration limit, never a subspace
 #' size) into the chosen route's own limit and record what it means.
-resolve_iteration_limit_controls <- function(controls, problem, chosen, maxit) {
+resolve_iteration_limit_controls <- function(controls, problem, chosen, maxit,
+                                             method = NULL) {
   maxit <- if (is.null(maxit)) NULL else as.integer(maxit)
   is_shift_invert <- is_transform_method(problem$transform) &&
     identical(problem$transform$kind, "shift_invert")
@@ -1387,7 +1440,17 @@ resolve_iteration_limit_controls <- function(controls, problem, chosen, maxit) {
     },
     lanczos_steps = {
       if (!is.null(maxit) && !is.null(controls$max_subspace)) {
-        controls$max_subspace <- min(as.integer(controls$max_subspace), maxit)
+        if (startsWith(chosen, "reference Hermitian Lanczos") &&
+            is.null(method_requested_max_subspace(method, problem))) {
+          # Unrestarted reference Lanczos: one iteration is one Lanczos step
+          # and the subspace is the whole iteration, so without an explicit
+          # max_subspace the step limit maxit sets the budget (it stops
+          # early once converged). maxit used to only cap the 3k + 20
+          # default, so raising it never bought more steps (F5).
+          controls$max_subspace <- min(as.integer(problem$A$dim[1L]), maxit)
+        } else {
+          controls$max_subspace <- min(as.integer(controls$max_subspace), maxit)
+        }
       }
       maxit %||% NA_integer_
     },

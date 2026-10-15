@@ -54,9 +54,10 @@
 # merges with a Rayleigh-Ritz step on the standard operator selected by the
 # problem's own target, maps back and re-certifies from scratch.
 #
-# Complex Hermitian operators are counted (dense complex inertia uses the
-# real embedding) but not probed (the probe kernel is real); a complex result
-# without an affordable count stays "not_checked".
+# Complex Hermitian results are checked on the real 2n embedding
+# [Re -Im; Im Re] (R/complex_hermitian.R): the returned pairs are realified
+# (every eigenvalue doubled) and counted or probed there, and a repaired set
+# is mapped back by a complex Rayleigh-Ritz step.
 
 #' @keywords internal
 hermitian_completeness_parts <- function(target, values = NULL) {
@@ -918,6 +919,14 @@ hermitian_target_completeness <- function(result, plan, problem, k, mode,
   }
   if (is.null(result$vectors)) {
     return(NULL)
+  }
+  if (complex_hermitian_problem(problem)) {
+    # Complex results are checked on the real 2n embedding
+    # (R/complex_hermitian.R).
+    return(complex_hermitian_target_completeness(
+      result, plan, problem, k, mode, vectors_requested,
+      solve_seconds = solve_seconds
+    ))
   }
   drop_vectors <- function(res) {
     if (!isTRUE(vectors_requested)) {

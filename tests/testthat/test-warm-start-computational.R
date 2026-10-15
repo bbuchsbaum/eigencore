@@ -210,8 +210,10 @@ test_that("matrix-free work accounting matches an independently observed callbac
     tol = 1e-8, seed = 133L, initial_subspace = start
   )
 
+  # Scalar lanczos() on a callback operator runs the native kernel (F5).
   expect_identical(
-    fit$method, "reference Hermitian Lanczos (prototype/oracle fallback)"
+    fit$method,
+    "native block Hermitian Lanczos (matrix-free callback, thick restart, locking)"
   )
   expect_certificate_clean(fit)
   expect_equal(
@@ -221,10 +223,11 @@ test_that("matrix-free work accounting matches an independently observed callbac
   )
   expect_identical(fit$operator_block_calls, observed$calls)
   expect_identical(fit$operator_columns, observed$columns)
+  # Kernel (incl. its own certification) + the scalar wrapper's final
+  # k-column residual pass + warm-start guard + completeness check.
   expect_equal(
     fit$operator_columns,
-    fit$matvecs +
-      fit$certification_operator_columns +
+    fit$restart$operator_columns + k +
       fit$initial_subspace$guard_operator_columns +
       fit$certificate$completeness$operator_columns
   )

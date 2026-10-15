@@ -12,6 +12,7 @@
       center(A, rows = FALSE, columns = TRUE, row_means = NULL, col_means = NULL, name = NULL)
       certificate(x, ...)
       check_adjoint(A, trials = 20, tol = 1e-12, seed = NULL)
+      complex_operator(re, im = NULL, structure = NULL)
       compose(A, B, name = NULL)
       crossprod_operator(A, name = NULL)
       diagnostics(x, ...)

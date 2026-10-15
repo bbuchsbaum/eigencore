@@ -30,6 +30,14 @@ suite_flag <- function(x) !is.null(x) && tolower(x) %in% c("true", "1", "yes")
 
 suite_now <- function() as.numeric(Sys.time())
 
+# CPU time (user + system) of this process and its finished children. On a
+# shared machine it is a steadier cost measure than wall time for
+# single-threaded runs (with threads > 1 it sums over threads).
+suite_cpu <- function() {
+  p <- proc.time()
+  sum(p[c("user.self", "sys.self")], na.rm = TRUE)
+}
+
 suite_loadavg <- function() {
   if (file.exists("/proc/loadavg")) {
     x <- tryCatch(scan("/proc/loadavg", what = "", n = 3L, quiet = TRUE),

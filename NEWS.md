@@ -1,5 +1,178 @@
 # eigencore (development version)
 
+## Native complex kernels for complex Hermitian problems
+
+* Dense complex Hermitian inertia counts now factor the complex matrix with
+  the Hermitian Bunch-Kaufman `zhetrf` (2x2 pivot blocks are Hermitian;
+  their inertia comes from determinant and trace) instead of `dsytrf` on the
+  real `2n x 2n` embedding, with the same backward-error reliability test
+  (bound `2n * eps * (||M||_1 + growth)`, the embedding's dimension). This
+  serves `eigen_count()` on complex matrices (method
+  `"dense_bunch_kaufman_hermitian"`, was
+  `"dense_bunch_kaufman_hermitian_embedding"`) and the completeness count of
+  realified dense complex solves (the dense embedding carries its complex
+  source and its context counts natively, doubling the counts). One
+  factorisation is 2.0x faster (n = 1000: 0.073 vs 0.147 s; n = 2000: 0.51
+  vs 1.03 s; one thread, reference BLAS) and needs a quarter of the memory;
+  the completeness step of a dense n = 2000, k = 10 solve dropped from
+  1.0-1.2 s to 0.6 s (n = 1000: 0.2 -> 0.11 s), and a dense n = 2000
+  `nearest()` solve now passes the cost gate and is `inertia_verified`
+  (was `probed`; 6.5 -> 5.0 s). `options(eigencore.complex_inertia_native =
+  FALSE)` restores the embedding count. Dense complex `interval()` targets
+  keep their exact LAPACK route (no count involved).
+* Matrix-free complex Hermitian operators
+  (`linear_operator(..., dtype = "complex", structure = hermitian())`) with
+  `largest()`, `smallest()` or `largest_magnitude()` and `auto()` or
+  `lanczos(block = 1)` now run a scalar thick-restart Lanczos in complex
+  arithmetic (new plan label `"native complex Hermitian thick-restart
+  Lanczos (matrix-free)"`) instead of the real `2n` embedding, which finds
+  every complex direction twice. Certification, polishing and the
+  completeness check (on the embedding) are unchanged. Operator columns of
+  the caller's function fell 2.4-3.4x (n = 1000, k = 10: 1040 -> 316
+  largest, 880 -> 256 dense largest; n = 2000: 1360 -> 456, 880 -> 316) and
+  wall time 1.1-1.6x. `options(eigencore.complex_native_lanczos = FALSE)`
+  restores the realified route; explicit sources (dense, `complex_operator()`)
+  keep the realified native block kernels.
+
+## Native-code assurance findings F4-F7
+
+* `eigs_sym(which = "BE")` with a warm start (`opts = list(initvec =)`)
+  and `eig_partial(target = both_ends(), initial_subspace =)` now take the
+  native both-ends route (both thick-restart solves start from the supplied
+  vector) instead of the unrestarted reference Lanczos, which converged 0 of
+  3 pairs on a 60 x 60 path Laplacian plus diagonal (F4). `"BE"` keeps
+  RSpectra's split (the extra pair from the high end when `k` is odd).
+* An explicit `lanczos()` (scalar, `block = 1`) on a matrix-free Hermitian
+  operator now runs the native thick-restart callback kernel, as `auto()`
+  does, instead of the R prototype Lanczos that stopped after 3k + 20 applies
+  and failed its certificate (F5). The reference route remains for targets
+  without a native kernel; there `maxit` now sets the Lanczos step budget
+  when `max_subspace` is not given (it used to only cap the 3k + 20 default).
+* `shifted_tridiagonal_preconditioner()` factors `A + shift * I` at
+  construction and rejects a singular system with an error naming the
+  preconditioner; the native LOBPCG names it too instead of a bare
+  `status=-5` (F6).
+* Built-in operator identities no longer depend on `long double`
+  arithmetic: they hash the exact content of a Matrix source (all slots but
+  the `factors` cache) and the structure flags, not the derived column
+  moments, so a persisted plan, restart state or PSD factor matches the same
+  matrix on every platform (F7). `identity_hash_format()` is now
+  `"eigencore-identity-hash-v3"`; objects persisted under v2 fail with the
+  typed `identity_format_changed` error and must be re-planned / re-factored.
+
+## Single-thread performance (P19-P24)
+
+* Implicitly centred sparse PCA (`svd_partial(center(A))`,
+  `scale_cols(center(A), w)`) now runs the implicit Gram thick-restart
+  Lanczos on a fused centred CSC kernel instead of the matrix-free
+  Golub-Kahan callback cycle: 50000 x 1000, k = 10 went from ~1.35 s to
+  ~0.31 s CPU (RSpectra on the centred function operator: ~0.28 s). Row or
+  double centring keeps Golub-Kahan. Certification is unchanged.
+* Sparse shift-invert with `nearest()`: the inertia completeness count now
+  starts its margin from the shift-invert factor's own backward bound and
+  needs two LDL' factorisations instead of four (2-D Laplacian n = 10000:
+  ~107 -> ~87 ms CPU). The margin is still checked against each count's
+  actual bound.
+* Exactly symmetric dense matrices are applied with `dsymv` (one triangle)
+  in the thick-restart Lanczos kernel; dense symmetric 1500, k = 10:
+  ~220 -> ~165 ms CPU.
+* Sparse matrices with few nonzeros per row use the ARPACK subspace
+  `max(2k + 1, 20)` for scalar thick-restart Lanczos (was `3k + 20`):
+  reorthogonalisation dominated there (20-40% less CPU at n = 20000,
+  k = 10..40). `options(eigencore.lanczos_sparse_row_nnz)` (64) sets the
+  cut-off.
+* The nonsymmetric completeness probe merges a missed eigenvalue found by
+  its screening pass directly when that value already converged at the
+  solve tolerance, instead of re-running the probe at full tolerance first
+  (C60 case, sparse 20000 LM k = 6: ~13.6k -> ~9.7k operator columns,
+  ~12.6 -> ~7.8 s; same repaired set).
+* The benchmark runner records process CPU time per repetition
+  (`cpu_median`, `cpu_min` in `results.csv`).
+
+## Complex Hermitian eigenproblems on the iterative routes
+
+* Complex Hermitian problems now run on the iterative routes with verified
+  completeness. They are solved as the real symmetric `2n x 2n` embedding
+  `[Re -Im; Im Re]` (every eigenvalue doubled, `k -> 2k`) through the
+  ordinary real pipeline (native block Lanczos, LDL' shift-invert, native
+  generalized Lanczos, interval slicing, dense LAPACK), and the real Ritz
+  vectors are mapped back by a complex Rayleigh-Ritz step and certified on
+  the complex operator. The real route's completeness verdict
+  (`"inertia_verified"`, `"probed"`, `"exact"`) transfers, so
+  `certificate$passed` can be `TRUE`. New plan label
+  `"native realified complex Hermitian route (real 2n embedding)"`;
+  `fit$restart$inner_method` names the real route used.
+* `auto()` keeps zheev for small dense complex Hermitian matrices (the
+  real dense-partial thresholds, `n < 128` or `k / n > 0.25`) and now uses
+  the embedding above them: dense `n = 500 / 1000 / 2000`, `k = 10` (one
+  thread) went from 0.44 / 4.8 / 32 s to 0.17 / 1.1 / 4.9 s with the same
+  eigenvalue accuracy. `nearest()` on a small dense complex matrix no longer
+  errors (it was routed to a real-only shift-invert).
+* `lanczos()` on complex input now works (it errored in
+  `reorthogonalize_against`): it runs the realified native block kernel with
+  `block = 2 * block` (at least 2). With
+  `options(eigencore.complex_hermitian_realify = FALSE)` it runs the
+  reference Lanczos, now fixed for complex arithmetic (Hermitian inner
+  products, complex basis, real tridiagonal).
+* `lobpcg()` on complex input (reference LOBPCG) now converges: Hermitian
+  Rayleigh quotients and Rayleigh-Ritz, an order-preserving complex
+  B-orthonormalisation, complex preconditioners and constraints.
+* New `complex_operator(re, im)` builds a complex operator from real and
+  imaginary parts (dense or any `Matrix` class); the `Matrix` package has
+  no complex sparse classes, so this is how complex sparse Hermitian
+  matrices enter eigencore. Their embedding stays a `dgCMatrix`, so native
+  sparse block Lanczos, CHOLMOD shift-invert (`nearest()`,
+  `shift_invert()`, C60 `smallest()` routing) and CHOLMOD inertia counts
+  all apply.
+* Complex matrix-free Hermitian operators
+  (`linear_operator(..., dtype = "complex", structure = hermitian())`) are
+  supported (they errored); general complex matrix-free operators still
+  error.
+* Complex Hermitian-definite pencils (`B` Hermitian positive definite,
+  complex or real) solve through the embedded real SPD pencil for every
+  method; `interval()` targets now accept complex pencils, complex sparse
+  and complex matrix-free operators (inertia counted and sliced on the
+  embedding).
+* Completeness of complex results from any route is checked on the
+  embedding: the returned pairs are realified and counted (LDL' inertia) or
+  probed there, and a repaired set is mapped back and re-certified. Complex
+  results previously stayed `"not_checked"`.
+* Mapped-back complex pairs that miss the tolerance (typically after a
+  completeness repair of an interior target on the embedding, whose
+  deflated complement solve can land at ~1e-6) are polished on the complex
+  operator: one shifted inverse-iteration step per unconverged pair (dense
+  complex LU, sparse LU of the embedding, or a materialised small
+  matrix-free operator), else a residual-started block Krylov expansion,
+  then a complex Rayleigh-Ritz over all returned plus refinement vectors,
+  re-certification and a completeness re-check. Found by the integration
+  test of `smallest_magnitude()` on dense n = 300, where pairs 4-6 had
+  residuals 7e-7..2.3e-6 against `tol = 1e-8`.
+
+## Multithreading on busy machines
+
+* eigencore's OpenMP sparse kernels no longer collapse when the machine is
+  oversubscribed (P18, C57, C62). With the OpenMP runtime's default
+  spinning wait policy, every fork/join of a short kernel waited a
+  scheduler time slice for a descheduled thread, so with 4 threads on 4
+  busy cores solves ran 10-80 times slower than with one thread. Each
+  parallel region is now timed; when regions run slower than they would
+  serially, the team is halved, and larger teams are retried after a
+  growing pause. With 8 competing CPU-bound processes on 4 cores, 4-thread
+  solves went from 16-19 s to 3-6 s (sparse symmetric n = 20000, `largest()`
+  / `smallest()`) and from 7-12 s to 0.6-1.2 s (`svd_partial()` 50000 x
+  2000); quiet-machine timings are unchanged. Most of the remaining
+  slowdown comes from a multithreaded OpenBLAS, which spins the same way;
+  set `OPENBLAS_NUM_THREADS=1` on busy machines. Only
+  the team size changes, so results stay independent of the load (and of
+  the thread count as before). `options(eigencore.adaptive_threads = FALSE)`
+  turns the governor off; `eigencore:::native_thread_info()` reports the
+  `effective` team size.
+* The default thread count is now also limited to the physical cores and
+  to a container's cgroup CPU quota.
+* The inertia completeness cost gates scale their budget by the smaller of
+  the solve's elapsed and CPU time, so a solve slowed down by other
+  processes no longer admits a minutes-long inertia count (C62).
+
 ## Nonsymmetric target completeness
 
 * Nonsymmetric Krylov-Schur results (`eig_partial()` on general matrices,

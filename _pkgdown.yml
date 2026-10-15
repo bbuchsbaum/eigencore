@@ -73,6 +73,7 @@ reference:
   contents:
   - linear_operator
   - as_operator
+  - complex_operator
   - operator_identity
   - adjoint
   - check_adjoint

@@ -39,8 +39,8 @@
 #' @param initial_subspace Optional numeric matrix of starting directions
 #'   (a warm start). Supported on standard real Hermitian Lanczos paths: the
 #'   native paths for explicit dense double or `dgCMatrix` operators, the native
-#'   matrix-free callback path selected by `lanczos(block > 1)`, and the scalar
-#'   matrix-free reference path selected by `lanczos(block = 1)`;
+#'   matrix-free callback path (scalar or block), the native both-ends route,
+#'   and the scalar reference path for targets without a native kernel;
 #'   supplying it on any other planned path (generalized, shift-invert, dense
 #'   fallback) is an error. Pass `method = lanczos()` to guarantee a Lanczos
 #'   route: with the default `method = auto()`, sparse or `nearest()` problems
@@ -128,6 +128,7 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
     rank <- validate_solution_count(rank, min(dims), "rank")
   }
   fast_started <- proc.time()[["elapsed"]]
+  fast_clock <- completeness_clock()
   fast <- try_svd_partial_native_gram_fastpath(
     A = A,
     rank = rank,
@@ -139,7 +140,7 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
   )
   if (!is.null(fast)) {
     fast <- require_verified_completeness(apply_svd_completeness(
-      fast, fast$plan, solve_seconds = proc.time()[["elapsed"]] - fast_started))
+      fast, fast$plan, solve_seconds = completeness_seconds_since(fast_clock)))
     work_values <- unclass(fast$work)
     work_values$total_seconds <- proc.time()[["elapsed"]] - fast_started
     fast$work <- new_typed_work_record(work_values)
@@ -177,9 +178,10 @@ svd_partial <- function(A, rank, target = largest(), method = auto(), tol = 1e-8
 #'   `"compute"`); see [eig_partial()].
 #' @param initial_subspace Optional numeric matrix of starting directions
 #'   (a warm start). Supported on standard real Hermitian Lanczos paths —
-#'   native dense double / `dgCMatrix`, native matrix-free callbacks for
-#'   `lanczos(block > 1)`, and the scalar matrix-free reference path for
-#'   `lanczos(block = 1)`; supplying it on any other planned path is an error.
+#'   native dense double / `dgCMatrix`, native matrix-free callbacks, the
+#'   native both-ends route, and the scalar reference path for targets
+#'   without a native kernel; supplying it on any other planned path is an
+#'   error.
 #'   The subspace is only
 #'   a starting hint, never a source of reused convergence: every solve
 #'   recomputes projected quantities, residuals, orthogonality, convergence,
@@ -442,6 +444,9 @@ execute_eigen_plan <- function(plan, restart_preparation = NULL) {
   # Ritz vectors, so they are kept internally and dropped afterwards when the
   # caller asked for values only.
   a <- plan$problem
+  if (plan_dispatches_complex_hermitian_realified(plan)) {
+    return(solve_complex_hermitian_realified(plan))
+  }
   if (is_interval_target(a$target)) {
     return(solve_interval_eigen(plan))
   }
@@ -455,12 +460,12 @@ execute_eigen_plan <- function(plan, restart_preparation = NULL) {
        (mode %in% c("auto", "inertia") && inertia_completeness_eligible(a, k)))
   need_vectors <- need_vectors ||
     hermitian_completeness_wants_vectors(plan, a, k, mode)
-  started <- proc.time()[["elapsed"]]
+  started <- completeness_clock()
   result <- execute_eigen_plan_dispatch(
     plan, restart_preparation = restart_preparation,
     vectors = vectors_requested || need_vectors
   )
-  solve_seconds <- proc.time()[["elapsed"]] - started
+  solve_seconds <- completeness_seconds_since(started)
   seed <- result$transform$inertia_seed %||% NULL
   if (!is.null(result$transform)) {
     result$transform["inertia_seed"] <- NULL
@@ -566,10 +571,10 @@ execute_eigen_plan_dispatch <- function(plan, restart_preparation = NULL,
 execute_svd_plan <- function(plan) {
   # SVD target completeness (R/completeness_svd.R): verify that the returned
   # triplets are the requested set.
-  started <- proc.time()[["elapsed"]]
+  started <- completeness_clock()
   result <- execute_svd_plan_dispatch(plan)
   apply_svd_completeness(result, plan,
-                         solve_seconds = proc.time()[["elapsed"]] - started)
+                         solve_seconds = completeness_seconds_since(started))
 }
 
 #' @keywords internal
@@ -753,6 +758,14 @@ plan_dispatches_native_lanczos <- function(plan) {
   )
 }
 
+# Native routes that consume a warm-start block: the single-end thick-restart
+# kernels and the both-ends route, which starts both of its solves from it.
+#' @keywords internal
+plan_dispatches_native_warm_lanczos <- function(plan) {
+  plan_dispatches_native_lanczos(plan) ||
+    identical(plan$method, native_both_ends_lanczos_label())
+}
+
 #' @keywords internal
 plan_dispatches_reference_hermitian_lanczos <- function(plan) {
   plan$method %in% c(
@@ -803,6 +816,9 @@ plan_dispatches_golub_kahan <- function(plan) {
 plan_dispatch_available <- function(plan) {
   if (identical(plan$problem_type, "eigen")) {
     problem <- plan$problem
+    if (plan_dispatches_complex_hermitian_realified(plan)) {
+      return(TRUE)
+    }
     if (is_interval_target(problem$target)) {
       return(plan$method %in% interval_route_labels())
     }
@@ -855,13 +871,17 @@ validate_complex_eigen_plan <- function(problem, plan) {
   if (!identical(problem$A$dtype, "complex")) {
     return(plan)
   }
-  if (!is.null(source_or_null(problem$A))) {
+  if (!is.null(source_or_null(problem$A)) ||
+      plan$method %in% complex_hermitian_reference_labels()) {
     return(plan)
   }
   stop(
-    "Complex matrix-free eigen operators are future scope in eigencore. ",
-    "Use a base complex dense matrix for the native dense complex LAPACK path; ",
-    "native complex callback/sparse operator support is not promoted yet.",
+    "Complex matrix-free eigen operators are future scope in eigencore for ",
+    "general (non-Hermitian) structure. Complex Hermitian operators ",
+    "(structure = hermitian(), or a complex_operator() with symmetric real ",
+    "and skew-symmetric imaginary parts) are supported through the real 2n ",
+    "embedding; for a general complex matrix use a base complex dense matrix ",
+    "(native dense complex LAPACK path).",
     call. = FALSE
   )
 }
@@ -1520,7 +1540,9 @@ should_use_native_implicit_gram_svd <- function(problem, method, rank = NULL) {
   source <- source_or_null(problem$A)
   is_csc <- identical(storage, "dgCMatrix")
   is_dense <- is.matrix(source) && is.double(source) && !is.complex(source)
-  if (!is_csc && !is_dense) {
+  # P20: column-centred sparse operators (center(), scale_cols(center()))
+  # run the same kernel on the fused centred CSC apply.
+  if (!is_csc && !is_dense && is.null(implicit_gram_centered_csc_parts(problem$A))) {
     return(FALSE)
   }
   dims <- as.integer(problem$A$dim)

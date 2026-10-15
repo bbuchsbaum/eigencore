@@ -327,7 +327,8 @@ test_that("a plain numeric vector is accepted as a single start direction", {
 })
 
 # --------------------------------------------------------------------------
-# Matrix-free reference Hermitian Lanczos consumes a start
+# Matrix-free Hermitian Lanczos consumes a start (scalar lanczos() on a
+# callback operator runs the native thick-restart kernel since F5)
 # --------------------------------------------------------------------------
 
 matrix_free_hermitian <- function(A) {
@@ -349,25 +350,27 @@ test_that("matrix-free warm start is consumed, certified, and cheaper than cold"
   truth <- sort(eigen(A, symmetric = TRUE)$values, decreasing = TRUE)[seq_len(k)]
   op <- matrix_free_hermitian(A)
 
-  cold <- eig_partial(op, k = k, target = largest(), method = lanczos(max_subspace = n),
+  # Default thick-restart subspace: with a full n-column subspace the native
+  # kernel finishes in one sweep either way, so a start cannot save applies.
+  cold <- eig_partial(op, k = k, target = largest(), method = lanczos(),
                       seed = 12)
   expect_identical(cold$method,
-                   "reference Hermitian Lanczos (prototype/oracle fallback)")
+                   eigencore:::native_matrix_free_block_lanczos_label())
   expect_identical(cold$start_source, "cold")
   expect_equal(sort(values(cold), decreasing = TRUE), truth, tolerance = 1e-7)
 
   # NULL is regression-identical to cold on the matrix-free path too.
-  cold2 <- eig_partial(op, k = k, target = largest(), method = lanczos(max_subspace = n),
+  cold2 <- eig_partial(op, k = k, target = largest(), method = lanczos(),
                        seed = 12, initial_subspace = NULL)
   expect_equal(values(cold), values(cold2))
   expect_equal(cold$matvecs, cold2$matvecs)
 
   # A perturbed previous-solve basis models a changed-operator continuation.
   warm_basis <- warm_from_truth(A, k, noise = 1e-3, seed = 19L)
-  warm <- eig_partial(op, k = k, target = largest(), method = lanczos(max_subspace = n),
+  warm <- eig_partial(op, k = k, target = largest(), method = lanczos(),
                       seed = 12, initial_subspace = warm_basis)
   expect_identical(warm$method,
-                   "reference Hermitian Lanczos (prototype/oracle fallback)")
+                   eigencore:::native_matrix_free_block_lanczos_label())
   expect_identical(warm$start_source, "user_supplied")
   expect_equal(sort(values(warm), decreasing = TRUE), truth, tolerance = 1e-7)
   # Matrix-free certificates withhold `passed` (stochastic norm estimate);

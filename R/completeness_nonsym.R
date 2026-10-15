@@ -451,7 +451,17 @@ nonsym_completeness_check <- function(op, values, vectors, target, tol,
     screened <- loose_tol > tol
     probe <- run_probe(loose_tol, if (screened) min(controls$restarts, 100L) else controls$restarts)
     verdict <- assess(probe)
-    if (screened && !isTRUE(probe$exhausted) &&
+    # P23: when a suspect of the screen already converged at the solve
+    # tolerance (Krylov-Schur resolves the dominant complement values far
+    # below the screening tolerance), the screen's basis carries an accurate
+    # intruder vector: try the merge with it first, and re-run the probe at
+    # the solve tolerance only if that merge does not certify and improve.
+    # The merged set is re-certified from scratch and probed again by the
+    # next round, which re-examines any suspect the merge left out.
+    screen_merge <- screened && !isTRUE(probe$exhausted) &&
+      isTRUE(probe$converged) && any(verdict$suspect) &&
+      any(verdict$confirmed)
+    if (screened && !screen_merge && !isTRUE(probe$exhausted) &&
         (any(verdict$suspect) || !isTRUE(probe$converged))) {
       probe <- run_probe(tol)
       verdict <- assess(probe)
@@ -483,19 +493,50 @@ nonsym_completeness_check <- function(op, values, vectors, target, tol,
       break
     }
     round <- round + 1L
-    merged <- nonsym_completeness_merge(op, Q, probe$basis, k,
-                                        nonsym_completeness_target(kind), tol,
-                                        certify_fn)
-    record$operator_columns <- record$operator_columns + merged$columns + k
-    record$operator_block_calls <- record$operator_block_calls + 2L
-    # Accept the merge when its sorted preference keys dominate the old ones
+    # Accept a merge when its sorted preference keys dominate the old ones
     # and at least one improves by more than the margin (the edge itself may
     # stay, e.g. when k cuts a conjugate pair).
-    improved <- length(merged$values) == k && {
-      old_keys <- sort(nonsym_completeness_key(values, kind), decreasing = TRUE)
-      new_keys <- sort(nonsym_completeness_key(merged$values, kind), decreasing = TRUE)
-      all(new_keys >= old_keys - margin) && any(new_keys > old_keys + margin)
+    try_merge <- function(probe, margin) {
+      merged <- nonsym_completeness_merge(op, Q, probe$basis, k,
+                                          nonsym_completeness_target(kind), tol,
+                                          certify_fn)
+      record$operator_columns <<- record$operator_columns + merged$columns + k
+      record$operator_block_calls <<- record$operator_block_calls + 2L
+      merged$improved <- length(merged$values) == k && {
+        old_keys <- sort(nonsym_completeness_key(values, kind), decreasing = TRUE)
+        new_keys <- sort(nonsym_completeness_key(merged$values, kind), decreasing = TRUE)
+        all(new_keys >= old_keys - margin) && any(new_keys > old_keys + margin)
+      }
+      merged
     }
+    merged <- try_merge(probe, margin)
+    if ((!isTRUE(merged$certificate$passed) || !isTRUE(merged$improved)) &&
+        screen_merge) {
+      # The screen-basis merge fell short: fall back to the solve-tolerance
+      # probe and its merge, as without the shortcut.
+      probe <- run_probe(tol)
+      verdict <- assess(probe)
+      margin <- verdict$margin
+      confirmed <- verdict$confirmed
+      record$margin <- margin
+      record$probe_tolerance <- tol
+      if (length(verdict$theta)) {
+        record$most_preferred_complement <- verdict$theta[[which.max(verdict$key)]]
+      }
+      if (!any(verdict$suspect)) {
+        round <- round - 1L
+        record$intruder_found <- FALSE
+        record$intruder_confirmed <- NULL
+        status <- if (!probe$converged) "inconclusive" else if (repaired) "repaired" else "probed"
+        if (!probe$converged) {
+          record$reason <- "complement probe did not converge within its restart budget"
+        }
+        break
+      }
+      record$intruder_confirmed <- any(confirmed)
+      merged <- try_merge(probe, margin)
+    }
+    improved <- isTRUE(merged$improved)
     if (!isTRUE(merged$certificate$passed) || !improved) {
       status <- if (any(confirmed)) "failed" else "inconclusive"
       record$reason <- if (!isTRUE(merged$certificate$passed)) {

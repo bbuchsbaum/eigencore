@@ -98,6 +98,9 @@ shifted_diagonal_preconditioner <- function(A, shift = 0) {
 #'
 #' @param A Real symmetric tridiagonal matrix.
 #' @param shift Non-negative diagonal shift added to the tridiagonal system.
+#'   `A + shift * I` must be nonsingular: it is factored once at
+#'   construction, and a singular system is an error naming this
+#'   preconditioner.
 #' @return A typed preconditioner function mapping residual blocks to
 #'   preconditioned blocks.
 #' @export
@@ -143,6 +146,23 @@ shifted_tridiagonal_preconditioner <- function(A, shift = 0) {
   force(lower)
   force(diag)
   force(upper)
+  # Factor once up front (O(n)): a singular A + shift * I used to surface
+  # only inside LOBPCG as a bare "status=-5" (F6).
+  if (n > 0L) {
+    tryCatch(
+      .Call("eigencore_tridiagonal_solve", as.numeric(lower), as.numeric(diag),
+            as.numeric(upper), matrix(1, n, 1L), PACKAGE = "eigencore"),
+      error = function(e) {
+        stop(
+          "shifted_tridiagonal_preconditioner(): A + shift * I is singular ",
+          "to working precision (shift = ", format(shift), "; ",
+          conditionMessage(e), "). Use a positive shift that moves the ",
+          "system away from the spectrum of A.",
+          call. = FALSE
+        )
+      }
+    )
+  }
   apply <- function(R) {
     .Call(
       "eigencore_tridiagonal_solve",

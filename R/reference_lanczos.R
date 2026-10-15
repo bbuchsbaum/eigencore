@@ -56,21 +56,30 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
   k <- controls$requested
   maxit <- controls$maxit
 
-  Q <- matrix(0, n, maxit)
+  # Complex Hermitian operators run the same recurrence in complex
+  # arithmetic: alpha_j = Re(q_j^H A q_j) and beta_j = ||z|| stay real, so the
+  # projected matrix is the same real tridiagonal T; the basis Q is complex.
+  complex_op <- identical(op$dtype %||% "double", "complex")
+  Q <- matrix(if (complex_op) 0i else 0, n, maxit)
   alpha <- numeric(maxit)
   beta <- numeric(maxit)
-  q_prev <- numeric(n)
+  q_prev <- if (complex_op) complex(n) else numeric(n)
   q <- if (is.null(start)) {
-    stats::rnorm(n)
+    if (complex_op) {
+      complex(real = stats::rnorm(n), imaginary = stats::rnorm(n))
+    } else {
+      stats::rnorm(n)
+    }
   } else {
-    start <- as.numeric(as.matrix(start)[, 1L])
+    start <- as.matrix(start)[, 1L]
+    start <- if (complex_op) as.complex(start) else as.numeric(start)
     if (length(start) != n || !all(is.finite(start))) {
       stop("reference Hermitian Lanczos start vector must be length ", n,
            " and finite.", call. = FALSE)
     }
     start
   }
-  q_norm <- sqrt(sum(q^2))
+  q_norm <- sqrt(sum(Mod(q)^2))
   if (q_norm == 0) {
     q[1L] <- 1
     q_norm <- 1
@@ -83,7 +92,7 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
   final <- NULL
   final_iteration <- NA_integer_
   iterations <- 0L
-  reorth_workspace <- basis_workspace(n, maxit, 1L)
+  reorth_workspace <- if (complex_op) NULL else basis_workspace(n, maxit, 1L)
 
   for (j in seq_len(maxit)) {
     iterations <- j
@@ -94,15 +103,23 @@ reference_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8,
     if (j > 1L) {
       z <- z - beta[[j - 1L]] * q_prev
     }
-    alpha[[j]] <- sum(q * z)
+    alpha[[j]] <- if (complex_op) Re(sum(Conj(q) * z)) else sum(q * z)
     z <- z - alpha[[j]] * q
 
     if (isTRUE(reorthogonalize)) {
       Qj <- Q[, seq_len(j), drop = FALSE]
-      z <- reorthogonalize_against(matrix(z, n, 1L), Qj, passes = 2L, workspace = reorth_workspace)[, 1L]
+      z <- if (complex_op) {
+        # Two-pass classical Gram-Schmidt with the Hermitian inner product.
+        for (pass in 1:2) {
+          z <- z - as.vector(Qj %*% (Conj(t(Qj)) %*% z))
+        }
+        z
+      } else {
+        reorthogonalize_against(matrix(z, n, 1L), Qj, passes = 2L, workspace = reorth_workspace)[, 1L]
+      }
     }
 
-    beta[[j]] <- sqrt(sum(z^2))
+    beta[[j]] <- sqrt(sum(Mod(z)^2))
     if (j >= k) {
       # Convergence test from the Lanczos relation A Q_j = Q_j T_j +
       # beta_j q_{j+1} e_j': the Ritz pair (theta_i, Q_j s_i) has residual

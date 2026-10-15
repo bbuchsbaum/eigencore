@@ -3,6 +3,7 @@
 \name{eigencore-threads}
 \alias{eigencore-threads}
 \alias{eigencore.threads}
+\alias{eigencore.adaptive_threads}
 \alias{eigencore.csr_cache_mb}
 \title{Multithreading in eigencore's sparse kernels}
 \description{
@@ -27,13 +28,47 @@ native call. When unset, a default fixed at package load is used: \code{1}
 under \verb{R CMD check} (\verb{_R_CHECK_PACKAGE_NAME_} set) or when
 \verb{_R_CHECK_LIMIT_CORES_} is set (CRAN's core limit); otherwise the first
 value of \code{OMP_NUM_THREADS} when set; otherwise the number of processors
-reported by OpenMP, capped at 8. Builds without OpenMP (for example
-Apple clang without \code{libomp}) always use one thread.}
+available to OpenMP (respecting the CPU affinity mask), further limited
+to the physical cores (\code{parallel::detectCores(logical = FALSE)}) and to
+the cgroup CPU quota of a container, and capped at 8. Builds without
+OpenMP (for example Apple clang without \code{libomp}) always use one
+thread.}
+\item{\code{eigencore.adaptive_threads}}{\code{TRUE} (default) or \code{FALSE}. While
+enabled, eigencore watches the parallel efficiency of its own OpenMP
+regions and lowers the number of threads it actually uses when the
+machine is oversubscribed (see below). \code{FALSE} always uses
+\code{eigencore.threads} threads, as in eigencore 1.3.0.}
 \item{\code{eigencore.csr_cache_mb}}{Memory cap in MB (default 4096) for the
 per-operator CSR copy or row slabs (about 12 bytes per nonzero) that the
 parallel \verb{A X} builds once per solve. When the copy would be larger,
 \verb{A X} stays serial for blocks of up to 10 columns.}
 }
+}
+
+\section{Busy machines}{
+
+OpenMP runtimes keep idle team threads spinning for a while (libgomp's
+default \code{OMP_WAIT_POLICY}), which is fast on idle cores. When other
+processes occupy the cores, every fork, join and barrier of a parallel
+region instead waits a scheduler time slice for a team member that is not
+running, and eigencore 1.3.0's short sparse kernels became 10-80 times
+slower with 4 threads than with 1. eigencore therefore times each parallel
+region: when a region takes longer than the master thread's share of the
+work times the team size (i.e. longer than running it serially would
+have), twice in a row, the team is halved, and a larger team is tried
+again after a pause that grows (0.25 s to 4 s) while the machine stays
+busy. Only the number of threads in a region changes; the algorithm and
+the work partition that determine rounding are chosen from
+\code{eigencore.threads}, so results do not depend on the machine load. The
+wait policy itself cannot be changed from a package (R loads the OpenMP
+runtime at start-up); on machines that are routinely oversubscribed,
+setting \code{OMP_WAIT_POLICY=passive} in the environment before starting R
+also removes the spinning. A multithreaded OpenBLAS (pthreads build)
+spins the same way in its own dense calls (including those made between
+eigencore's native calls and by CHOLMOD); eigencore does not change it
+on its own because OpenBLAS results depend on its thread count, so on a
+busy machine also limit it (\code{OPENBLAS_NUM_THREADS=1}, or
+\code{RhpcBLASctl::blas_set_num_threads(1)}).
 }
 
 \section{Interaction with a multithreaded BLAS}{

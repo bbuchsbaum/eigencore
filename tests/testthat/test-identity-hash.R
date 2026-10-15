@@ -9,7 +9,7 @@ test_that("C45: identity hash is a fixed, platform-independent function of value
   # Pinned value: a change here changes every persisted identity and token,
   # so it must come with a new identity_hash_format().
   expect_identical(digest, "cfda38219a438b067edd10ed2d61ea20")
-  expect_identical(eigencore:::identity_hash_format(), "eigencore-identity-hash-v2")
+  expect_identical(eigencore:::identity_hash_format(), "eigencore-identity-hash-v3")
 })
 
 test_that("C45: identity hash follows identical() semantics on values and structure", {
@@ -106,7 +106,7 @@ test_that("C45: identity is identical across separate R sessions", {
 
 test_that("C45: plans and restart states from an older identity format ask for a re-plan", {
   plan <- plan_solver(eigen_problem(diag(c(7, 5, 3, 1))), k = 2L)
-  expect_identical(plan$serialization$hash_format, "eigencore-identity-hash-v2")
+  expect_identical(plan$serialization$hash_format, "eigencore-identity-hash-v3")
   old <- plan
   old$serialization$hash_format <- NULL
   err <- tryCatch(solve(old), error = identity)
@@ -117,7 +117,7 @@ test_that("C45: plans and restart states from an older identity format ask for a
 
   fit <- solve(plan_solver(eigen_problem(diag(seq(30, 1))), k = 3L))
   state <- restart_state(fit)
-  expect_identical(state$serialization$hash_format, "eigencore-identity-hash-v2")
+  expect_identical(state$serialization$hash_format, "eigencore-identity-hash-v3")
   stale <- state
   stale$serialization$hash_format <- NULL
   err <- tryCatch(restart_state(stale), error = identity)

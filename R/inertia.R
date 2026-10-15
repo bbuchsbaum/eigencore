@@ -11,9 +11,8 @@
 #   diagonal      direct comparison of a_i / b_i with sigma (exact)
 #   tridiagonal   Sturm recurrence (unpivoted LDL'), backward stable for
 #                 counting (LAPACK dstebz semantics)
-#   dense         Bunch-Kaufman LDL' (LAPACK dsytrf), complex Hermitian via
-#                 the real symmetric embedding [Re -Im; Im Re] (every
-#                 eigenvalue doubled)
+#   dense         Bunch-Kaufman LDL' (LAPACK dsytrf); complex Hermitian by
+#                 the Hermitian LDL^H (LAPACK zhetrf, R/complex_inertia.R)
 #   sparse        CHOLMOD simplicial LDL' with a fill-reducing (AMD) ordering
 #                 through Matrix::Cholesky(LDL = TRUE, super = FALSE); the
 #                 symbolic factor is reused (Matrix::update) across shifts.
@@ -47,7 +46,8 @@
 #' * tridiagonal `A` with identity or diagonal `B`: Sturm sequence
 #'   (backward stable for counting);
 #' * dense real symmetric: LAPACK Bunch-Kaufman `dsytrf`; complex Hermitian:
-#'   the same on the real symmetric embedding `[Re(A) -Im(A); Im(A) Re(A)]`;
+#'   the Hermitian Bunch-Kaufman \eqn{LDL^H} `zhetrf` (2x2 pivot blocks are
+#'   Hermitian; their inertia follows from determinant and trace);
 #' * sparse (`dsCMatrix`, symmetric `dgCMatrix`, other sparse classes):
 #'   CHOLMOD simplicial \eqn{LDL^T} with an AMD fill-reducing ordering via
 #'   [Matrix::Cholesky()].
@@ -89,7 +89,7 @@
 #'     perturbed); `perturbed`, `perturbation` (`delta`);
 #'   * `reliable`: whether the counts are trustworthy (see Details);
 #'   * `method`: `"diagonal"`, `"tridiagonal_sturm"`,
-#'     `"dense_bunch_kaufman"`, `"dense_bunch_kaufman_hermitian_embedding"` or
+#'     `"dense_bunch_kaufman"`, `"dense_bunch_kaufman_hermitian"` (complex) or
 #'     `"sparse_cholmod_ldl"`; `generalized`: whether `B` was given;
 #'   * `diagnostics`: a list with `scale` (an upper bound of
 #'     `||A - sigma B||_2`), `min_pivot` and `max_pivot` (absolute),
@@ -328,8 +328,11 @@ inertia_norm1 <- function(part) {
     },
     dense = if (isTRUE(part$complex)) {
       max(colSums(Mod(part$matrix)), 0)
+    } else if (length(part$matrix)) {
+      # LAPACK dlange: the same 1-norm without an n x n abs() copy (P21).
+      norm(part$matrix, "O")
     } else {
-      max(colSums(abs(part$matrix)), 0)
+      0
     },
     sparse = max(Matrix::colSums(abs(part$matrix)), 0)
   )
@@ -373,6 +376,11 @@ inertia_hermitian_embedding <- function(x) {
 # cached CHOLMOD factor whose symbolic analysis later shifts reuse.
 #' @keywords internal
 inertia_context <- function(A, B = NULL) {
+  # Realified complex problems count natively (R/complex_inertia.R).
+  native <- complex_inertia_embedding_context(A, B)
+  if (!is.null(native)) {
+    return(native)
+  }
   a <- inertia_normalize(A, "A")
   b <- if (is.null(B)) NULL else inertia_normalize(B, "B")
   if (!is.null(b) && b$n != a$n) {
@@ -422,6 +430,10 @@ inertia_context <- function(A, B = NULL) {
     Ad <- inertia_as_dense(a)
     Bd <- if (is.null(b)) NULL else inertia_as_dense(b)
     cplx <- is.complex(Ad) || is.complex(Bd)
+    if (cplx && complex_inertia_native_enabled()) {
+      complex_inertia_fill_dense(ctx, Ad, Bd)
+      return(ctx)
+    }
     if (cplx) {
       Ad <- inertia_hermitian_embedding(Ad + 0i)
       Bd <- if (is.null(Bd)) NULL else inertia_hermitian_embedding(Bd + 0i)
@@ -500,6 +512,9 @@ inertia_at <- function(ctx, s) {
     # the entries of O(eps): ||E|| <= ~4 eps ||T - s B||.
     out$backward_bound <- 4 * eps * out$scale
     return(out)
+  }
+  if (identical(ctx$kind, "dense") && isTRUE(ctx$complex_native)) {
+    return(complex_inertia_at_dense(ctx, s, out))
   }
   if (identical(ctx$kind, "dense")) {
     t <- tryCatch(
@@ -828,7 +843,7 @@ inertia_factor_cost <- function(ctx) {
     ctx$kind,
     diagonal = list(flops = n, factor_nnz = n, source = "exact"),
     tridiagonal = list(flops = 5 * n, factor_nnz = 2 * n, source = "exact"),
-    dense = {
+    dense = if (isTRUE(ctx$complex_native)) complex_inertia_factor_cost(ctx) else {
       m <- if (isTRUE(ctx$complex)) 2 * n else n
       list(flops = m^3 / 3, factor_nnz = m^2 / 2, source = "exact")
     },

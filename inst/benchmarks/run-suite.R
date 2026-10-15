@@ -30,7 +30,8 @@
 #   --list                             print the selected cases and exit
 #
 # Output: <out>/<YYYYMMDD>-<machine-id>-<profile>/
-#   results.csv       one row per case x method x threads
+#   results.csv       one row per case x method x threads (wall times and
+#                     process CPU time per repetition: cpu_median, cpu_min)
 #   cases.csv         one row per case: generator, size, reference source, ||A||_2
 #   environment.json  machine, R, BLAS/LAPACK, package versions, git SHA, load
 #   environment.rds   the same as an R list (plus per-worker thread settings)
@@ -110,15 +111,20 @@ suite_time_method <- function(ad, reps, budget) {
   }
   n_reps <- if (t_first >= budget) 0L else as.integer(min(reps, max(1, floor(budget / max(t_first, 1e-6)))))
   times <- numeric(0)
+  cpu <- numeric(0)
   for (i in seq_len(n_reps)) {
     invisible(gc(FALSE))
+    c0 <- suite_cpu()
     t0 <- suite_now()
     withCallingHandlers(ad$run(), warning = muffle)
     times <- c(times, suite_now() - t0)
+    cpu <- c(cpu, suite_cpu() - c0)
   }
   timed <- if (length(times)) times else t_first
   list(raw = raw, error = NULL, t_first = t_first, times = times,
        time_median = stats::median(timed), time_min = min(timed), time_max = max(timed),
+       cpu_median = if (length(cpu)) stats::median(cpu) else NA_real_,
+       cpu_min = if (length(cpu)) min(cpu) else NA_real_,
        reps_timed = length(times), rss_peak_mb = rss_peak, r_heap_peak_mb = heap_peak,
        warnings = warns, load_start = load_start, load_end = suite_loadavg()[1L])
 }
@@ -169,6 +175,8 @@ suite_row <- function(case, method, nthreads, ad = NULL, timing = NULL, std = NU
     time_min = g(timing, "time_min", NA_real_),
     time_max = g(timing, "time_max", NA_real_),
     time_first = g(timing, "t_first", NA_real_),
+    cpu_median = g(timing, "cpu_median", NA_real_),
+    cpu_min = g(timing, "cpu_min", NA_real_),
     times = if (is.null(timing) || !length(timing$times)) NA_character_ else
       paste(sprintf("%.4f", timing$times), collapse = ";"),
     matvecs = as.numeric(g(std, "matvecs", NA_real_)),
@@ -256,8 +264,9 @@ suite_run_worker <- function(nthreads) {
       timing$raw <- NULL
       row <- suite_row(case, method, nthreads, ad, timing, std, acc)
       rows[[length(rows) + 1L]] <- row
-      suite_log(sprintf("  %-9s median %-9s (min %-9s, %d reps) matvecs %-6s bwd %.1e value_err %.1e target %s%s",
+      suite_log(sprintf("  %-9s median %-9s (min %-9s, cpu %-9s, %d reps) matvecs %-6s bwd %.1e value_err %.1e target %s%s",
                         method, suite_fmt_time(row$time_median), suite_fmt_time(row$time_min),
+                        suite_fmt_time(row$cpu_median),
                         row$reps_timed, format(row$matvecs), row$max_backward_error, row$value_err,
                         row$target_ok, if (is.na(row$eigencore_certified)) "" else
                           paste0(" certified ", row$eigencore_certified)))

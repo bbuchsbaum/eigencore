@@ -18,6 +18,7 @@ extern "C" SEXP eigencore_csc_randomized_svd_controller(SEXP, SEXP, SEXP, SEXP, 
 extern "C" SEXP eigencore_csc_column_moments(SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_set_default_threads(SEXP);
 extern "C" SEXP eigencore_thread_info(void);
+extern "C" SEXP eigencore_thread_governor(SEXP);
 extern "C" SEXP eigencore_csc_apply_repeat(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_centered_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_csc_centered_scaled_block_apply(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -70,6 +71,7 @@ extern "C" SEXP eigencore_completeness_probe_csc(SEXP, SEXP, SEXP, SEXP, SEXP, S
 extern "C" SEXP eigencore_completeness_probe_r_operator(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_normal_thick_restart_lanczos_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_normal_thick_restart_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_normal_thick_restart_lanczos_centered_scaled_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_lobpcg_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_lobpcg_dense_dense_b(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_lobpcg_dense_diagonal_b(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -114,6 +116,7 @@ extern "C" SEXP eigencore_block_golub_kahan_ritz(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_golub_kahan_ritz(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_is_symmetric(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_symmetric_inertia(SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_dense_hermitian_inertia(SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_tridiagonal_inertia(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_simplicial_ldl_diagnostics(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_cholmod_abi(void);
@@ -161,6 +164,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_csc_column_moments", (DL_FUNC) &eigencore_csc_column_moments, 3},
   {"eigencore_set_default_threads", (DL_FUNC) &eigencore_set_default_threads, 1},
   {"eigencore_thread_info", (DL_FUNC) &eigencore_thread_info, 0},
+  {"eigencore_thread_governor", (DL_FUNC) &eigencore_thread_governor, 1},
   {"eigencore_csc_apply_repeat", (DL_FUNC) &eigencore_csc_apply_repeat, 12},
   {"eigencore_csc_centered_block_apply", (DL_FUNC) &eigencore_csc_centered_block_apply, 13},
   {"eigencore_csc_centered_scaled_block_apply", (DL_FUNC) &eigencore_csc_centered_scaled_block_apply, 11},
@@ -213,6 +217,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_completeness_probe_r_operator", (DL_FUNC) &eigencore_completeness_probe_r_operator, 4},
   {"eigencore_normal_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_normal_thick_restart_lanczos_dense, 10},
   {"eigencore_normal_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_normal_thick_restart_lanczos_csc, 13},
+  {"eigencore_normal_thick_restart_lanczos_centered_scaled_csc", (DL_FUNC) &eigencore_normal_thick_restart_lanczos_centered_scaled_csc, 15},
   {"eigencore_lobpcg_dense", (DL_FUNC) &eigencore_lobpcg_dense, 10},
   {"eigencore_lobpcg_dense_dense_b", (DL_FUNC) &eigencore_lobpcg_dense_dense_b, 11},
   {"eigencore_lobpcg_dense_diagonal_b", (DL_FUNC) &eigencore_lobpcg_dense_diagonal_b, 12},
@@ -257,6 +262,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_golub_kahan_ritz", (DL_FUNC) &eigencore_golub_kahan_ritz, 7},
   {"eigencore_dense_is_symmetric", (DL_FUNC) &eigencore_dense_is_symmetric, 2},
   {"eigencore_dense_symmetric_inertia", (DL_FUNC) &eigencore_dense_symmetric_inertia, 3},
+  {"eigencore_dense_hermitian_inertia", (DL_FUNC) &eigencore_dense_hermitian_inertia, 3},
   {"eigencore_tridiagonal_inertia", (DL_FUNC) &eigencore_tridiagonal_inertia, 4},
   {"eigencore_simplicial_ldl_diagnostics", (DL_FUNC) &eigencore_simplicial_ldl_diagnostics, 4},
   {"eigencore_cholmod_abi", (DL_FUNC) &eigencore_cholmod_abi, 0},

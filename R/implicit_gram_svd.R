@@ -19,6 +19,38 @@ default_implicit_gram_max_subspace <- function(k, block, sparse = FALSE) {
   max(factor * k + 2L * block, 40L)
 }
 
+# Column-centred (optionally right-scaled) sparse operator C = (A - 1 mu') D
+# from center() / scale_cols(center()) (P20): list(matrix, col_means,
+# weights), or NULL when `op` is not one. Row or double centring is not
+# covered (its correction is not a column rank-one term).
+#' @keywords internal
+implicit_gram_centered_csc_parts <- function(op) {
+  md <- op$metadata %||% list()
+  storage <- md$storage %||% NULL
+  if (!isTRUE(md$native) ||
+      !(identical(storage, "centered_dgCMatrix") ||
+        identical(storage, "centered_scaled_dgCMatrix")) ||
+      !isTRUE(md$columns) || isTRUE(md$rows)) {
+    return(NULL)
+  }
+  A <- md$base_matrix %||% NULL
+  if (!inherits(A, "dgCMatrix")) {
+    return(NULL)
+  }
+  n <- ncol(A)
+  means <- as.numeric(md$col_means %||% numeric())
+  weights <- if (identical(storage, "centered_scaled_dgCMatrix")) {
+    as.numeric(md$weights %||% numeric())
+  } else {
+    rep(1, n)
+  }
+  if (length(means) != n || length(weights) != n ||
+      any(!is.finite(means)) || any(!is.finite(weights))) {
+    return(NULL)
+  }
+  list(matrix = A, col_means = means, weights = weights)
+}
+
 #' Implicit normal-equations (Gram) partial SVD.
 #'
 #' Runs the production block thick-restart Lanczos on the smaller-side normal
@@ -40,16 +72,18 @@ native_implicit_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
   storage <- op$metadata$storage %||% NULL
   is_csc <- identical(storage, "dgCMatrix")
   is_dense <- is.matrix(source) && is.double(source) && !is.complex(source)
-  if (!is_csc && !is_dense) {
-    stop("Native implicit Gram SVD requires a dense double matrix or dgCMatrix operator.",
-         call. = FALSE)
+  centered <- if (!is_csc && !is_dense) implicit_gram_centered_csc_parts(op) else NULL
+  if (!is_csc && !is_dense && is.null(centered)) {
+    stop("Native implicit Gram SVD requires a dense double matrix, a dgCMatrix ",
+         "or a column-centred dgCMatrix operator.", call. = FALSE)
   }
+  sparse <- is_csc || !is.null(centered)
   if (!implicit_gram_svd_target_supported(target)) {
     stop("Native implicit Gram SVD supports largest singular-value targets.",
          call. = FALSE)
   }
 
-  A <- if (is_csc) op$metadata$matrix else source
+  A <- if (is_csc) op$metadata$matrix else if (!is.null(centered)) centered$matrix else source
   m <- as.integer(op$dim[1L])
   n <- as.integer(op$dim[2L])
   limit <- min(m, n)
@@ -64,9 +98,9 @@ native_implicit_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
   outer <- if (side == 0L) n else m
   # Dense applies amortize the matrix read across block columns; the sparse
   # kernel's per-column working set makes single-vector blocks faster there.
-  block <- if (is.null(block)) (if (is_csc) 1L else 2L) else as.integer(block)
+  block <- if (is.null(block)) (if (sparse) 1L else 2L) else as.integer(block)
   m_max <- if (is.null(max_subspace)) {
-    min(outer, default_implicit_gram_max_subspace(rank, block, sparse = is_csc))
+    min(outer, default_implicit_gram_max_subspace(rank, block, sparse = sparse))
   } else {
     min(outer, as.integer(max_subspace))
   }
@@ -88,7 +122,27 @@ native_implicit_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
   # amplification, warm-started from the top Ritz vectors) follows. The exact
   # original-coordinate certificate is the authoritative pass/fail decision.
   run_kernel <- function(kernel_tol, start) {
-    iter <- if (is_csc) {
+    iter <- if (!is.null(centered)) {
+      .Call(
+        "eigencore_normal_thick_restart_lanczos_centered_scaled_csc",
+        methods::slot(A, "i"),
+        methods::slot(A, "p"),
+        methods::slot(A, "x"),
+        methods::slot(A, "Dim"),
+        centered$col_means,
+        centered$weights,
+        as.integer(side),
+        as.integer(rank),
+        as.integer(m_max),
+        as.integer(block),
+        1L,  # largest eigenvalues of the normal operator
+        as.numeric(kernel_tol),
+        max_restarts,
+        0.0,
+        start,
+        PACKAGE = "eigencore"
+      )
+    } else if (is_csc) {
       .Call(
         "eigencore_normal_thick_restart_lanczos_csc",
         methods::slot(A, "i"),
@@ -141,14 +195,25 @@ native_implicit_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     # Recover the opposite factor, then certify with fresh forward AND adjoint
     # applies in original coordinates (certify_svd_operator); the product used
     # to form u (or v) is not reused as a cached side of the certificate (C13).
+    # The 1 / sigma scaling is applied to the short Gram-side block before
+    # the product (one pass over an outer x rank block instead of the long
+    # side).
     if (side == 0L) {
       v <- W
-      u <- as.matrix(A %*% v)
-      for (j in seq_along(inv_sigma)) u[, j] <- u[, j] * inv_sigma[[j]]
+      vs <- v * rep(inv_sigma, each = nrow(v))
+      u <- if (!is.null(centered)) {
+        as.matrix(apply_operator(op, vs))
+      } else {
+        as.matrix(A %*% vs)
+      }
     } else {
       u <- W
-      v <- as.matrix(Matrix::crossprod(A, u))
-      for (j in seq_along(inv_sigma)) v[, j] <- v[, j] * inv_sigma[[j]]
+      us <- u * rep(inv_sigma, each = nrow(u))
+      v <- if (!is.null(centered)) {
+        as.matrix(apply_adjoint_operator(op, us))
+      } else {
+        as.matrix(Matrix::crossprod(A, us))
+      }
     }
     cert <- certify_svd_operator(op, sigma, u, v, tol = tol)
     list(iter = iter, lambda = lambda, W = W, sigma = sigma,
@@ -208,6 +273,9 @@ native_implicit_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
     certificate = cert,
     iterations = total_iterations,
     matvecs = total_matvecs,
+    # Each normal-operator application is one forward and one adjoint apply
+    # of A, so work() can split the base applies (P20).
+    adjoint_matvecs = if (is.na(total_matvecs)) NA_integer_ else as.integer(total_matvecs %/% 2L),
     stage_seconds = iter$stage_seconds %||% numeric(),
     restart = list(
       kind = "implicit_gram_thick_restart_lanczos",
@@ -216,6 +284,7 @@ native_implicit_gram_svd <- function(op, rank, target = largest(), tol = 1e-8,
       gram_side = if (side == 0L) "right" else "left",
       gram_dimension = outer,
       normal_operator_implicit = TRUE,
+      centered_csc = !is.null(centered),
       materialized_gram = FALSE,
       block = block,
       max_subspace = m_max,

@@ -175,7 +175,7 @@ lanczos_restart_adapter_supported <- function(plan) {
 
 #' @keywords internal
 lanczos_restart_start_width <- function(plan) {
-  if (plan_dispatches_native_lanczos(plan)) {
+  if (plan_dispatches_native_warm_lanczos(plan)) {
     as.integer(plan$controls$block %||% 1L)
   } else {
     1L

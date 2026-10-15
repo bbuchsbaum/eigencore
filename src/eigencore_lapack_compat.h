@@ -3,7 +3,8 @@
 
 // Compatibility shims for building against R older than 4.4.0, whose
 // R_ext/Lapack.h neither defines the La_INT / La_LGL aliases nor declares
-// the complex QZ drivers (zggev, zgges) this package uses. On R >= 4.4.0
+// the complex QZ drivers (zggev, zgges) and the Hermitian LDL^H
+// factorisation (zhetrf) this package uses. On R >= 4.4.0
 // this header is a no-op so the stock declarations apply unchanged.
 //
 // Include this after <R_ext/BLAS.h> and <R_ext/Lapack.h>.
@@ -43,6 +44,12 @@ F77_NAME(zgges)(const char* jobvsl, const char* jobvsr, const char* sort,
                 Rcomplex* vsr, const int* ldvsr,
                 Rcomplex* work, const int* lwork, double* rwork, int* bwork,
                 int* info FCLEN FCLEN FCLEN);
+
+// Hermitian Bunch-Kaufman LDL^H (native complex inertia counts).
+La_extern void
+F77_NAME(zhetrf)(const char* uplo, const int* n, Rcomplex* a, const int* lda,
+                 int* ipiv, Rcomplex* work, const int* lwork,
+                 int* info FCLEN);
 
 #ifdef __cplusplus
 }

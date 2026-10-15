@@ -96,12 +96,13 @@ fit$certificate
 #>   max orthogonality loss: 1.332268e-15
 #>   orthogonality tolerance: 1.490116e-08
 #>   orthogonality required: TRUE
+#>   target completeness: exact
 ```
 
 The backward error is the standard normwise one,
 `max residual / ||A||_2` for an SVD and
-`||A x - lambda x|| / ((||A||_2 + |lambda|) ||x||)` for an eigenpair. The
-exact `||A||_2` is rarely available, so eigencore divides by a value
+`||A x - lambda x|| / ((||A||_2 + |lambda|) ||x||)` for an eigenpair.
+The exact `||A||_2` is rarely available, so eigencore divides by a value
 that never exceeds it: the exact norm where it is cheap (diagonal
 matrices, a full computed spectrum), otherwise the largest of the column
 norms, the `||A x|| / ||x||` ratios of the returned vectors, and, only
@@ -203,7 +204,7 @@ certification fallback is needed:
 ``` r
 plan <- plan_solver(svd_problem(A_centered, target = largest()), rank = 5)
 plan$method
-#> [1] "native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary)"
+#> [1] "native certified implicit Gram SVD (thick-restart Lanczos)"
 ```
 
 Use `work(result)` for cross-solver accounting. It keeps forward,
@@ -264,9 +265,9 @@ eig
 #>   target: smallest
 #>   restart: native_tridiagonal_shift_invert_lanczos
 #>   locked: 0
-#>   max residual: 9.364725e-10
-#>   max backward error: 3.823131e-10
-#>   max orthogonality loss: 4.440892e-16
+#>   max residual: 3.41212e-10
+#>   max backward error: 1.392991e-10
+#>   max orthogonality loss: 6.661338e-16
 #>   norm bound: two_norm_lower_bound+identity_exact
 #>   scale estimated: FALSE
 #>   certificate: passed
@@ -281,43 +282,49 @@ form, so the answer can also be checked directly:
 ## Benchmarks
 
 The table is drawn from stored results of the benchmark suite
-(`inst/benchmarks/results/`, profile `standard`), not timed when this README
-is built. Times are medians over repeated calls; eigencore's include building
-its certificate, the other packages do no certification. Every method's output
-is checked independently by the suite (2-norm backward error, error against a
-trusted reference, and whether the wanted eigenvalues were actually
-returned); † marks a result that missed part of the wanted set. RSpectra and
-irlba are single-threaded here; "n/a" means the method does not apply or the
-dense problem was too large.
+(`inst/benchmarks/results/`, profile `standard`), not timed when this
+README is built. Times are medians over repeated calls; eigencore’s
+include building its certificate, the other packages do no
+certification. Every method’s output is checked independently by the
+suite (2-norm backward error, error against a trusted reference, and
+whether the wanted eigenvalues were actually returned); † marks a result
+that missed part of the wanted set. RSpectra and irlba are
+single-threaded here; “n/a” means the method does not apply or the dense
+problem was too large.
 
-| Problem | eigencore (1 thr) | eigencore (4 thr) | RSpectra | irlba | base R | eigencore / RSpectra | certified |
-|---|---:|---:|---:|---:|---:|---:|:---:|
-| sparse symmetric 20k, largest, k = 10 | 278 ms | 6.53 s | 219 ms | - | n/a | 1.27 | yes |
-| sparse symmetric 20k, smallest, k = 10 | 375 ms | 312 ms | 206 ms | - | n/a | 1.82 | yes |
-| sparse nonsymmetric 20k, largest modulus, k = 6 | 4.75 s† | 9.70 s† | 2.51 s† | - | n/a | 1.89 | yes |
-| sparse SVD 50k × 2k, k = 20 | 195 ms | 8.96 s | 136 ms | 919 ms | n/a | 1.43 | yes |
-| sparse SVD 50k × 20k, k = 20 | 1.13 s | 13.9 s | 750 ms | 2.22 s | n/a | 1.51 | yes |
-| centred sparse PCA 50k × 1k, k = 10 | 1.31 s | 1.41 s | 288 ms | 508 ms | n/a | 4.54 | yes |
-| dense symmetric 1500, largest, k = 10 | 198 ms | 186 ms | 74 ms | - | 682 ms | 2.66 | yes |
-| full dense eigen 1500 (`eig_full` vs `eigen`) | 858 ms | 481 ms | - | - | 700 ms | - | yes |
-| 2-D Laplacian 10k, nearest 4.01, k = 6 | 971 ms | 1.10 s | 41 ms | - | n/a | 23.79 | yes |
-| generalized FEM pencil 2.5k, smallest, k = 6 | 182 ms | 187 ms | 686 ms | - | 6.68 s | 0.27 | yes |
-| 1-D Laplacian 20k, smallest, k = 8 | 56 ms | 78 ms | 6.59 s† | - | n/a | 0.01 | yes |
+| Problem                                         | eigencore (1 thr) | eigencore (4 thr) | RSpectra |  irlba | base R | eigencore / RSpectra | certified |
+|-------------------------------------------------|------------------:|------------------:|---------:|-------:|-------:|---------------------:|:---------:|
+| sparse symmetric 20k, largest, k = 10           |            313 ms |            409 ms |   223 ms |     \- |    n/a |                 1.40 |    yes    |
+| sparse symmetric 20k, smallest, k = 10          |            359 ms |            267 ms |   207 ms |     \- |    n/a |                 1.73 |    yes    |
+| sparse nonsymmetric 20k, largest modulus, k = 6 |            7.90 s |            6.85 s |  2.02 s† |     \- |    n/a |                 3.90 |    yes    |
+| sparse SVD 50k × 2k, k = 20                     |            206 ms |            196 ms |   128 ms | 886 ms |    n/a |                 1.60 |    yes    |
+| sparse SVD 50k × 20k, k = 20                    |            1.22 s |            671 ms |   762 ms | 2.18 s |    n/a |                 1.60 |    yes    |
+| centred sparse PCA 50k × 1k, k = 10             |            323 ms |            187 ms |   292 ms | 456 ms |    n/a |                 1.11 |    yes    |
+| dense symmetric 1500, largest, k = 10           |            173 ms |            110 ms |    74 ms |     \- | 648 ms |                 2.33 |    yes    |
+| full dense eigen 1500 (`eig_full` vs `eigen`)   |            910 ms |            475 ms |       \- |     \- | 695 ms |                   \- |    yes    |
+| 2-D Laplacian 10k, nearest 4.01, k = 6          |             91 ms |             94 ms |    40 ms |     \- |    n/a |                 2.25 |    yes    |
+| generalized FEM pencil 2.5k, smallest, k = 6    |            215 ms |            193 ms |   571 ms |     \- | 6.75 s |                 0.38 |    yes    |
+| 1-D Laplacian 20k, smallest, k = 8              |             42 ms |             49 ms |  6.75 s† |     \- |    n/a |                 0.01 |    yes    |
 
-<sub>2026-10-09; Intel(R) Xeon(R) Processor @ 2.10GHz, 4 logical cores; R 4.3.3; OpenBLAS; eigencore 1.3.0 (bf11055cbd); RSpectra 0.16.1, irlba 2.3.5.1; median of 5 reps; load average 1.8 at start, 7.6 at end; run `20261009-3d7cb0dd-standard`.</sub>
+<sub>2026-10-10; Intel(R) Xeon(R) Processor @ 2.10GHz, 4 logical cores;
+R 4.3.3; OpenBLAS; eigencore 1.3.0 (f993161049); RSpectra 0.16.1, irlba
+2.3.5.1; median of 5 reps; load average 1.1 at start, 1.4 at end; run
+`20261010-3d7cb0dd-standard`.</sub>
 
-Results depend on the processor, BLAS/LAPACK, thread count, machine load and
-the matrices themselves; these are random and model matrices measured on one
-shared machine. On that machine other jobs pushed the load well above the
-core count during the 4-thread pass, and eigencore's multithreaded kernels
-slowed down by up to an order of magnitude under that oversubscription (same
-operator-application counts, single-threaded competitors unaffected); the
-1-thread column is the representative one. The
-[benchmarks article](https://bbuchsbaum.github.io/eigencore/articles/benchmarks.html)
-shows every case and method, operator-application counts, accuracy, scaling
-curves and the limits of the comparison. Reproduce or add your machine with
+Results depend on the processor, BLAS/LAPACK, thread count, machine load
+and the matrices themselves; these are random and model matrices
+measured on one 4-core cloud machine with nothing else running (load
+average recorded below). At this size most sparse kernels gain little
+from 4 threads, and the largest symmetric case is slightly slower with
+them; eigencore now shrinks its OpenMP team when parallel regions stop
+paying off, so a busy machine degrades it gracefully instead of by an
+order of magnitude. The [benchmarks
+article](https://bbuchsbaum.github.io/eigencore/articles/benchmarks.html)
+shows every case and method, operator-application counts, accuracy,
+scaling curves and the limits of the comparison. Reproduce or add your
+machine with
 
-```sh
+``` sh
 R CMD INSTALL --preclean --no-docs -l .rlib .
 Rscript inst/benchmarks/run-suite.R --lib=.rlib --profile=standard --threads=1,4
 ```
@@ -340,8 +347,8 @@ with the same arguments:
 ``` r
 res <- eigs_sym(L, k = 8, which = "SA")
 res$values
-#> [1] 2.467154e-08 9.868617e-08 2.220439e-07 3.947447e-07 6.167886e-07
-#> [6] 8.881755e-07 1.208906e-06 1.578979e-06
+#> [1] 1.578979e-06 1.208906e-06 8.881755e-07 6.167886e-07 3.947447e-07
+#> [6] 2.220439e-07 9.868617e-08 2.467154e-08
 res$certificate$passed
 #> [1] TRUE
 ```

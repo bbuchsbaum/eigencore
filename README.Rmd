@@ -296,11 +296,11 @@ cat("\n<sub>", bench_env_line(bench_res), "</sub>\n", sep = "")
 
 Results depend on the processor, BLAS/LAPACK, thread count, machine load and
 the matrices themselves; these are random and model matrices measured on one
-shared machine. On that machine other jobs pushed the load well above the
-core count during the 4-thread pass, and eigencore's multithreaded kernels
-slowed down by up to an order of magnitude under that oversubscription (same
-operator-application counts, single-threaded competitors unaffected); the
-1-thread column is the representative one. The
+4-core cloud machine with nothing else running (load average recorded below).
+At this size most sparse kernels gain little from 4 threads, and the largest
+symmetric case is slightly slower with them; eigencore now shrinks its OpenMP
+team when parallel regions stop paying off, so a busy machine degrades it
+gracefully instead of by an order of magnitude. The
 [benchmarks article](https://bbuchsbaum.github.io/eigencore/articles/benchmarks.html)
 shows every case and method, operator-application counts, accuracy, scaling
 curves and the limits of the comparison. Reproduce or add your machine with
