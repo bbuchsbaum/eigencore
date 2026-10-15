@@ -253,7 +253,16 @@ auto <- function(max_subspace = NULL) {
 #'   [eigen_count()]); it needs an explicit dense or sparse matrix (a
 #'   matrix-free operator with n at most
 #'   `getOption("eigencore.completeness_materialize_limit", 2000)` is
-#'   materialised by n applies) and
+#'   materialised by n applies). For a real dense matrix without `B`, of
+#'   order at least
+#'   `getOption("eigencore.completeness_cholesky_min_n", 400)` (`Inf`
+#'   disables it), and a `largest()` / `smallest()` target, the verified
+#'   case is proved instead by one Cholesky factorisation of
+#'   \eqn{A - t I} (or \eqn{t I - A}) deflated by the returned vectors (about half the
+#'   cost of the count and threaded by an optimised BLAS;
+#'   `certificate(fit)$completeness$inertia_method` is
+#'   `"dense_deflated_cholesky"`); when it does not succeed the count runs
+#'   as before. The check
 #'   reports `"inertia_verified"`, `"inertia_failed"` (repaired when
 #'   possible, otherwise `passed = FALSE`) or `"inertia_inconclusive"` (an
 #'   eigenvalue cluster straddles the target edge within the residual

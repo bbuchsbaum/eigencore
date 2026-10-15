@@ -169,7 +169,7 @@ as_operator.matrix <- function(x, ...) {
   }
   symmetric <- flags[[2L]]
   dim_x <- dim(x)
-  linear_operator(
+  op <- linear_operator(
     dim = dim_x,
     apply = function(X, alpha = 1, beta = 0, Y = NULL) {
       dense_block_apply(x, X, alpha = alpha, beta = beta, Y = Y, transpose = FALSE)
@@ -182,6 +182,21 @@ as_operator.matrix <- function(x, ...) {
     name = "dense_matrix",
     metadata = list(source = x, native = TRUE)
   )
+  # P25: the same pass decided exact symmetry; memoised for the dense Lanczos
+  # kernel (dsymv), so it does not rescan the matrix.
+  operator_memoised_value(op, "dense_exact_symmetric", isTRUE(flags[[3L]]))
+  op
+}
+
+# Exact-symmetry flag of a dense double operator source for the native dense
+# Lanczos kernel: the memoised result of the construction-time structure
+# check, or NA (the kernel then checks itself). The memo is keyed to the
+# operator's construction-time metadata, so a replaced source never inherits
+# a stale flag.
+#' @keywords internal
+dense_exact_symmetric_flag <- function(op) {
+  flag <- operator_memoised_value(op, "dense_exact_symmetric", NA)
+  if (is.logical(flag) && length(flag) == 1L) flag else NA
 }
 
 #' @export

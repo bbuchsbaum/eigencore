@@ -1072,13 +1072,16 @@ extern "C" SEXP eigencore_dense_is_symmetric(SEXP A_, SEXP tol_) {
   EIGENCORE_ENTRY_END
 }
 
-// One pass over a double matrix returning c(all_finite, is_symmetric), with
-// the same semantics as eigencore_dense_is_symmetric: symmetric means square,
-// every entry finite, and max |a_ij - a_ji| <= tol * max |a_ij| (relative to
-// the largest entry, no floor at 1). The pair (a_ij, a_ji) is read in
-// cache-sized tiles so the transposed access stays local; each entry is read
-// exactly once. Non-finite entries are detected via x * 0 (NaN unless x is
-// finite) accumulated into one sum, which keeps the inner loop branch-free.
+// One pass over a double matrix returning c(all_finite, is_symmetric,
+// exactly_symmetric), with the same semantics as eigencore_dense_is_symmetric
+// for is_symmetric: square, every entry finite, and
+// max |a_ij - a_ji| <= tol * max |a_ij| (relative to the largest entry, no
+// floor at 1); exactly_symmetric means maxdiff == 0 as well (P25: reported
+// from the same pass so the dense Lanczos kernel need not rescan the matrix
+// before choosing dsymv). The pair (a_ij, a_ji) is read in cache-sized tiles
+// so the transposed access stays local; each entry is read exactly once.
+// Non-finite entries are detected via x * 0 (NaN unless x is finite)
+// accumulated into one sum, which keeps the inner loop branch-free.
 extern "C" SEXP eigencore_dense_finite_symmetric(SEXP A_, SEXP tol_) {
   EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_)) {
@@ -1097,6 +1100,7 @@ extern "C" SEXP eigencore_dense_finite_symmetric(SEXP A_, SEXP tol_) {
   }
   double nonfinite = 0.0;
   bool symmetric = false;
+  bool exact = false;
   if (!square) {
     for (R_xlen_t i = 0; i < len; ++i) {
       nonfinite += A[i] * 0.0;
@@ -1133,10 +1137,12 @@ extern "C" SEXP eigencore_dense_finite_symmetric(SEXP A_, SEXP tol_) {
       }
     }
     symmetric = !ISNAN(nonfinite) && maxdiff <= tol * scale;
+    exact = !ISNAN(nonfinite) && maxdiff == 0.0;
   }
-  SEXP out = PROTECT(allocVector(LGLSXP, 2));
+  SEXP out = PROTECT(allocVector(LGLSXP, 3));
   LOGICAL(out)[0] = ISNAN(nonfinite) ? FALSE : TRUE;
   LOGICAL(out)[1] = symmetric ? TRUE : FALSE;
+  LOGICAL(out)[2] = exact ? TRUE : FALSE;
   UNPROTECT(1);
   return out;
   EIGENCORE_ENTRY_END
@@ -2359,6 +2365,95 @@ extern "C" SEXP eigencore_dense_symmetric_inertia(SEXP A_, SEXP sigma_, SEXP B_)
   const double m1 = tally.max_mult > 1.0 ? tally.max_mult : 1.0;
   tally.growth = tally.max_abs * m1 * m1;
   return inertia_tally_sexp(tally);
+  EIGENCORE_ENTRY_END
+}
+
+// Deflated Cholesky completeness proof (P25). Factors
+//   H = sign * A - s I + gamma X X'
+// (lower triangles only: H starts as sign * tril(A), dsyrk adds gamma X X',
+// then s is subtracted from the diagonal) with dpotrf. On success H is
+// positive definite up to the factorisation's backward error, so
+// sign * A - s I is positive on the null space of X' (dimension >= n - k):
+// sign * A has at most k eigenvalues below s - delta, where delta bounds the
+// rounding of forming and factoring H (R/completeness_inertia.R). Returns
+// c(info, frob2 = ||R||_F^2, min_diag = min diag(R)^2); info > 0 means H is
+// not (numerically) positive definite. Cholesky is roughly twice as fast as
+// Bunch-Kaufman dsytrf and threads well in optimised BLAS.
+extern "C" SEXP eigencore_dense_deflated_cholesky(SEXP A_, SEXP X_, SEXP sign_,
+                                                  SEXP s_, SEXP gamma_) {
+  EIGENCORE_ENTRY_BEGIN
+  if (!isReal(A_) || !isReal(X_)) {
+    error("deflated Cholesky: A and X must be double matrices");
+  }
+  SEXP dimA = getAttrib(A_, R_DimSymbol);
+  SEXP dimX = getAttrib(X_, R_DimSymbol);
+  if (dimA == R_NilValue || INTEGER(dimA)[0] != INTEGER(dimA)[1] ||
+      dimX == R_NilValue || INTEGER(dimX)[0] != INTEGER(dimA)[0]) {
+    error("deflated Cholesky: A must be square and X must have nrow(A) rows");
+  }
+  const int n = INTEGER(dimA)[0];
+  const int k = INTEGER(dimX)[1];
+  const double sign = asReal(sign_) < 0.0 ? -1.0 : 1.0;
+  const double s = asReal(s_);
+  const double gamma = asReal(gamma_);
+  if (!R_FINITE(s) || !R_FINITE(gamma) || gamma < 0.0) {
+    error("deflated Cholesky: s and gamma must be finite, gamma >= 0");
+  }
+  double out[3] = {0.0, 0.0, 0.0};
+  auto pack = [&out]() {
+    SEXP out_ = PROTECT(allocVector(REALSXP, 3));
+    for (int i = 0; i < 3; ++i) REAL(out_)[i] = out[i];
+    UNPROTECT(1);
+    return out_;
+  };
+  if (n == 0) {
+    return pack();
+  }
+  const size_t nn = static_cast<size_t>(n) * static_cast<size_t>(n);
+  std::vector<double> H(nn, 0.0);
+  const double* A = REAL(A_);
+  for (int j = 0; j < n; ++j) {
+    const size_t col = static_cast<size_t>(j) * static_cast<size_t>(n);
+    for (int i = j; i < n; ++i) {
+      H[col + static_cast<size_t>(i)] = sign * A[col + static_cast<size_t>(i)];
+    }
+  }
+  const char uplo = 'L';
+  if (k > 0 && gamma > 0.0) {
+    const char trans = 'N';
+    const double one = 1.0;
+    F77_CALL(dsyrk)(&uplo, &trans, &n, &k, &gamma, REAL(X_), &n, &one,
+                    H.data(), &n FCONE FCONE);
+  }
+  for (int i = 0; i < n; ++i) {
+    const size_t ii = static_cast<size_t>(i) * (static_cast<size_t>(n) + 1);
+    H[ii] -= s;
+  }
+  int info = 0;
+  F77_CALL(dpotrf)(&uplo, &n, H.data(), &n, &info FCONE);
+  if (info < 0) {
+    error("LAPACK dpotrf failed with info=%d", info);
+  }
+  out[0] = static_cast<double>(info);
+  if (info == 0) {
+    double frob2 = 0.0;
+    double min_diag = R_PosInf;
+    for (int j = 0; j < n; ++j) {
+      const size_t col = static_cast<size_t>(j) * static_cast<size_t>(n);
+      const double d = H[col + static_cast<size_t>(j)];
+      if (d * d < min_diag) min_diag = d * d;
+      for (int i = j; i < n; ++i) {
+        const double v = H[col + static_cast<size_t>(i)];
+        frob2 += v * v;
+      }
+    }
+    if (!R_FINITE(frob2)) {
+      out[0] = static_cast<double>(n + 1);
+    }
+    out[1] = frob2;
+    out[2] = min_diag;
+  }
+  return pack();
   EIGENCORE_ENTRY_END
 }
 

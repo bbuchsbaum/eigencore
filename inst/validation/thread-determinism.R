@@ -18,6 +18,13 @@
 # differs by more than 1e-10 relative (values) / 1e-6 (vector subspace; the
 # solves converge to tol = 1e-8, so vectors computed along different rounding
 # paths legitimately differ by about tol / gap).
+#
+# The inputs are small, so the thread-count runs set
+# options(eigencore.parallel_min_work = 0) to run every region on the full
+# team (P26). The parallel work threshold only sets team sizes, so the
+# script also checks that the largest thread count gives bitwise identical
+# results with the default threshold and with Inf (every eigencore region
+# serial).
 
 suppressPackageStartupMessages({
   library(eigencore)
@@ -47,9 +54,9 @@ make_inputs <- function() {
 }
 inp <- make_inputs()
 
-run_all <- function(threads) {
-  options(eigencore.threads = threads)
-  on.exit(options(eigencore.threads = NULL))
+run_all <- function(threads, min_work = 0) {
+  old <- options(eigencore.threads = threads, eigencore.parallel_min_work = min_work)
+  on.exit(options(old))
   ap <- ns$apply_operator
   apt <- ns$apply_adjoint_operator
   Rop <- as_operator(inp$R)
@@ -155,6 +162,19 @@ if (length(multi) >= 2L) {
   if (!all(cmp$identical)) {
     message("FAIL: multi-threaded runs are not bitwise identical")
     bad <- TRUE
+  }
+}
+if (length(multi)) {
+  top <- thread_counts[[max(multi)]]
+  for (mw in list(NULL, Inf)) {
+    label <- if (is.null(mw)) "default" else format(mw)
+    cmp <- compare(results[[max(multi)]], run_all(top, mw))
+    cat(sprintf("\n== threads %d: parallel_min_work %s vs 0 ==\n", top, label))
+    print(cmp, row.names = FALSE, digits = 3)
+    if (!all(cmp$identical)) {
+      message("FAIL: the parallel work threshold changed a result")
+      bad <- TRUE
+    }
   }
 }
 if (bad) stop("thread determinism check failed")

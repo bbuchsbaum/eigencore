@@ -390,13 +390,14 @@ hermitian_completeness_tie <- function(check, values, part, ctx) {
 # Count every part. Returns list(status, record, failed_part).
 #' @keywords internal
 hermitian_completeness_count <- function(problem, gate, values, residuals,
-                                         orthogonality, parts) {
+                                         orthogonality, parts, vectors = NULL) {
   inflate <- 2 * (gate$delta_A %||% 0) + 2 * (gate$delta_B %||% 0) * abs(values)
   residuals <- abs(as.numeric(residuals)) + inflate
   checks <- lapply(parts, function(p) {
     check <- inertia_completeness_check(
       problem$A, values[p$idx], residuals[p$idx], orthogonality, p$target,
-      Bop = gate$metric, ctx = gate$ctx
+      Bop = gate$metric, ctx = gate$ctx,
+      vectors = if (is.null(vectors)) NULL else vectors[, p$idx, drop = FALSE]
     )
     hermitian_completeness_tie(check, values[p$idx], p, gate$ctx)
   })
@@ -951,7 +952,8 @@ hermitian_target_completeness <- function(result, plan, problem, k, mode,
   }
   if (isTRUE(gate$use)) {
     count <- hermitian_completeness_count(problem, gate, values, cert$residuals,
-                                          cert$orthogonality, parts)
+                                          cert$orthogonality, parts,
+                                          vectors = result$vectors)
     record <- count$record
     record$gate <- gate$reason
     record$predicted_seconds <- gate$predicted_seconds
@@ -983,7 +985,7 @@ hermitian_target_completeness <- function(result, plan, problem, k, mode,
                                              Bop = problem$metric, tol = tol)
           again <- hermitian_completeness_count(
             problem, gate, out_values, new_cert$residuals, new_cert$orthogonality,
-            hermitian_completeness_parts(target, out_values)
+            hermitian_completeness_parts(target, out_values), vectors = out_vectors
           )
           keep <- c("edge", "rho", "margin", "threshold_upper", "count_upper",
                     "threshold_lower", "count_lower", "reason", "parts",

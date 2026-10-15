@@ -345,6 +345,7 @@ native_block_lanczos_hermitian <- function(op, k, target = largest(), tol = 1e-8
       as.numeric(norm_A),
       start,
       as.integer(check_stride),
+      dense_exact_symmetric_flag(op),
       PACKAGE = "eigencore"
     )
   } else if (native_matrix_free_block_lanczos_available(op)) {
