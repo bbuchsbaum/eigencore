@@ -185,7 +185,7 @@ test_that("generalized SPD pencils: dense and sparse", {
   expect_error(eigen_count(A, 0, B = -B), "positive definite")
 })
 
-test_that("complex Hermitian counts use the real symmetric embedding", {
+test_that("complex Hermitian counts use zhetrf (or the real embedding)", {
   set.seed(6)
   n <- 30L
   H <- matrix(complex(real = stats::rnorm(n * n), imaginary = stats::rnorm(n * n)), n)
@@ -193,8 +193,12 @@ test_that("complex Hermitian counts use the real symmetric embedding", {
   ev <- eigen(H, only.values = TRUE)$values
   for (s in c(-3, 0, 1.5, 6)) {
     r <- eigen_count(H, s)
-    expect_identical(r$method, "dense_bunch_kaufman_hermitian_embedding")
+    expect_identical(r$method, "dense_bunch_kaufman_hermitian")
     t5_expect_counts(r, ev, info = paste("sigma", s))
+    r2 <- withr::with_options(list(eigencore.complex_inertia_native = FALSE),
+                              eigen_count(H, s))
+    expect_identical(r2$method, "dense_bunch_kaufman_hermitian_embedding")
+    t5_expect_counts(r2, ev, info = paste("embedding sigma", s))
   }
 })
 

@@ -35,7 +35,7 @@ An object of class \code{eigencore_inertia}, a list with
 perturbed); \code{perturbed}, \code{perturbation} (\code{delta});
 \item \code{reliable}: whether the counts are trustworthy (see Details);
 \item \code{method}: \code{"diagonal"}, \code{"tridiagonal_sturm"},
-\code{"dense_bunch_kaufman"}, \code{"dense_bunch_kaufman_hermitian_embedding"} or
+\code{"dense_bunch_kaufman"}, \code{"dense_bunch_kaufman_hermitian"} (complex) or
 \code{"sparse_cholmod_ldl"}; \code{generalized}: whether \code{B} was given;
 \item \code{diagnostics}: a list with \code{scale} (an upper bound of
 \verb{||A - sigma B||_2}), \code{min_pivot} and \code{max_pivot} (absolute),
@@ -60,7 +60,8 @@ Factorisations by storage:
 \item tridiagonal \code{A} with identity or diagonal \code{B}: Sturm sequence
 (backward stable for counting);
 \item dense real symmetric: LAPACK Bunch-Kaufman \code{dsytrf}; complex Hermitian:
-the same on the real symmetric embedding \verb{[Re(A) -Im(A); Im(A) Re(A)]};
+the Hermitian Bunch-Kaufman \eqn{LDL^H} \code{zhetrf} (2x2 pivot blocks are
+Hermitian; their inertia follows from determinant and trace);
 \item sparse (\code{dsCMatrix}, symmetric \code{dgCMatrix}, other sparse classes):
 CHOLMOD simplicial \eqn{LDL^T} with an AMD fill-reducing ordering via
 \code{\link[Matrix:Cholesky]{Matrix::Cholesky()}}.

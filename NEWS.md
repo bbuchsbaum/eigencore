@@ -1,5 +1,39 @@
 # eigencore (development version)
 
+## Native complex kernels for complex Hermitian problems
+
+* Dense complex Hermitian inertia counts now factor the complex matrix with
+  the Hermitian Bunch-Kaufman `zhetrf` (2x2 pivot blocks are Hermitian;
+  their inertia comes from determinant and trace) instead of `dsytrf` on the
+  real `2n x 2n` embedding, with the same backward-error reliability test
+  (bound `2n * eps * (||M||_1 + growth)`, the embedding's dimension). This
+  serves `eigen_count()` on complex matrices (method
+  `"dense_bunch_kaufman_hermitian"`, was
+  `"dense_bunch_kaufman_hermitian_embedding"`) and the completeness count of
+  realified dense complex solves (the dense embedding carries its complex
+  source and its context counts natively, doubling the counts). One
+  factorisation is 2.0x faster (n = 1000: 0.073 vs 0.147 s; n = 2000: 0.51
+  vs 1.03 s; one thread, reference BLAS) and needs a quarter of the memory;
+  the completeness step of a dense n = 2000, k = 10 solve dropped from
+  1.0-1.2 s to 0.6 s (n = 1000: 0.2 -> 0.11 s), and a dense n = 2000
+  `nearest()` solve now passes the cost gate and is `inertia_verified`
+  (was `probed`; 6.5 -> 5.0 s). `options(eigencore.complex_inertia_native =
+  FALSE)` restores the embedding count. Dense complex `interval()` targets
+  keep their exact LAPACK route (no count involved).
+* Matrix-free complex Hermitian operators
+  (`linear_operator(..., dtype = "complex", structure = hermitian())`) with
+  `largest()`, `smallest()` or `largest_magnitude()` and `auto()` or
+  `lanczos(block = 1)` now run a scalar thick-restart Lanczos in complex
+  arithmetic (new plan label `"native complex Hermitian thick-restart
+  Lanczos (matrix-free)"`) instead of the real `2n` embedding, which finds
+  every complex direction twice. Certification, polishing and the
+  completeness check (on the embedding) are unchanged. Operator columns of
+  the caller's function fell 2.4-3.4x (n = 1000, k = 10: 1040 -> 316
+  largest, 880 -> 256 dense largest; n = 2000: 1360 -> 456, 880 -> 316) and
+  wall time 1.1-1.6x. `options(eigencore.complex_native_lanczos = FALSE)`
+  restores the realified route; explicit sources (dense, `complex_operator()`)
+  keep the realified native block kernels.
+
 ## Native-code assurance findings F4-F7
 
 * `eigs_sym(which = "BE")` with a warm start (`opts = list(initvec =)`)
