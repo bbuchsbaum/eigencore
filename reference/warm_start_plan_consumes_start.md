@@ -2,10 +2,11 @@
 
 The boundary is standard (non-generalized, non-transformed) real
 Hermitian Lanczos: native dense double / dgCMatrix CSC paths, the native
-matrix-free callback path selected by `lanczos(block > 1)`, and the
-scalar matrix-free reference path selected by `lanczos(block = 1)`.
-Every other dispatch is out of scope and must reject `initial_subspace`
-rather than ignore it, densify, or borrow a production label.
+matrix-free callback path (scalar or block), the native both-ends route
+(both of its thick-restart solves start from the block), and the scalar
+reference path for targets without a native kernel. Every other dispatch
+is out of scope and must reject `initial_subspace` rather than ignore
+it, densify, or borrow a production label.
 
 ## Usage
 

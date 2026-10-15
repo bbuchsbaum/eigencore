@@ -96,11 +96,12 @@ eig_partial(
   Optional numeric matrix of starting directions (a warm start).
   Supported on standard real Hermitian Lanczos paths: the native paths
   for explicit dense double or `dgCMatrix` operators, the native
-  matrix-free callback path selected by `lanczos(block > 1)`, and the
-  scalar matrix-free reference path selected by `lanczos(block = 1)`;
-  supplying it on any other planned path (generalized, shift-invert,
-  dense fallback) is an error. Pass `method = lanczos()` to guarantee a
-  Lanczos route: with the default `method = auto()`, sparse or
+  matrix-free callback path (scalar or block), the native both-ends
+  route, and the scalar reference path for targets without a native
+  kernel; supplying it on any other planned path (generalized,
+  shift-invert, dense fallback) is an error. Pass `method = lanczos()`
+  to guarantee a Lanczos route: with the default `method = auto()`,
+  sparse or
   [`nearest()`](https://bbuchsbaum.github.io/eigencore/reference/nearest.md)
   problems may be planned as shift-invert, which does not consume a
   start and will reject the argument. The subspace is only a starting

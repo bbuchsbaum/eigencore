@@ -69,7 +69,10 @@
 
 
 <dt id="arg-shift">shift<a class="anchor" aria-label="anchor" href="#arg-shift"></a></dt>
-<dd><p>Non-negative diagonal shift added to the tridiagonal system.</p></dd>
+<dd><p>Non-negative diagonal shift added to the tridiagonal system.
+<code>A + shift * I</code> must be nonsingular: it is factored once at
+construction, and a singular system is an error naming this
+preconditioner.</p></dd>
 
 </dl></div>
     <div class="section level2">

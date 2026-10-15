@@ -98,6 +98,8 @@ Block-native linear operators and operator algebra.
   : Create a block-native linear operator.
 - [`as_operator()`](https://bbuchsbaum.github.io/eigencore/reference/as_operator.md)
   : Convert an object to an eigencore operator.
+- [`complex_operator()`](https://bbuchsbaum.github.io/eigencore/reference/complex_operator.md)
+  : Complex operator from its real and imaginary parts.
 - [`operator_identity()`](https://bbuchsbaum.github.io/eigencore/reference/operator_identity.md)
   : Return operator identity and revision provenance.
 - [`adjoint()`](https://bbuchsbaum.github.io/eigencore/reference/adjoint.md)
@@ -221,5 +223,6 @@ solver work.
   Extract typed logical work diagnostics.
 - [`eigencore-threads`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md)
   [`eigencore.threads`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md)
+  [`eigencore.adaptive_threads`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md)
   [`eigencore.csr_cache_mb`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md)
   : Multithreading in eigencore's sparse kernels

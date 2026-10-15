@@ -145,11 +145,11 @@ exactly as you would the original matrix.</p>
 <span><span class="co">#&gt; Partial SVD</span></span>
 <span><span class="co">#&gt;   requested rank: 5 </span></span>
 <span><span class="co">#&gt;   converged rank: 5 </span></span>
-<span><span class="co">#&gt;   method: native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary) </span></span>
+<span><span class="co">#&gt;   method: native certified implicit Gram SVD (thick-restart Lanczos) </span></span>
 <span><span class="co">#&gt;   target: largest </span></span>
-<span><span class="co">#&gt;   max residual: 5.968391e-11 </span></span>
-<span><span class="co">#&gt;   max backward error: 1.267432e-10 </span></span>
-<span><span class="co">#&gt;   max orthogonality loss: 1.332268e-15 </span></span>
+<span><span class="co">#&gt;   max residual: 2.463127e-11 </span></span>
+<span><span class="co">#&gt;   max backward error: 5.230634e-11 </span></span>
+<span><span class="co">#&gt;   max orthogonality loss: 1.350135e-14 </span></span>
 <span><span class="co">#&gt;   norm bound: two_norm_lower_bound </span></span>
 <span><span class="co">#&gt;   scale estimated: FALSE </span></span>
 <span><span class="co">#&gt;   certificate: passed</span></span></code></pre></div>
@@ -172,7 +172,7 @@ pass:</p>
 <code class="sourceCode R"><span><span class="va">fit</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">passed</span></span>
 <span><span class="co">#&gt; [1] TRUE</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">max_backward_error</span></span>
-<span><span class="co">#&gt; [1] 1.267432e-10</span></span>
+<span><span class="co">#&gt; [1] 5.230634e-11</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">norm_bound_type</span></span>
 <span><span class="co">#&gt; [1] "two_norm_lower_bound"</span></span>
 <span><span class="va">fit</span><span class="op">$</span><span class="va">certificate</span><span class="op">$</span><span class="va">scale_is_estimate</span></span>
@@ -195,7 +195,7 @@ numerically indistinguishable from centering the dense matrix directly.
 Check it:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Extremes.html" class="external-link">max</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">abs</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="va">fit</span><span class="op">$</span><span class="va">d</span>, decreasing <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span> <span class="op">-</span> <span class="fu"><a href="https://rdrr.io/r/base/sort.html" class="external-link">sort</a></span><span class="op">(</span><span class="va">all_sv</span><span class="op">[</span><span class="fl">1</span><span class="op">:</span><span class="fl">5</span><span class="op">]</span>, decreasing <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [1] 5.551115e-16</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] 3.330669e-16</span></span></code></pre></div>
 <p>The two agree to machine precision. <code>dense_centered</code> above
 was built only to draw the comparison plot and run this check — the
 eigencore computation itself never materialized it.</p>
@@ -239,12 +239,12 @@ method selection, densification, or fallback behavior matters:</p>
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">plan</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/plan_solver.html">plan_solver</a></span><span class="op">(</span><span class="fu"><a href="../reference/svd_problem.html">svd_problem</a></span><span class="op">(</span><span class="va">Acs</span><span class="op">)</span>, rank <span class="op">=</span> <span class="fl">5</span>, target <span class="op">=</span> <span class="fu"><a href="../reference/largest.html">largest</a></span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="va">plan</span><span class="op">$</span><span class="va">method</span></span>
-<span><span class="co">#&gt; [1] "native prototype Golub-Kahan"</span></span>
+<span><span class="co">#&gt; [1] "native certified implicit Gram SVD (thick-restart Lanczos)"</span></span>
 <span><span class="va">plan</span><span class="op">$</span><span class="va">reasons</span></span>
-<span><span class="co">#&gt; [1] "target: largest"                                                                                                                           </span></span>
-<span><span class="co">#&gt; [2] "rectangular SVD problem"                                                                                                                   </span></span>
-<span><span class="co">#&gt; [3] "adjoint is available"                                                                                                                      </span></span>
-<span><span class="co">#&gt; [4] "default avoids normal equations"                                                                                                           </span></span>
+<span><span class="co">#&gt; [1] "target: largest"                                                                                                                                   </span></span>
+<span><span class="co">#&gt; [2] "rectangular SVD problem"                                                                                                                           </span></span>
+<span><span class="co">#&gt; [3] "adjoint is available"                                                                                                                              </span></span>
+<span><span class="co">#&gt; [4] "smaller-side normal operator solved by native thick-restart Lanczos without materializing the Gram matrix; exact original-coordinate certification"</span></span>
 <span><span class="co">#&gt; [5] "centered-plus-column-scaled CSC operator has a fused native block apply and direct native Golub-Kahan cycle without an R callback boundary"</span></span></code></pre></div>
 <p>Centering and scaling a CSC matrix fuse into a single native,
 non-densifying construction. The planner routes that operator to a

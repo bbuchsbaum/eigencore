@@ -74,10 +74,10 @@ solve(
 
   Optional numeric matrix of starting directions (a warm start).
   Supported on standard real Hermitian Lanczos paths — native dense
-  double / `dgCMatrix`, native matrix-free callbacks for
-  `lanczos(block > 1)`, and the scalar matrix-free reference path for
-  `lanczos(block = 1)`; supplying it on any other planned path is an
-  error. The subspace is only a starting hint, never a source of reused
+  double / `dgCMatrix`, native matrix-free callbacks, the native
+  both-ends route, and the scalar reference path for targets without a
+  native kernel; supplying it on any other planned path is an error. The
+  subspace is only a starting hint, never a source of reused
   convergence: every solve recomputes projected quantities, residuals,
   orthogonality, convergence, and a fresh current-operator certificate.
   An already-invariant supplied subspace is discarded to a cold start

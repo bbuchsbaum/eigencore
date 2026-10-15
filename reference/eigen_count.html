@@ -113,7 +113,7 @@ bound alone decides).</p></dd>
 perturbed); <code>perturbed</code>, <code>perturbation</code> (<code>delta</code>);</p></li>
 <li><p><code>reliable</code>: whether the counts are trustworthy (see Details);</p></li>
 <li><p><code>method</code>: <code>"diagonal"</code>, <code>"tridiagonal_sturm"</code>,
-<code>"dense_bunch_kaufman"</code>, <code>"dense_bunch_kaufman_hermitian_embedding"</code> or
+<code>"dense_bunch_kaufman"</code>, <code>"dense_bunch_kaufman_hermitian"</code> (complex) or
 <code>"sparse_cholmod_ldl"</code>; <code>generalized</code>: whether <code>B</code> was given;</p></li>
 <li><p><code>diagnostics</code>: a list with <code>scale</code> (an upper bound of
 <code>||A - sigma B||_2</code>), <code>min_pivot</code> and <code>max_pivot</code> (absolute),
@@ -129,7 +129,8 @@ factorisation: shift, counts, min pivot, reliable, error) and
 <li><p>tridiagonal <code>A</code> with identity or diagonal <code>B</code>: Sturm sequence
 (backward stable for counting);</p></li>
 <li><p>dense real symmetric: LAPACK Bunch-Kaufman <code>dsytrf</code>; complex Hermitian:
-the same on the real symmetric embedding <code>[Re(A) -Im(A); Im(A) Re(A)]</code>;</p></li>
+the Hermitian Bunch-Kaufman \(LDL^H\) <code>zhetrf</code> (2x2 pivot blocks are
+Hermitian; their inertia follows from determinant and trace);</p></li>
 <li><p>sparse (<code>dsCMatrix</code>, symmetric <code>dgCMatrix</code>, other sparse classes):
 CHOLMOD simplicial \(LDL^T\) with an AMD fill-reducing ordering via
 <code><a href="https://rdrr.io/pkg/Matrix/man/Cholesky-methods.html" class="external-link">Matrix::Cholesky()</a></code>.</p></li>

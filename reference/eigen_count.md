@@ -57,7 +57,7 @@ An object of class `eigencore_inertia`, a list with
 - `reliable`: whether the counts are trustworthy (see Details);
 
 - `method`: `"diagonal"`, `"tridiagonal_sturm"`,
-  `"dense_bunch_kaufman"`, `"dense_bunch_kaufman_hermitian_embedding"`
+  `"dense_bunch_kaufman"`, `"dense_bunch_kaufman_hermitian"` (complex)
   or `"sparse_cholmod_ldl"`; `generalized`: whether `B` was given;
 
 - `diagnostics`: a list with `scale` (an upper bound of
@@ -79,8 +79,9 @@ Factorisations by storage:
   (backward stable for counting);
 
 - dense real symmetric: LAPACK Bunch-Kaufman `dsytrf`; complex
-  Hermitian: the same on the real symmetric embedding
-  `[Re(A) -Im(A); Im(A) Re(A)]`;
+  Hermitian: the Hermitian Bunch-Kaufman \\LDL^H\\ `zhetrf` (2x2 pivot
+  blocks are Hermitian; their inertia follows from determinant and
+  trace);
 
 - sparse (`dsCMatrix`, symmetric `dgCMatrix`, other sparse classes):
   CHOLMOD simplicial \\LDL^T\\ with an AMD fill-reducing ordering via

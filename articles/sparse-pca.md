@@ -78,11 +78,11 @@ fit
 #> Partial SVD
 #>   requested rank: 5 
 #>   converged rank: 5 
-#>   method: native matrix-free Golub-Kahan callback cycle + native Ritz extraction (callback boundary) 
+#>   method: native certified implicit Gram SVD (thick-restart Lanczos) 
 #>   target: largest 
-#>   max residual: 5.968391e-11 
-#>   max backward error: 1.267432e-10 
-#>   max orthogonality loss: 1.332268e-15 
+#>   max residual: 2.463127e-11 
+#>   max backward error: 5.230634e-11 
+#>   max orthogonality loss: 1.350135e-14 
 #>   norm bound: two_norm_lower_bound 
 #>   scale estimated: FALSE 
 #>   certificate: passed
@@ -109,7 +109,7 @@ pass:
 fit$certificate$passed
 #> [1] TRUE
 fit$certificate$max_backward_error
-#> [1] 1.267432e-10
+#> [1] 5.230634e-11
 fit$certificate$norm_bound_type
 #> [1] "two_norm_lower_bound"
 fit$certificate$scale_is_estimate
@@ -136,7 +136,7 @@ dense matrix directly. Check it:
 ``` r
 
 max(abs(sort(fit$d, decreasing = TRUE) - sort(all_sv[1:5], decreasing = TRUE)))
-#> [1] 5.551115e-16
+#> [1] 3.330669e-16
 ```
 
 The two agree to machine precision. `dense_centered` above was built
@@ -188,12 +188,12 @@ method selection, densification, or fallback behavior matters:
 
 plan <- plan_solver(svd_problem(Acs), rank = 5, target = largest())
 plan$method
-#> [1] "native prototype Golub-Kahan"
+#> [1] "native certified implicit Gram SVD (thick-restart Lanczos)"
 plan$reasons
-#> [1] "target: largest"                                                                                                                           
-#> [2] "rectangular SVD problem"                                                                                                                   
-#> [3] "adjoint is available"                                                                                                                      
-#> [4] "default avoids normal equations"                                                                                                           
+#> [1] "target: largest"                                                                                                                                   
+#> [2] "rectangular SVD problem"                                                                                                                           
+#> [3] "adjoint is available"                                                                                                                              
+#> [4] "smaller-side normal operator solved by native thick-restart Lanczos without materializing the Gram matrix; exact original-coordinate certification"
 #> [5] "centered-plus-column-scaled CSC operator has a fused native block apply and direct native Golub-Kahan cycle without an R callback boundary"
 ```
 
