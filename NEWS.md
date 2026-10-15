@@ -1,4 +1,49 @@
-# eigencore (development version)
+# eigencore 2.0.0
+
+eigencore 2.0.0 makes `certificate$passed` mean "the returned set is the
+requested one and every pair is accurate", adds eigenvalue counting, interval
+targets and first-class complex Hermitian problems, and closes most of the
+single-thread speed gap to RSpectra. Every route was swept by a differential
+oracle (15000 cases at the extended level: no certified wrong answers) and by
+ASan/UBSan and valgrind.
+
+## Breaking changes
+
+* **Strict `certificate$passed`.** `passed` is now `TRUE` only when the
+  residuals are certified *and* the returned set was verified to be the
+  requested one (`certificate$target_completeness` is `"exact"`,
+  `"inertia_verified"`, `"probed"` or `"repaired"`). Previously a result
+  with certified residuals passed even if it had missed a wanted eigenvalue.
+  The two halves are reported separately as `residual_passed` and
+  `target_passed`. `options(eigencore.require_completeness = FALSE)`
+  restores the old meaning.
+* **Two-norm backward errors.** Backward errors use the standard normwise
+  2-norm definition instead of Frobenius scaling, so they are larger than in
+  1.x and some borderline results now fail (see "Behaviour change: two-norm
+  backward errors" below).
+* **Identity hash v3.** Operator identities hash the exact matrix content, so
+  plans, restart states and PSD factors saved by 1.x fail with the typed
+  `identity_format_changed` error and must be re-planned.
+* Explicit `lanczos()` on matrix-free operators, `eigs_sym(which = "BE")`
+  with a start vector, and `smallest()` on factorisable sparse matrices take
+  different (native) routes, so iteration counts and rounding differ from
+  1.x.
+
+## Highlights
+
+* Eigenvalue counting (`eigen_count()`), CHOLMOD LDL' shift-invert and
+  `interval(a, b)` targets with spectrum slicing.
+* Complex Hermitian problems on every iterative route (dense, sparse via
+  `complex_operator()`, matrix-free, pencils), with verified completeness.
+* Single-thread speed: centred sparse PCA 4.5x faster, sparse shift-invert,
+  dense symmetric and nonsymmetric solves 1.2-2.6x faster.
+* Multithreading degrades gracefully on busy machines (an OpenMP team
+  governor and per-region work thresholds) instead of slowing down 10-80x.
+* Reproducible benchmark suite (`inst/benchmarks/run-suite.R`) with stored
+  results behind the README table and the benchmarks article.
+
+The sections below give the details.
+
 
 ## Native complex kernels for complex Hermitian problems
 

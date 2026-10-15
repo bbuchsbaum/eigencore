@@ -1,6 +1,6 @@
 Package: eigencore
 Title: Certified Partial Eigenvalue and Singular Value Computation
-Version: 1.3.0
+Version: 2.0.0
 Authors@R: c(
     person("Bradley", "Buchsbaum", role = c("aut", "cre", "cph"), email = "brad.buchsbaum@gmail.com")
   )

@@ -2,30 +2,30 @@
 
 ## Release summary
 
-This is a minor update from 1.0.2 to 1.1.0. It adds certified warm starts for
-the supported real Hermitian Lanczos paths, an optional mid-sweep convergence
-check, and a native implicit-Gram route for eligible largest-target partial
-SVD problems. Every new iterative route retains original-coordinate residual
-and backward-error certification. The release also includes the
-no-memory-profiling portability fixes from 1.0.1 and 1.0.2.
+This is a major update from 1.3.0 to 2.0.0.
 
-The public changes are additive. Existing calls with the new arguments omitted
-retain their previous behavior, and exported symbols are checked against the
-release snapshot.
+* `certificate$passed` is now strict: it is `TRUE` only when residuals are
+  certified and the returned set was verified to be the requested one.
+* Backward errors use the standard 2-norm definition.
+* Persisted plans from 1.x must be re-planned; they fail with a typed error,
+  not a crash.
+
+These behaviour changes are why the major version is bumped. New features:
+eigenvalue counting, interval targets, complex Hermitian iterative routes,
+and faster single- and multi-threaded kernels.
 
 ## Test environments
 
-* local: macOS 14 (aarch64-apple-darwin20), R 4.5.1,
-  `R CMD check --as-cran --no-manual`
-* GitHub Actions release matrix: macOS R-release, Windows R-release, and Ubuntu
-  R-devel, R-release, and R-oldrel
+* local: Ubuntu 24.04, R 4.3.3, `R CMD check --as-cran --no-manual`
+* GitHub Actions: macOS R-release, Windows R-release, and Ubuntu R-devel,
+  R-release and R-oldrel
 
 ## R CMD check results
 
-0 errors | 0 warnings | 0 notes locally.
+0 errors | 0 warnings | 1 note
 
-The exact source artifact, SHA-256 digest, and hosted-matrix receipts are
-recorded with the 1.1.0 release rather than embedded into the source tarball.
+* installed package size: the compiled solver kernels (libs) are about
+  7 MB on Linux.
 
 ## Downstream dependencies
 
