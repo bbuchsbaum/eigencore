@@ -198,3 +198,75 @@ test_that("P25: the structure check reports exact symmetry for the dense Lanczos
   fit2 <- eig_partial(eigencore:::operator_scale(as_operator(A), 1), 4L, largest(), seed = 3L)
   expect_equal(values(fit1), values(fit2), tolerance = 1e-10)
 })
+
+test_that("P26: the parallel work threshold sets team sizes, never results", {
+  skip_if_not(isTRUE(eigencore:::native_thread_info()[["openmp"]] == 1L),
+              "built without OpenMP")
+  set.seed(2601)
+  shapes <- list(
+    square = Matrix::rsparsematrix(3000, 3000, density = 0.004),  # CSR gather
+    tall = Matrix::rsparsematrix(9000, 500, density = 0.006),     # row slabs
+    wide = Matrix::rsparsematrix(500, 7000, density = 0.006)
+  )
+  run_apply <- function(min_work, threads, A, X, transpose) {
+    old <- options(eigencore.threads = threads, eigencore.parallel_min_work = min_work)
+    on.exit(options(old))
+    eigencore:::csc_apply_repeat(A, X, transpose = transpose, reps = 3L,
+                                 col_means = Matrix::colMeans(A),
+                                 weights = rep(1.5, ncol(A)))$Y
+  }
+  for (name in names(shapes)) {
+    A <- shapes[[name]]
+    for (b in c(1L, 12L)) {
+      for (transpose in c(FALSE, TRUE)) {
+        X <- matrix(rnorm((if (transpose) nrow(A) else ncol(A)) * b), ncol = b)
+        ref <- run_apply(0, 4L, A, X, transpose)
+        for (mw in list(Inf, 1e5, NULL)) {
+          expect_identical(run_apply(mw, 4L, A, X, transpose), ref,
+                           info = paste(name, b, transpose, format(mw)))
+        }
+        expect_identical(run_apply(NULL, 1L, A, X, transpose), ref)
+      }
+    }
+  }
+  # Solves: CSC Lanczos (slab reorthogonalisation, n > 1024 rows), block
+  # Lanczos, implicit Gram SVD and Golub-Kahan agree bitwise for every
+  # threshold and every thread count > 1.
+  B <- Matrix::rsparsematrix(5000, 5000, density = 8e-4)
+  S <- methods::as(methods::as(Matrix::forceSymmetric(B + Matrix::t(B)),
+                               "generalMatrix"), "CsparseMatrix")
+  R <- shapes$tall
+  solve_all <- function(threads, min_work) {
+    old <- options(eigencore.threads = threads, eigencore.parallel_min_work = min_work)
+    on.exit(options(old))
+    list(
+      e = eig_partial(S, 6L, seed = 1),
+      b = eig_partial(S, 6L, method = lanczos(block = 3L), seed = 2),
+      s = svd_partial(R, 5L, seed = 3),
+      g = svd_partial(R, 4L, method = golub_kahan(), seed = 4)
+    )
+  }
+  strip <- function(r) lapply(r, function(f) list(values(f), f$vectors %||% f$u))
+  `%||%` <- function(a, b) if (is.null(a)) b else a
+  ref <- strip(solve_all(4L, 0))
+  expect_identical(strip(solve_all(4L, Inf)), ref)
+  expect_identical(strip(solve_all(4L, NULL)), ref)
+  expect_identical(strip(solve_all(2L, NULL)), ref)
+  one <- strip(solve_all(1L, NULL))
+  for (i in seq_along(ref)) {
+    expect_equal(one[[i]][[1L]], ref[[i]][[1L]], tolerance = 1e-10)
+  }
+})
+
+test_that("P26: invalid parallel_min_work values fall back to the default", {
+  set.seed(2602)
+  A <- Matrix::rsparsematrix(2000, 2000, density = 0.004)
+  X <- matrix(rnorm(2000 * 3), ncol = 3)
+  ref <- eigencore:::csc_apply_repeat(A, X, reps = 2L)$Y
+  for (bad in list(-1, NA_real_, "x", NA_integer_, c(0, 1))) {
+    old <- options(eigencore.threads = 4L, eigencore.parallel_min_work = bad)
+    out <- tryCatch(eigencore:::csc_apply_repeat(A, X, reps = 2L)$Y,
+                    finally = options(old))
+    expect_identical(out, ref)
+  }
+})

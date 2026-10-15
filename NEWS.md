@@ -1,6 +1,30 @@
 # eigencore (development version)
 
-## Release polish (P25, C63)
+## Release polish (P26, P25, C63)
+
+* Parallel work threshold (P26): every OpenMP region now estimates its work
+  (multiply-adds; 4 per sparse nonzero and right-hand side) and gets at most
+  `floor(work / getOption("eigencore.parallel_min_work", 65536))` threads,
+  running serially below two. Small sparse products and early, short
+  reorthogonalisations no longer pay fork/join and straggler costs on a
+  4-core machine. The threshold only sets team sizes; results are bitwise
+  unchanged for any value (checked by `inst/validation/thread-determinism.R`
+  and `test-release-polish.R`). `inst/benchmarks/bench-parallel-threshold.R`
+  calibrates it on a machine.
+* The threaded Lanczos reorthogonalisation (used while a sparse solve runs
+  with more than one thread) was scalar OpenMP loops that ran at about 0.6x
+  of OpenBLAS per thread (random sparse n = 20000, k = 10: 175-189 ms vs
+  105-120 ms of single-thread BLAS when run on one thread), so 4 threads
+  barely beat, or lost to, one. It now calls single-threaded BLAS `dgemm` on
+  fixed 1024-row slabs shared among the threads and adds the partial sums in
+  slab order: the same per-thread speed as the serial path, and results
+  still identical for every thread count above one.
+* With `eigencore.threads` above one, a native sparse solve now switches a
+  multithreaded OpenBLAS / FlexiBLAS to one thread at its first sparse
+  product even when that product runs serially (previously only at the
+  first parallel product), so OpenBLAS workers no longer spin against
+  eigencore's threads in solves whose products are small. Dense solves are
+  unchanged (their BLAS keeps its threads).
 
 * Dense completeness count cost (P25): for a real dense Hermitian matrix
   (no `B`) of order at least

@@ -527,16 +527,30 @@ projection kernel (`native_operators.cpp`).
 `inst/validation/thread-determinism.R` (threads 1, 2, 4): all raw CSC /
 centred-scaled applies (forward, adjoint, cached-CSR wide matrix, row-slab
 tall matrix, repeated applies) are bitwise identical across thread counts.
-The implicit-Gram and Golub-Kahan SVDs, `svds`, Krylov-Schur Arnoldi, LOBPCG
-and randomized SVD are bitwise identical as well. Lanczos eigensolves (CSC,
-block) differ between 1 and >1 threads by rounding only (values <= 2.4e-14
-relative, vector subspaces <= 4e-8 at `tol = 1e-8`), because with more than
-one thread the reorthogonalisation switches from BLAS `dgemm` to the OpenMP
-kernels, as documented in `?eigencore-threads`; 2 and 4 threads agree
-bitwise. The full suite passes identically with 1 and 4 threads (plain and
-ASan builds).
+`svds`, Krylov-Schur Arnoldi, LOBPCG, the centred-scaled SVD and randomized
+SVD are bitwise identical as well. Lanczos eigensolves (CSC, block) differ
+between 1 and >1 threads by rounding only (values <= 2.7e-14 relative,
+vector subspaces <= 2e-8 at `tol = 1e-8`), because with more than one
+thread the reorthogonalisation switches from one BLAS `dgemm` to
+single-threaded BLAS calls on fixed 1024-row slabs whose partial sums are
+added in slab order (P26; before P26 these were scalar OpenMP loops), as
+documented in `?eigencore-threads`; 2 and 4 threads agree bitwise. Since
+P26 a sparse solve with more than one thread switches a multithreaded
+OpenBLAS to one thread at its first sparse product, also when that product
+runs serially; when the one-thread run leaves OpenBLAS multithreaded (the
+script does not set `OPENBLAS_NUM_THREADS`), BLAS-based steps of the
+implicit-Gram and Golub-Kahan SVDs therefore differ between 1 and >1
+threads by rounding (<= 2e-15 relative) instead of being identical; with
+the BLAS thread count matched, as in `run-suite.R`, they are identical. The
+script runs every region on the full team
+(`options(eigencore.parallel_min_work = 0)`, the inputs are small) and
+checks that the default work threshold and `Inf` (every eigencore region
+serial) give bitwise identical results at the largest thread count. The
+full suite passes identically with 1 and 4 threads (plain and ASan
+builds).
 
-The parallel-efficiency governor (P18) only lowers the OpenMP team size of a
+The parallel-efficiency governor (P18) and the per-thread work threshold
+(P26, `eigencore.parallel_min_work`) only lower the OpenMP team size of a
 region; algorithm choices follow `eigencore.threads`, so the check also
 passes unchanged with 8 competing CPU-bound processes on 4 cores, where the
 governor runs most regions on one or two threads.

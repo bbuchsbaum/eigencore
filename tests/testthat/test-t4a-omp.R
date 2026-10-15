@@ -132,7 +132,8 @@ test_that("P8: cached parallel CSC kernels are bitwise thread-count invariant", 
         for (scaled in c(FALSE, TRUE)) {
           run <- function(threads, cache_mb = 4096) {
             with_options(
-              list(eigencore.threads = threads, eigencore.csr_cache_mb = cache_mb),
+              list(eigencore.threads = threads, eigencore.csr_cache_mb = cache_mb,
+                   eigencore.parallel_min_work = 0),
               eigencore:::csc_apply_repeat(
                 A, X, alpha = 0.7, beta = -0.3, Y = Y0, transpose = transpose,
                 reps = 3L, col_means = if (scaled) mu, weights = if (scaled) w
@@ -262,7 +263,7 @@ test_that("P18: the parallel-efficiency governor changes team sizes, not results
   S <- methods::as(methods::as(Matrix::forceSymmetric(B + Matrix::t(B)),
                                "generalMatrix"), "CsparseMatrix")
   run <- function(cap) {
-    with_options(list(eigencore.threads = 4L), {
+    with_options(list(eigencore.threads = 4L, eigencore.parallel_min_work = 0), {
       info <- governor(cap)
       expect_identical(info[["effective"]], if (cap == 0) 4L else as.integer(cap))
       out <- list()
