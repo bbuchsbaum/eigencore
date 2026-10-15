@@ -50,6 +50,15 @@ ASan/UBSan and valgrind.
 The sections below give the details.
 
 
+## Completeness repair accuracy
+
+* The Hermitian completeness repair solves its deflated complement in the
+  probe's transformed space (squared shift or shift-invert) to 1/100 of the
+  requested tolerance (`options(eigencore.completeness_repair_tol_factor)`).
+  At the requested tolerance a backward error there maps back to A up to
+  about `||G|| / (2 sqrt(mu) ||A||)` times larger, so repaired `nearest()`
+  pairs landed at the tolerance and passed or failed with platform rounding.
+
 ## Native complex kernels for complex Hermitian problems
 
 * Dense complex Hermitian inertia counts now factor the complex matrix with

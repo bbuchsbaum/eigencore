@@ -665,6 +665,14 @@ hermitian_completeness_mapped_margin <- function(pop, values, vG, rG, m) {
   max(mapped, 2 * sqrt(sum(rG^2)), 64 * .Machine$double.eps * max(abs(vG), 0))
 }
 
+# Tolerance factor for the transformed-space repair solve (see
+# hermitian_completeness_repair_round()).
+#' @keywords internal
+completeness_repair_tol_factor <- function() {
+  f <- suppressWarnings(as.numeric(getOption("eigencore.completeness_repair_tol_factor", 1e-2)))
+  if (length(f) != 1L || !is.finite(f) || f <= 0 || f > 1) 1e-2 else f
+}
+
 # One repair round for a part with an intruder (or a count failure): solve
 # the deflated complement of G, then Rayleigh-Ritz on the standard operator
 # over span(Y, X_c), selected by the problem's own target.
@@ -711,8 +719,13 @@ hermitian_completeness_repair_round <- function(std, Y, pop, vG, probe, margin,
     scale <- max(abs(c(vG, probe$theta)), 0)
     Gdef <- completeness_deflated_operator(pop$G, basis,
                                            completeness_shift(vG, kind, scale))
+    # The complement is solved in G's space (squared shift or shift-invert),
+    # where a backward error of tol maps back to up to ||G|| / (2 sqrt(mu)
+    # ||A||) times tol on A: solve tighter so the repaired pairs certify at
+    # tol with margin on every platform's rounding.
+    comp_tol <- max(tol * completeness_repair_tol_factor(), 64 * .Machine$double.eps)
     comp <- tryCatch(native_block_lanczos_hermitian(
-      Gdef, k = kc, target = ktarget, tol = tol, maxit = m_max, block = block,
+      Gdef, k = kc, target = ktarget, tol = comp_tol, maxit = m_max, block = block,
       max_restarts = 100L, vectors = TRUE, full_subspace = FALSE,
       certificate_fallback = FALSE, start = start_cols
     ), error = function(e) NULL)
