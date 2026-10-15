@@ -33,6 +33,7 @@
   wall time 1.1-1.6x. `options(eigencore.complex_native_lanczos = FALSE)`
   restores the realified route; explicit sources (dense, `complex_operator()`)
   keep the realified native block kernels.
+
 ## Release polish (P26, P25, C63)
 
 * Parallel work threshold (P26): every OpenMP region now estimates its work
