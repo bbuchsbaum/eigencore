@@ -35,8 +35,13 @@ ASan/UBSan and valgrind.
   `interval(a, b)` targets with spectrum slicing.
 * Complex Hermitian problems on every iterative route (dense, sparse via
   `complex_operator()`, matrix-free, pencils), with verified completeness.
-* Single-thread speed: centred sparse PCA 4.5x faster, sparse shift-invert,
-  dense symmetric and nonsymmetric solves 1.2-2.6x faster.
+* Speed: centred sparse PCA now runs at RSpectra's speed (it was 4.5x
+  slower); nonsymmetric solves need 2.4-8x fewer operator applications;
+  dense completeness checks use one Cholesky factorisation; sparse
+  shift-invert, dense symmetric and supernodal LDL' solves have less
+  overhead. Remaining gaps to RSpectra (1.7-2.7x on sparse symmetric, SVD,
+  shift-invert and nonsymmetric cases at one thread) are mostly the
+  certification and completeness work RSpectra does not do.
 * Multithreading degrades gracefully on busy machines (an OpenMP team
   governor and per-region work thresholds) instead of slowing down 10-80x.
 * Reproducible benchmark suite (`inst/benchmarks/run-suite.R`) with stored
