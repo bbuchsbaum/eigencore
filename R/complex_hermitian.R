@@ -18,8 +18,10 @@
 # (R(H), R(M)) for 2k eigenpairs through the ordinary real pipeline (native
 # block Lanczos, shift-invert, generalized Lanczos/LOBPCG, interval slicing,
 # dense LAPACK), so every native real kernel, the completeness probe and the
-# LDL' inertia counts run unchanged. The 2k real Ritz vectors are mapped back
-# by a complex Rayleigh-Ritz step: Z = top + i bottom spans (to the solve's
+# LDL' inertia counts run unchanged (a dense embedding is counted natively
+# by zhetrf on its complex source, R/complex_inertia.R). The 2k real Ritz
+# vectors are mapped back by a complex Rayleigh-Ritz step: Z = top + i
+# bottom spans (to the solve's
 # accuracy) the k-dimensional complex invariant subspace; an M-orthonormal
 # basis of span(Z) (rank decided by the Gram spectrum) is projected onto H
 # and the k target pairs are selected, then certified from scratch on the
@@ -53,9 +55,12 @@ complex_hermitian_realified_label <- function() {
   "native realified complex Hermitian route (real 2n embedding)"
 }
 
+# Complex Hermitian iterative routes: the realified route and the native
+# complex Lanczos for matrix-free operators (R/complex_lanczos.R).
 #' @keywords internal
 plan_dispatches_complex_hermitian_realified <- function(plan) {
-  identical(plan$method %||% "", complex_hermitian_realified_label())
+  (plan$method %||% "") %in% c(complex_hermitian_realified_label(),
+                               complex_native_lanczos_label())
 }
 
 # Does the problem carry a complex operator (A or B)?
@@ -142,6 +147,11 @@ complex_hermitian_plan <- function(problem, k, method, method_descriptor,
       execution = execution,
       planner_policy = planner_policy
     ))
+  }
+  if (is.null(transform) && !is_interval_target(problem$target) &&
+      complex_native_lanczos_eligible(problem, method, initial_subspace)) {
+    return(complex_native_lanczos_plan(problem, k, method, method_descriptor,
+                                       execution, planner_policy, maxit))
   }
   if (identical(kind, "shift_invert") || is_transform_method(transform)) {
     sigma <- (if (identical(kind, "shift_invert")) method else transform)$sigma
@@ -337,6 +347,13 @@ complex_hermitian_realify_dense <- function(H, symmetrize = FALSE) {
   out
 }
 
+# (H + H^H) / 2: exactly Hermitian, with a real diagonal.
+#' @keywords internal
+complex_hermitian_part <- function(H) {
+  H <- as.matrix(H) + 0i
+  (H + Conj(t(H))) / 2
+}
+
 #' @keywords internal
 complex_hermitian_realify_sparse <- function(re, im) {
   re <- methods::as(methods::as(methods::as(re, "CsparseMatrix"), "generalMatrix"), "dMatrix")
@@ -440,7 +457,7 @@ complex_hermitian_realify_operator <- function(op) {
       out <- matrix(0, 2L * n, 2L * n)
       out[seq_len(n), seq_len(n)] <- src
       out[n + seq_len(n), n + seq_len(n)] <- src
-      return(as_operator(out))
+      return(complex_inertia_mark_embedding(as_operator(out), src))
     }
     if (inherits(mat, "diagonalMatrix")) {
       d <- as.numeric(Matrix::diag(mat))
@@ -470,13 +487,17 @@ complex_hermitian_realify_operator <- function(op) {
     if (inherits(split$re, "sparseMatrix") || inherits(split$im, "sparseMatrix")) {
       return(as_operator(complex_hermitian_realify_sparse(split$re, split$im)))
     }
-    H <- split$re + 1i * split$im
-    return(as_operator(complex_hermitian_realify_dense(H, symmetrize = TRUE)))
+    H <- complex_hermitian_part(split$re + 1i * split$im)
+    return(complex_inertia_mark_embedding(
+      as_operator(complex_hermitian_realify_dense(H)), H))
   }
   if (is.matrix(src) && is.complex(src) && n <= complex_hermitian_dense_realify_max_n()) {
     # Symmetrise first: the embedding of an exactly Hermitian matrix is
     # exactly symmetric (certificates are recomputed on the original).
-    return(as_operator(complex_hermitian_realify_dense(src, symmetrize = TRUE)))
+    # (The native inertia count reads the same Hermitian part.)
+    H <- complex_hermitian_part(src)
+    return(complex_inertia_mark_embedding(
+      as_operator(complex_hermitian_realify_dense(H)), H))
   }
   linear_operator(
     dim = c(2L * n, 2L * n),
@@ -826,6 +847,9 @@ complex_hermitian_add_work <- function(fit) {
 
 #' @keywords internal
 solve_complex_hermitian_realified <- function(plan) {
+  if (identical(plan$method, complex_native_lanczos_label())) {
+    return(solve_complex_hermitian_native(plan))
+  }
   started <- proc.time()[["elapsed"]]
   problem <- plan$problem
   execution <- plan$execution

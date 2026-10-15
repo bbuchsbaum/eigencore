@@ -185,7 +185,7 @@ inertia_metric_lower_bound <- function(Bop) {
   dmin <- switch(
     bctx$kind,
     tridiagonal = min(bctx$d),
-    dense = min(diag(bctx$A)),
+    dense = min(Re(diag(bctx$A))),
     sparse = min(Matrix::diag(bctx$A))
   )
   if (!is.finite(dmin) || dmin <= 0) {
