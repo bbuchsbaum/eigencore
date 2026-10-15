@@ -28,3 +28,5 @@
 ^tests/testthat/test-geigen-parity[.]R$
 ^PACKAGES([.](gz|rds))?$
 ^\.rlib$
+^vignettes/articles$
+^vignettes/fonts$
