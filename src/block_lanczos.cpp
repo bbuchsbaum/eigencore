@@ -3225,7 +3225,7 @@ static int dense_symmetric_apply(void* impl, EigencoreTranspose op,
 extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(
     SEXP A_, SEXP k_, SEXP m_max_, SEXP block_size_,
     SEXP target_kind_, SEXP tol_, SEXP max_restarts_,
-    SEXP norm_a_, SEXP start_, SEXP check_stride_) {
+    SEXP norm_a_, SEXP start_, SEXP check_stride_, SEXP exact_symmetric_) {
   EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
@@ -3259,8 +3259,16 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(
   // P21: an exactly symmetric source is applied with dsymv, which reads one
   // triangle (half the memory traffic of dgemv) and gives the same product
   // up to rounding. A source that is Hermitian only within a tolerance keeps
-  // the full dgemv product.
-  if (dense_exactly_symmetric(REAL(A_), n)) {
+  // the full dgemv product. P25: the caller may pass the flag computed by the
+  // operator's structure check (eigencore_dense_finite_symmetric) for this
+  // very matrix; NA (or NULL) rescans.
+  int exact_flag = NA_LOGICAL;
+  if (TYPEOF(exact_symmetric_) == LGLSXP && XLENGTH(exact_symmetric_) == 1) {
+    exact_flag = LOGICAL(exact_symmetric_)[0];
+  }
+  const bool exact_symmetric = exact_flag == NA_LOGICAL ?
+    dense_exactly_symmetric(REAL(A_), n) : exact_flag != 0;
+  if (exact_symmetric) {
     return block_thick_restart_lanczos_impl(
       &impl, dense_symmetric_apply, n, 0, k, m_max, block_size, target_kind,
       tol, max_restarts, norm_a, REAL(start_), check_stride);

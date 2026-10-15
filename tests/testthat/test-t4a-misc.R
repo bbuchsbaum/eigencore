@@ -3,7 +3,8 @@
 # (matrix-free smallest/interior SVD without Frobenius metadata).
 
 test_that("C48: fused finite/symmetry pass matches the symmetry kernel", {
-  fused <- eigencore:::dense_finite_symmetric
+  # The third flag (exact symmetry, P25) is covered in test-release-polish.R.
+  fused <- function(x) eigencore:::dense_finite_symmetric(x)[1:2]
   sym <- function(x) {
     isTRUE(.Call("eigencore_dense_is_symmetric", x, sqrt(.Machine$double.eps),
                  PACKAGE = "eigencore"))

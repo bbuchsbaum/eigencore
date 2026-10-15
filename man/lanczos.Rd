@@ -54,7 +54,16 @@ eigenvalues with an \eqn{LDL^T} factorisation of \verb{A - t B} (see
 \code{\link[=eigen_count]{eigen_count()}}); it needs an explicit dense or sparse matrix (a
 matrix-free operator with n at most
 \code{getOption("eigencore.completeness_materialize_limit", 2000)} is
-materialised by n applies) and
+materialised by n applies). For a real dense matrix without \code{B}, of
+order at least
+\code{getOption("eigencore.completeness_cholesky_min_n", 400)} (\code{Inf}
+disables it), and a \code{largest()} / \code{smallest()} target, the verified
+case is proved instead by one Cholesky factorisation of
+\eqn{A - t I} (or \eqn{t I - A}) deflated by the returned vectors (about half the
+cost of the count and threaded by an optimised BLAS;
+\code{certificate(fit)$completeness$inertia_method} is
+\code{"dense_deflated_cholesky"}); when it does not succeed the count runs
+as before. The check
 reports \code{"inertia_verified"}, \code{"inertia_failed"} (repaired when
 possible, otherwise \code{passed = FALSE}) or \code{"inertia_inconclusive"} (an
 eigenvalue cluster straddles the target edge within the residual

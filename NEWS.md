@@ -1,5 +1,36 @@
 # eigencore (development version)
 
+## Release polish (P25, C63)
+
+* Dense completeness count cost (P25): for a real dense Hermitian matrix
+  (no `B`) of order at least
+  `getOption("eigencore.completeness_cholesky_min_n", 400)` with a
+  `largest()` / `smallest()` target, the verified case of the inertia
+  certificate is now proved by one Cholesky factorisation of
+  `A - t I + gamma X X'` (or `t I - A + ...`; `X` the returned vectors) instead of a
+  Bunch-Kaufman `dsytrf` count. Success shows that at most k eigenvalues lie
+  beyond the threshold, which with Kahan's residual bound is the same
+  verdict as the count, so the status stays `"inertia_verified"` (a proof,
+  not evidence); `certificate(fit)$completeness$inertia_method` reads
+  `"dense_deflated_cholesky"` and `$cholesky_delta` records the rounding
+  bound used. A factorisation that does not succeed falls back to the count,
+  which still distinguishes failed from inconclusive. `dpotrf` costs about
+  0.6-1x of `dsytrf` on one thread and threads well in OpenBLAS (n = 2000:
+  ~50 ms with 4 threads vs ~145 ms for `dsytrf`, which does not thread).
+  The probe (evidence) is not used in place of the proof by default.
+* The dense structure check now also reports exact symmetry from the same
+  pass, memoised on the operator, so the dense Lanczos kernel no longer
+  rescans the matrix before choosing `dsymv` (one n^2 pass less per dense
+  solve).
+* C63: the positive definite sparse shift-invert factor (supernodal LL'
+  converted to simplicial LDL') no longer keeps the explicit zeros of
+  relaxed supernodal amalgamation (2-D grid 300 x 300: 4.12M -> 2.93M
+  stored entries, the same as the simplicial factorisation), so its solves
+  do no extra work; it now also seeds the symbolic analysis of later
+  inertia counts. Only exact zeros outside the symbolic Cholesky pattern
+  (elimination tree of the permuted matrix) are dropped, so later numeric
+  refactorisations (`Matrix::update()`) are unaffected.
+
 ## Native-code assurance findings F4-F7
 
 * `eigs_sym(which = "BE")` with a warm start (`opts = list(initvec =)`)

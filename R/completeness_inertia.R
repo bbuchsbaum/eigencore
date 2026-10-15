@@ -207,7 +207,8 @@ inertia_metric_lower_bound <- function(Bop) {
 # norms ||A x - theta B x|| and max |X'BX - I|).
 #' @keywords internal
 inertia_completeness_check <- function(Aop, values, residuals, orthogonality,
-                                       target, Bop = NULL, ctx = NULL) {
+                                       target, Bop = NULL, ctx = NULL,
+                                       vectors = NULL) {
   started <- proc.time()[["elapsed"]]
   kind <- inertia_completeness_kind(target)
   center <- if (identical(kind, "nearest")) as.numeric(target$value) else 0
@@ -292,6 +293,24 @@ inertia_completeness_check <- function(Aop, values, residuals, orthogonality,
       seed_bound > 0) {
     margin <- max(margin, 4 * seed_bound)
   }
+  # P25: the verified case of a dense extremal count proved by one Cholesky
+  # factorisation instead of a Bunch-Kaufman count (same verdict, about half
+  # the time); anything else falls through to the count.
+  chol <- inertia_deflated_cholesky_check(ctx, kind, values, vectors, E, rho,
+                                          margin, f)
+  if (!is.null(chol)) {
+    record$factorizations <- record$factorizations + 1
+    if (isTRUE(chol$verified)) {
+      record$proof <- "deflated_cholesky"
+      record$inertia_method <- "dense_deflated_cholesky"
+      record$margin <- chol$margin
+      record$threshold_upper <- chol$threshold
+      record$count_upper <- k
+      record$cholesky_delta <- chol$delta
+      return(finish("inertia_verified"))
+    }
+    record$cholesky_fallback <- chol$reason
+  }
   # The count is exact for A - t B + E with ||E|| <= backward_bound; the
   # matched eigenvalues sit at least `margin` from the threshold, so the
   # margin must exceed that bound (widen once if it does not).
@@ -338,12 +357,96 @@ inertia_completeness_check <- function(Aop, values, residuals, orthogonality,
          "the k-th and (k+1)-th eigenvalues are not separated by more than the residual bound")
 }
 
+# P25: deflated Cholesky proof of the verified dense extremal case.
+#
+# For the k smallest of M = sign * A (sign = 1 for smallest, -1 for
+# largest; f = sign * lambda is the preference distance) with threshold
+# s = E + rho + m (E = max f(theta), the count's upper threshold), factor
+#   H = M - s I + gamma X X',   gamma = 2 (s - min f(theta)) > 0,
+# with dpotrf. Let F be the rounding of forming H and Delta the Cholesky
+# backward error (R'R = H_computed + Delta, |Delta| <= gamma_{n+1} |R'||R|,
+# Higham, Thm 10.3, any evaluation order). For v in null(X') (dimension
+# >= n - k): v'(M - sI)v = v'R'Rv - v'(Delta + F)v > -delta ||v||^2 with
+#   delta = 2 (gamma_{n+1} ||R||_F^2 + gamma_{k+2} (gamma ||X||_F^2 + ||A||_1 + |s|))
+# (the factor 2 is slack), since R is nonsingular. By Courant-Fischer M has
+# at least n - k eigenvalues above s - delta, i.e. at most k with
+# f < s - delta. Kahan gives k distinct eigenvalues with f <= E + rho =
+# s - m < s - delta (when m > delta): they are exactly the k most preferred
+# ones and every other eigenvalue has f > s - delta. This is the verdict
+# N(s - delta) = k of the inertia count, a proof, so the status stays
+# "inertia_verified". A failed factorisation (an eigenvalue near or beyond
+# the threshold, or a wrong set) or delta >= m proves nothing; the caller
+# then runs the ordinary count, which also distinguishes failed from
+# inconclusive.
+#
+# Cost rule: used for real dense standard problems (no B) with an extremal
+# target, the returned vectors available, and
+# n >= getOption("eigencore.completeness_cholesky_min_n", 400) (Inf turns
+# it off). Below that size both factorisations take a few milliseconds and
+# the count is kept for its richer diagnostics. Returns NULL when not
+# applicable, otherwise list(verified, ...).
+#' @keywords internal
+inertia_deflated_cholesky_check <- function(ctx, kind, values, vectors, E, rho,
+                                            margin, f) {
+  min_n <- suppressWarnings(as.numeric(
+    getOption("eigencore.completeness_cholesky_min_n", 400)))
+  if (length(min_n) != 1L || is.na(min_n)) {
+    min_n <- 400
+  }
+  k <- length(values)
+  if (is.null(vectors) || !kind %in% c("largest", "smallest") ||
+      !identical(ctx$kind, "dense") || isTRUE(ctx$generalized) ||
+      isTRUE(ctx$complex) || !is.null(ctx$B) || ctx$n < min_n ||
+      !is.matrix(vectors) || !is.double(vectors) || nrow(vectors) != ctx$n ||
+      ncol(vectors) != k || k < 1L || k >= ctx$n || any(!is.finite(vectors))) {
+    return(NULL)
+  }
+  n <- ctx$n
+  eps <- .Machine$double.eps
+  g <- function(m) m * eps / (1 - m * eps)
+  sign <- if (identical(kind, "largest")) -1 else 1
+  xf2 <- sum(vectors^2)
+  trA <- sign * sum(diag(ctx$A))
+  delta_for <- function(s, gamma, frob2) {
+    2 * (g(n + 1) * frob2 + g(k + 2) * (gamma * xf2 + ctx$normA + abs(s)))
+  }
+  # ||R||_F^2 = trace(R'R) ~ trace(H): widen the margin up front when the
+  # predicted delta would not fit (large n), as the count widens for its own
+  # backward bound.
+  m <- margin
+  for (pass in 1:2) {
+    s <- E + rho + m
+    gamma <- 2 * (s - min(f))
+    pred <- delta_for(s, gamma, max(trA - n * s + gamma * xf2, 0) * 1.01)
+    if (pred < m) break
+    m <- 2 * pred
+  }
+  out <- tryCatch(
+    .Call("eigencore_dense_deflated_cholesky", ctx$A, vectors, sign, s, gamma,
+          PACKAGE = "eigencore"),
+    error = function(e) NULL
+  )
+  if (is.null(out)) {
+    return(list(verified = FALSE, reason = "factorisation error"))
+  }
+  if (out[[1L]] != 0) {
+    return(list(verified = FALSE,
+                reason = "H = sign A - s I + gamma X X' is not positive definite"))
+  }
+  delta <- delta_for(s, gamma, out[[2L]])
+  if (!is.finite(delta) || delta >= m) {
+    return(list(verified = FALSE, reason = "rounding bound exceeds the margin"))
+  }
+  list(verified = TRUE, margin = m, delta = delta, threshold = s - delta)
+}
+
 # Item 2 (tranche 5 phase 2): a shift-invert solve already factored
 # A - sigma I. Its simplicial LDL' factor seeds the context (later shifts run
 # Matrix::update on it, reusing the symbolic analysis) and its tally answers
-# a count at sigma itself without refactoring. A factor converted from a
-# relaxed supernodal LL' carries explicit zeros, so it is not used as the
-# symbolic seed (the plain simplicial pattern is smaller), only its tally.
+# a count at sigma itself without refactoring. A positive definite shift's
+# factor converted from a relaxed supernodal LL' no longer carries the
+# amalgamation zeros (C63: the bridge drops them), so it seeds the symbolic
+# analysis too.
 #' @keywords internal
 inertia_seed_context <- function(ctx, seed) {
   if (is.null(seed) || !identical(ctx$kind, "sparse") || !is.null(ctx$B) ||
@@ -351,7 +454,7 @@ inertia_seed_context <- function(ctx, seed) {
       !identical(as.integer(methods::slot(seed$factor, "Dim")), c(ctx$n, ctx$n))) {
     return(invisible(ctx))
   }
-  if (!isTRUE(seed$positive_definite) && is.null(ctx$factor)) {
+  if (is.null(ctx$factor)) {
     ctx$factor <- seed$factor
     ctx$seeded_symbolic <- TRUE
   }
@@ -441,7 +544,7 @@ inertia_completeness_run <- function(problem, values, vectors, cert, tol, ctx,
   op <- problem$A
   check <- inertia_completeness_check(
     op, values, cert$residuals, cert$orthogonality, target,
-    Bop = problem$metric, ctx = ctx
+    Bop = problem$metric, ctx = ctx, vectors = vectors
   )
   record <- check$record
   record$repaired <- FALSE
@@ -484,7 +587,8 @@ inertia_completeness_run <- function(problem, values, vectors, cert, tol, ctx,
       record$operator_columns <- record$operator_columns + ncol(V)
       record$operator_block_calls <- record$operator_block_calls + 1L
       orth <- max(abs(crossprod(V) - diag(length(values))))
-      again <- inertia_completeness_check(op, values, residuals, orth, target, ctx = ctx)
+      again <- inertia_completeness_check(op, values, residuals, orth, target, ctx = ctx,
+                                          vectors = V)
       record$factorizations <- record$factorizations + again$record$factorizations
       keep <- c("edge", "rho", "margin", "threshold_upper", "count_upper",
                 "threshold_lower", "count_lower", "reason")
