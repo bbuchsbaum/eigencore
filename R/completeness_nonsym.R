@@ -72,7 +72,7 @@ nonsym_completeness_controls <- function() {
     # Wanted Ritz values of the complement probe and its Krylov-Schur
     # subspace; complements no larger than `exhaust` are spanned completely.
     wanted = as_count(getOption("eigencore.nonsym_probe_wanted"), 6L, 1L),
-    subspace = as_count(getOption("eigencore.nonsym_probe_subspace"), 60L, 3L),
+    subspace = as_count(getOption("eigencore.nonsym_probe_subspace"), 80L, 3L),
     exhaust = as_count(getOption("eigencore.nonsym_probe_exhaust"), 64L, 0L),
     restarts = as_count(getOption("eigencore.nonsym_probe_restarts"), 1000L, 1L),
     # Screening tolerance of the first (clean-verdict) probe pass.
@@ -81,8 +81,88 @@ nonsym_completeness_controls <- function() {
         getOption("eigencore.nonsym_probe_screen_tol", 1e-4)))
       if (length(value) != 1L || !is.finite(value) || value <= 0) 1e-4 else value
     },
-    max_rounds = as_count(getOption("eigencore.completeness_max_rounds"), 3L, 0L)
+    max_rounds = as_count(getOption("eigencore.completeness_max_rounds"), 3L, 0L),
+    # Boundary resolution (P27): a clean probe whose best converged
+    # complement value lies within this relative gap of the returned edge is
+    # "crowded" and must be confirmed by an independent probe that converges
+    # the same top complement values; disagreement doubles the probe's wanted
+    # count and subspace, up to `escalations` times, and an unresolved
+    # boundary is "inconclusive".
+    crowded_gap = {
+      value <- suppressWarnings(as.numeric(
+        getOption("eigencore.nonsym_probe_crowded_gap", 2e-3)))
+      if (length(value) != 1L || !is.finite(value) || value < 0) 2e-3 else value
+    },
+    escalations = as_count(getOption("eigencore.nonsym_probe_escalations"), 2L, 0L),
+    # Complements up to this dimension are spanned completely when the
+    # boundary stays unresolved.
+    exhaust_limit = as_count(getOption("eigencore.nonsym_probe_exhaust_limit"), 400L, 0L),
+    # Smallest median relative spacing of the distinct preference keys at a
+    # crowded edge that the probe accepts as resolved.
+    resolution = {
+      value <- suppressWarnings(as.numeric(
+        getOption("eigencore.nonsym_probe_resolution", 1e-4)))
+      if (length(value) != 1L || !is.finite(value) || value < 0) 1e-4 else value
+    }
   )
+}
+
+# Largest probe subspace the boundary-resolution escalation may use: the
+# complement dimension, and a basis budget of 1 GiB (as the main solve's
+# adaptive growth, native_krylov_schur_default_subspace_limit()).
+#' @keywords internal
+nonsym_probe_subspace_cap <- function(n, nc) {
+  budget <- floor(2^30 / (32 * max(as.integer(n), 1L))) - 1L
+  as.integer(max(1L, min(nc, budget)))
+}
+
+# Median relative spacing of the distinct keys at the edge: the returned
+# keys and the converged complement keys, keys closer than `collapse`
+# merged (conjugate partners share a modulus or real part), the `take` most
+# preferred kept. NA when fewer than two distinct keys remain.
+#' @keywords internal
+nonsym_edge_spacing <- function(keys, take, collapse, scale) {
+  keys <- sort(keys[is.finite(keys)], decreasing = TRUE)
+  if (length(keys) < 2L) {
+    return(NA_real_)
+  }
+  distinct <- keys[[1L]]
+  for (key in keys[-1L]) {
+    if (distinct[[length(distinct)]] - key > collapse) {
+      distinct <- c(distinct, key)
+    }
+  }
+  distinct <- utils::head(distinct, take)
+  if (length(distinct) < 2L) {
+    return(NA_real_)
+  }
+  stats::median(-diff(distinct)) / scale
+}
+
+# Do two independent clean probes resolve the boundary? Each must have
+# converged a complement value, and their most preferred converged keys must
+# agree to within the probes' resolution (the larger of their Ritz residuals
+# and `resolution`, the probe tolerance times the spectrum scale) plus the
+# margin. Krylov-Schur on a crowded edge (a dense ring, or the edge of a
+# random matrix's disk) converges eigenvalues in an order set by their
+# angular isolation rather than by the small key differences the target
+# ranks by, so independent starts then settle on different values there.
+#' @keywords internal
+nonsym_probe_agree <- function(a, b, resolution, margin) {
+  top <- function(v) {
+    keep <- which(v$converged_values)
+    if (!length(keep)) {
+      return(NULL)
+    }
+    best <- keep[[which.max(v$key[keep])]]
+    list(key = v$key[[best]], res = v$res[[best]])
+  }
+  ta <- top(a)
+  tb <- top(b)
+  if (is.null(ta) || is.null(tb)) {
+    return(FALSE)
+  }
+  abs(ta$key - tb$key) <= max(resolution, ta$res + tb$res) + margin
 }
 
 # Targets the probe can rank (the native Krylov-Schur target codes).
@@ -419,20 +499,46 @@ nonsym_completeness_check <- function(op, values, vectors, target, tol,
       theta_scale <- pmax(Mod(theta), .Machine$double.eps^(1 / 3) *
                             max(c(Mod(theta), 1e-300)))
       converged <- theta_res <= max(tol, 100 * .Machine$double.eps) * theta_scale
+      # Complement Ritz values converged at the probe's own tolerance.
+      n_unmatched <- length(basis$unmatched)
+      own <- c(rep(FALSE, n_unmatched),
+               probe$residuals <= max(probe$tolerance %||% tol,
+                                      100 * .Machine$double.eps) *
+                 theta_scale[n_unmatched + seq_along(probe$residuals)])
+      # Ambiguous (P27): converged at the screening tolerance, not beyond
+      # the edge, but within its own residual of it and not converged at
+      # the solve tolerance, so the screen cannot tell which side of the
+      # edge that eigenvalue lies on (a screening residual of 1e-4 does not
+      # resolve a dense ring whose moduli differ by 1e-6).
+      # A value tying with the edge within the margin is an eigenvalue of
+      # equal preference (e.g. real eigenvalues under an imaginary-part
+      # target), not an ambiguity.
+      # Imaginary-part targets are exempt: on a real operator every real
+      # eigenvalue ties at key 0, and the solve-tolerance re-run stagnates
+      # on such ties (see below).
+      ambiguous <- own & !suspect & !converged & abs(key - edge) > margin &
+        key + theta_res >= edge - margin &
+        !(kind %in% c("largest_imaginary", "smallest_imaginary"))
       list(theta = theta, margin = margin, key = key, suspect = suspect,
-           confirmed = suspect & converged)
+           confirmed = suspect & converged, ambiguous = ambiguous,
+           res = theta_res, converged_values = own)
     }
-    run_probe <- function(probe_tol, restarts = controls$restarts) {
+    run_probe <- function(probe_tol, restarts = controls$restarts,
+                          wanted = controls$wanted, subspace = controls$subspace,
+                          stream = round) {
       probe_controls <- controls
       probe_controls$restarts <- restarts
+      probe_controls$wanted <- wanted
+      probe_controls$subspace <- subspace
       probe <- if (ncol(Q) >= op$dim[[1L]]) {
         # The returned subspace is the whole space: the complement is empty.
         list(theta = complex(), residuals = numeric(),
              basis = matrix(0, op$dim[[1L]], 0L), converged = TRUE,
              exhausted = TRUE, matvecs = 0L, restarts = 0L, subspace = 0L)
       } else {
-        nonsym_deflated_probe(op, Q, kind, probe_tol, probe_controls, stream = round)
+        nonsym_deflated_probe(op, Q, kind, probe_tol, probe_controls, stream = stream)
       }
+      probe$tolerance <- probe_tol
       record$subspace <<- probe$subspace
       record$restarts <<- record$restarts + probe$restarts
       record$operator_columns <<- record$operator_columns + probe$matvecs
@@ -448,25 +554,132 @@ nonsym_completeness_check <- function(op, values, vectors, target, tol,
     # Krylov-Schur restart selection can stagnate at a loose tolerance on
     # heavily tied keys, e.g. imaginary-part targets over a real complement).
     loose_tol <- max(tol, min(sqrt(tol), controls$screen_tol))
-    screened <- loose_tol > tol
-    probe <- run_probe(loose_tol, if (screened) min(controls$restarts, 100L) else controls$restarts)
-    verdict <- assess(probe)
-    # P23: when a suspect of the screen already converged at the solve
-    # tolerance (Krylov-Schur resolves the dominant complement values far
-    # below the screening tolerance), the screen's basis carries an accurate
-    # intruder vector: try the merge with it first, and re-run the probe at
-    # the solve tolerance only if that merge does not certify and improve.
-    # The merged set is re-certified from scratch and probed again by the
-    # next round, which re-examines any suspect the merge left out.
-    screen_merge <- screened && !isTRUE(probe$exhausted) &&
-      isTRUE(probe$converged) && any(verdict$suspect) &&
-      any(verdict$confirmed)
-    if (screened && !screen_merge && !isTRUE(probe$exhausted) &&
-        (any(verdict$suspect) || !isTRUE(probe$converged))) {
-      probe <- run_probe(tol)
+    # One probe pass (wanted, subspace, stream): the screen, then the
+    # solve-tolerance re-run when needed.
+    probe_pass <- function(wanted, subspace, stream) {
+      screened <- loose_tol > tol
+      probe <- run_probe(loose_tol,
+                         if (screened) min(controls$restarts, 100L) else controls$restarts,
+                         wanted = wanted, subspace = subspace, stream = stream)
       verdict <- assess(probe)
-      screened <- FALSE
+      # P23: when a suspect of the screen already converged at the solve
+      # tolerance (Krylov-Schur resolves the dominant complement values far
+      # below the screening tolerance), the screen's basis carries an accurate
+      # intruder vector: try the merge with it first, and re-run the probe at
+      # the solve tolerance only if that merge does not certify and improve.
+      # The merged set is re-certified from scratch and probed again by the
+      # next round, which re-examines any suspect the merge left out.
+      screen_merge <- screened && !isTRUE(probe$exhausted) &&
+        isTRUE(probe$converged) && any(verdict$suspect) &&
+        any(verdict$confirmed)
+      # P27: a screen value within its residual of the edge (ambiguous)
+      # also needs the solve tolerance.
+      if (screened && !screen_merge && !isTRUE(probe$exhausted) &&
+          (any(verdict$suspect) || any(verdict$ambiguous) ||
+           !isTRUE(probe$converged))) {
+        probe <- run_probe(tol, wanted = wanted, subspace = subspace, stream = stream)
+        verdict <- assess(probe)
+        screened <- FALSE
+      }
+      list(probe = probe, verdict = verdict, screened = screened,
+           screen_merge = screen_merge, wanted = wanted, subspace = subspace,
+           stream = stream)
     }
+    pass <- probe_pass(controls$wanted, controls$subspace, stream = round)
+    # P27: boundary resolution. A clean, converged, non-exhaustive probe
+    # whose best converged complement value is within crowded_gap (relative)
+    # of the edge is confirmed by an independent probe (fresh start stream);
+    # the two must converge the same most-preferred complement values.
+    # Disagreement escalates both the wanted count and the subspace; an
+    # intruder found on the way goes to the repair below; a boundary still
+    # unresolved when the escalation budget runs out is inconclusive.
+    clean_pass <- function(ps) {
+      !any(ps$verdict$suspect) && isTRUE(ps$probe$converged)
+    }
+    nc <- op$dim[[1L]] - ncol(Q)
+    unresolved <- FALSE
+    if (clean_pass(pass) && !isTRUE(pass$probe$exhausted)) {
+      v <- pass$verdict
+      scale <- max(c(Mod(values), Mod(v$theta), 1e-300))
+      # Relative gap from the edge to the best converged complement value
+      # that does not tie with it (a tie within the margin and residual is
+      # an eigenvalue of equal preference, e.g. a multiplet cut by k).
+      edge_gap <- function(v) {
+        cv <- v$converged_values & v$key < edge - v$margin - v$res
+        if (any(cv)) (edge - max(v$key[cv])) / scale else Inf
+      }
+      gap <- edge_gap(v)
+      record$crowding_gap <- gap
+      if (gap < controls$crowded_gap) {
+        cap <- nonsym_probe_subspace_cap(op$dim[[1L]], nc)
+        level <- 0L
+        passes <- 1L
+        prev <- pass
+        repeat {
+          if (level >= controls$escalations || prev$subspace >= cap) {
+            unresolved <- TRUE
+            break
+          }
+          level <- level + 1L
+          nxt <- probe_pass(min(2L * prev$wanted, cap - 1L),
+                            min(as.integer(ceiling(1.5 * prev$subspace)), cap),
+                            stream = round + 1009L * passes)
+          passes <- passes + 1L
+          if (!clean_pass(nxt)) {
+            if (any(nxt$verdict$suspect)) pass <- nxt else unresolved <- TRUE
+            break
+          }
+          if (isTRUE(nxt$probe$exhausted) ||
+              nonsym_probe_agree(
+                prev$verdict, nxt$verdict,
+                resolution = max(prev$probe$tolerance, nxt$probe$tolerance) * scale,
+                margin = max(prev$verdict$margin, nxt$verdict$margin))) {
+            pass <- nxt
+            break
+          }
+          prev <- nxt
+        }
+        # A crowd too dense for Krylov-Schur to order by the target key:
+        # converged values near the edge closer (median, relative) than the
+        # resolution. On such a ring the order in which eigenvalues converge
+        # is set by their angular isolation, and two independent probes can
+        # agree while missing the same eigenvalue just beyond the edge.
+        if (!unresolved && clean_pass(pass) && !isTRUE(pass$probe$exhausted)) {
+          v <- pass$verdict
+          spacing <- nonsym_edge_spacing(
+            c(nonsym_completeness_key(values, kind), v$key[v$converged_values]),
+            take = k + pass$wanted,
+            collapse = v$margin + max(c(0, v$res[v$converged_values])),
+            scale = scale)
+          record$edge_spacing <- spacing
+          record$crowding_gap <- min(record$crowding_gap, edge_gap(v))
+          if ((is.finite(spacing) && spacing < controls$resolution) ||
+              edge_gap(v) < controls$resolution) {
+            unresolved <- TRUE
+          }
+        }
+        # An unresolved boundary on a small complement: span all of it (the
+        # complement Ritz values are then its whole spectrum, from a
+        # backward-stable Schur form), which settles the edge either way.
+        if (unresolved && nc <= controls$exhaust_limit && nc <= cap) {
+          full <- probe_pass(min(pass$wanted, nc), nc,
+                             stream = round + 1009L * passes)
+          passes <- passes + 1L
+          if (isTRUE(full$probe$exhausted) &&
+              (clean_pass(full) || any(full$verdict$suspect))) {
+            pass <- full
+            unresolved <- FALSE
+          }
+        }
+        record$boundary_passes <- passes
+        record$boundary_escalations <- level
+        record$boundary_resolved <- !unresolved
+      }
+    }
+    probe <- pass$probe
+    verdict <- pass$verdict
+    screened <- pass$screened
+    screen_merge <- pass$screen_merge
     theta <- verdict$theta
     margin <- verdict$margin
     suspect <- verdict$suspect
@@ -479,9 +692,16 @@ nonsym_completeness_check <- function(op, values, vectors, target, tol,
       NA_complex_
     }
     if (!any(suspect)) {
-      status <- if (!probe$converged) "inconclusive" else if (repaired) "repaired" else "probed"
+      status <- if (!probe$converged || unresolved) {
+        "inconclusive"
+      } else if (repaired) "repaired" else "probed"
       if (!probe$converged) {
         record$reason <- "complement probe did not converge within its restart budget"
+      } else if (unresolved) {
+        record$reason <- paste(
+          "boundary unresolved: the spectrum near the returned edge is too",
+          "dense for the probe to order by the target (independent probes",
+          "disagree, or eigenvalue spacing below the probe resolution)")
       }
       break
     }
@@ -514,7 +734,8 @@ nonsym_completeness_check <- function(op, values, vectors, target, tol,
         screen_merge) {
       # The screen-basis merge fell short: fall back to the solve-tolerance
       # probe and its merge, as without the shortcut.
-      probe <- run_probe(tol)
+      probe <- run_probe(tol, wanted = pass$wanted, subspace = pass$subspace,
+                         stream = round)
       verdict <- assess(probe)
       margin <- verdict$margin
       confirmed <- verdict$confirmed
@@ -524,14 +745,18 @@ nonsym_completeness_check <- function(op, values, vectors, target, tol,
         record$most_preferred_complement <- verdict$theta[[which.max(verdict$key)]]
       }
       if (!any(verdict$suspect)) {
-        round <- round - 1L
+        # The screen's suspect did not survive the solve tolerance. The
+        # boundary was not confirmed by an independent probe on this path,
+        # so a clean verdict needs the next round (same set, fresh streams).
         record$intruder_found <- FALSE
         record$intruder_confirmed <- NULL
-        status <- if (!probe$converged) "inconclusive" else if (repaired) "repaired" else "probed"
         if (!probe$converged) {
+          round <- round - 1L
+          status <- "inconclusive"
           record$reason <- "complement probe did not converge within its restart budget"
+          break
         }
-        break
+        next
       }
       record$intruder_confirmed <- any(confirmed)
       merged <- try_merge(probe, margin)

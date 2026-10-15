@@ -134,6 +134,82 @@ The sections below give the details.
   (elimination tree of the permuted matrix) are dropped, so later numeric
   refactorisations (`Matrix::update()`) are unaffected.
 
+## Nonsymmetric completeness probe: boundary resolution (P27)
+
+* The nonsymmetric completeness probe no longer reports `"probed"` for a
+  set that misses eigenvalues on a crowded edge. On a dense ring of moduli
+  at the edge, or the edge of a large random matrix's disk, Krylov-Schur
+  converges eigenvalues in an order set by their angular isolation, not by
+  moduli that differ by 1e-5. Before this change both the main solve and
+  the single complement probe could miss the same pairs, and the result
+  certified. That happened on 9 of 9 runs on a 600 x 600 ring (60 pairs
+  within 2e-3 of modulus 1), and on 2 of 9 runs on the random sparse
+  n = 20000 `largest_magnitude()` k = 6 matrices.
+* When the best converged complement value lies within
+  `eigencore.nonsym_probe_crowded_gap` (2e-3, relative) of the returned
+  edge, the probe runs an independent pass. It uses a fresh start stream,
+  twice the wanted count and 1.5x the subspace. The two passes must
+  converge the same most preferred complement value; otherwise the probe
+  escalates again, up to `eigencore.nonsym_probe_escalations` (2) times.
+* An intruder found on the way is repaired as before. The boundary still
+  counts as unresolved, and the result is `"inconclusive"` with
+  `passed = FALSE`, in these cases:
+  * the passes keep disagreeing;
+  * the gap to the edge, or the median spacing of the values at the edge,
+    is below `eigencore.nonsym_probe_resolution` (1e-4).
+* Complements of dimension up to `eigencore.nonsym_probe_exhaust_limit`
+  (400) are first spanned completely, which settles the edge either way.
+* A screening value within its residual of the edge, and not converged at
+  the solve tolerance, now forces the solve-tolerance pass. Imaginary-part
+  targets are exempt, because there the real eigenvalues tie at the edge.
+* Edges with a clear gap pay nothing extra. Examples: sparse 5000
+  `largest_real()`/`smallest_real()`, `largest_magnitude()` k = 1, dense
+  1500 `largest_real()`.
+* Crowded edges pay one more probe pass:
+  * benchmark `nonsym_sparse_n20000_LM_k6`: 2822 -> 3990 operator columns,
+    4.0-4.2 -> 7.6-7.7 s CPU (RSpectra: 3.0 s, wrong set);
+  * random sparse 2000/5000 `largest_magnitude()`: +230-540 columns,
+    +0.1-0.5 s.
+* Sweeps:
+  * 66 runs on dense-ring families (n = 400-800, k = 1/6/12, normal and
+    non-normal) and 27 runs on nine n = 20000 random sparse matrices: no
+    certified wrong set. Before, 100% of the first ring family and 2 of 9
+    runs on the disk matrices were certified wrong.
+  * Many correct ring results are now declined (`"inconclusive"`).
+* The oracle generator has a new `ring` nonsymmetric spectrum (half of the
+  former `complex_pairs` cases).
+
+## Nonsymmetric Krylov-Schur restart (P28)
+
+* The native real Krylov-Schur kernel grows its subspace when convergence
+  stalls. It starts at the ARPACK size `max(2k + 1, 20)`. After 25 restarts
+  without the wanted values converging, it doubles the subspace, up to 4x
+  that size (and a 1 GiB basis budget). The kept Krylov-Schur
+  decomposition carries over unchanged. Well-separated spectra converge
+  before the first doubling and run as before. A requested `max_subspace`
+  stays fixed. On the clustered disk edge of a random sparse n = 20000
+  `largest_magnitude()` k = 6 problem, the fixed 20-column subspace needed
+  400-1000 restarts (5k-17k operator columns, heavy-tailed by start
+  vector). The grown subspace needs 1.5k-3k, and its converged set is more
+  often the true one, so the completeness probe repairs less often.
+* The restart keep count `k + min(nconv, (ncv - k) / 2)` now uses the
+  number of wanted values converged in the current projected matrix, as
+  ARPACK and Spectra do, instead of the count from the previous restart.
+* The nonsymmetric completeness probe's default Krylov-Schur subspace
+  (`eigencore.nonsym_probe_subspace`) is now 80 (was 60). The larger
+  subspace explores more per restart and needed fewer operator columns on
+  seven random sparse n = 20000 cases (14 s vs 23 s probe CPU in total).
+  The verdict logic, tolerances, wanted count and fresh random start are
+  unchanged.
+* Benchmark `nonsym_sparse_n20000_LM_k6`, 1 thread, same loaded machine:
+  12.1-12.9 s down to 4.6-5.1 s CPU, and 9710 down to 2822 operator
+  columns (main solve 1854, probe 968, no repair round). RSpectra took
+  3.1 s for 3947 columns and returned the wrong set. Random sparse
+  n = 20000 `largest_magnitude()` k = 20: 57-88 s down to 8.7 s, and
+  `largest_real()` k = 6: 15-25 s down to 8 s. These figures predate P27's
+  boundary-resolution pass, which brings the benchmark to 3990 columns and
+  about 7.7 s.
+
 ## Native-code assurance findings F4-F7
 
 * `eigs_sym(which = "BE")` with a warm start (`opts = list(initvec =)`)
