@@ -567,3 +567,36 @@ test_that("shift-invert recovers smallest eigenvalues of a 1D Laplacian", {
   expect_true(fit$restart$native)
   expect_true(fit$restart$factorization_native)
 })
+
+issue26_cycle_laplacian <- function() {
+  set.seed(11)
+  n <- 30L
+  edges <- rbind(cbind(seq_len(n - 1L), 2:n), cbind(1:10, 21:30))
+  graph <- Matrix::sparseMatrix(
+    i = c(edges[, 1L], edges[, 2L]),
+    j = c(edges[, 2L], edges[, 1L]),
+    x = rep(stats::runif(nrow(edges), 0.5, 2), 2L),
+    dims = c(n, n)
+  )
+  degree <- Matrix::rowSums(graph)
+  methods::as(Matrix::Diagonal(x = degree) - graph, "generalMatrix")
+}
+
+test_that("sparse shift-invert certifies all pairs in original coordinates (#26)", {
+  skip_if_not_installed("Matrix")
+  L <- issue26_cycle_laplacian()
+  sigma <- -1e-3 * mean(Matrix::diag(L))
+  dense_vals <- sort(eigen(as.matrix(L), symmetric = TRUE, only.values = TRUE)$values)
+
+  for (tol in c(1e-12, 1e-14)) {
+    set.seed(1)
+    fit <- eig_partial(
+      L, k = 6L, target = nearest(sigma),
+      method = shift_invert(sigma),
+      tol = tol, maxit = 30L, allow_dense_fallback = "never"
+    )
+    expect_identical(fit$nconv, 6L)
+    expect_true(isTRUE(fit$certificate$passed))
+    expect_equal(sort(fit$values), dense_vals[1:6], tolerance = 1e-9)
+  }
+})
