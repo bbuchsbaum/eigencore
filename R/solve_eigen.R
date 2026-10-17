@@ -421,7 +421,8 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
       max_restarts = method_max_restarts,
       vectors = TRUE,
       extraction = method_extraction,
-      krylov_schur_maxit = ks_max_iterations
+      krylov_schur_maxit = ks_max_iterations,
+      subspace_limit = controls$max_subspace_limit
     )
   } else {
     reference_arnoldi_general(
@@ -455,7 +456,8 @@ solve_eigen_arnoldi <- function(a, k, method, tol, maxit, vectors, certify, plan
       maxit = method_subspace,
       max_restarts = method_max_restarts,
       extraction = method_extraction,
-      krylov_schur_maxit = ks_max_iterations
+      krylov_schur_maxit = ks_max_iterations,
+      subspace_limit = controls$max_subspace_limit
     )
   }
   if (identical(left_policy, "compute") && !isTRUE(left_contract$supported)) {

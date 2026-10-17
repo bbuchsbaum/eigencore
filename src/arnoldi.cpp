@@ -442,6 +442,80 @@ static int arnoldi_select(int count, const double* wi, const int* order,
   return chosen;
 }
 
+// Ritz residual estimates |b^T y| / ||y|| for the eigenvalues of the leading
+// cnt x cnt block of the real Schur form T (leading dimension ldt), with bq
+// the Schur-basis coupling row. Y (cnt x cnt) and work (3 cnt) are scratch.
+// Returns the dtrevc info code.
+static int arnoldi_schur_residuals(int cnt, const double* T, int ldt,
+                                   const double* bq, double* Y, double* work,
+                                   double* res) {
+  const char side = 'R';
+  const char howmny = 'A';
+  int vl_dummy_ld = 1;
+  double vl_dummy = 0.0;
+  int mout = 0;
+  int info = 0;
+  int select_dummy = 0;
+  const int inc = 1;
+  F77_CALL(dtrevc)(&side, &howmny, &select_dummy, &cnt, const_cast<double*>(T), &ldt,
+                   &vl_dummy, &vl_dummy_ld, Y, &cnt, &cnt, &mout, work, &info
+                   FCONE FCONE);
+  if (info != 0) {
+    return info;
+  }
+  for (int j = 0; j < cnt;) {
+    const double* yr = Y + static_cast<int64_t>(j) * cnt;
+    const bool pair = (j + 1 < cnt) && T[(j + 1) + static_cast<int64_t>(j) * ldt] != 0.0;
+    if (!pair) {
+      const double ynorm = arnoldi_norm2(cnt, yr);
+      const double dot = F77_CALL(ddot)(&cnt, bq, &inc, yr, &inc);
+      res[j] = (ynorm > 0.0) ? std::fabs(dot) / ynorm : std::fabs(dot);
+      j += 1;
+    } else {
+      const double* yi = Y + static_cast<int64_t>(j + 1) * cnt;
+      const double nr = arnoldi_norm2(cnt, yr);
+      const double ni = arnoldi_norm2(cnt, yi);
+      const double ynorm = std::sqrt(nr * nr + ni * ni);
+      const double d1 = F77_CALL(ddot)(&cnt, bq, &inc, yr, &inc);
+      const double d2 = F77_CALL(ddot)(&cnt, bq, &inc, yi, &inc);
+      const double r = (ynorm > 0.0) ? std::hypot(d1, d2) / ynorm : std::hypot(d1, d2);
+      res[j] = r;
+      res[j + 1] = r;
+      j += 2;
+    }
+  }
+  return 0;
+}
+
+// Scale-invariant convergence test (ARPACK-style, relative to |theta|, with
+// a floor proportional to ||T||_F so eigenvalues at or near zero can
+// converge): res <= tol_eff * max(|theta|, eps^(1/3) * ||T||_F), tol_eff
+// never below 100 * eps, the attainable residual level. Counts the passing
+// values among the `check` most wanted (order[0..check)).
+static int arnoldi_count_converged(int check, const int* order, const double* wr,
+                                   const double* wi, const double* res,
+                                   double tol, double tnorm) {
+  const double tol_eff = std::max(tol, 100.0 * DBL_EPSILON);
+  const double floor_scale = std::cbrt(DBL_EPSILON) * tnorm;
+  int nconv = 0;
+  for (int r = 0; r < check; ++r) {
+    const int idx = order[r];
+    const double theta = std::hypot(wr[idx], wi[idx]);
+    if (res[idx] <= tol_eff * std::max(theta, floor_scale)) {
+      ++nconv;
+    }
+  }
+  return nconv;
+}
+
+// Adaptive subspace growth: restarts at one subspace size without the
+// wanted values converging before the subspace doubles (up to the caller's
+// limit). Well-separated spectra converge within a few restarts at the
+// ARPACK size and never grow; on a clustered wanted edge (random sparse
+// n = 20000, largest_magnitude k = 6) the fixed 20-column subspace needed
+// 400-1000 restarts (5000-17000 operator columns), the grown one 1500-3000.
+static const int kKrylovSchurGrowAfter = 25;
+
 struct ArnoldiKrylovSchurResult {
   int size;
   int matvecs;
@@ -449,6 +523,7 @@ struct ArnoldiKrylovSchurResult {
   int nconv;
   int reorthogonalization_passes;
   int breakdowns;
+  int growths;
   double apply_seconds;
   double orthogonalization_seconds;
   double schur_seconds;
@@ -465,7 +540,8 @@ static SEXP native_krylov_schur_impl(void* impl,
                                      double tol,
                                      int max_iterations,
                                      const double* D = nullptr,
-                                     int dcols = 0) {
+                                     int dcols = 0,
+                                     int subspace_limit = 0) {
   if (n64 < 1 || max_subspace < 1 || k < 1) {
     error("native Krylov-Schur Arnoldi requires positive dimensions");
   }
@@ -489,54 +565,80 @@ static SEXP native_krylov_schur_impl(void* impl,
   if (n_eff < 1) {
     error("native Krylov-Schur Arnoldi deflation leaves an empty complement");
   }
-  const int m = std::min(max_subspace, n_eff);
+  int m = std::min(max_subspace, n_eff);
   if (k > m) {
     error("native Krylov-Schur Arnoldi requires k <= max_subspace");
   }
+  // Adaptive subspace growth (step 6 below): the subspace may grow from m
+  // up to m_limit when the wanted values stall.
+  int m_limit = std::max(m, std::min(subspace_limit, n_eff));
+  if (!eigencore_int_indexable(n64 * (static_cast<int64_t>(m_limit) + 1))) {
+    m_limit = m;
+  }
   max_iterations = std::max(1, max_iterations);
-  const int lds = m + 1;
+  int lds = m + 1;
   const size_t n_sz = static_cast<size_t>(n);
-  const size_t m_sz = static_cast<size_t>(m);
 
   // All workspace through R_alloc so an R error (including one raised by a
   // matrix-free callback) cannot leak it.
-  double* V = reinterpret_cast<double*>(R_alloc(n_sz * (m_sz + 1), sizeof(double)));
-  double* S = reinterpret_cast<double*>(R_alloc(static_cast<size_t>(lds) * m_sz, sizeof(double)));
-  double* T = reinterpret_cast<double*>(R_alloc(m_sz * m_sz, sizeof(double)));
-  double* Q = reinterpret_cast<double*>(R_alloc(m_sz * m_sz, sizeof(double)));
-  double* Y = reinterpret_cast<double*>(R_alloc(m_sz * m_sz, sizeof(double)));
-  double* Wbuf = reinterpret_cast<double*>(R_alloc(n_sz * m_sz, sizeof(double)));
+  double* V = reinterpret_cast<double*>(R_alloc(n_sz * (static_cast<size_t>(m) + 1), sizeof(double)));
+  double* S = reinterpret_cast<double*>(R_alloc(static_cast<size_t>(lds) * m, sizeof(double)));
+  double* Wbuf = reinterpret_cast<double*>(R_alloc(n_sz * m, sizeof(double)));
   double* w = reinterpret_cast<double*>(R_alloc(n_sz, sizeof(double)));
-  double* coeff = reinterpret_cast<double*>(R_alloc(m_sz + 1, sizeof(double)));
-  double* tmp = reinterpret_cast<double*>(R_alloc(m_sz + 1, sizeof(double)));
-  double* wr = reinterpret_cast<double*>(R_alloc(m_sz, sizeof(double)));
-  double* wi = reinterpret_cast<double*>(R_alloc(m_sz, sizeof(double)));
-  double* b = reinterpret_cast<double*>(R_alloc(m_sz, sizeof(double)));
-  double* bq = reinterpret_cast<double*>(R_alloc(m_sz, sizeof(double)));
-  double* res = reinterpret_cast<double*>(R_alloc(m_sz, sizeof(double)));
-  double* trevc_work = reinterpret_cast<double*>(R_alloc(3 * m_sz + 1, sizeof(double)));
-  int* order = reinterpret_cast<int*>(R_alloc(m_sz, sizeof(int)));
-  int* select = reinterpret_cast<int*>(R_alloc(m_sz, sizeof(int)));
-  int* bwork = reinterpret_cast<int*>(R_alloc(m_sz, sizeof(int)));
   double* dcoeff = reinterpret_cast<double*>(
     R_alloc(static_cast<size_t>(std::max(dcols, 1)), sizeof(double)));
-  std::memset(V, 0, sizeof(double) * n_sz * (m_sz + 1));
-  std::memset(S, 0, sizeof(double) * static_cast<size_t>(lds) * m_sz);
+  std::memset(V, 0, sizeof(double) * n_sz * (static_cast<size_t>(m) + 1));
+  std::memset(S, 0, sizeof(double) * static_cast<size_t>(lds) * m);
 
-  // dgees workspace query (m is fixed for the whole run).
+  // Projected-problem workspace for subspace size m (reallocated on growth).
   const char jobvs = 'V';
   const char sort = 'N';
   int sdim = 0;
   int info = 0;
-  int lwork = -1;
-  double work_query = 0.0;
-  F77_CALL(dgees)(&jobvs, &sort, nullptr, &m, T, &m, &sdim, wr, wi, Q, &m,
-                  &work_query, &lwork, bwork, &info FCONE FCONE);
-  if (info != 0) {
-    error("LAPACK dgees workspace query failed for native Krylov-Schur Arnoldi with info=%d", info);
-  }
-  lwork = std::max(std::max(1, 3 * m), static_cast<int>(work_query));
-  double* gees_work = reinterpret_cast<double*>(R_alloc(static_cast<size_t>(lwork), sizeof(double)));
+  int lwork = 0;
+  double* T = nullptr;
+  double* Q = nullptr;
+  double* Y = nullptr;
+  double* coeff = nullptr;
+  double* tmp = nullptr;
+  double* wr = nullptr;
+  double* wi = nullptr;
+  double* b = nullptr;
+  double* bq = nullptr;
+  double* res = nullptr;
+  double* trevc_work = nullptr;
+  int* order = nullptr;
+  int* select = nullptr;
+  int* bwork = nullptr;
+  double* gees_work = nullptr;
+  auto alloc_projected = [&](int size) {
+    const size_t sz = static_cast<size_t>(size);
+    T = reinterpret_cast<double*>(R_alloc(sz * sz, sizeof(double)));
+    Q = reinterpret_cast<double*>(R_alloc(sz * sz, sizeof(double)));
+    Y = reinterpret_cast<double*>(R_alloc(sz * sz, sizeof(double)));
+    coeff = reinterpret_cast<double*>(R_alloc(sz + 1, sizeof(double)));
+    tmp = reinterpret_cast<double*>(R_alloc(sz + 1, sizeof(double)));
+    wr = reinterpret_cast<double*>(R_alloc(sz, sizeof(double)));
+    wi = reinterpret_cast<double*>(R_alloc(sz, sizeof(double)));
+    b = reinterpret_cast<double*>(R_alloc(sz, sizeof(double)));
+    bq = reinterpret_cast<double*>(R_alloc(sz, sizeof(double)));
+    res = reinterpret_cast<double*>(R_alloc(sz, sizeof(double)));
+    trevc_work = reinterpret_cast<double*>(R_alloc(3 * sz + 1, sizeof(double)));
+    order = reinterpret_cast<int*>(R_alloc(sz, sizeof(int)));
+    select = reinterpret_cast<int*>(R_alloc(sz, sizeof(int)));
+    bwork = reinterpret_cast<int*>(R_alloc(sz, sizeof(int)));
+    // dgees workspace query for this size.
+    int query = -1;
+    double work_query = 0.0;
+    F77_CALL(dgees)(&jobvs, &sort, nullptr, &size, T, &size, &sdim, wr, wi, Q, &size,
+                    &work_query, &query, bwork, &info FCONE FCONE);
+    if (info != 0) {
+      error("LAPACK dgees workspace query failed for native Krylov-Schur Arnoldi with info=%d", info);
+    }
+    lwork = std::max(std::max(1, 3 * size), static_cast<int>(work_query));
+    gees_work = reinterpret_cast<double*>(R_alloc(static_cast<size_t>(lwork), sizeof(double)));
+  };
+  alloc_projected(m);
 
   arnoldi_normalize_start(n, start, V);
   if (dcols > 0) {
@@ -551,8 +653,9 @@ static SEXP native_krylov_schur_impl(void* impl,
   }
 
   EigencoreWorkspace workspace = {0, 0, nullptr, 0};
-  ArnoldiKrylovSchurResult state = {0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0};
-  const int max_keep = (m < n_eff) ? m - 1 : m;
+  ArnoldiKrylovSchurResult state = {0, 0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0};
+  int max_keep = (m < n_eff) ? m - 1 : m;
+  int restarts_at_size = 0;
   int l = 0;
   double scale = 0.0;
   int p = 0;
@@ -622,7 +725,24 @@ static SEXP native_krylov_schur_impl(void* impl,
 
     // 3. Choose how many Ritz values to keep (ARPACK/Spectra heuristic) and
     //    reorder them to the leading block.
-    int want = k + std::min(state.nconv, (m - k) / 2);
+    //    The keep count uses the number of wanted values converged in THIS
+    //    projected matrix (as ARPACK dnaup2 and Spectra do), not the count
+    //    from the previous restart.
+    int nconv_now = 0;
+    {
+      const char trans = 'T';
+      const double one = 1.0;
+      const double zero = 0.0;
+      const int inc = 1;
+      F77_CALL(dgemv)(&trans, &m, &m, &one, Q, &m, b, &inc, &zero, bq, &inc FCONE);
+      info = arnoldi_schur_residuals(m, T, m, bq, Y, trevc_work, res);
+      if (info != 0) {
+        error("LAPACK dtrevc failed for native Krylov-Schur Arnoldi with info=%d", info);
+      }
+      arnoldi_rank(target, m, wr, wi, order);
+      nconv_now = arnoldi_count_converged(std::min(k, m), order, wr, wi, res, tol, tnorm);
+    }
+    int want = k + std::min(nconv_now, (m - k) / 2);
     if (k == 1 && m >= 6) {
       want = std::max(want, m / 2);
     } else if (k == 1 && m > 2) {
@@ -663,53 +783,13 @@ static SEXP native_krylov_schur_impl(void* impl,
     const double zero = 0.0;
     const int inc = 1;
     F77_CALL(dgemv)(&trans, &m, &m, &one, Q, &m, b, &inc, &zero, bq, &inc FCONE);
-    const char side = 'R';
-    const char howmny = 'A';
-    int vl_dummy_ld = 1;
-    double vl_dummy = 0.0;
-    int mout = 0;
-    F77_CALL(dtrevc)(&side, &howmny, select, &p, T, &m, &vl_dummy, &vl_dummy_ld,
-                     Y, &p, &p, &mout, trevc_work, &info FCONE FCONE);
+    info = arnoldi_schur_residuals(p, T, m, bq, Y, trevc_work, res);
     if (info != 0) {
       error("LAPACK dtrevc failed for native Krylov-Schur Arnoldi with info=%d", info);
     }
-    for (int j = 0; j < p;) {
-      const double* yr = Y + static_cast<int64_t>(j) * p;
-      const bool pair = (j + 1 < p) && T[(j + 1) + static_cast<int64_t>(j) * m] != 0.0;
-      if (!pair) {
-        const double ynorm = arnoldi_norm2(p, yr);
-        const double dot = F77_CALL(ddot)(&p, bq, &inc, yr, &inc);
-        res[j] = (ynorm > 0.0) ? std::fabs(dot) / ynorm : std::fabs(dot);
-        j += 1;
-      } else {
-        const double* yi = Y + static_cast<int64_t>(j + 1) * p;
-        const double nr = arnoldi_norm2(p, yr);
-        const double ni = arnoldi_norm2(p, yi);
-        const double ynorm = std::sqrt(nr * nr + ni * ni);
-        const double d1 = F77_CALL(ddot)(&p, bq, &inc, yr, &inc);
-        const double d2 = F77_CALL(ddot)(&p, bq, &inc, yi, &inc);
-        const double r = (ynorm > 0.0) ? std::hypot(d1, d2) / ynorm : std::hypot(d1, d2);
-        res[j] = r;
-        res[j + 1] = r;
-        j += 2;
-      }
-    }
-    // Scale-invariant convergence test (ARPACK-style, relative to |theta|,
-    // with a floor proportional to ||T||_F so eigenvalues at or near zero
-    // can converge): res <= tol_eff * max(|theta|, eps^(1/3) * ||T||_F).
-    // tol_eff is never below 100 * eps, the attainable residual level.
     arnoldi_rank(target, p, wr, wi, order);
-    int nconv = 0;
-    const int check = std::min(k, p);
-    const double tol_eff = std::max(tol, 100.0 * DBL_EPSILON);
-    const double floor_scale = std::cbrt(DBL_EPSILON) * tnorm;
-    for (int r = 0; r < check; ++r) {
-      const int idx = order[r];
-      const double theta = std::hypot(wr[idx], wi[idx]);
-      if (res[idx] <= tol_eff * std::max(theta, floor_scale)) {
-        ++nconv;
-      }
-    }
+    const int nconv = arnoldi_count_converged(std::min(k, p), order, wr, wi, res,
+                                              tol, tnorm);
     state.nconv = nconv;
     converged = (nconv >= k) || (m == n_eff);
 
@@ -730,7 +810,7 @@ static SEXP native_krylov_schur_impl(void* impl,
     std::memcpy(V, Wbuf, sizeof(double) * n_sz * static_cast<size_t>(p));
     std::memcpy(V + static_cast<int64_t>(p) * n, V + static_cast<int64_t>(m) * n,
                 sizeof(double) * n_sz);
-    std::memset(S, 0, sizeof(double) * static_cast<size_t>(lds) * m_sz);
+    std::memset(S, 0, sizeof(double) * static_cast<size_t>(lds) * m);
     for (int col = 0; col < p; ++col) {
       for (int row = 0; row < p; ++row) {
         S[row + static_cast<int64_t>(col) * lds] = T[row + static_cast<int64_t>(col) * m];
@@ -743,6 +823,38 @@ static SEXP native_krylov_schur_impl(void* impl,
       break;
     }
     ++state.restarts;
+    ++restarts_at_size;
+    // 6. Adaptive growth: when the wanted values have not converged after
+    //    kKrylovSchurGrowAfter restarts at this size (a clustered wanted
+    //    edge, where the fixed ARPACK-size subspace stalls), double the
+    //    subspace up to m_limit. The kept decomposition A V_p = V_{p+1} S_p
+    //    carries over unchanged; only the workspace is enlarged.
+    if (m < m_limit && restarts_at_size >= kKrylovSchurGrowAfter) {
+      const int m_new = std::min(m_limit, 2 * m);
+      const int lds_new = m_new + 1;
+      double* V_new = reinterpret_cast<double*>(
+        R_alloc(n_sz * (static_cast<size_t>(m_new) + 1), sizeof(double)));
+      std::memset(V_new, 0, sizeof(double) * n_sz * (static_cast<size_t>(m_new) + 1));
+      std::memcpy(V_new, V, sizeof(double) * n_sz * static_cast<size_t>(p + 1));
+      double* S_new = reinterpret_cast<double*>(
+        R_alloc(static_cast<size_t>(lds_new) * m_new, sizeof(double)));
+      std::memset(S_new, 0, sizeof(double) * static_cast<size_t>(lds_new) * m_new);
+      for (int col = 0; col < p; ++col) {
+        for (int row = 0; row <= p; ++row) {
+          S_new[row + static_cast<int64_t>(col) * lds_new] =
+            S[row + static_cast<int64_t>(col) * lds];
+        }
+      }
+      V = V_new;
+      S = S_new;
+      Wbuf = reinterpret_cast<double*>(R_alloc(n_sz * m_new, sizeof(double)));
+      m = m_new;
+      lds = lds_new;
+      max_keep = (m < n_eff) ? m - 1 : m;
+      alloc_projected(m);
+      restarts_at_size = 0;
+      ++state.growths;
+    }
   }
   state.size = p;
 
@@ -770,7 +882,7 @@ static SEXP native_krylov_schur_impl(void* impl,
   SET_STRING_ELT(stage_names_, 3, mkChar("restart"));
   setAttrib(stage_, R_NamesSymbol, stage_names_);
 
-  const int n_out = 13;
+  const int n_out = 14;
   SEXP out_ = PROTECT(allocVector(VECSXP, n_out));
   SEXP names_ = PROTECT(allocVector(STRSXP, n_out));
   int slot = 0;
@@ -791,6 +903,7 @@ static SEXP native_krylov_schur_impl(void* impl,
   put("residual_estimates", res_);
   put("max_subspace", ScalarInteger(m));
   put("breakdowns", ScalarInteger(state.breakdowns));
+  put("subspace_growths", ScalarInteger(state.growths));
   put("stage_seconds", stage_);
   setAttrib(out_, R_NamesSymbol, names_);
   UNPROTECT(7);
@@ -1023,6 +1136,15 @@ static ArnoldiTarget arnoldi_target_or_error(SEXP target_, SEXP target_values_) 
   return target;
 }
 
+// maxit_ is the restart cap, optionally followed by the subspace growth limit
+// (c(maxit, limit); absent or <= max_subspace: fixed subspace).
+static int arnoldi_subspace_limit(SEXP maxit_) {
+  if (!isInteger(maxit_) || LENGTH(maxit_) < 2 || INTEGER(maxit_)[1] == NA_INTEGER) {
+    return 0;
+  }
+  return INTEGER(maxit_)[1];
+}
+
 extern "C" SEXP eigencore_arnoldi_ks_dense(SEXP A_, SEXP start_, SEXP k_,
                                             SEXP max_subspace_, SEXP target_,
                                             SEXP target_values_,
@@ -1044,7 +1166,7 @@ extern "C" SEXP eigencore_arnoldi_ks_dense(SEXP A_, SEXP start_, SEXP k_,
   return native_krylov_schur_impl(
     &impl, eigencore_dense_apply, n, REAL(start_), asInteger(k_),
     asInteger(max_subspace_), arnoldi_target_or_error(target_, target_values_),
-    asReal(tol_), asInteger(maxit_)
+    asReal(tol_), asInteger(maxit_), nullptr, 0, arnoldi_subspace_limit(maxit_)
   );
   EIGENCORE_ENTRY_END
 }
@@ -1094,7 +1216,7 @@ extern "C" SEXP eigencore_arnoldi_ks_csc(SEXP i_, SEXP p_, SEXP x_, SEXP dim_,
     &impl, transposed ? arnoldi_csc_adjoint_apply : eigencore_csc_apply,
     nrow, REAL(start_), asInteger(k_),
     asInteger(max_subspace_), arnoldi_target_or_error(target_, target_values_),
-    asReal(tol_), asInteger(maxit_)
+    asReal(tol_), asInteger(maxit_), nullptr, 0, arnoldi_subspace_limit(maxit_)
   );
   EIGENCORE_ENTRY_END
 }
@@ -1122,7 +1244,7 @@ extern "C" SEXP eigencore_arnoldi_ks_r_operator(SEXP dim_, SEXP apply_,
   return native_krylov_schur_impl(
     &impl, eigencore_r_operator_apply, nrow, REAL(start_), asInteger(k_),
     asInteger(max_subspace_), arnoldi_target_or_error(target_, target_values_),
-    asReal(tol_), asInteger(maxit_)
+    asReal(tol_), asInteger(maxit_), nullptr, 0, arnoldi_subspace_limit(maxit_)
   );
   EIGENCORE_ENTRY_END
 }

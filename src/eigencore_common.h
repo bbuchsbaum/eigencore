@@ -298,6 +298,38 @@ extern "C" void eigencore_call_leave(void);
 // single-threaded (see native_operators.cpp).
 extern "C" int eigencore_reorth_threads(void);
 
+// Minimum work per thread of a parallel region (P26), defined in
+// native_operators.cpp. Every OpenMP region estimates its work in dense
+// multiply-add units (a sparse nonzero times a right-hand side counts
+// kEigencoreSparseWorkWeight units: the indirect access costs about four
+// streamed multiply-adds) and gets at most floor(work / min_work) threads,
+// min_work = getOption("eigencore.parallel_min_work") (default
+// kEigencoreDefaultParallelMinWork, roughly 25-50 microseconds of serial
+// work per thread). A region too small to keep a team busy gains nothing
+// from it and, on a machine whose cores are not all idle, waits for the
+// slowest (or a descheduled) team member at every join; with the cap a
+// region that is not worth one extra thread runs serially. Like the
+// governor this only sets the team size: the algorithm and its partition
+// are chosen from eigencore_thread_count(), so results do not depend on the
+// threshold.
+static const double kEigencoreSparseWorkWeight = 4.0;
+static const double kEigencoreDefaultParallelMinWork = 65536.0;
+extern "C" double eigencore_parallel_min_work(void);
+static inline int eigencore_parallel_team(int requested, double work) {
+  if (requested <= 1) {
+    return 1;
+  }
+  const double per_thread = eigencore_parallel_min_work();
+  if (!(per_thread > 0.0)) {
+    return requested;
+  }
+  const double fit = work / per_thread;
+  if (!(fit >= 2.0)) {
+    return 1;
+  }
+  return fit >= static_cast<double>(requested) ? requested : static_cast<int>(fit);
+}
+
 // Parallel-efficiency governor (P18 / C57 / C62), defined in
 // native_operators.cpp. With libgomp's default (active) wait policy, idle
 // team threads spin; when other processes occupy the cores, each fork/join or

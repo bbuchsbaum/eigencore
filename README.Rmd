@@ -297,10 +297,11 @@ cat("\n<sub>", bench_env_line(bench_res), "</sub>\n", sep = "")
 Results depend on the processor, BLAS/LAPACK, thread count, machine load and
 the matrices themselves; these are random and model matrices measured on one
 4-core cloud machine with nothing else running (load average recorded below).
-At this size most sparse kernels gain little from 4 threads, and the largest
-symmetric case is slightly slower with them; eigencore now shrinks its OpenMP
-team when parallel regions stop paying off, so a busy machine degrades it
-gracefully instead of by an order of magnitude. The
+At this size several sparse cases are 10-25% slower with 4 threads than with
+1 (the work per parallel region is small); the larger SVD, PCA and dense cases
+gain 1.4-2.4x. eigencore shrinks its OpenMP team when parallel regions stop
+paying off, so a busy machine degrades it gracefully instead of by an order
+of magnitude. The
 [benchmarks article](https://bbuchsbaum.github.io/eigencore/articles/benchmarks.html)
 shows every case and method, operator-application counts, accuracy, scaling
 curves and the limits of the comparison. Reproduce or add your machine with

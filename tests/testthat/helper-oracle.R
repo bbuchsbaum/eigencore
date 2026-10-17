@@ -191,12 +191,19 @@ oracle_case_nonsym <- function(max_n) {
   } else {
     oracle_pick(c("auto", "lanczos1"), c(10, 1))
   }
-  list(api = "eig", structure = "nonsym", storage = storage, n = n,
+  case <- list(api = "eig", structure = "nonsym", storage = storage, n = n,
        spectrum = oracle_pick(c("random_matrix", "real", "complex_pairs",
                                 "clustered", "defective", "tiny", "huge",
                                 "singular", "repeated")),
        k = oracle_draw_k(n), target = target, method = method,
        sigma_pos = stats::runif(1), tol = oracle_draw_tol())
+  # P27: half of the complex-pair cases become a dense ring of conjugate
+  # pairs at nearly equal modulus (drawn last, so the other draws of every
+  # case are unchanged).
+  if (case$spectrum == "complex_pairs" && stats::runif(1) < 0.5) {
+    case$spectrum <- "ring"
+  }
+  case
 }
 
 # Complex family: complex Hermitian (dense, complex_operator() sparse/dense
@@ -453,8 +460,29 @@ oracle_nonsym_matrix <- function(n, spectrum, sparse = FALSE) {
   lambda <- complex(0)
   jordan <- 1L
   i <- 1L
+  # Dense ring: conjugate pairs with moduli in [2 (1 - 1e-3), 2] and
+  # arguments spread over (0, pi), the rest real inside radius 1.6.
+  ring_end <- if (spectrum == "ring") 2L * max(1L, n %/% 4L) else 0L
   while (i <= n) {
     left <- n - i + 1L
+    if (i < ring_end && left >= 2L) {
+      r <- 2 * (1 - 1e-3 * stats::runif(1))
+      phi <- stats::runif(1, 0.05, pi - 0.05)
+      a <- r * cos(phi)
+      b <- r * sin(phi)
+      J[i:(i + 1L), i:(i + 1L)] <- matrix(c(a, -b, b, a), 2)
+      lambda <- c(lambda, complex(real = a, imaginary = b),
+                  complex(real = a, imaginary = -b))
+      i <- i + 2L
+      next
+    }
+    if (spectrum == "ring") {
+      mu <- stats::runif(1, -1.6, 1.6)
+      J[i, i] <- mu
+      lambda <- c(lambda, complex(real = mu))
+      i <- i + 1L
+      next
+    }
     kind <- if (spectrum %in% c("complex_pairs", "random", "tiny", "huge") &&
                 left >= 2L && stats::runif(1) < 0.5) {
       "pair"

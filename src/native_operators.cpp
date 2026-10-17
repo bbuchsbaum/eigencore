@@ -390,6 +390,12 @@ static int g_eigencore_threads = 1;
 // getOption("eigencore.csr_cache_mb", 4096).
 static const double kEigencoreDefaultCsrCacheMb = 4096.0;
 static double g_eigencore_csr_cache_bytes = kEigencoreDefaultCsrCacheMb * 1048576.0;
+// getOption("eigencore.parallel_min_work") (P26; eigencore_common.h).
+static double g_parallel_min_work = kEigencoreDefaultParallelMinWork;
+
+extern "C" double eigencore_parallel_min_work(void) {
+  return g_parallel_min_work;
+}
 
 static int eigencore_processor_count() {
 #ifdef _OPENMP
@@ -541,6 +547,23 @@ extern "C" void eigencore_refresh_thread_count(void) {
     }
   }
   g_eigencore_csr_cache_bytes = csr_mb * 1048576.0;
+  static SEXP min_work_symbol = nullptr;
+  if (min_work_symbol == nullptr) {
+    min_work_symbol = Rf_install("eigencore.parallel_min_work");
+  }
+  const SEXP min_work_option = Rf_GetOption1(min_work_symbol);
+  double min_work = kEigencoreDefaultParallelMinWork;
+  if ((TYPEOF(min_work_option) == REALSXP || TYPEOF(min_work_option) == INTSXP) &&
+      XLENGTH(min_work_option) >= 1) {
+    const double value = TYPEOF(min_work_option) == REALSXP ?
+      REAL(min_work_option)[0] :
+      (INTEGER(min_work_option)[0] == NA_INTEGER ? NA_REAL :
+         static_cast<double>(INTEGER(min_work_option)[0]));
+    if (!ISNAN(value) && value >= 0.0) {
+      min_work = value;
+    }
+  }
+  g_parallel_min_work = min_work;
   static SEXP adaptive_symbol = nullptr;
   if (adaptive_symbol == nullptr) {
     adaptive_symbol = Rf_install("eigencore.adaptive_threads");
@@ -848,9 +871,13 @@ struct CscApplyCache {
 
 static const int kCscPanelCols = 10;
 static const int kCscCsrMinBlock = 4;
-// Below this many nonzero-times-RHS updates a parallel region costs more than
-// it saves.
-static const int64_t kCscParallelMinWork = 32768;
+
+// P26: team size for a sparse region of `nnz_updates` nonzero-times-RHS
+// updates (eigencore_common.h).
+static inline int csc_parallel_team(int requested, double nnz_updates) {
+  return eigencore_parallel_team(requested,
+                                 kEigencoreSparseWorkWeight * nnz_updates);
+}
 
 static CscApplyCache* csc_apply_cache(CSCOperator* csc) {
   if (!csc->cache) {
@@ -868,16 +895,26 @@ static double* csc_panel(CSCOperator* csc, int64_t rows) {
   return cache->panel.data();
 }
 
+// Threads for a CSC apply: 1 (serial kernels) or eigencore_thread_count()
+// (the parallel kernels and partitions). P26: inside a native solve (any
+// apply not marked per-call) with more than one thread, eigencore owns the
+// threads for the rest of the .Call: a spinning-thread BLAS is switched to
+// one thread even when this apply is too small to run in parallel, so the
+// reorthogonalisation and the dense Ritz work never wake BLAS workers that
+// compete with the OpenMP team. An apply worth fewer than two threads runs
+// the serial kernel (bitwise identical to the parallel ones).
 static int csc_apply_threads(const CSCOperator* csc, int64_t block_cols) {
   const int threads = eigencore_thread_count();
   if (threads <= 1) {
     return 1;
   }
-  const int64_t nnz = csc->col_ptr[csc->cols];
-  if (nnz * block_cols < kCscParallelMinWork) {
+  if (csc->cache && csc->cache->per_call && eigencore_blas_busy()) {
     return 1;
   }
-  if (csc->cache && csc->cache->per_call && eigencore_blas_busy()) {
+  eigencore_blas_quiesce();
+  const int64_t nnz = csc->col_ptr[csc->cols];
+  if (csc_parallel_team(threads, static_cast<double>(nnz) *
+                                 static_cast<double>(block_cols)) <= 1) {
     return 1;
   }
   return threads;
@@ -1186,7 +1223,8 @@ static void csc_forward_gather(CSCOperator* csc, int threads,
       std::min<int64_t>(kCscPanelCols, block_cols - chunk));
     const double* Xc = X + chunk * ldx;
     double* Yc = Y + chunk * ldy;
-    EigencoreParallelRegion region(threads);
+    EigencoreParallelRegion region(
+      csc_parallel_team(threads, static_cast<double>(nnz) * c));
     const int team = region.threads();
     (void) team;  // only read by the OpenMP pragma
     EIGENCORE_OMP(omp parallel num_threads(team))
@@ -1262,9 +1300,12 @@ static void csc_forward_apply(CSCOperator* csc, int64_t block_cols,
       const int* srows = cache->slab_rows.data();
       const int parts = cache->slab_parts;
       eigencore_blas_quiesce();
-      // The slab layout is fixed by `threads`; the governor may run it on a
-      // smaller team (each slab is still one thread's work).
-      EigencoreParallelRegion region(parts);
+      // The slab layout is fixed by `threads`; the governor and the work
+      // threshold may run it on a smaller team (each slab is still one
+      // thread's work).
+      EigencoreParallelRegion region(csc_parallel_team(
+        parts, static_cast<double>(csc->col_ptr[n]) *
+                 static_cast<double>(block_cols)));
       const int team = region.threads();
       (void) team;  // only read by the OpenMP pragma
       EIGENCORE_OMP(omp parallel num_threads(team))
@@ -1293,8 +1334,9 @@ static void csc_forward_apply(CSCOperator* csc, int64_t block_cols,
     if (chunks > 1) {
       // No CSR copy: split aligned column chunks across threads.
       eigencore_blas_quiesce();
-      EigencoreParallelRegion region(
-        static_cast<int>(std::min<int64_t>(threads, chunks)));
+      EigencoreParallelRegion region(csc_parallel_team(
+        static_cast<int>(std::min<int64_t>(threads, chunks)),
+        static_cast<double>(csc->col_ptr[n]) * static_cast<double>(block_cols)));
       const int team = region.threads();
       (void) team;  // only read by the OpenMP pragma
       EIGENCORE_OMP(omp parallel num_threads(team))
@@ -1422,7 +1464,8 @@ static void csc_adjoint_apply(CSCOperator* csc, int64_t block_cols,
     if (threads > 1) {
       // One region for the panel transpose and the gather (one fork/join
       // per chunk instead of two).
-      EigencoreParallelRegion region(threads);
+      EigencoreParallelRegion region(
+        csc_parallel_team(threads, static_cast<double>(csc->col_ptr[n]) * c));
       const int team = region.threads();
       (void) team;  // only read by the OpenMP pragma
       EIGENCORE_OMP(omp parallel num_threads(team))
@@ -2366,14 +2409,14 @@ static void csc_project_transposed_kernel(const int* row_idx, const int* col_ptr
                                           double* Qt, double* B,
                                           bool per_call) {
   int threads = eigencore_thread_count();
-  if (static_cast<int64_t>(col_ptr[n]) * q_cols < kCscParallelMinWork ||
-      (per_call && threads > 1 && eigencore_blas_busy())) {
+  if (per_call && threads > 1 && eigencore_blas_busy()) {
     threads = 1;
   }
   if (threads > 1) {
     eigencore_blas_quiesce();
   }
-  EigencoreParallelRegion region(threads);
+  EigencoreParallelRegion region(csc_parallel_team(
+    threads, static_cast<double>(col_ptr[n]) * static_cast<double>(q_cols)));
   const int team = region.threads();
   (void) team;  // only read by the OpenMP pragma
   EIGENCORE_OMP(omp parallel num_threads(team) if(team > 1))
@@ -3999,8 +4042,18 @@ static int ldl_solve_apply(const LdlSolveLeaf& f, int64_t block_cols,
                            double beta, double* Y, int64_t ldy) {
   const int64_t n = f.n;
   int status = 0;
-  EigencoreParallelRegion region(block_cols > 1 ?
-    std::min<int>(eigencore_thread_count(), static_cast<int>(block_cols)) : 1);
+  // Columns are independent solves of 2 nnz(L) + n updates each (P26).
+  int ldl_team = 1;
+  if (block_cols > 1 && eigencore_thread_count() > 1) {
+    double ldl_nnz = 0.0;
+    for (int64_t j = 0; j < n; ++j) {
+      ldl_nnz += static_cast<double>(f.nz[j]);
+    }
+    ldl_team = csc_parallel_team(
+      std::min<int>(eigencore_thread_count(), static_cast<int>(block_cols)),
+      static_cast<double>(block_cols) * (2.0 * ldl_nnz + static_cast<double>(n)));
+  }
+  EigencoreParallelRegion region(ldl_team);
 #ifdef _OPENMP
   const int threads = region.threads();
 #pragma omp parallel num_threads(threads) if (threads > 1)

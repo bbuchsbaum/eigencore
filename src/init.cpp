@@ -63,7 +63,7 @@ extern "C" SEXP eigencore_block_golub_kahan_dense_retained_cycle(SEXP, SEXP, SEX
 extern "C" SEXP eigencore_block_golub_kahan_csc_retained_cycle(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_lanczos_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
-extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_thick_restart_lanczos_csc(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_block_thick_restart_lanczos_r_operator(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_completeness_probe_dense(SEXP, SEXP, SEXP);
@@ -117,6 +117,7 @@ extern "C" SEXP eigencore_golub_kahan_ritz(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, S
 extern "C" SEXP eigencore_dense_is_symmetric(SEXP, SEXP);
 extern "C" SEXP eigencore_dense_symmetric_inertia(SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_dense_hermitian_inertia(SEXP, SEXP, SEXP);
+extern "C" SEXP eigencore_dense_deflated_cholesky(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_tridiagonal_inertia(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_simplicial_ldl_diagnostics(SEXP, SEXP, SEXP, SEXP);
 extern "C" SEXP eigencore_cholmod_abi(void);
@@ -209,7 +210,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_block_golub_kahan_csc_retained_cycle", (DL_FUNC) &eigencore_block_golub_kahan_csc_retained_cycle, 14},
   {"eigencore_block_lanczos_dense", (DL_FUNC) &eigencore_block_lanczos_dense, 7},
   {"eigencore_block_lanczos_csc", (DL_FUNC) &eigencore_block_lanczos_csc, 10},
-  {"eigencore_block_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_block_thick_restart_lanczos_dense, 10},
+  {"eigencore_block_thick_restart_lanczos_dense", (DL_FUNC) &eigencore_block_thick_restart_lanczos_dense, 11},
   {"eigencore_block_thick_restart_lanczos_csc", (DL_FUNC) &eigencore_block_thick_restart_lanczos_csc, 13},
   {"eigencore_block_thick_restart_lanczos_r_operator", (DL_FUNC) &eigencore_block_thick_restart_lanczos_r_operator, 11},
   {"eigencore_completeness_probe_dense", (DL_FUNC) &eigencore_completeness_probe_dense, 3},
@@ -263,6 +264,7 @@ static const R_CallMethodDef CallEntries[] = {
   {"eigencore_dense_is_symmetric", (DL_FUNC) &eigencore_dense_is_symmetric, 2},
   {"eigencore_dense_symmetric_inertia", (DL_FUNC) &eigencore_dense_symmetric_inertia, 3},
   {"eigencore_dense_hermitian_inertia", (DL_FUNC) &eigencore_dense_hermitian_inertia, 3},
+  {"eigencore_dense_deflated_cholesky", (DL_FUNC) &eigencore_dense_deflated_cholesky, 5},
   {"eigencore_tridiagonal_inertia", (DL_FUNC) &eigencore_tridiagonal_inertia, 4},
   {"eigencore_simplicial_ldl_diagnostics", (DL_FUNC) &eigencore_simplicial_ldl_diagnostics, 4},
   {"eigencore_cholmod_abi", (DL_FUNC) &eigencore_cholmod_abi, 0},

@@ -5,6 +5,7 @@
 \alias{eigencore.threads}
 \alias{eigencore.adaptive_threads}
 \alias{eigencore.csr_cache_mb}
+\alias{eigencore.parallel_min_work}
 \title{Multithreading in eigencore's sparse kernels}
 \description{
 eigencore parallelises its native sparse (CSC, \code{dgCMatrix}) operator
@@ -16,9 +17,11 @@ centred-scaled sparse operators, and the implicit normal operators
 entry is accumulated by one thread in the same order and with the same
 arithmetic as the serial loop, so sparse products are bitwise identical for
 any thread count. While such a solve runs, the Lanczos
-reorthogonalisation also uses these threads (see below); its OpenMP kernels
+reorthogonalisation also uses these threads (see below): single-threaded
+BLAS calls on fixed blocks of rows, shared among the threads, whose results
 do not depend on the thread count either, so results computed with one and
-with several threads differ only by rounding.
+with several threads differ only by rounding, and results with 2, 4 or 8
+threads agree exactly.
 }
 \section{Options}{
 
@@ -42,6 +45,19 @@ machine is oversubscribed (see below). \code{FALSE} always uses
 per-operator CSR copy or row slabs (about 12 bytes per nonzero) that the
 parallel \verb{A X} builds once per solve. When the copy would be larger,
 \verb{A X} stays serial for blocks of up to 10 columns.}
+\item{\code{eigencore.parallel_min_work}}{Minimum work per thread of a
+parallel region (default 65536), in multiply-add units: a sparse
+product counts 4 units per nonzero and right-hand side, the
+reorthogonalisation 1 per basis entry and column. A region gets at most
+\code{floor(work / eigencore.parallel_min_work)} threads and runs serially
+below two, so small products (a 20000 x 20000 matrix with 3 nonzeros
+per row, about 60 microseconds) use few threads or one: they cannot
+gain from more and, when any core is busy, every join waits for the
+slowest team member. Like the adaptive thread count it only changes how
+many threads run a region, never the result. \code{0} lets every region use
+all threads; \code{Inf} keeps eigencore's own kernels serial.
+\code{inst/benchmarks/bench-parallel-threshold.R} measures the crossover on
+a machine.}
 }
 }
 
@@ -75,11 +91,12 @@ busy machine also limit it (\code{OPENBLAS_NUM_THREADS=1}, or
 
 OpenBLAS (pthreads build) and FlexiBLAS keep idle worker threads spinning
 after each call; OpenMP threads started meanwhile would compete with them
-for cores. When a native sparse solve (for example \code{eigs_sym()}, \code{svds()} or
-\code{svd_partial()} on a \code{dgCMatrix}) runs a multithreaded sparse kernel,
-eigencore therefore switches such a BLAS to one thread for the rest of that
-call and restores the previous setting when the call returns (or fails);
-its reorthogonalisation then runs on eigencore's OpenMP threads. Sparse
+for cores. When \code{eigencore.threads} is above one, a native sparse solve
+(for example \code{eigs_sym()}, \code{svds()} or \code{svd_partial()} on a \code{dgCMatrix})
+therefore switches such a BLAS to one thread at its first sparse product
+(also when that product is too small to run in parallel) for the rest of
+that call and restores the previous setting when the call returns (or
+fails); its reorthogonalisation then runs on eigencore's threads. Sparse
 products applied one at a time from R-level operators (for example inside
 a matrix-free \code{center()} solve) stay serial while such a BLAS is
 multithreaded, so the surrounding BLAS work keeps its threads. An

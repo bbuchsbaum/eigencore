@@ -117,3 +117,79 @@ test_that("completeness = 'none' leaves nonsymmetric results not_checked", {
   expect_false(certificate(fit)$passed)
   expect_true(certificate(fit)$residual_passed)
 })
+
+# P27: a dense ring of eigenvalue moduli at the wanted edge. Krylov-Schur
+# converges ring eigenvalues in an order set by their angular isolation, not
+# by moduli that differ by ~1e-5, so before P27 the main solve returned a set
+# missing several pairs and the single complement probe certified it.
+nonsym_ring_matrix <- function(n, npairs, width, seed) {
+  set.seed(seed, kind = "Mersenne-Twister", normal.kind = "Inversion",
+           sample.kind = "Rejection")
+  T <- matrix(0, n, n)
+  vals <- complex(0)
+  j <- 1L
+  for (p in seq_len(npairs)) {
+    r <- 1 - width * stats::runif(1)
+    phi <- stats::runif(1, 0.05, pi - 0.05)
+    T[j:(j + 1L), j:(j + 1L)] <- matrix(c(r * cos(phi), -r * sin(phi),
+                                          r * sin(phi), r * cos(phi)), 2)
+    vals <- c(vals, r * exp(1i * phi), r * exp(-1i * phi))
+    j <- j + 2L
+  }
+  rest <- n - j + 1L
+  d <- 0.95 * sqrt(stats::runif(rest)) * sample(c(-1, 1), rest, TRUE)
+  T[cbind(j:n, j:n)] <- d
+  Q <- qr.Q(qr(matrix(stats::rnorm(n * n), n)))
+  list(A = Q %*% T %*% t(Q), values = c(vals, d))
+}
+
+test_that("a dense ring at the edge is repaired or declined, never certified wrong (P27)", {
+  ring <- nonsym_ring_matrix(600, 60, 2e-3, seed = 2)
+  truth <- sort(Mod(ring$values), decreasing = TRUE)[1:6]
+  for (s in c(1L, 3L)) {
+    fit <- eig_partial(ring$A, k = 6, target = largest_magnitude(), seed = s,
+                       left_vectors = "none")
+    cert <- certificate(fit)
+    correct <- isTRUE(all.equal(sort(Mod(values(fit)), decreasing = TRUE), truth,
+                                tolerance = 1e-7))
+    expect_true(correct || !isTRUE(cert$passed))
+    if (!correct) {
+      expect_false(identical(cert$target_completeness, "probed"))
+    }
+    if (identical(cert$target_completeness, "inconclusive")) {
+      expect_match(cert$completeness$reason, "boundary unresolved")
+    }
+    expect_false(is.null(cert$completeness$crowding_gap))
+  }
+})
+
+test_that("a well-separated edge runs a single probe pass (P27)", {
+  set.seed(11)
+  n <- 400
+  d <- c(10, 9, 8, 7, 6, 5, stats::runif(n - 6, -1, 1))
+  Q <- qr.Q(qr(matrix(stats::rnorm(n * n), n)))
+  T <- diag(d)
+  T[upper.tri(T)] <- 0.1 * stats::rnorm(n * (n - 1) / 2) / sqrt(n)
+  A <- Q %*% T %*% t(Q)
+  fit <- eig_partial(A, k = 3, target = largest_real(), left_vectors = "none")
+  cert <- certificate(fit)
+  expect_true(cert$passed)
+  expect_identical(cert$target_completeness, "probed")
+  expect_null(cert$completeness$boundary_passes)
+  expect_equal(sort(values(fit)), c(8, 9, 10), tolerance = 1e-8)
+})
+
+test_that("boundary helpers: edge spacing and probe agreement (P27)", {
+  ns <- asNamespace("eigencore")
+  # Conjugate partners share a key and collapse; spacing is relative.
+  expect_equal(ns$nonsym_edge_spacing(c(2, 2, 1.9, 1.9, 1.7), take = 10,
+                                      collapse = 1e-12, scale = 2),
+               stats::median(c(0.1, 0.2)) / 2)
+  expect_true(is.na(ns$nonsym_edge_spacing(c(1, 1), 5, 1e-12, 1)))
+  a <- list(key = c(1, 0.9), res = c(1e-10, 1e-10), converged_values = c(TRUE, TRUE))
+  b <- list(key = c(0.95, 0.9), res = c(1e-10, 1e-10), converged_values = c(TRUE, TRUE))
+  expect_true(ns$nonsym_probe_agree(a, a, resolution = 1e-4, margin = 0))
+  expect_false(ns$nonsym_probe_agree(a, b, resolution = 1e-4, margin = 0))
+  expect_false(ns$nonsym_probe_agree(a, list(key = 1, res = 1, converged_values = FALSE),
+                                     resolution = 1e-4, margin = 0))
+})

@@ -45,7 +45,12 @@ expect_complex_pairs <- function(fit, H, truth, B = NULL, tol = 1e-8,
   expect_true(is.complex(V))
   BV <- if (is.null(B)) V else B %*% V
   R <- H %*% V - sweep(BV, 2L, fit$values, `*`)
-  scale <- max(abs(truth)) + 1
+  # The certificate's contract is ||r|| <= tol (||H||_2 + |lambda| ||B||_2)
+  # ||x||; scaling by the wanted values alone would demand far more than that
+  # for interior targets (smallest magnitude, nearest).
+  norm_h <- max(abs(eigen(H, symmetric = TRUE, only.values = TRUE)$values))
+  norm_b <- if (is.null(B)) 1 else max(abs(eigen(B, symmetric = TRUE, only.values = TRUE)$values))
+  scale <- norm_h + max(abs(truth)) * norm_b
   expect_lt(max(sqrt(colSums(Mod(R)^2))) / scale, 10 * tol)
   G <- Conj(t(V)) %*% BV
   expect_lt(max(Mod(G - diag(ncol(V)))), 1e-6)

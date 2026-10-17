@@ -1073,6 +1073,13 @@ arnoldi_plan_controls <- function(problem, k, chosen, method = NULL) {
   }
   list(
     max_subspace = max_subspace,
+    # Adaptive Krylov-Schur growth limit for the default subspace only; a
+    # requested max_subspace is used as given.
+    max_subspace_limit = if (native_path && is.null(requested_subspace)) {
+      native_krylov_schur_default_subspace_limit(n, k, max_subspace)
+    } else {
+      NULL
+    },
     max_restarts = max_restarts,
     krylov_schur_max_iterations = if (native_path) {
       native_krylov_schur_default_maxit()

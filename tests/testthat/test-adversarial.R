@@ -442,11 +442,14 @@ test_that("native Arnoldi restart budget is wired and keeps best attempt", {
   expect_equal(fit$restart$max_restarts, 2L)
   expect_equal(fit$restart$restart_count, 2L)
   expect_equal(nrow(history), 3L)
-  expect_equal(
-    fit$restart$selected_attempt,
-    history$attempt[which.min(history$max_backward_error)]
-  )
-  expect_equal(fit$certificate$max_backward_error, min(finite_errors), tolerance = 1e-12)
+  # The best attempt ranks by converged count first, then by backward error
+  # (reference_arnoldi_score_better()); at tol = 1e-16 an attempt can count
+  # a pair as converged by rounding luck.
+  best <- order(-history$nconv, history$max_backward_error)[[1L]]
+  expect_equal(fit$restart$selected_attempt, history$attempt[[best]])
+  expect_equal(fit$certificate$max_backward_error,
+               history$max_backward_error[[best]], tolerance = 1e-12)
+  expect_true(all(is.finite(finite_errors)))
   expect_false(fit$certificate$passed)
   expect_true(fit$restart$native)
   expect_true(fit$restart$refined_extraction_native)

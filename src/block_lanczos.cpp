@@ -394,61 +394,64 @@ static int block_accept_work_vector(const double* V_locked, int n_locked,
   return 1;
 }
 
-// Reorthogonalisation kernels (C36/C43): C (k x b, ld ldc) = V^T W and
-// W -= V C for an n x k basis V and an n x b block W (both ld n). They call
-// BLAS dgemm unless eigencore_reorth_threads() > 1, i.e. BLAS has been switched
-// to one thread for a multithreaded sparse solve (or is a serial reference
-// BLAS); then OpenMP kernels do the same memory-bound passes. Every
-// coefficient is one thread's dot product (fixed four-way partial sums) and
-// every row of W is updated by one thread in basis order, so the OpenMP
-// results do not depend on the thread count.
-static const int64_t kReorthOmpMinWork = 65536;
+// Reorthogonalisation kernels (C36/C43/P26): C (k x b, ld ldc) = V^T W and
+// W -= V C for an n x k basis V and an n x b block W (both ld n). With
+// eigencore_reorth_threads() <= 1 (one thread, or a threaded BLAS that does
+// the work itself) they are single BLAS dgemm calls. Otherwise BLAS runs on
+// one thread (switched by this call, configured, or a serial BLAS) and the
+// rows are cut into fixed slabs of kReorthSlabRows: each slab is one
+// single-threaded BLAS dgemm (the same vectorised kernels as the serial
+// path; the former OpenMP loops ran at ~0.6x of OpenBLAS per thread, P26),
+// the slabs are shared among the OpenMP team, and the V^T W partial sums are
+// added in slab order. The slab partition does not depend on the thread
+// count, the team size (governor) or the work threshold, so the results are
+// the same for every thread count > 1. The team is capped by the work
+// (eigencore_parallel_team()); a small region runs its slabs on one thread.
+static const int kReorthSlabRows = 1024;
 
 static void reorth_gemm_tn(int n, int k, int b, const double* V,
                            const double* W, double* C, int ldc) {
   if (k <= 0 || b <= 0) {
     return;
   }
+  const char trans_T = 'T';
+  const char trans_N = 'N';
+  const double one = 1.0;
+  const double zero = 0.0;
   const int threads = eigencore_reorth_threads();
-  if (threads <= 1 ||
-      static_cast<int64_t>(n) * k * b < kReorthOmpMinWork) {
-    const char trans_T = 'T';
-    const char trans_N = 'N';
-    const double one = 1.0;
-    const double zero = 0.0;
+  if (threads <= 1 || n <= kReorthSlabRows) {
     F77_CALL(dgemm)(&trans_T, &trans_N, &k, &b, &n, &one, V, &n, W, &n,
                     &zero, C, &ldc FCONE FCONE);
     return;
   }
-  const int64_t total = static_cast<int64_t>(k) * b;
-  EigencoreParallelRegion region(threads);
+  const int slabs = (n + kReorthSlabRows - 1) / kReorthSlabRows;
+  const int64_t kb = static_cast<int64_t>(k) * b;
+  std::vector<double> partial(static_cast<size_t>(slabs) * static_cast<size_t>(kb));
+  double* P = partial.data();
+  const double work = static_cast<double>(n) * k * b;
+  EigencoreParallelRegion region(eigencore_parallel_team(threads, work));
   const int team = region.threads();
   (void) team;  // only read by the OpenMP pragma
-  EIGENCORE_OMP(omp parallel num_threads(team))
+  EIGENCORE_OMP(omp parallel num_threads(team) if(team > 1))
   {
     EIGENCORE_OMP(omp for schedule(static) nowait)
-    for (int64_t idx = 0; idx < total; ++idx) {
-      const int j = static_cast<int>(idx % k);
-      const int col = static_cast<int>(idx / k);
-      const double* v = V + static_cast<int64_t>(j) * n;
-      const double* w = W + static_cast<int64_t>(col) * n;
-      double s0 = 0.0;
-      double s1 = 0.0;
-      double s2 = 0.0;
-      double s3 = 0.0;
-      int row = 0;
-      for (; row + 4 <= n; row += 4) {
-        s0 += v[row] * w[row];
-        s1 += v[row + 1] * w[row + 1];
-        s2 += v[row + 2] * w[row + 2];
-        s3 += v[row + 3] * w[row + 3];
-      }
-      for (; row < n; ++row) {
-        s0 += v[row] * w[row];
-      }
-      C[j + static_cast<int64_t>(col) * ldc] = (s0 + s1) + (s2 + s3);
+    for (int slab = 0; slab < slabs; ++slab) {
+      const int r0 = slab * kReorthSlabRows;
+      const int rows = (r0 + kReorthSlabRows < n) ? kReorthSlabRows : n - r0;
+      F77_CALL(dgemm)(&trans_T, &trans_N, &k, &b, &rows, &one, V + r0, &n,
+                      W + r0, &n, &zero, P + slab * kb, &k FCONE FCONE);
     }
     region.master_pause();
+  }
+  for (int col = 0; col < b; ++col) {
+    for (int j = 0; j < k; ++j) {
+      const int64_t idx = j + static_cast<int64_t>(col) * k;
+      double sum = P[idx];
+      for (int slab = 1; slab < slabs; ++slab) {
+        sum += P[slab * kb + idx];
+      }
+      C[j + static_cast<int64_t>(col) * ldc] = sum;
+    }
   }
 }
 
@@ -457,37 +460,28 @@ static void reorth_gemm_nn_minus(int n, int k, int b, const double* V,
   if (k <= 0 || b <= 0) {
     return;
   }
+  const char trans_N = 'N';
+  const double one = 1.0;
+  const double minus_one = -1.0;
   const int threads = eigencore_reorth_threads();
-  if (threads <= 1 ||
-      static_cast<int64_t>(n) * k * b < kReorthOmpMinWork) {
-    const char trans_N = 'N';
-    const double one = 1.0;
-    const double minus_one = -1.0;
+  if (threads <= 1 || n <= kReorthSlabRows) {
     F77_CALL(dgemm)(&trans_N, &trans_N, &n, &b, &k, &minus_one, V, &n,
                     C, &ldc, &one, W, &n FCONE FCONE);
     return;
   }
-  const int block_rows = 512;
-  const int blocks = (n + block_rows - 1) / block_rows;
-  EigencoreParallelRegion region(threads);
+  const int slabs = (n + kReorthSlabRows - 1) / kReorthSlabRows;
+  const double work = static_cast<double>(n) * k * b;
+  EigencoreParallelRegion region(eigencore_parallel_team(threads, work));
   const int team = region.threads();
   (void) team;  // only read by the OpenMP pragma
-  EIGENCORE_OMP(omp parallel num_threads(team))
+  EIGENCORE_OMP(omp parallel num_threads(team) if(team > 1))
   {
     EIGENCORE_OMP(omp for schedule(static) nowait)
-    for (int blk = 0; blk < blocks; ++blk) {
-      const int r0 = blk * block_rows;
-      const int r1 = (r0 + block_rows < n) ? r0 + block_rows : n;
-      for (int col = 0; col < b; ++col) {
-        double* w = W + static_cast<int64_t>(col) * n;
-        for (int j = 0; j < k; ++j) {
-          const double c = C[j + static_cast<int64_t>(col) * ldc];
-          const double* v = V + static_cast<int64_t>(j) * n;
-          for (int row = r0; row < r1; ++row) {
-            w[row] -= v[row] * c;
-          }
-        }
-      }
+    for (int slab = 0; slab < slabs; ++slab) {
+      const int r0 = slab * kReorthSlabRows;
+      int rows = (r0 + kReorthSlabRows < n) ? kReorthSlabRows : n - r0;
+      F77_CALL(dgemm)(&trans_N, &trans_N, &rows, &b, &k, &minus_one, V + r0,
+                      &n, C, &ldc, &one, W + r0, &n FCONE FCONE);
     }
     region.master_pause();
   }
@@ -3225,7 +3219,7 @@ static int dense_symmetric_apply(void* impl, EigencoreTranspose op,
 extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(
     SEXP A_, SEXP k_, SEXP m_max_, SEXP block_size_,
     SEXP target_kind_, SEXP tol_, SEXP max_restarts_,
-    SEXP norm_a_, SEXP start_, SEXP check_stride_) {
+    SEXP norm_a_, SEXP start_, SEXP check_stride_, SEXP exact_symmetric_) {
   EIGENCORE_ENTRY_BEGIN
   if (!isReal(A_) || !isReal(start_)) {
     error("A and start must be double");
@@ -3259,8 +3253,16 @@ extern "C" SEXP eigencore_block_thick_restart_lanczos_dense(
   // P21: an exactly symmetric source is applied with dsymv, which reads one
   // triangle (half the memory traffic of dgemv) and gives the same product
   // up to rounding. A source that is Hermitian only within a tolerance keeps
-  // the full dgemv product.
-  if (dense_exactly_symmetric(REAL(A_), n)) {
+  // the full dgemv product. P25: the caller may pass the flag computed by the
+  // operator's structure check (eigencore_dense_finite_symmetric) for this
+  // very matrix; NA (or NULL) rescans.
+  int exact_flag = NA_LOGICAL;
+  if (TYPEOF(exact_symmetric_) == LGLSXP && XLENGTH(exact_symmetric_) == 1) {
+    exact_flag = LOGICAL(exact_symmetric_)[0];
+  }
+  const bool exact_symmetric = exact_flag == NA_LOGICAL ?
+    dense_exactly_symmetric(REAL(A_), n) : exact_flag != 0;
+  if (exact_symmetric) {
     return block_thick_restart_lanczos_impl(
       &impl, dense_symmetric_apply, n, 0, k, m_max, block_size, target_kind,
       tol, max_restarts, norm_a, REAL(start_), check_stride);

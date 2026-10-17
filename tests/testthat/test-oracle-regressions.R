@@ -139,7 +139,9 @@ repeated_spectrum_matrix <- function(values, seed = 5) {
 
 expect_verified_set <- function(fit, expected, states) {
   cert <- fit$certificate
-  expect_true(cert$passed)
+  expect_true(cert$passed, info = paste(
+    c(sprintf("max backward error %.3g (tol %.3g)", max(cert$backward_error),
+              cert$tolerance), cert$notes), collapse = "; "))
   expect_true(cert$target_completeness %in% states)
   expect_equal(sort(fit$values), sort(expected), tolerance = 1e-8)
 }

@@ -390,13 +390,14 @@ hermitian_completeness_tie <- function(check, values, part, ctx) {
 # Count every part. Returns list(status, record, failed_part).
 #' @keywords internal
 hermitian_completeness_count <- function(problem, gate, values, residuals,
-                                         orthogonality, parts) {
+                                         orthogonality, parts, vectors = NULL) {
   inflate <- 2 * (gate$delta_A %||% 0) + 2 * (gate$delta_B %||% 0) * abs(values)
   residuals <- abs(as.numeric(residuals)) + inflate
   checks <- lapply(parts, function(p) {
     check <- inertia_completeness_check(
       problem$A, values[p$idx], residuals[p$idx], orthogonality, p$target,
-      Bop = gate$metric, ctx = gate$ctx
+      Bop = gate$metric, ctx = gate$ctx,
+      vectors = if (is.null(vectors)) NULL else vectors[, p$idx, drop = FALSE]
     )
     hermitian_completeness_tie(check, values[p$idx], p, gate$ctx)
   })
@@ -664,6 +665,14 @@ hermitian_completeness_mapped_margin <- function(pop, values, vG, rG, m) {
   max(mapped, 2 * sqrt(sum(rG^2)), 64 * .Machine$double.eps * max(abs(vG), 0))
 }
 
+# Tolerance factor for the transformed-space repair solve (see
+# hermitian_completeness_repair_round()).
+#' @keywords internal
+completeness_repair_tol_factor <- function() {
+  f <- suppressWarnings(as.numeric(getOption("eigencore.completeness_repair_tol_factor", 1e-2)))
+  if (length(f) != 1L || !is.finite(f) || f <= 0 || f > 1) 1e-2 else f
+}
+
 # One repair round for a part with an intruder (or a count failure): solve
 # the deflated complement of G, then Rayleigh-Ritz on the standard operator
 # over span(Y, X_c), selected by the problem's own target.
@@ -710,8 +719,13 @@ hermitian_completeness_repair_round <- function(std, Y, pop, vG, probe, margin,
     scale <- max(abs(c(vG, probe$theta)), 0)
     Gdef <- completeness_deflated_operator(pop$G, basis,
                                            completeness_shift(vG, kind, scale))
+    # The complement is solved in G's space (squared shift or shift-invert),
+    # where a backward error of tol maps back to up to ||G|| / (2 sqrt(mu)
+    # ||A||) times tol on A: solve tighter so the repaired pairs certify at
+    # tol with margin on every platform's rounding.
+    comp_tol <- max(tol * completeness_repair_tol_factor(), 64 * .Machine$double.eps)
     comp <- tryCatch(native_block_lanczos_hermitian(
-      Gdef, k = kc, target = ktarget, tol = tol, maxit = m_max, block = block,
+      Gdef, k = kc, target = ktarget, tol = comp_tol, maxit = m_max, block = block,
       max_restarts = 100L, vectors = TRUE, full_subspace = FALSE,
       certificate_fallback = FALSE, start = start_cols
     ), error = function(e) NULL)
@@ -951,7 +965,8 @@ hermitian_target_completeness <- function(result, plan, problem, k, mode,
   }
   if (isTRUE(gate$use)) {
     count <- hermitian_completeness_count(problem, gate, values, cert$residuals,
-                                          cert$orthogonality, parts)
+                                          cert$orthogonality, parts,
+                                          vectors = result$vectors)
     record <- count$record
     record$gate <- gate$reason
     record$predicted_seconds <- gate$predicted_seconds
@@ -983,7 +998,7 @@ hermitian_target_completeness <- function(result, plan, problem, k, mode,
                                              Bop = problem$metric, tol = tol)
           again <- hermitian_completeness_count(
             problem, gate, out_values, new_cert$residuals, new_cert$orthogonality,
-            hermitian_completeness_parts(target, out_values)
+            hermitian_completeness_parts(target, out_values), vectors = out_vectors
           )
           keep <- c("edge", "rho", "margin", "threshold_upper", "count_upper",
                     "threshold_lower", "count_lower", "reason", "parts",
