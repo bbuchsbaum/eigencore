@@ -74,20 +74,31 @@ lanczos(
   it needs an explicit dense or sparse matrix (a matrix-free operator
   with n at most
   `getOption("eigencore.completeness_materialize_limit", 2000)` is
-  materialised by n applies) and reports `"inertia_verified"`,
-  `"inertia_failed"` (repaired when possible, otherwise
-  `passed = FALSE`) or `"inertia_inconclusive"` (an eigenvalue cluster
-  straddles the target edge within the residual bound and the counts
-  cannot show that a correct choice was returned; a repeated eigenvalue
-  at the edge is verified as a tie, recorded in
-  `certificate(fit)$completeness$tie`). `"probe"` runs a short block
-  Lanczos process on the operator deflated against the returned
-  eigenvectors (from a fixed-seed start; the global random stream is not
-  touched) and, if it finds a more-preferred eigenvalue outside the
-  returned set (for example a missed copy of a repeated eigenvalue),
-  repairs the result with a deflated complement solve; it is
-  probabilistic (it can prove a set incomplete but not complete) and is
-  the check for large matrix-free operators; for
+  materialised by n applies). For a real dense matrix without `B`, of
+  order at least
+  `getOption("eigencore.completeness_cholesky_min_n", 400)` (`Inf`
+  disables it), and a
+  [`largest()`](https://bbuchsbaum.github.io/eigencore/reference/largest.md)
+  /
+  [`smallest()`](https://bbuchsbaum.github.io/eigencore/reference/smallest.md)
+  target, the verified case is proved instead by one Cholesky
+  factorisation of \\A - t I\\ (or \\t I - A\\) deflated by the returned
+  vectors (about half the cost of the count and threaded by an optimised
+  BLAS; `certificate(fit)$completeness$inertia_method` is
+  `"dense_deflated_cholesky"`); when it does not succeed the count runs
+  as before. The check reports `"inertia_verified"`, `"inertia_failed"`
+  (repaired when possible, otherwise `passed = FALSE`) or
+  `"inertia_inconclusive"` (an eigenvalue cluster straddles the target
+  edge within the residual bound and the counts cannot show that a
+  correct choice was returned; a repeated eigenvalue at the edge is
+  verified as a tie, recorded in `certificate(fit)$completeness$tie`).
+  `"probe"` runs a short block Lanczos process on the operator deflated
+  against the returned eigenvectors (from a fixed-seed start; the global
+  random stream is not touched) and, if it finds a more-preferred
+  eigenvalue outside the returned set (for example a missed copy of a
+  repeated eigenvalue), repairs the result with a deflated complement
+  solve; it is probabilistic (it can prove a set incomplete but not
+  complete) and is the check for large matrix-free operators; for
   [`nearest()`](https://bbuchsbaum.github.io/eigencore/reference/nearest.md)
   targets it runs on the route's own \\(A - \sigma I)^{-1}\\ after
   shift-invert, otherwise on \\(A - \sigma I)^2\\. Generalized problems

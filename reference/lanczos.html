@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">2.0.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -122,7 +122,16 @@ eigenvalues with an \(LDL^T\) factorisation of <code>A - t B</code> (see
 <code><a href="eigen_count.html">eigen_count()</a></code>); it needs an explicit dense or sparse matrix (a
 matrix-free operator with n at most
 <code>getOption("eigencore.completeness_materialize_limit", 2000)</code> is
-materialised by n applies) and
+materialised by n applies). For a real dense matrix without <code>B</code>, of
+order at least
+<code>getOption("eigencore.completeness_cholesky_min_n", 400)</code> (<code>Inf</code>
+disables it), and a <code><a href="largest.html">largest()</a></code> / <code><a href="smallest.html">smallest()</a></code> target, the verified
+case is proved instead by one Cholesky factorisation of
+\(A - t I\) (or \(t I - A\)) deflated by the returned vectors (about half the
+cost of the count and threaded by an optimised BLAS;
+<code>certificate(fit)$completeness$inertia_method</code> is
+<code>"dense_deflated_cholesky"</code>); when it does not succeed the count runs
+as before. The check
 reports <code>"inertia_verified"</code>, <code>"inertia_failed"</code> (repaired when
 possible, otherwise <code>passed = FALSE</code>) or <code>"inertia_inconclusive"</code> (an
 eigenvalue cluster straddles the target edge within the residual

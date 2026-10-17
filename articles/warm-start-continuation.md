@@ -104,9 +104,9 @@ comparison <- do.call(rbind, rows)
 
 | rho | cold operator columns | warm operator columns | max \|cold value - warm value\| |
 |---:|---:|---:|:---|
-| 0.02 | 1009 | 414 | 2.05e-15 |
-| 0.04 | 928 | 429 | 1.62e-15 |
-| 0.06 | 868 | 494 | 2.66e-15 |
+| 0.02 | 1009 | 414 | 7.67e-16 |
+| 0.04 | 928 | 429 | 2.07e-15 |
+| 0.06 | 868 | 494 | 2.75e-15 |
 
 On this reproducible family, every continuation step uses fewer operator
 columns than its cold counterpart and agrees on the requested values

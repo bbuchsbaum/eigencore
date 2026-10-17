@@ -27,7 +27,7 @@
 
     <a class="navbar-brand me-2" href="index.html">eigencore</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">1.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">2.0.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -275,109 +275,109 @@
 <tbody>
 <tr>
 <td>sparse symmetric 20k, largest, k = 10</td>
-<td align="right">313 ms</td>
-<td align="right">409 ms</td>
-<td align="right">223 ms</td>
+<td align="right">569 ms</td>
+<td align="right">620 ms</td>
+<td align="right">291 ms</td>
 <td align="right">-</td>
 <td align="right">n/a</td>
-<td align="right">1.40</td>
+<td align="right">1.96</td>
 <td align="center">yes</td>
 </tr>
 <tr>
 <td>sparse symmetric 20k, smallest, k = 10</td>
-<td align="right">359 ms</td>
-<td align="right">267 ms</td>
-<td align="right">207 ms</td>
+<td align="right">580 ms</td>
+<td align="right">667 ms</td>
+<td align="right">312 ms</td>
 <td align="right">-</td>
 <td align="right">n/a</td>
-<td align="right">1.73</td>
+<td align="right">1.86</td>
 <td align="center">yes</td>
 </tr>
 <tr>
 <td>sparse nonsymmetric 20k, largest modulus, k = 6</td>
-<td align="right">7.90 s</td>
-<td align="right">6.85 s</td>
-<td align="right">2.02 s†</td>
+<td align="right">7.55 s</td>
+<td align="right">7.05 s</td>
+<td align="right">2.80 s†</td>
 <td align="right">-</td>
 <td align="right">n/a</td>
-<td align="right">3.90</td>
+<td align="right">2.69</td>
 <td align="center">yes</td>
 </tr>
 <tr>
 <td>sparse SVD 50k × 2k, k = 20</td>
-<td align="right">206 ms</td>
-<td align="right">196 ms</td>
-<td align="right">128 ms</td>
-<td align="right">886 ms</td>
+<td align="right">335 ms</td>
+<td align="right">349 ms</td>
+<td align="right">201 ms</td>
+<td align="right">2.04 s</td>
 <td align="right">n/a</td>
-<td align="right">1.60</td>
+<td align="right">1.67</td>
 <td align="center">yes</td>
 </tr>
 <tr>
 <td>sparse SVD 50k × 20k, k = 20</td>
-<td align="right">1.22 s</td>
-<td align="right">671 ms</td>
-<td align="right">762 ms</td>
-<td align="right">2.18 s</td>
+<td align="right">2.33 s</td>
+<td align="right">1.45 s</td>
+<td align="right">1.06 s</td>
+<td align="right">5.20 s</td>
 <td align="right">n/a</td>
-<td align="right">1.60</td>
+<td align="right">2.19</td>
 <td align="center">yes</td>
 </tr>
 <tr>
 <td>centred sparse PCA 50k × 1k, k = 10</td>
-<td align="right">323 ms</td>
-<td align="right">187 ms</td>
-<td align="right">292 ms</td>
-<td align="right">456 ms</td>
+<td align="right">511 ms</td>
+<td align="right">341 ms</td>
+<td align="right">533 ms</td>
+<td align="right">982 ms</td>
 <td align="right">n/a</td>
-<td align="right">1.11</td>
+<td align="right">0.96</td>
 <td align="center">yes</td>
 </tr>
 <tr>
 <td>dense symmetric 1500, largest, k = 10</td>
-<td align="right">173 ms</td>
-<td align="right">110 ms</td>
-<td align="right">74 ms</td>
+<td align="right">198 ms</td>
+<td align="right">142 ms</td>
+<td align="right">105 ms</td>
 <td align="right">-</td>
-<td align="right">648 ms</td>
-<td align="right">2.33</td>
+<td align="right">934 ms</td>
+<td align="right">1.89</td>
 <td align="center">yes</td>
 </tr>
 <tr>
 <td>full dense eigen 1500 (<code>eig_full</code> vs <code>eigen</code>)</td>
-<td align="right">910 ms</td>
-<td align="right">475 ms</td>
+<td align="right">1.38 s</td>
+<td align="right">773 ms</td>
 <td align="right">-</td>
 <td align="right">-</td>
-<td align="right">695 ms</td>
+<td align="right">925 ms</td>
 <td align="right">-</td>
 <td align="center">yes</td>
 </tr>
 <tr>
 <td>2-D Laplacian 10k, nearest 4.01, k = 6</td>
-<td align="right">91 ms</td>
-<td align="right">94 ms</td>
-<td align="right">40 ms</td>
+<td align="right">116 ms</td>
+<td align="right">146 ms</td>
+<td align="right">56 ms</td>
 <td align="right">-</td>
 <td align="right">n/a</td>
-<td align="right">2.25</td>
+<td align="right">2.07</td>
 <td align="center">yes</td>
 </tr>
 <tr>
 <td>generalized FEM pencil 2.5k, smallest, k = 6</td>
-<td align="right">215 ms</td>
-<td align="right">193 ms</td>
-<td align="right">571 ms</td>
+<td align="right">334 ms</td>
+<td align="right">380 ms</td>
+<td align="right">645 ms</td>
 <td align="right">-</td>
-<td align="right">6.75 s</td>
-<td align="right">0.38</td>
+<td align="right">10.6 s</td>
+<td align="right">0.52</td>
 <td align="center">yes</td>
 </tr>
 <tr>
 <td>1-D Laplacian 20k, smallest, k = 8</td>
-<td align="right">42 ms</td>
-<td align="right">49 ms</td>
-<td align="right">6.75 s†</td>
+<td align="right">61 ms</td>
+<td align="right">68 ms</td>
+<td align="right">9.97 s†</td>
 <td align="right">-</td>
 <td align="right">n/a</td>
 <td align="right">0.01</td>
@@ -385,8 +385,8 @@
 </tr>
 </tbody>
 </table>
-<p><sub>2026-10-10; Intel(R) Xeon(R) Processor @ 2.10GHz, 4 logical cores; R 4.3.3; OpenBLAS; eigencore 1.3.0 (f993161049); RSpectra 0.16.1, irlba 2.3.5.1; median of 5 reps; load average 1.1 at start, 1.4 at end; run <code>20261010-3d7cb0dd-standard</code>.</sub></p>
-<p>Results depend on the processor, BLAS/LAPACK, thread count, machine load and the matrices themselves; these are random and model matrices measured on one 4-core cloud machine with nothing else running (load average recorded below). At this size most sparse kernels gain little from 4 threads, and the largest symmetric case is slightly slower with them; eigencore now shrinks its OpenMP team when parallel regions stop paying off, so a busy machine degrades it gracefully instead of by an order of magnitude. The <a href="https://bbuchsbaum.github.io/eigencore/articles/benchmarks.html">benchmarks article</a> shows every case and method, operator-application counts, accuracy, scaling curves and the limits of the comparison. Reproduce or add your machine with</p>
+<p><sub>2026-10-15; Intel(R) Xeon(R) Processor @ 2.80GHz, 4 logical cores; R 4.3.3; OpenBLAS; eigencore 2.0.0 (e560f8ad61); RSpectra 0.16.1, irlba 2.3.5.1; median of 5 reps; load average 1.0 at start, 2.0 at end; run <code>20261015-9d7130c3-standard</code>.</sub></p>
+<p>Results depend on the processor, BLAS/LAPACK, thread count, machine load and the matrices themselves; these are random and model matrices measured on one 4-core cloud machine with nothing else running (load average recorded below). At this size several sparse cases are 10-25% slower with 4 threads than with 1 (the work per parallel region is small); the larger SVD, PCA and dense cases gain 1.4-2.4x. eigencore shrinks its OpenMP team when parallel regions stop paying off, so a busy machine degrades it gracefully instead of by an order of magnitude. The <a href="https://bbuchsbaum.github.io/eigencore/articles/benchmarks.html">benchmarks article</a> shows every case and method, operator-application counts, accuracy, scaling curves and the limits of the comparison. Reproduce or add your machine with</p>
 <div class="sourceCode" id="cb10"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL <span class="at">--preclean</span> <span class="at">--no-docs</span> <span class="at">-l</span> .rlib .</span>
 <span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a><span class="ex">Rscript</span> inst/benchmarks/run-suite.R <span class="at">--lib</span><span class="op">=</span>.rlib <span class="at">--profile</span><span class="op">=</span>standard <span class="at">--threads</span><span class="op">=</span>1,4</span></code></pre></div>
 </div>

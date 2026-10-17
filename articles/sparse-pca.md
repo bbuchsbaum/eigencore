@@ -82,7 +82,7 @@ fit
 #>   target: largest 
 #>   max residual: 2.463127e-11 
 #>   max backward error: 5.230634e-11 
-#>   max orthogonality loss: 1.350135e-14 
+#>   max orthogonality loss: 1.362799e-14 
 #>   norm bound: two_norm_lower_bound 
 #>   scale estimated: FALSE 
 #>   certificate: passed
@@ -136,7 +136,7 @@ dense matrix directly. Check it:
 ``` r
 
 max(abs(sort(fit$d, decreasing = TRUE) - sort(all_sv[1:5], decreasing = TRUE)))
-#> [1] 3.330669e-16
+#> [1] 4.440892e-16
 ```
 
 The two agree to machine precision. `dense_centered` above was built

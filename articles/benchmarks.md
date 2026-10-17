@@ -90,22 +90,22 @@ return the wanted set, and ‡ when its independent backward error exceeds
 
 ## Result sets
 
-|  | 20261010-3d7cb0dd-standard | 20261010-3d7cb0dd-scaling |
+|  | 20261015-9d7130c3-standard | 20261015-9d7130c3-scaling |
 |:---|:---|:---|
-| run | 20261010-3d7cb0dd-standard | 20261010-3d7cb0dd-scaling |
-| date | 2026-10-10T18:04:41Z | 2026-10-10T18:15:23Z |
-| machine | 3d7cb0dd | 3d7cb0dd |
-| cpu | Intel(R) Xeon(R) Processor @ 2.10GHz (4 logical / 4 physical cores, 15.7 GB) | Intel(R) Xeon(R) Processor @ 2.10GHz (4 logical / 4 physical cores, 15.7 GB) |
+| run | 20261015-9d7130c3-standard | 20261015-9d7130c3-scaling |
+| date | 2026-10-15T15:54:12Z | 2026-10-15T16:10:12Z |
+| machine | 9d7130c3 | 9d7130c3 |
+| cpu | Intel(R) Xeon(R) Processor @ 2.80GHz (4 logical / 4 physical cores, 15.7 GB) | Intel(R) Xeon(R) Processor @ 2.80GHz (4 logical / 4 physical cores, 15.7 GB) |
 | R | 4.3.3 (2024-02-29) | 4.3.3 (2024-02-29) |
 | platform | x86_64-pc-linux-gnu | x86_64-pc-linux-gnu |
 | BLAS | OpenBLAS (libopenblasp-r0.3.26.so) | OpenBLAS (libopenblasp-r0.3.26.so) |
-| eigencore | 1.3.0 @ f993161049 | 1.3.0 @ f993161049 |
+| eigencore | 2.0.0 @ e560f8ad61 | 2.0.0 @ e560f8ad61 |
 | competitors | RSpectra 0.16.1, irlba 2.3.5.1 | RSpectra 0.16.1, irlba 2.3.5.1 |
 | threads | 1,4 | 1,4 |
 | blas_threads | 1:1 4:4 | 1:1 4:4 |
 | reps | 5 | 3 |
-| load_start_end | 1.12 / 1.39 | 1.39 / 1.31 |
-| wall | 640 s | 597 s |
+| load_start_end | 1.02 / 1.99 | 1.99 / 1.25 |
+| wall | 958 s | 990 s |
 
 Environment of each stored result set (one column per run). {.table}
 
@@ -136,98 +136,98 @@ Cases of the standard profile. {.table}
 
 | case | threads | eigencore | RSpectra | base | eigencore / RSpectra | matvecs ec / RS | bwd err ec | bwd err RS | certified |
 |:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
-| sym_sparse_n20000_LA_k10 | 1 | 313 ms | 223 ms | n/a | 1.40 | 253 / 230 | 8.1e-09 | 2.4e-09 | yes |
-| sym_sparse_n20000_LA_k10 | 4 | 409 ms | 215 ms | n/a | 1.90 | 253 / 230 | 8.1e-09 | 2.4e-09 | yes |
-| sym_sparse_n20000_SA_k10 | 1 | 359 ms | 207 ms | n/a | 1.73 | 283 / 236 | 5.4e-09 | 4.4e-09 | yes |
-| sym_sparse_n20000_SA_k10 | 4 | 267 ms | 236 ms | n/a | 1.13 | 283 / 236 | 5.4e-09 | 4.4e-09 | yes |
+| sym_sparse_n20000_LA_k10 | 1 | 569 ms | 291 ms | n/a | 1.96 | 253 / 230 | 8.1e-09 | 2.4e-09 | yes |
+| sym_sparse_n20000_LA_k10 | 4 | 620 ms | 285 ms | n/a | 2.18 | 253 / 230 | 8.1e-09 | 2.4e-09 | yes |
+| sym_sparse_n20000_SA_k10 | 1 | 580 ms | 312 ms | n/a | 1.86 | 283 / 236 | 5.4e-09 | 4.4e-09 | yes |
+| sym_sparse_n20000_SA_k10 | 4 | 667 ms | 332 ms | n/a | 2.01 | 283 / 236 | 5.4e-09 | 4.4e-09 | yes |
 
 ### Sparse nonsymmetric, largest modulus
 
 | case | threads | eigencore | RSpectra | base | eigencore / RSpectra | matvecs ec / RS | bwd err ec | bwd err RS | certified |
 |:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
-| nonsym_sparse_n20000_LM_k6 | 1 | 7.90 s | 2.02 s† | n/a | 3.90 | 9710 / 3947 | 5.0e-11 | 2.6e-09 (miss) | yes |
-| nonsym_sparse_n20000_LM_k6 | 4 | 6.85 s | 2.09 s† | n/a | 3.28 | 9710 / 3947 | 5.0e-11 | 2.6e-09 (miss) | yes |
+| nonsym_sparse_n20000_LM_k6 | 1 | 7.55 s | 2.80 s† | n/a | 2.69 | 3990 / 3947 | 2.1e-09 | 2.6e-09 (miss) | yes |
+| nonsym_sparse_n20000_LM_k6 | 4 | 7.05 s | 3.15 s† | n/a | 2.24 | 3990 / 3947 | 2.1e-09 | 2.6e-09 (miss) | yes |
 
 ### Sparse SVD
 
 | case | threads | eigencore | RSpectra | irlba | base | eigencore / RSpectra | matvecs ec / RS | bwd err ec | bwd err RS | certified |
 |:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
-| svd_sparse_50000x2000_k20 | 1 | 206 ms | 128 ms | 886 ms | n/a | 1.60 | 488 / 486 | 8.3e-10 | 1.8e-09 | yes |
-| svd_sparse_50000x2000_k20 | 4 | 196 ms | 120 ms | 612 ms | n/a | 1.63 | 488 / 486 | 8.3e-10 | 1.8e-09 | yes |
-| svd_sparse_50000x20000_k20 | 1 | 1.22 s | 762 ms | 2.18 s | n/a | 1.60 | 706 / 602 | 2.3e-10 | 7.1e-09 | yes |
-| svd_sparse_50000x20000_k20 | 4 | 671 ms | 739 ms | 1.44 s | n/a | 0.91 | 706 / 602 | 2.3e-10 | 7.1e-09 | yes |
+| svd_sparse_50000x2000_k20 | 1 | 335 ms | 201 ms | 2.04 s | n/a | 1.67 | 488 / 486 | 8.3e-10 | 1.8e-09 | yes |
+| svd_sparse_50000x2000_k20 | 4 | 349 ms | 188 ms | 1.53 s | n/a | 1.85 | 488 / 486 | 8.3e-10 | 1.8e-09 | yes |
+| svd_sparse_50000x20000_k20 | 1 | 2.33 s | 1.06 s | 5.20 s | n/a | 2.19 | 706 / 602 | 2.3e-10 | 7.1e-09 | yes |
+| svd_sparse_50000x20000_k20 | 4 | 1.45 s | 1.04 s | 3.77 s | n/a | 1.39 | 706 / 602 | 2.3e-10 | 7.1e-09 | yes |
 
 ### Dense symmetric, partial
 
 | case | threads | eigencore | RSpectra | base | eigencore / RSpectra | matvecs ec / RS | bwd err ec | bwd err RS | certified |
 |:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
-| dense_sym_n1500_LA_k10 | 1 | 173 ms | 74 ms | 648 ms | 2.33 | 166 / 169 | 6.1e-09 | 1.2e-09 | yes |
-| dense_sym_n1500_LA_k10 | 4 | 110 ms | 27 ms | 377 ms | 4.13 | 166 / 169 | 6.1e-09 | 1.2e-09 | yes |
+| dense_sym_n1500_LA_k10 | 1 | 198 ms | 105 ms | 934 ms | 1.89 | 166 / 169 | 6.1e-09 | 1.2e-09 | yes |
+| dense_sym_n1500_LA_k10 | 4 | 142 ms | 47 ms | 603 ms | 3.03 | 166 / 169 | 6.1e-09 | 1.2e-09 | yes |
 
 ### Full dense eigendecomposition
 
 | case                   | threads | eigencore | base   | bwd err ec | certified |
 |:-----------------------|:--------|:----------|:-------|:-----------|:----------|
-| eig_full_n1500_vectors | 1       | 910 ms    | 695 ms | 2.0e-15    | yes       |
-| eig_full_n1500_vectors | 4       | 475 ms    | 373 ms | 1.8e-15    | yes       |
-| eig_full_n1500_values  | 1       | 328 ms    | 336 ms | \-         | \-        |
-| eig_full_n1500_values  | 4       | 142 ms    | 151 ms | \-         | \-        |
+| eig_full_n1500_vectors | 1       | 1.38 s    | 925 ms | 2.0e-15    | yes       |
+| eig_full_n1500_vectors | 4       | 773 ms    | 696 ms | 1.8e-15    | yes       |
+| eig_full_n1500_values  | 1       | 438 ms    | 380 ms | \-         | \-        |
+| eig_full_n1500_values  | 4       | 260 ms    | 210 ms | \-         | \-        |
 
 ### Interior eigenvalues by shift-invert
 
 | case | threads | eigencore | RSpectra | base | eigencore / RSpectra | matvecs ec / RS | bwd err ec | bwd err RS | certified |
 |:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
-| shift_invert_lap2d_g100_sigma4.01_k6 | 1 | 91 ms | 40 ms | n/a | 2.25 | 45 / 41 | 4.9e-14 | 6.4e-14 | yes |
-| shift_invert_lap2d_g100_sigma4.01_k6 | 4 | 94 ms | 33 ms | n/a | 2.88 | 45 / 41 | 4.9e-14 | 6.4e-14 | yes |
+| shift_invert_lap2d_g100_sigma4.01_k6 | 1 | 116 ms | 56 ms | n/a | 2.07 | 45 / 41 | 4.9e-14 | 6.4e-14 | yes |
+| shift_invert_lap2d_g100_sigma4.01_k6 | 4 | 146 ms | 54 ms | n/a | 2.71 | 45 / 41 | 4.9e-14 | 6.4e-14 | yes |
 
 ### Generalized symmetric-definite
 
 | case | threads | eigencore | RSpectra | base | eigencore / RSpectra | matvecs ec / RS | bwd err ec | bwd err RS | certified |
 |:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
-| generalized_fem2d_g50_SA_k6 | 1 | 215 ms | 571 ms | 6.75 s | 0.38 | \- / 1042 | 8.1e-09 | 6.0e-11 | yes |
-| generalized_fem2d_g50_SA_k6 | 4 | 193 ms | 543 ms | 4.31 s | 0.35 | \- / 1042 | 8.1e-09 | 6.0e-11 | yes |
+| generalized_fem2d_g50_SA_k6 | 1 | 334 ms | 645 ms | 10.6 s | 0.52 | \- / 1042 | 8.1e-09 | 6.0e-11 | yes |
+| generalized_fem2d_g50_SA_k6 | 4 | 380 ms | 668 ms | 6.63 s | 0.57 | \- / 1042 | 8.1e-09 | 6.0e-11 | yes |
 
 ### Centred sparse PCA (implicit centring)
 
 | case | threads | eigencore | RSpectra | irlba | base | eigencore / RSpectra | matvecs ec / RS | bwd err ec | bwd err RS | certified |
 |:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
-| pca_centered_50000x1000_k10 | 1 | 323 ms | 292 ms | 456 ms | n/a | 1.11 | 366 / 330 | 4.6e-11 | 6.1e-09 | yes |
-| pca_centered_50000x1000_k10 | 4 | 187 ms | 295 ms | 398 ms | n/a | 0.63 | 366 / 330 | 4.6e-11 | 6.1e-09 | yes |
+| pca_centered_50000x1000_k10 | 1 | 511 ms | 533 ms | 982 ms | n/a | 0.96 | 366 / 330 | 4.6e-11 | 6.1e-09 | yes |
+| pca_centered_50000x1000_k10 | 4 | 341 ms | 497 ms | 800 ms | n/a | 0.69 | 366 / 330 | 4.6e-11 | 6.1e-09 | yes |
 
 ### Banded (1-D Laplacian), smallest
 
 | case | threads | eigencore | RSpectra | base | eigencore / RSpectra | matvecs ec / RS | bwd err ec | bwd err RS | certified |
 |:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
-| banded_lap1d_n20000_SA_k8 | 1 | 42 ms | 6.75 s† | n/a | 0.01 | 23 / 12020 | 1.2e-10 | \- (miss) | yes |
-| banded_lap1d_n20000_SA_k8 | 4 | 49 ms | 6.61 s† | n/a | 0.01 | 23 / 12020 | 1.2e-10 | \- (miss) | yes |
+| banded_lap1d_n20000_SA_k8 | 1 | 61 ms | 9.97 s† | n/a | 0.01 | 23 / 12020 | 1.2e-10 | \- (miss) | yes |
+| banded_lap1d_n20000_SA_k8 | 4 | 68 ms | 10.4 s† | n/a | 0.01 | 23 / 12020 | 1.2e-10 | \- (miss) | yes |
 
 ### 2-D Laplacian, smallest (repeated eigenvalues)
 
 | case | threads | eigencore | RSpectra | base | eigencore / RSpectra | matvecs ec / RS | bwd err ec | bwd err RS | certified |
 |:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
-| laplacian2d_g150_SA_k10 | 1 | 265 ms | 6.45 s† | n/a | 0.04 | 61 / 6488 | 3.0e-16 | 3.1e-13 (miss) | yes |
-| laplacian2d_g150_SA_k10 | 4 | 254 ms | 6.46 s† | n/a | 0.04 | 61 / 6488 | 3.0e-16 | 3.1e-13 (miss) | yes |
+| laplacian2d_g150_SA_k10 | 1 | 382 ms | 10.0 s† | n/a | 0.04 | 61 / 6488 | 3.3e-16 | 3.1e-13 (miss) | yes |
+| laplacian2d_g150_SA_k10 | 4 | 439 ms | 9.93 s† | n/a | 0.04 | 61 / 6488 | 5.9e-16 | 3.1e-13 (miss) | yes |
 
 ### Power-law spectrum
 
 | case | threads | eigencore | RSpectra | base | eigencore / RSpectra | matvecs ec / RS | bwd err ec | bwd err RS | certified |
 |:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
-| powerlaw_dense_n2000_LA_k10 | 1 | 186 ms | 36 ms | 1.40 s | 5.24 | 50 / 40 | 2.2e-16 | 7.7e-13 | yes |
-| powerlaw_dense_n2000_LA_k10 | 4 | 166 ms | 14 ms | 685 ms | 11.80 | 50 / 40 | 2.6e-16 | 7.7e-13 | yes |
+| powerlaw_dense_n2000_LA_k10 | 1 | 278 ms | 66 ms | 2.27 s | 4.25 | 50 / 40 | 2.2e-16 | 7.7e-13 | yes |
+| powerlaw_dense_n2000_LA_k10 | 4 | 149 ms | 22 ms | 1.09 s | 6.72 | 50 / 40 | 2.6e-16 | 7.7e-13 | yes |
 
 ### Clustered / repeated top eigenvalues
 
 | case | threads | eigencore | RSpectra | base | eigencore / RSpectra | matvecs ec / RS | bwd err ec | bwd err RS | certified |
 |:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
-| clustered_dense_n2000_LA_k10 | 1 | 264 ms | 101 ms | 1.79 s | 2.60 | 125 / 127 | 1.1e-11 | 8.0e-11 | yes |
-| clustered_dense_n2000_LA_k10 | 4 | 186 ms | 40 ms | 1.06 s | 4.60 | 125 / 127 | 7.3e-12 | 9.7e-11 | yes |
+| clustered_dense_n2000_LA_k10 | 1 | 449 ms | 264 ms | 2.81 s | 1.70 | 125 / 127 | 1.1e-11 | 8.0e-11 | yes |
+| clustered_dense_n2000_LA_k10 | 4 | 190 ms | 53 ms | 1.88 s | 3.58 | 125 / 127 | 7.3e-12 | 9.7e-11 | yes |
 
 ### Low rank plus noise SVD
 
 | case | threads | eigencore | RSpectra | irlba | base | eigencore / RSpectra | matvecs ec / RS | bwd err ec | bwd err RS | certified |
 |:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
-| lowrank_noise_5000x500_k10 | 1 | 71 ms | 50 ms | 46 ms | 337 ms | 1.43 | \- / 52 | 9.9e-16 | 3.8e-14 | yes |
-| lowrank_noise_5000x500_k10 | 4 | 58 ms | 14 ms | 15 ms | 204 ms | 4.13 | \- / 52 | 1.3e-15 | 3.8e-14 | yes |
+| lowrank_noise_5000x500_k10 | 1 | 117 ms | 115 ms | 99 ms | 551 ms | 1.02 | \- / 52 | 9.9e-16 | 3.8e-14 | yes |
+| lowrank_noise_5000x500_k10 | 4 | 77 ms | 27 ms | 27 ms | 316 ms | 2.87 | \- / 52 | 1.3e-15 | 3.8e-14 | yes |
 
 ### Time relative to RSpectra
 
@@ -247,7 +247,7 @@ explicit Gram paths).
 |:-------------------------------------|:----------|:---------|:------|
 | sym_sparse_n20000_LA_k10             | 253       | 230      | \-    |
 | sym_sparse_n20000_SA_k10             | 283       | 236      | \-    |
-| nonsym_sparse_n20000_LM_k6           | 9710      | 3947     | \-    |
+| nonsym_sparse_n20000_LM_k6           | 3990      | 3947     | \-    |
 | svd_sparse_50000x2000_k20            | 488       | 486      | 756   |
 | svd_sparse_50000x20000_k20           | 706       | 602      | 1096  |
 | dense_sym_n1500_LA_k10               | 166       | 169      | \-    |
@@ -271,7 +271,7 @@ Operator applications (A and A’ counted separately) at threads = 1.
 |:---|:---|:---|:---|:---|
 | sym_sparse_n20000_LA_k10 | 8.1e-09 / 1.6e-14 / ok, cert | 2.4e-09 / 1.6e-14 / ok | \- | n/a |
 | sym_sparse_n20000_SA_k10 | 5.4e-09 / 9.3e-15 / ok, cert | 4.4e-09 / 7.4e-15 / ok | \- | n/a |
-| nonsym_sparse_n20000_LM_k6 | 5.0e-11 / 2.1e-12 / ok, cert | 2.6e-09 / 8.2e-02 / MISS | \- | n/a |
+| nonsym_sparse_n20000_LM_k6 | 2.1e-09 / 1.3e-11 / ok, cert | 2.6e-09 / 8.2e-02 / MISS | \- | n/a |
 | svd_sparse_50000x2000_k20 | 8.3e-10 / 3.3e-15 / ok, cert | 1.8e-09 / 3.0e-15 / ok | 8.6e-09 / 4.5e-15 / ok | n/a |
 | svd_sparse_50000x20000_k20 | 2.3e-10 / 8.4e-15 / ok, cert | 7.1e-09 / 6.0e-15 / ok | 8.2e-09 / 1.0e-14 / ok | n/a |
 | dense_sym_n1500_LA_k10 | 6.1e-09 / 5.8e-15 / ok, cert | 1.2e-09 / 5.5e-15 / ok | \- | 8.2e-16 / 5.3e-15 / ok |
@@ -281,7 +281,7 @@ Operator applications (A and A’ counted separately) at threads = 1.
 | generalized_fem2d_g50_SA_k6 | 8.1e-09 / 1.2e-15 / ok, cert | 6.0e-11 / 2.3e-13 / ok | \- | 2.2e-15 / 2.5e-16 / ok |
 | pca_centered_50000x1000_k10 | 4.6e-11 / 1.8e-15 / ok, cert | 6.1e-09 / 1.8e-15 / ok | 9.4e-09 / 4.0e-15 / ok | n/a |
 | banded_lap1d_n20000_SA_k8 | 1.2e-10 / 2.8e-17 / ok, cert | \- / - / MISS | \- | n/a |
-| laplacian2d_g150_SA_k10 | 3.0e-16 / 2.1e-17 / ok, cert | 3.1e-13 / 3.1e-13 / MISS | \- | n/a |
+| laplacian2d_g150_SA_k10 | 3.3e-16 / 2.1e-17 / ok, cert | 3.1e-13 / 3.1e-13 / MISS | \- | n/a |
 | powerlaw_dense_n2000_LA_k10 | 2.2e-16 / 1.2e-16 / ok, cert | 7.7e-13 / 1.3e-15 / ok | \- | 3.8e-16 / 1.7e-16 / ok |
 | clustered_dense_n2000_LA_k10 | 1.1e-11 / 4.9e-16 / ok, cert | 8.0e-11 / 2.0e-15 / ok | \- | 1.4e-15 / 1.4e-15 / ok |
 | lowrank_noise_5000x500_k10 | 9.9e-16 / 1.2e-16 / ok, cert | 3.8e-14 / 3.9e-16 / ok | 6.0e-15 / 7.7e-16 / ok | 9.1e-15 / 7.1e-16 / ok |
@@ -317,28 +317,28 @@ the wanted set.
 
 | group            | method    | threads | slope |
 |:-----------------|:----------|--------:|------:|
-| scaling_n        | eigencore |       1 |  0.77 |
-| scaling_n        | RSpectra  |       1 |  1.26 |
-| scaling_n        | eigencore |       4 |  0.76 |
-| scaling_n        | RSpectra  |       4 |  1.20 |
-| scaling_nnz      | eigencore |       1 |  0.58 |
-| scaling_nnz      | RSpectra  |       1 |  0.58 |
-| scaling_nnz      | eigencore |       4 |  0.33 |
-| scaling_nnz      | RSpectra  |       4 |  0.56 |
-| scaling_k        | eigencore |       1 |  0.91 |
-| scaling_k        | RSpectra  |       1 |  0.95 |
-| scaling_k        | eigencore |       4 |  0.90 |
+| scaling_n        | eigencore |       1 |  0.97 |
+| scaling_n        | RSpectra  |       1 |  1.17 |
+| scaling_n        | eigencore |       4 |  0.68 |
+| scaling_n        | RSpectra  |       4 |  1.14 |
+| scaling_nnz      | eigencore |       1 |  0.64 |
+| scaling_nnz      | RSpectra  |       1 |  0.60 |
+| scaling_nnz      | eigencore |       4 |  0.44 |
+| scaling_nnz      | RSpectra  |       4 |  0.60 |
+| scaling_k        | eigencore |       1 |  0.99 |
+| scaling_k        | RSpectra  |       1 |  0.92 |
+| scaling_k        | eigencore |       4 |  0.84 |
 | scaling_k        | RSpectra  |       4 |  0.93 |
-| scaling_svd_m    | eigencore |       1 |  1.00 |
-| scaling_svd_m    | RSpectra  |       1 |  1.02 |
-| scaling_svd_m    | irlba     |       1 |  1.18 |
-| scaling_svd_m    | eigencore |       4 |  0.81 |
-| scaling_svd_m    | RSpectra  |       4 |  1.17 |
-| scaling_svd_m    | irlba     |       4 |  1.11 |
-| scaling_banded_n | eigencore |       1 |  0.65 |
-| scaling_banded_n | RSpectra  |       1 |  1.25 |
-| scaling_banded_n | eigencore |       4 |  0.45 |
-| scaling_banded_n | RSpectra  |       4 |  1.25 |
+| scaling_svd_m    | eigencore |       1 |  1.13 |
+| scaling_svd_m    | RSpectra  |       1 |  1.36 |
+| scaling_svd_m    | irlba     |       1 |  1.34 |
+| scaling_svd_m    | eigencore |       4 |  0.82 |
+| scaling_svd_m    | RSpectra  |       4 |  1.32 |
+| scaling_svd_m    | irlba     |       4 |  1.29 |
+| scaling_banded_n | eigencore |       1 |  0.59 |
+| scaling_banded_n | RSpectra  |       1 |  1.13 |
+| scaling_banded_n | eigencore |       4 |  0.56 |
+| scaling_banded_n | RSpectra  |       4 |  1.15 |
 
 Fitted log-log slope of median time against the swept variable. {.table}
 

@@ -225,4 +225,5 @@ solver work.
   [`eigencore.threads`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md)
   [`eigencore.adaptive_threads`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md)
   [`eigencore.csr_cache_mb`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md)
+  [`eigencore.parallel_min_work`](https://bbuchsbaum.github.io/eigencore/reference/eigencore-threads.md)
   : Multithreading in eigencore's sparse kernels

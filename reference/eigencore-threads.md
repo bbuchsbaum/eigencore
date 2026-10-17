@@ -11,9 +11,11 @@ centred-scaled sparse operators, and the implicit normal operators
 Every output entry is accumulated by one thread in the same order and
 with the same arithmetic as the serial loop, so sparse products are
 bitwise identical for any thread count. While such a solve runs, the
-Lanczos reorthogonalisation also uses these threads (see below); its
-OpenMP kernels do not depend on the thread count either, so results
-computed with one and with several threads differ only by rounding.
+Lanczos reorthogonalisation also uses these threads (see below):
+single-threaded BLAS calls on fixed blocks of rows, shared among the
+threads, whose results do not depend on the thread count either, so
+results computed with one and with several threads differ only by
+rounding, and results with 2, 4 or 8 threads agree exactly.
 
 ## Options
 
@@ -44,6 +46,21 @@ computed with one and with several threads differ only by rounding.
   per solve. When the copy would be larger, `A X` stays serial for
   blocks of up to 10 columns.
 
+- `eigencore.parallel_min_work`:
+
+  Minimum work per thread of a parallel region (default 65536), in
+  multiply-add units: a sparse product counts 4 units per nonzero and
+  right-hand side, the reorthogonalisation 1 per basis entry and column.
+  A region gets at most `floor(work / eigencore.parallel_min_work)`
+  threads and runs serially below two, so small products (a 20000 x
+  20000 matrix with 3 nonzeros per row, about 60 microseconds) use few
+  threads or one: they cannot gain from more and, when any core is busy,
+  every join waits for the slowest team member. Like the adaptive thread
+  count it only changes how many threads run a region, never the result.
+  `0` lets every region use all threads; `Inf` keeps eigencore's own
+  kernels serial. `inst/benchmarks/bench-parallel-threshold.R` measures
+  the crossover on a machine.
+
 ## Busy machines
 
 OpenMP runtimes keep idle team threads spinning for a while (libgomp's
@@ -73,16 +90,17 @@ busy machine also limit it (`OPENBLAS_NUM_THREADS=1`, or
 
 OpenBLAS (pthreads build) and FlexiBLAS keep idle worker threads
 spinning after each call; OpenMP threads started meanwhile would compete
-with them for cores. When a native sparse solve (for example
+with them for cores. When `eigencore.threads` is above one, a native
+sparse solve (for example
 [`eigs_sym()`](https://bbuchsbaum.github.io/eigencore/reference/eigs_sym.md),
 [`svds()`](https://bbuchsbaum.github.io/eigencore/reference/svds.md) or
 [`svd_partial()`](https://bbuchsbaum.github.io/eigencore/reference/svd_partial.md)
-on a `dgCMatrix`) runs a multithreaded sparse kernel, eigencore
-therefore switches such a BLAS to one thread for the rest of that call
-and restores the previous setting when the call returns (or fails); its
-reorthogonalisation then runs on eigencore's OpenMP threads. Sparse
-products applied one at a time from R-level operators (for example
-inside a matrix-free
+on a `dgCMatrix`) therefore switches such a BLAS to one thread at its
+first sparse product (also when that product is too small to run in
+parallel) for the rest of that call and restores the previous setting
+when the call returns (or fails); its reorthogonalisation then runs on
+eigencore's threads. Sparse products applied one at a time from R-level
+operators (for example inside a matrix-free
 [`center()`](https://bbuchsbaum.github.io/eigencore/reference/center.md)
 solve) stay serial while such a BLAS is multithreaded, so the
 surrounding BLAS work keeps its threads. An OpenMP-built OpenBLAS shares
